@@ -10,6 +10,9 @@ export class UploadUrlResult {
   @AutoMap()
   uploadUrl!: string;
 
+  @AutoMap()
+  uploadFields!: Record<string, string>;
+
   bucket!: string;
   objectKey!: string;
 }

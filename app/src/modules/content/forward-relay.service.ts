@@ -21,8 +21,8 @@ export class ForwardRelay {
     private readonly ingestion: AiIngestion,
   ) {}
 
-  async pump(): Promise<void> {
-    const pending = await this.outbox.findUnpublished();
+  async pump(limit: number): Promise<void> {
+    const pending = await this.outbox.findUnpublished(limit);
 
     for (const row of pending) {
       const payload = row.payload as {

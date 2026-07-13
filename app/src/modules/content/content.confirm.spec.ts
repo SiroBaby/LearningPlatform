@@ -108,4 +108,17 @@ describe('ContentService.confirm', () => {
     const reloaded = await documents.findOneByOrFail({ id: doc.id });
     expect(reloaded.status).toBe(DocumentStatus.UPLOADED);
   });
+
+  it('verify fail (object size khác declared size) -> reject, status không đổi', async () => {
+    const owner = randomUUID();
+    const doc = await seedUploaded(owner);
+    verifier.setResult({ sizeBytes: 1025 });
+
+    await expect(service.confirm(owner, doc.id)).rejects.toMatchObject({
+      status: 400,
+    });
+
+    const reloaded = await documents.findOneByOrFail({ id: doc.id });
+    expect(reloaded.status).toBe(DocumentStatus.UPLOADED);
+  });
 });

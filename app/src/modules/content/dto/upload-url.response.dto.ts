@@ -14,6 +14,13 @@ export class UploadUrlResponseDto {
   @AutoMap()
   readonly uploadUrl: string;
 
+  @ApiProperty({
+    description: 'Signed multipart form fields. Submit these with the file to uploadUrl using HTTP POST.',
+    example: { key: 'owner-id/document-id.pdf', policy: '...' },
+  })
+  @AutoMap()
+  readonly uploadFields: Record<string, string>;
+
   @ApiProperty({ example: 300, minimum: 1 })
   @AutoMap()
   readonly expirySec: number;

@@ -11,10 +11,11 @@ export class CourseOutboxRepository extends BaseRepository<OutboxEvent> {
     super(OutboxEvent, dataSource);
   }
 
-  async findUnpublished(): Promise<OutboxEvent[]> {
+  async findUnpublished(limit: number): Promise<OutboxEvent[]> {
     return this.find({
       where: { publishedAt: IsNull() },
       order: { createdAt: 'ASC' },
+      take: limit,
     });
   }
 

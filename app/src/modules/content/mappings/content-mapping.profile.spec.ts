@@ -28,7 +28,7 @@ describe('ContentMappingProfile', () => {
       originalName: 'bai-giang.pdf',
       ownerId: 'd9c63d87-9ec5-4f00-9ab7-32d35a5b1e7e',
       pageCount: 12,
-      sizeBytes: 248320,
+      sizeBytes: '248320',
       status: DocumentStatus.READY,
       storageRef: 'internal/object-key.pdf',
       type: DocumentType.PDF,
@@ -41,6 +41,7 @@ describe('ContentMappingProfile', () => {
       createdAt: '2026-06-21T12:34:56.789Z',
       id: document.id,
       originalName: document.originalName,
+      sizeBytes: 248320,
       updatedAt: '2026-06-21T12:35:56.789Z',
     });
     expect(actual).not.toHaveProperty('ownerId');
@@ -53,6 +54,7 @@ describe('ContentMappingProfile', () => {
       documentId: 'c1ce6db5-3afd-4d8a-a134-902847cc4f87',
       expirySec: 300,
       objectKey: 'internal/object-key.pdf',
+      uploadFields: { key: 'owner/document.pdf', policy: 'signed-policy' },
       uploadUrl: 'https://storage.example/upload',
     });
 
@@ -61,6 +63,7 @@ describe('ContentMappingProfile', () => {
     expect(actual).toEqual({
       documentId: result.documentId,
       expirySec: result.expirySec,
+      uploadFields: result.uploadFields,
       uploadUrl: result.uploadUrl,
     });
   });

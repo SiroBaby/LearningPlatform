@@ -8,6 +8,7 @@ import {
   StorageVerifier,
 } from '../../storage/contracts/storage-verifier.port';
 import { CreateUploadUrlCommand } from './contracts/create-upload-url.command';
+import { resolveDocumentUploadPolicy } from './contracts/document-upload-policy';
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { Document } from './entities/document.entity';
 import { ContentRepository } from './repositories/content.repository';
@@ -30,8 +31,8 @@ export class ContentService {
     ownerId: string,
     command: CreateUploadUrlCommand,
   ): Promise<UploadUrlResult> {
-    const ext = this.safeExtension(command.originalName);
-    const objectKey = `${ownerId}/${randomUUID()}${ext}`;
+    const policy = resolveDocumentUploadPolicy(command.type, command.originalName);
+    const objectKey = `${ownerId}/${randomUUID()}${policy.extension}`;
 
     const saved = await this.contentRepository.createUploaded(
       ownerId,
@@ -39,13 +40,16 @@ export class ContentService {
       objectKey,
     );
 
-    const { url, expirySec } = await this.storage.createPresignedPutUrl(
+    const { url, formFields, expirySec } = await this.storage.createPresignedPostUrl(
       objectKey,
+      policy.contentType,
+      command.sizeBytes,
     );
 
     return Object.assign(new UploadUrlResult(), {
       documentId: saved.id,
       uploadUrl: url,
+      uploadFields: formFields,
       objectKey,
       bucket: this.storage.getBucketName(),
       expirySec,
@@ -70,7 +74,11 @@ export class ContentService {
     }
 
     const v = await this.verifier.verify(document.storageRef, document.type);
-    if (!v.exists || !v.magicBytesValid) {
+    if (
+      !v.exists ||
+      !v.magicBytesValid ||
+      v.sizeBytes !== Number(document.sizeBytes)
+    ) {
       throw new BadRequestException('Uploaded file failed verification');
     }
 
@@ -80,13 +88,5 @@ export class ContentService {
     }
 
     return confirmed;
-  }
-
-  // Lấy đuôi file an toàn (chỉ chữ/số, tối đa 10 ký tự)
-  private safeExtension(name: string): string {
-    const dot = name.lastIndexOf('.');
-    if (dot < 0) return '';
-    const raw = name.slice(dot + 1).toLowerCase();
-    return /^[a-z0-9]{1,10}$/.test(raw) ? `.${raw}` : '';
   }
 }

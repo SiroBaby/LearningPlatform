@@ -67,7 +67,7 @@ describe('JobPoller.tick', () => {
   });
 
   it('không có job PENDING -> no-op, không lỗi', async () => {
-    await expect(poller.tick()).resolves.toBeUndefined();
+    await expect(poller.tick()).resolves.toBe(false);
   });
 
   it('không đụng job đã COMPLETED', async () => {

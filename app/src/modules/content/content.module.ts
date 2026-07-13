@@ -18,6 +18,6 @@ import { CourseOutboxRepository } from './repositories/course-outbox.repository'
     ContentMappingProfile,
     ForwardRelay,
   ],
-  exports: [ContentService],
+  exports: [ContentService, ForwardRelay],
 })
 export class ContentModule {}

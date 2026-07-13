@@ -56,7 +56,7 @@ describe('ForwardRelay.pump', () => {
   it('đọc outbox chưa publish -> tạo job PENDING + đánh dấu published', async () => {
     const { documentId, ownerId } = await seedOutbox();
 
-    await relay.pump();
+    await relay.pump(100);
 
     const job = await jobs.findOneByOrFail({ documentId });
     expect(job.ownerId).toBe(ownerId); // owner_id qua data plane (ADR-0018)
@@ -67,8 +67,8 @@ describe('ForwardRelay.pump', () => {
   it('at-least-once: pump 2 lần -> vẫn 1 job (enqueue idempotent)', async () => {
     const { documentId } = await seedOutbox();
 
-    await relay.pump();
-    await relay.pump();
+    await relay.pump(100);
+    await relay.pump(100);
 
     const all = await jobs.findBy({ documentId });
     expect(all).toHaveLength(1);
@@ -76,10 +76,10 @@ describe('ForwardRelay.pump', () => {
 
   it('chỉ xử lý row chưa publish (đã publish -> bỏ qua)', async () => {
     const { documentId } = await seedOutbox();
-    await relay.pump();
+    await relay.pump(100);
     const before = (await jobs.findBy({ documentId })).length;
 
-    await relay.pump(); // row đã published, không enqueue lại
+    await relay.pump(100); // row đã published, không enqueue lại
 
     const after = (await jobs.findBy({ documentId })).length;
     expect(after).toBe(before);

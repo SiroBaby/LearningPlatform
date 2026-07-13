@@ -40,18 +40,22 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
-   * Cấp presigned PUT URL để client upload thẳng lên MinIO.
-   * App không proxy file (bài học 03/07-docs: tránh bottleneck băng thông).
+   * Presigned POST policy enforces the exact object key, MIME type and size at
+   * storage boundary before MinIO accepts user-controlled bytes.
    */
-  async createPresignedPutUrl(
+  async createPresignedPostUrl(
     objectKey: string,
-  ): Promise<{ url: string; expirySec: number }> {
-    const url = await this.client.presignedPutObject(
-      this.bucket,
-      objectKey,
-      this.presignExpiry,
-    );
-    return { url, expirySec: this.presignExpiry };
+    contentType: string,
+    sizeBytes: number,
+  ): Promise<{ formFields: Record<string, string>; url: string; expirySec: number }> {
+    const policy = this.client.newPostPolicy();
+    policy.setBucket(this.bucket);
+    policy.setKey(objectKey);
+    policy.setExpires(new Date(Date.now() + this.presignExpiry * 1000));
+    policy.setContentType(contentType);
+    policy.setContentLengthRange(sizeBytes, sizeBytes);
+    const { formData, postURL } = await this.client.presignedPostPolicy(policy);
+    return { formFields: formData, url: postURL, expirySec: this.presignExpiry };
   }
 
   /** Lấy metadata object (size, contentType) — dùng ở bước confirm sau này. */

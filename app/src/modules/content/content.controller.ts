@@ -32,7 +32,7 @@ export class ContentController {
   ) {}
 
   @Post('upload-url')
-  @ApiOperation({ summary: 'Create a presigned upload URL for a Document.' })
+  @ApiOperation({ summary: 'Create a presigned multipart upload form for a Document.' })
   @ApiBadRequestResponse({ description: 'Invalid request body or upload metadata.' })
   @ApiCreatedResponse({ type: UploadUrlResponseDto })
   async createUploadUrl(

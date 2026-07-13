@@ -73,3 +73,9 @@
 - Tất cả `dependencies` và `devDependencies` dùng exact version; `package.json` không được có prefix range `^`, `~`, `>`, `<`, `*` hoặc workspace range. Chỉ nâng version qua security/dependency upgrade có audit và verification.
 - Sau mọi `npm install`, `npm uninstall` hoặc dependency upgrade: kiểm tra toàn bộ `package.json` để thay mọi range version bằng exact installed version, chạy `npm install --package-lock-only`, rồi chạy `npm audit`. Không kết thúc task khi package chưa được pin hoặc lockfile chưa đồng bộ.
 - Không commit/push/pull khi chưa có yêu cầu rõ.
+
+## Production Quality
+
+- Trước khi gọi một flow là production-ready, phải xác minh end-to-end behavior, failure handling, bounded resource usage, graceful shutdown và configuration validation; không dựa vào happy path hoặc hard-code interval/batch/credential.
+- Background processing phải chạy trong worker entrypoint/deployment role riêng, có typed configuration cho throughput/backoff, không overlap một worker loop, và không làm HTTP API process chạy worker ngầm.
+- Ưu tiên tái sử dụng module, port và repository hiện hữu; không duplicate orchestration hoặc tạo abstraction mới nếu composition root hiện có đủ. Source code theo runtime concern (`modules/`, `worker/`, `config/`); e2e test đặt ngoài `src/`.

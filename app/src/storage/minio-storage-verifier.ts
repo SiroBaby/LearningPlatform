@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { isUtf8 } from 'buffer';
 
 import { StorageService } from './storage.service';
 import {
@@ -9,7 +10,7 @@ import {
 // Magic bytes theo loại (docs/07: không tin Content-Type client gửi).
 const MAGIC: Record<string, Buffer[]> = {
   PDF: [Buffer.from('%PDF')],
-  // TEXT: không có magic cố định → chấp nhận (verify bằng size/tồn tại)
+    TEXT: [],
 };
 
 @Injectable()
@@ -37,9 +38,12 @@ export class MinioStorageVerifier implements StorageVerifier {
     documentType: string,
   ): Promise<boolean> {
     const signatures = MAGIC[documentType];
-    if (!signatures) return true; // loại không có magic cố định (vd TEXT)
+    if (!signatures) return false;
 
-    const head = await this.storage.readHead(objectKey, 8);
+    const head = await this.storage.readHead(objectKey, 4096);
+    if (documentType === 'TEXT') {
+      return isUtf8(head) && !head.includes(0);
+    }
     return signatures.some((sig) => head.subarray(0, sig.length).equals(sig));
   }
 }

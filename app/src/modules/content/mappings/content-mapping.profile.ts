@@ -12,7 +12,15 @@ import { Document } from '../entities/document.entity';
 @Injectable()
 export class ContentMappingProfile {
   constructor(@Inject(MAPPER) mapper: Mapper) {
-    createMap(mapper, UploadUrlResult, UploadUrlResponseDto);
+    createMap(
+      mapper,
+      UploadUrlResult,
+      UploadUrlResponseDto,
+      forMember(
+        (destination) => destination.uploadFields,
+        mapFrom((source) => source.uploadFields),
+      ),
+    );
     createMap(
       mapper,
       Document,
@@ -33,6 +41,10 @@ export class ContentMappingProfile {
       forMember(
         (destination) => destination.updatedAt,
         mapFrom((source) => DateTimeUtil.toUtcIsoString(source.updatedAt)),
+      ),
+      forMember(
+        (destination) => destination.sizeBytes,
+        mapFrom((source) => Number(source.sizeBytes)),
       ),
     );
   }

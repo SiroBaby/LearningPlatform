@@ -6,6 +6,7 @@ import {
   CONFIG_PATH,
   DatabaseSettings,
   StorageSettings,
+  WorkerSettings,
 } from './configuration.types';
 
 @Injectable()
@@ -35,7 +36,7 @@ export class ApplicationConfigService {
   }
 
   get storage(): StorageSettings {
-    return {
+    const storage = {
       accessKey: this.required<string>(CONFIG_PATH.storage.accessKey),
       bucket: this.required<string>(CONFIG_PATH.storage.bucket),
       endpoint: this.required<string>(CONFIG_PATH.storage.endpoint),
@@ -43,6 +44,17 @@ export class ApplicationConfigService {
       presignExpiry: this.required<number>(CONFIG_PATH.storage.presignExpiry),
       secretKey: this.required<string>(CONFIG_PATH.storage.secretKey),
       useSSL: this.required<boolean>(CONFIG_PATH.storage.useSSL),
+    };
+    this.assertProductionStorage(storage);
+    return storage;
+  }
+
+  get worker(): WorkerSettings {
+    return {
+      errorBackoffMs: this.positiveInteger(CONFIG_PATH.worker.errorBackoffMs),
+      jobBatchSize: this.positiveInteger(CONFIG_PATH.worker.jobBatchSize),
+      outboxBatchSize: this.positiveInteger(CONFIG_PATH.worker.outboxBatchSize),
+      pollIntervalMs: this.positiveInteger(CONFIG_PATH.worker.pollIntervalMs),
     };
   }
 
@@ -53,5 +65,26 @@ export class ApplicationConfigService {
     }
 
     return value;
+  }
+
+  private positiveInteger(path: string): number {
+    const value = this.required<number>(path);
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new Error(`Configuration ${path} must be a positive integer`);
+    }
+    return value;
+  }
+
+  private assertProductionStorage(storage: StorageSettings): void {
+    if (this.required<string>(CONFIG_PATH.app.environment) !== 'production') return;
+    if (!storage.useSSL) {
+      throw new Error('MINIO_USE_SSL must be true in production');
+    }
+    if (
+      storage.accessKey === 'minioadmin' ||
+      storage.secretKey === 'minioadmin'
+    ) {
+      throw new Error('Default MinIO credentials are forbidden in production');
+    }
   }
 }

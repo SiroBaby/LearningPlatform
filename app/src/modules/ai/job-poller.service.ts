@@ -15,13 +15,14 @@ import { ProcessingJobRepository } from './repositories/processing-job.repositor
 export class JobPoller {
   constructor(private readonly processingJobs: ProcessingJobRepository) {}
 
-  async tick(): Promise<void> {
+  async tick(): Promise<boolean> {
     const claimed = await this.processingJobs.claimPending();
 
-    if (!claimed) return;
+    if (!claimed) return false;
 
     // --- no-op pipeline placeholder (issue 03-05 sẽ thay bằng stage thật) ---
 
     await this.processingJobs.complete(claimed);
+    return true;
   }
 }

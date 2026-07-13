@@ -28,6 +28,13 @@ export interface StorageSettings {
   useSSL: boolean;
 }
 
+export interface WorkerSettings {
+  errorBackoffMs: number;
+  jobBatchSize: number;
+  outboxBatchSize: number;
+  pollIntervalMs: number;
+}
+
 export const CONFIG_PATH = {
   app: {
     environment: 'app.env',
@@ -53,5 +60,11 @@ export const CONFIG_PATH = {
     presignExpiry: 'storage.presignExpiry',
     secretKey: 'storage.secretKey',
     useSSL: 'storage.useSSL',
+  },
+  worker: {
+    errorBackoffMs: 'worker.errorBackoffMs',
+    jobBatchSize: 'worker.jobBatchSize',
+    outboxBatchSize: 'worker.outboxBatchSize',
+    pollIntervalMs: 'worker.pollIntervalMs',
   },
 } as const;
