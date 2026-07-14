@@ -30,6 +30,7 @@ export interface StorageSettings {
 
 export interface WorkerSettings {
   errorBackoffMs: number;
+  maxExtractableObjectBytes: number;
   jobBatchSize: number;
   outboxBatchSize: number;
   pollIntervalMs: number;
@@ -65,6 +66,7 @@ export const CONFIG_PATH = {
   },
   worker: {
     errorBackoffMs: 'worker.errorBackoffMs',
+    maxExtractableObjectBytes: 'worker.maxExtractableObjectBytes',
     jobBatchSize: 'worker.jobBatchSize',
     outboxBatchSize: 'worker.outboxBatchSize',
     pollIntervalMs: 'worker.pollIntervalMs',

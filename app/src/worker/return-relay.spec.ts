@@ -119,6 +119,34 @@ describe('ReturnRelay', () => {
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
   });
 
+  it('publishes and idempotently projects a failed PDF extraction result', async () => {
+    const document = await seedProcessingDocument();
+    const event = await outbox.save(
+      outbox.create({
+        aggregateId: randomUUID(),
+        eventType: 'DocumentProcessingResult',
+        payload: {
+          documentId: document.id,
+          errorCode: 'PDF_TEXT_NOT_FOUND',
+          errorMessage: 'The uploaded PDF does not contain extractable text.',
+          ownerId: document.ownerId,
+          status: DocumentStatus.FAILED,
+          version: 1,
+        },
+      }),
+    );
+
+    await relay.pump(10);
+    await relay.pump(10);
+
+    const projected = await documents.findOneByOrFail({ id: document.id });
+    expect(projected.status).toBe(DocumentStatus.FAILED);
+    expect(projected.errorMessage).toBe(
+      'The uploaded PDF does not contain extractable text.',
+    );
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+  });
+
   it('does not project a result for another owner', async () => {
     const document = await seedProcessingDocument();
     const event = await seedResult(document, DocumentStatus.READY, randomUUID());

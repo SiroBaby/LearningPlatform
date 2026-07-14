@@ -27,6 +27,7 @@
 - `content -> ai`: `course.outbox` -> relay -> `AiIngestion`; content không ghi `ai.*`.
 - `ai -> content`: dùng `ai.outbox` return seam; AI không ghi trực tiếp `course.documents`.
 - Relay là at-least-once. Consumer/repository write phải idempotent.
+- Return-relay payload validation must accept every value of its versioned domain error-code enum; add a FAILED relay test whenever a producer introduces a new code.
 - Không tạo/sửa migration nếu không có yêu cầu rõ. Migration SQL thuần có cặp `.up.sql`/`.down.sql` trong `src/database/migrations/`.
 
 ## Validation, Time And API Contract
@@ -42,6 +43,8 @@
 - Chỉ `ApplicationConfigService` được inject `ConfigService` và chứa config path string. `main.ts`, storage service, database config và module khác dùng typed getter từ `ApplicationConfigService`.
 
 ## TypeScript Entity And Test Conventions
+
+- Non-runtime TypeScript interfaces and external module shapes must use explicit Nest provider tokens/factories, with module-compilation coverage for the provider graph.
 
 - Với TypeORM entity được hydrate bởi ORM, mapped property bắt buộc dùng definite-assignment assertion (`property!: Type`) khi không được khởi tạo trong constructor; không dùng `?` hoặc giá trị mặc định giả chỉ để qua strict initialization.
 - Test Jest phải import tường minh APIs từ `@jest/globals` (ví dụ `describe`, `it`, `expect`, `jest`) để editor type-check ổn định.

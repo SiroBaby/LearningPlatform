@@ -3,6 +3,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   DocumentProcessingFailureCode,
 } from './contracts/document-processing-result';
+import { ExtractionError } from './contracts/extraction-error';
 import { JOB_PROCESSOR, type JobProcessor } from './contracts/job-processor.port';
 import { ProcessingJobRepository } from './repositories/processing-job.repository';
 
@@ -31,10 +32,12 @@ export class JobPoller {
     try {
       await this.processor.process(job);
       await this.processingJobs.complete(claimed);
-    } catch {
+    } catch (error) {
       await this.processingJobs.fail(
         claimed,
-        DocumentProcessingFailureCode.PROCESSING_FAILED,
+        error instanceof ExtractionError
+          ? error.code
+          : DocumentProcessingFailureCode.PROCESSING_FAILED,
       );
     }
     return true;

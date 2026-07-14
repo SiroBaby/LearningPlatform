@@ -43,14 +43,14 @@ export class ReturnRelay {
   }
 
   private parseResult(payload: Record<string, unknown>): DocumentProcessingResult {
+    const errorCode = this.parseFailureCode(payload.errorCode);
+
     if (
       payload.version !== 1 ||
       typeof payload.documentId !== 'string' ||
       typeof payload.ownerId !== 'string' ||
       (payload.errorMessage !== null && typeof payload.errorMessage !== 'string') ||
-      (payload.errorCode !== null &&
-        payload.errorCode !== 'PROCESSING_FAILED' &&
-        payload.errorCode !== 'PROCESSING_TIMED_OUT') ||
+      errorCode === undefined ||
       (payload.status !== DocumentProcessingResultStatus.READY &&
         payload.status !== DocumentProcessingResultStatus.FAILED)
     ) {
@@ -59,16 +59,26 @@ export class ReturnRelay {
 
     return {
       documentId: payload.documentId,
-      errorCode:
-        payload.errorCode === 'PROCESSING_TIMED_OUT'
-          ? DocumentProcessingFailureCode.PROCESSING_TIMED_OUT
-          : payload.errorCode === 'PROCESSING_FAILED'
-            ? DocumentProcessingFailureCode.PROCESSING_FAILED
-            : null,
+      errorCode,
       errorMessage: payload.errorMessage,
       ownerId: payload.ownerId,
       status: payload.status,
       version: payload.version,
     };
+  }
+
+  private parseFailureCode(
+    value: unknown,
+  ): DocumentProcessingFailureCode | null | undefined {
+    if (value === null) return null;
+    if (
+      typeof value === 'string' &&
+      Object.values(DocumentProcessingFailureCode).includes(
+        value as DocumentProcessingFailureCode,
+      )
+    ) {
+      return value as DocumentProcessingFailureCode;
+    }
+    return undefined;
   }
 }

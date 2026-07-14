@@ -73,6 +73,24 @@ export class StorageService implements OnModuleInit {
     return Buffer.concat(chunks).subarray(0, n);
   }
 
+  /** Reads at most maxBytes plus one sentinel byte to keep worker memory bounded. */
+  async readObject(objectKey: string, maxBytes: number): Promise<Buffer> {
+    const stream = await this.client.getObject(this.bucket, objectKey);
+    const chunks: Buffer[] = [];
+    let receivedBytes = 0;
+
+    for await (const chunk of stream) {
+      const bytes = Buffer.from(chunk);
+      receivedBytes += bytes.length;
+      if (receivedBytes > maxBytes) {
+        stream.destroy();
+        throw new RangeError('Storage object exceeds the configured extraction limit');
+      }
+      chunks.push(bytes);
+    }
+    return Buffer.concat(chunks, receivedBytes);
+  }
+
   getBucketName(): string {
     return this.bucket;
   }

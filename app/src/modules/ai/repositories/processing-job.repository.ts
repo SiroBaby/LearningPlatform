@@ -142,6 +142,18 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> {
     if (errorCode === DocumentProcessingFailureCode.PROCESSING_FAILED) {
       return 'Processing failed';
     }
+    if (errorCode === DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND) {
+      return 'Uploaded object could not be read';
+    }
+    if (errorCode === DocumentProcessingFailureCode.EXTRACTION_OBJECT_TOO_LARGE) {
+      return 'Uploaded object exceeds the extraction size limit';
+    }
+    if (errorCode === DocumentProcessingFailureCode.PDF_INVALID) {
+      return 'Uploaded PDF could not be parsed';
+    }
+    if (errorCode === DocumentProcessingFailureCode.PDF_TEXT_NOT_FOUND) {
+      return 'Uploaded PDF has no extractable text layer';
+    }
     return null;
   }
 }

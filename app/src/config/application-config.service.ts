@@ -52,6 +52,9 @@ export class ApplicationConfigService {
   get worker(): WorkerSettings {
     return {
       errorBackoffMs: this.positiveInteger(CONFIG_PATH.worker.errorBackoffMs),
+      maxExtractableObjectBytes: this.positiveInteger(
+        CONFIG_PATH.worker.maxExtractableObjectBytes,
+      ),
       jobBatchSize: this.positiveInteger(CONFIG_PATH.worker.jobBatchSize),
       outboxBatchSize: this.positiveInteger(CONFIG_PATH.worker.outboxBatchSize),
       pollIntervalMs: this.positiveInteger(CONFIG_PATH.worker.pollIntervalMs),

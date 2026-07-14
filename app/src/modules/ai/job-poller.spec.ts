@@ -14,6 +14,8 @@ import { startTestDb, TestDb } from '../../test-support/test-db';
 import { createTestDataSource } from '../../test-support/test-data-source';
 import { JobPoller } from './job-poller.service';
 import { JobProcessor } from './contracts/job-processor.port';
+import { ExtractionError } from './contracts/extraction-error';
+import { DocumentProcessingFailureCode } from './contracts/document-processing-result';
 import { AiOutboxEvent } from './entities/ai-outbox-event.entity';
 import { ProcessingJob } from './entities/processing-job.entity';
 import { JobStatus } from './enums/job-status.enum';
@@ -94,6 +96,25 @@ describe('JobPoller.tick', () => {
     expect(JSON.stringify((await outbox.find())[0].payload)).not.toContain(
       'private-bucket',
     );
+  });
+
+  it('extractor failure -> FAILED with its safe structured code', async () => {
+    processor = {
+      process: async () => {
+        throw new ExtractionError(DocumentProcessingFailureCode.PDF_TEXT_NOT_FOUND);
+      },
+    };
+    poller = new JobPoller(new ProcessingJobRepository(ds), processor);
+    const id = await seedPending();
+
+    await poller.tick();
+
+    expect((await jobs.findOneByOrFail({ id })).status).toBe(JobStatus.FAILED);
+    expect((await outbox.find())[0].payload).toMatchObject({
+      errorCode: 'PDF_TEXT_NOT_FOUND',
+      errorMessage: 'Uploaded PDF has no extractable text layer',
+      status: 'FAILED',
+    });
   });
 
   it('rolls back the final job state when its return outbox write fails', async () => {
