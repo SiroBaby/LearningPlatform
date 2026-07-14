@@ -1,5 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
+import {
+  DocumentProcessingFailureCode,
+} from './contracts/document-processing-result';
+import { JOB_PROCESSOR, type JobProcessor } from './contracts/job-processor.port';
 import { ProcessingJobRepository } from './repositories/processing-job.repository';
 
 /**
@@ -13,16 +17,26 @@ import { ProcessingJobRepository } from './repositories/processing-job.repositor
  */
 @Injectable()
 export class JobPoller {
-  constructor(private readonly processingJobs: ProcessingJobRepository) {}
+  constructor(
+    private readonly processingJobs: ProcessingJobRepository,
+    @Inject(JOB_PROCESSOR) private readonly processor: JobProcessor,
+  ) {}
 
   async tick(): Promise<boolean> {
     const claimed = await this.processingJobs.claimPending();
 
     if (!claimed) return false;
 
-    // --- no-op pipeline placeholder (issue 03-05 sẽ thay bằng stage thật) ---
-
-    await this.processingJobs.complete(claimed);
+    const job = await this.processingJobs.findOneByOrFail({ id: claimed });
+    try {
+      await this.processor.process(job);
+      await this.processingJobs.complete(claimed);
+    } catch {
+      await this.processingJobs.fail(
+        claimed,
+        DocumentProcessingFailureCode.PROCESSING_FAILED,
+      );
+    }
     return true;
   }
 }

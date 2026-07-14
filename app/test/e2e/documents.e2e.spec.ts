@@ -10,6 +10,8 @@ import { Document } from '../../src/modules/content/entities/document.entity';
 import { STORAGE_VERIFIER } from '../../src/storage/contracts/storage-verifier.port';
 import { StorageService } from '../../src/storage/storage.service';
 import { startTestDb, TestDb } from '../../src/test-support/test-db';
+import { WorkerModule } from '../../src/worker/worker.module';
+import { WorkerRunner } from '../../src/worker/worker-runner.service';
 
 describe('Document HTTP flow', () => {
   let db: TestDb;
@@ -57,7 +59,7 @@ describe('Document HTTP flow', () => {
 
   beforeEach(async () => {
     await db.client.query(
-      'TRUNCATE "course"."documents", "course"."outbox", "ai"."processing_jobs"',
+      'TRUNCATE "course"."documents", "course"."outbox", "ai"."outbox", "ai"."processing_jobs"',
     );
   });
 
@@ -102,6 +104,21 @@ describe('Document HTTP flow', () => {
       status: 'PROCESSING',
       sizeBytes: 22,
     });
+
+    // A compiled WorkerModule executes the production relay/poller/return wiring
+    // deterministically in-process, without a separate child process.
+    const workerModule = await Test.createTestingModule({
+      imports: [WorkerModule],
+    }).compile();
+    const workerRunner = workerModule.get(WorkerRunner);
+    await workerRunner.onApplicationBootstrap();
+    await workerRunner.onApplicationShutdown();
+
+    const ready = await request(`/api/v1/documents/${upload.documentId}`, {
+      headers: ownerHeaders(),
+    });
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({ status: 'READY' });
 
     const hidden = await request(`/api/v1/documents/${upload.documentId}`, {
       headers: ownerHeaders(otherOwnerId),

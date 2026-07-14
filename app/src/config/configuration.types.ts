@@ -33,6 +33,8 @@ export interface WorkerSettings {
   jobBatchSize: number;
   outboxBatchSize: number;
   pollIntervalMs: number;
+  stuckJobBatchSize: number;
+  stuckJobTimeoutMs: number;
 }
 
 export const CONFIG_PATH = {
@@ -66,5 +68,7 @@ export const CONFIG_PATH = {
     jobBatchSize: 'worker.jobBatchSize',
     outboxBatchSize: 'worker.outboxBatchSize',
     pollIntervalMs: 'worker.pollIntervalMs',
+    stuckJobBatchSize: 'worker.stuckJobBatchSize',
+    stuckJobTimeoutMs: 'worker.stuckJobTimeoutMs',
   },
 } as const;

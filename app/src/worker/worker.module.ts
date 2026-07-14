@@ -8,6 +8,7 @@ import { AiModule } from '../modules/ai/ai.module';
 import { ContentModule } from '../modules/content/content.module';
 import { StorageModule } from '../storage/storage.module';
 import { WorkerRunner } from './worker-runner.service';
+import { ReturnRelay } from './return-relay.service';
 
 @Module({
   imports: [
@@ -21,6 +22,6 @@ import { WorkerRunner } from './worker-runner.service';
     AiModule,
     ContentModule,
   ],
-  providers: [WorkerRunner],
+  providers: [ReturnRelay, WorkerRunner],
 })
 export class WorkerModule {}

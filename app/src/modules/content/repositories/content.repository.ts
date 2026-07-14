@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 
 import { BaseRepository } from '../../../database/base.repository';
 import { CreateUploadUrlCommand } from '../contracts/create-upload-url.command';
+import { DocumentStatusProjectionCommand } from '../contracts/document-status-projection.port';
 import { Document } from '../entities/document.entity';
 import { DocumentStatus } from '../enums/document-status.enum';
 import { OutboxEvent } from '../entities/outbox-event.entity';
@@ -57,5 +58,25 @@ export class ContentRepository extends BaseRepository<Document> {
 
       return manager.findOne(Document, { where: { id, ownerId } });
     });
+  }
+
+  async projectProcessingResult(
+    command: DocumentStatusProjectionCommand,
+  ): Promise<void> {
+    await this.createQueryBuilder()
+      .update(Document)
+      .set({
+        errorMessage: command.errorMessage,
+        status: command.status,
+      })
+      .where(
+        'id = :documentId AND owner_id = :ownerId AND status = :processingStatus',
+        {
+          documentId: command.documentId,
+          ownerId: command.ownerId,
+          processingStatus: DocumentStatus.PROCESSING,
+        },
+      )
+      .execute();
   }
 }
