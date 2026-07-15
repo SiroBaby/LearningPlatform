@@ -19,5 +19,5 @@
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true
   },
-  "exclude": ["node_modules", "dist", "jest.config.ts", "**/*.spec.ts", "src/test-support/**"]
+  "exclude": ["node_modules", "dist", "jest.config.ts", "**/*.spec.ts", "src/test-support/**", "test/**"]
 }

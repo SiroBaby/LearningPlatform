@@ -1,7 +1,6 @@
 import { ProcessingJob } from '../entities/processing-job.entity';
 
 export const DOCUMENT_SOURCE_READER = Symbol('DOCUMENT_SOURCE_READER');
-export const EXTRACTED_SEGMENT_SINK = Symbol('EXTRACTED_SEGMENT_SINK');
 
 export type Locator = PdfPageLocator | TextRangeLocator;
 
@@ -28,8 +27,4 @@ export interface ExtractionSource {
 
 export interface DocumentSourceReader {
   read(job: ProcessingJob): Promise<ExtractionSource>;
-}
-
-export interface ExtractedSegmentSink {
-  save(job: ProcessingJob, segments: readonly ExtractedSegment[]): Promise<void>;
 }

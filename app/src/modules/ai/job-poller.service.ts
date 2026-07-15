@@ -24,17 +24,15 @@ export class JobPoller {
   ) {}
 
   async tick(): Promise<boolean> {
-    const claimed = await this.processingJobs.claimPending();
-
-    if (!claimed) return false;
-
-    const job = await this.processingJobs.findOneByOrFail({ id: claimed });
+    const job = await this.processingJobs.claimPending();
+    if (!job) return false;
+    const attempt = { attempts: job.attempts, id: job.id };
     try {
       await this.processor.process(job);
-      await this.processingJobs.complete(claimed);
+      await this.processingJobs.complete(attempt);
     } catch (error) {
       await this.processingJobs.fail(
-        claimed,
+        attempt,
         error instanceof ExtractionError
           ? error.code
           : DocumentProcessingFailureCode.PROCESSING_FAILED,

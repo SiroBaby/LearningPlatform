@@ -10,6 +10,17 @@ export interface ApplicationSettings {
   swagger: SwaggerSettings;
 }
 
+export type LlmProviderType = 'fake' | 'openai';
+
+export interface AiSettings {
+  openai: {
+    apiKey: string | undefined;
+    model: string | undefined;
+    requestTimeoutMs: number;
+  };
+  provider: LlmProviderType;
+}
+
 export interface DatabaseSettings {
   host: string;
   name: string;
@@ -29,6 +40,12 @@ export interface StorageSettings {
 }
 
 export interface WorkerSettings {
+  chunkInsertBatchSize: number;
+  chunkMaxChars: number;
+  maxChunksPerDocument: number;
+  maxChunkTotalChars: number;
+  chunkOverlapChars: number;
+  chunkTargetChars: number;
   errorBackoffMs: number;
   maxExtractableObjectBytes: number;
   jobBatchSize: number;
@@ -39,6 +56,14 @@ export interface WorkerSettings {
 }
 
 export const CONFIG_PATH = {
+  ai: {
+    openai: {
+      apiKey: 'ai.openai.apiKey',
+      model: 'ai.openai.model',
+      requestTimeoutMs: 'ai.openai.requestTimeoutMs',
+    },
+    provider: 'ai.provider',
+  },
   app: {
     environment: 'app.env',
     port: 'app.port',
@@ -65,6 +90,12 @@ export const CONFIG_PATH = {
     useSSL: 'storage.useSSL',
   },
   worker: {
+    chunkInsertBatchSize: 'worker.chunkInsertBatchSize',
+    chunkMaxChars: 'worker.chunkMaxChars',
+    maxChunksPerDocument: 'worker.maxChunksPerDocument',
+    maxChunkTotalChars: 'worker.maxChunkTotalChars',
+    chunkOverlapChars: 'worker.chunkOverlapChars',
+    chunkTargetChars: 'worker.chunkTargetChars',
     errorBackoffMs: 'worker.errorBackoffMs',
     maxExtractableObjectBytes: 'worker.maxExtractableObjectBytes',
     jobBatchSize: 'worker.jobBatchSize',

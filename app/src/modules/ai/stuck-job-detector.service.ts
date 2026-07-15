@@ -8,15 +8,18 @@ export class StuckJobDetector {
   constructor(private readonly processingJobs: ProcessingJobRepository) {}
 
   async detectAndFail(timeoutMs: number, limit: number): Promise<number> {
-    const stuckJobIds = await this.processingJobs.findStuckRunning(timeoutMs, limit);
+    const stuckJobs = await this.processingJobs.findStuckRunning(timeoutMs, limit);
+    let failed = 0;
 
-    for (const id of stuckJobIds) {
-      await this.processingJobs.fail(
-        id,
+    for (const attempt of stuckJobs) {
+      if (await this.processingJobs.fail(
+        attempt,
         DocumentProcessingFailureCode.PROCESSING_TIMED_OUT,
-      );
+      )) {
+        failed += 1;
+      }
     }
 
-    return stuckJobIds.length;
+    return failed;
   }
 }

@@ -14,7 +14,9 @@
     "migration:new": "node scripts/new-migration.js",
     "migration:run": "ts-node -T src/database/migrate.ts up",
     "migration:revert": "ts-node -T src/database/migrate.ts down",
-    "migration:status": "ts-node -T src/database/migrate.ts status"
+    "migration:status": "ts-node -T src/database/migrate.ts status",
+    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
+    "test:e2e": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js test/e2e"
   },
   "dependencies": {
     "@automapper/classes": "8.8.1",
@@ -30,6 +32,7 @@
     "class-validator": "0.14.4",
     "dotenv": "16.6.1",
     "minio": "8.0.7",
+    "openai": "6.47.0",
     "pdfjs-dist": "5.4.296",
     "pg": "8.21.0",
     "reflect-metadata": "0.1.14",

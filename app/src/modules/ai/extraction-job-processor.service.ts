@@ -6,14 +6,15 @@ import { STORAGE_OBJECT_READER, StorageObjectReader } from '../../storage/contra
 import {
   DOCUMENT_SOURCE_READER,
   DocumentSourceReader,
-  EXTRACTED_SEGMENT_SINK,
-  ExtractedSegmentSink,
 } from './contracts/extraction.contracts';
 import { ExtractionError } from './contracts/extraction-error';
 import { DocumentProcessingFailureCode } from './contracts/document-processing-result';
 import { JobProcessor } from './contracts/job-processor.port';
 import { ProcessingJob } from './entities/processing-job.entity';
 import { ExtractionService, MAX_EXTRACTABLE_OBJECT_BYTES } from './extraction.service';
+import { ChunkService } from './chunk.service';
+import { CHUNK_STORE, ChunkStore } from './contracts/chunk.contracts';
+import { QUIZ_GENERATOR, type QuizGenerator } from './contracts/quiz-generator.port';
 
 @Injectable()
 export class ExtractionJobProcessor implements JobProcessor {
@@ -21,7 +22,9 @@ export class ExtractionJobProcessor implements JobProcessor {
     @Inject(DOCUMENT_SOURCE_READER) private readonly sources: DocumentSourceReader,
     @Inject(STORAGE_OBJECT_READER) private readonly objects: StorageObjectReader,
     private readonly extraction: ExtractionService,
-    @Inject(EXTRACTED_SEGMENT_SINK) private readonly segments: ExtractedSegmentSink,
+    private readonly chunker: ChunkService,
+    @Inject(CHUNK_STORE) private readonly chunks: ChunkStore,
+    @Inject(QUIZ_GENERATOR) private readonly quizGeneration: QuizGenerator,
     @Optional() private readonly config?: ApplicationConfigService,
   ) {}
 
@@ -40,6 +43,21 @@ export class ExtractionJobProcessor implements JobProcessor {
       throw new ExtractionError(DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND);
     }
     const extracted = await this.extraction.extract(source, bytes);
-    await this.segments.save(job, extracted);
+    const chunks = this.chunker.chunk(job.documentId, job.ownerId, extracted);
+    const persisted = await this.chunks.replaceForDocument({
+      attempt: job.attempts,
+      chunks,
+      documentId: job.documentId,
+      jobId: job.id,
+      ownerId: job.ownerId,
+    });
+    if (!persisted) {
+      throw new ExtractionError(DocumentProcessingFailureCode.PROCESSING_FAILED);
+    }
+    const persistedChunks = await this.chunks.findForDocument(job.documentId, job.ownerId);
+    await this.quizGeneration.generate({
+      chunks: persistedChunks,
+      job: { documentId: job.documentId, ownerId: job.ownerId },
+    });
   }
 }

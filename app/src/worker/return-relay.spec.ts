@@ -147,6 +147,53 @@ describe('ReturnRelay', () => {
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
   });
 
+  it('accepts the safe chunk resource-limit failure code', async () => {
+    const document = await seedProcessingDocument();
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        documentId: document.id,
+        errorCode: 'CHUNK_RESOURCE_LIMIT_EXCEEDED',
+        errorMessage: 'Document exceeds configured chunk processing limits',
+        ownerId: document.ownerId,
+        status: DocumentStatus.FAILED,
+        version: 1,
+      },
+    }));
+
+    await relay.pump(10);
+
+    expect((await documents.findOneByOrFail({ id: document.id })).errorMessage).toBe(
+      'Document exceeds configured chunk processing limits',
+    );
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+  });
+
+  it.each([
+    ['GENERATION_OUTPUT_INVALID', 'Generated question output is invalid'],
+    ['INSUFFICIENT_VALID_QUESTIONS', 'Not enough valid questions were generated'],
+  ])('accepts the safe generation failure code %s', async (errorCode, errorMessage) => {
+    const document = await seedProcessingDocument();
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        documentId: document.id,
+        errorCode,
+        errorMessage,
+        ownerId: document.ownerId,
+        status: DocumentStatus.FAILED,
+        version: 1,
+      },
+    }));
+
+    await relay.pump(10);
+
+    expect((await documents.findOneByOrFail({ id: document.id })).errorMessage).toBe(errorMessage);
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+  });
+
   it('does not project a result for another owner', async () => {
     const document = await seedProcessingDocument();
     const event = await seedResult(document, DocumentStatus.READY, randomUUID());

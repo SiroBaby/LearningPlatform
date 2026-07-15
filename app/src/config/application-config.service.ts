@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import {
+  AiSettings,
   ApplicationSettings,
   CONFIG_PATH,
   DatabaseSettings,
@@ -12,6 +13,26 @@ import {
 @Injectable()
 export class ApplicationConfigService {
   constructor(private readonly config: ConfigService) {}
+
+  get ai(): AiSettings {
+    const provider = this.required<string>(CONFIG_PATH.ai.provider);
+    if (provider !== 'fake' && provider !== 'openai') {
+      throw new Error('AI_LLM_PROVIDER must be fake or openai');
+    }
+    if (this.required<string>(CONFIG_PATH.app.environment) === 'production' && provider !== 'openai') {
+      throw new Error('AI_LLM_PROVIDER must be openai in production');
+    }
+    const requestTimeoutMs = this.positiveInteger(CONFIG_PATH.ai.openai.requestTimeoutMs);
+    const apiKey = this.config.get<string>(CONFIG_PATH.ai.openai.apiKey);
+    const model = this.config.get<string>(CONFIG_PATH.ai.openai.model);
+    if (provider === 'openai' && (!apiKey?.trim() || !model?.trim())) {
+      throw new Error('OPENAI_API_KEY and OPENAI_MODEL are required for the OpenAI provider');
+    }
+    return {
+      openai: { apiKey, model, requestTimeoutMs },
+      provider,
+    };
+  }
 
   get application(): ApplicationSettings {
     return {
@@ -50,17 +71,30 @@ export class ApplicationConfigService {
   }
 
   get worker(): WorkerSettings {
-    return {
+    const worker = {
+      chunkInsertBatchSize: this.positiveInteger(CONFIG_PATH.worker.chunkInsertBatchSize),
+      chunkMaxChars: this.positiveInteger(CONFIG_PATH.worker.chunkMaxChars),
+      chunkOverlapChars: this.positiveInteger(CONFIG_PATH.worker.chunkOverlapChars),
+      chunkTargetChars: this.positiveInteger(CONFIG_PATH.worker.chunkTargetChars),
       errorBackoffMs: this.positiveInteger(CONFIG_PATH.worker.errorBackoffMs),
       maxExtractableObjectBytes: this.positiveInteger(
         CONFIG_PATH.worker.maxExtractableObjectBytes,
       ),
+      maxChunksPerDocument: this.positiveInteger(CONFIG_PATH.worker.maxChunksPerDocument),
+      maxChunkTotalChars: this.positiveInteger(CONFIG_PATH.worker.maxChunkTotalChars),
       jobBatchSize: this.positiveInteger(CONFIG_PATH.worker.jobBatchSize),
       outboxBatchSize: this.positiveInteger(CONFIG_PATH.worker.outboxBatchSize),
       pollIntervalMs: this.positiveInteger(CONFIG_PATH.worker.pollIntervalMs),
       stuckJobBatchSize: this.positiveInteger(CONFIG_PATH.worker.stuckJobBatchSize),
       stuckJobTimeoutMs: this.positiveInteger(CONFIG_PATH.worker.stuckJobTimeoutMs),
     };
+    if (worker.chunkTargetChars > worker.chunkMaxChars) {
+      throw new Error('WORKER_CHUNK_TARGET_CHARS must not exceed WORKER_CHUNK_MAX_CHARS');
+    }
+    if (worker.chunkOverlapChars >= worker.chunkMaxChars) {
+      throw new Error('WORKER_CHUNK_OVERLAP_CHARS must be below WORKER_CHUNK_MAX_CHARS');
+    }
+    return worker;
   }
 
   private required<T>(path: string): T {

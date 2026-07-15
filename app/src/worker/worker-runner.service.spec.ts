@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { Logger } from '@nestjs/common';
 
 import type { ApplicationConfigService } from '../config/application-config.service';
 import type { JobPoller } from '../modules/ai/job-poller.service';
@@ -57,5 +58,32 @@ describe('WorkerRunner', () => {
     expect(stuckJobs.detectAndFail.mock.invocationCallOrder[0]).toBeLessThan(
       returnRelay.pump.mock.invocationCallOrder[0],
     );
+  });
+
+  it('logs a fixed message without the raw worker error payload', async () => {
+    const logger = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const config = {
+      worker: {
+        errorBackoffMs: 1,
+        jobBatchSize: 1,
+        outboxBatchSize: 1,
+        pollIntervalMs: 1_000,
+        stuckJobBatchSize: 1,
+        stuckJobTimeoutMs: 1,
+      },
+    } as ApplicationConfigService;
+    const runner = new WorkerRunner(
+      config,
+      { pump: async () => { throw new Error('raw document: secret lecture text'); } } as unknown as ForwardRelay,
+      { tick: async () => false } as unknown as JobPoller,
+      { pump: async () => undefined } as unknown as ReturnRelay,
+      { detectAndFail: async () => 0 } as unknown as StuckJobDetector,
+    );
+
+    await runner.onApplicationBootstrap();
+    await runner.onApplicationShutdown();
+
+    expect(logger).toHaveBeenCalledWith('Worker cycle failed');
+    expect(JSON.stringify(logger.mock.calls)).not.toContain('secret lecture text');
   });
 });

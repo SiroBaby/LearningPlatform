@@ -1,8 +1,11 @@
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from '@jest/globals';
 
-import { ExtractionError } from './contracts/extraction-error';
 import { DocumentProcessingFailureCode } from './contracts/document-processing-result';
-import { ExtractionService, MAX_EXTRACTABLE_OBJECT_BYTES, PdfJsModule } from './extraction.service';
+import { ExtractionService, MAX_EXTRACTABLE_OBJECT_BYTES } from './extraction.service';
+import type { PdfJsModule } from './extraction.service';
 
 describe('ExtractionService', () => {
   const extraction = new ExtractionService(undefined, createPdfJsMock());
@@ -28,6 +31,25 @@ describe('ExtractionService', () => {
     expect(segments).toEqual([
       { text: 'First page', locator: { kind: 'page', page: 1 } },
       { text: 'Second page', locator: { kind: 'page', page: 2 } },
+    ]);
+    expect(segments[0]).not.toHaveProperty('type');
+  });
+
+  it('extracts a local text-layer PDF through the real PDF.js adapter', async () => {
+    const inputPdf = await readFile(
+      resolve(__dirname, '../../../test/fixtures/extraction-text-layer.pdf'),
+    );
+
+    const segments = await new ExtractionService().extract(
+      { storageRef: 'documents/extraction-text-layer.pdf', type: 'PDF' },
+      inputPdf,
+    );
+
+    expect(segments).toEqual([
+      {
+        text: 'Learning Platform fixture',
+        locator: { kind: 'page', page: 1 },
+      },
     ]);
     expect(segments[0]).not.toHaveProperty('type');
   });
@@ -104,11 +126,14 @@ function createPdfJsMock(): PdfJsModule {
       return {
         promise: Promise.resolve({
           numPages: pages.length,
-          getPage: async (pageNumber: number) => ({
-            getTextContent: async () => ({
-              items: pages[pageNumber - 1] ? [{ str: pages[pageNumber - 1]!, hasEOL: false }] : [],
-            }),
-          }),
+          getPage: async (pageNumber: number) => {
+            const pageText = pages[pageNumber - 1];
+            return {
+              getTextContent: async () => ({
+                items: pageText ? [{ str: pageText, hasEOL: false }] : [],
+              }),
+            };
+          },
           destroy: async () => undefined,
         }),
         destroy: () => undefined,

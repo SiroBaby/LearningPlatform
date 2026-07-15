@@ -1,17 +1,31 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { randomUUID } from 'crypto';
-import { createServer, Server } from 'http';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import { DataSource } from 'typeorm';
 
 import { AppModule } from '../../src/app.module';
 import { Document } from '../../src/modules/content/entities/document.entity';
+import { Chunk } from '../../src/modules/ai/entities/chunk.entity';
+import { GenerationCacheRecord } from '../../src/modules/ai/entities/generation-cache.entity';
+import { PromptVersion } from '../../src/modules/ai/entities/prompt-version.entity';
+import { LLM_PROVIDER, type LlmProvider } from '../../src/modules/ai/contracts/llm-provider.contracts';
+import { QuizGenerationService } from '../../src/modules/ai/quiz-generation.service';
+import { QuestionEntity } from '../../src/modules/assessment/entities/question.entity';
+import { QuestionOptionEntity } from '../../src/modules/assessment/entities/question-option.entity';
+import { QuizEntity } from '../../src/modules/assessment/entities/quiz.entity';
 import { STORAGE_VERIFIER } from '../../src/storage/contracts/storage-verifier.port';
+import { STORAGE_OBJECT_READER } from '../../src/storage/contracts/storage-object-reader.port';
 import { StorageService } from '../../src/storage/storage.service';
+import { PDF_JS_MODULE } from '../../src/modules/ai/extraction.service';
 import { startTestDb, TestDb } from '../../src/test-support/test-db';
 import { WorkerModule } from '../../src/worker/worker.module';
 import { WorkerRunner } from '../../src/worker/worker-runner.service';
+import {
+  CountingLlmProvider,
+  pdfJsWithText,
+  TestStorageServer,
+} from '../support/document-flow-test-doubles';
 
 describe('Document HTTP flow', () => {
   let db: TestDb;
@@ -36,6 +50,8 @@ describe('Document HTTP flow', () => {
       })
       .overrideProvider(STORAGE_VERIFIER)
       .useValue(storage)
+      .overrideProvider(PDF_JS_MODULE)
+      .useValue(pdfJsWithText('Chunkable lecture content'))
       .compile();
 
     app = module.createNestApplication();
@@ -59,7 +75,7 @@ describe('Document HTTP flow', () => {
 
   beforeEach(async () => {
     await db.client.query(
-      'TRUNCATE "course"."documents", "course"."outbox", "ai"."outbox", "ai"."processing_jobs"',
+      'TRUNCATE "quiz"."options", "quiz"."questions", "quiz"."quizzes", "ai"."generation_cache", "ai"."prompt_versions", "course"."documents", "course"."outbox", "ai"."outbox", "ai"."processing_jobs", "ai"."chunks" CASCADE',
     );
   });
 
@@ -109,7 +125,14 @@ describe('Document HTTP flow', () => {
     // deterministically in-process, without a separate child process.
     const workerModule = await Test.createTestingModule({
       imports: [WorkerModule],
-    }).compile();
+    })
+      .overrideProvider(PDF_JS_MODULE)
+      .useValue(pdfJsWithText('Chunkable lecture content'))
+      .overrideProvider(STORAGE_OBJECT_READER)
+      .useValue({ read: (objectKey: string) => storage.read(objectKey) })
+      .overrideProvider(LLM_PROVIDER)
+      .useClass(CountingLlmProvider)
+      .compile();
     const workerRunner = workerModule.get(WorkerRunner);
     await workerRunner.onApplicationBootstrap();
     await workerRunner.onApplicationShutdown();
@@ -129,6 +152,43 @@ describe('Document HTTP flow', () => {
       id: upload.documentId,
     });
     expect(document.ownerId).toBe(ownerId);
+    const chunks = await dataSource.getRepository(Chunk).find({
+      where: { documentId: upload.documentId, ownerId },
+      order: { chunkIndex: 'ASC' },
+    });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toMatchObject({
+      locator: { kind: 'page', page: 1 },
+      text: 'Chunkable lecture content',
+    });
+    const quizzes = await dataSource.getRepository(QuizEntity).find({
+      where: { documentId: upload.documentId, ownerId },
+    });
+    const questions = await dataSource.getRepository(QuestionEntity).find({
+      where: { ownerId, quizId: quizzes[0]?.id },
+    });
+    const options = await dataSource.getRepository(QuestionOptionEntity).find({
+      where: { ownerId, questionId: questions[0]?.id },
+    });
+    expect(quizzes).toHaveLength(1);
+    expect(questions).toHaveLength(1);
+    expect(options).toHaveLength(2);
+    expect(questions[0]?.citation).toEqual({
+      chunkId: chunks[0]?.id,
+      locator: { kind: 'page', page: 1 },
+      snippet: 'Chunkable lecture content',
+    });
+    expect(await dataSource.getRepository(GenerationCacheRecord).count()).toBe(1);
+    expect(await dataSource.getRepository(PromptVersion).count()).toBe(1);
+
+    const provider = workerModule.get<LlmProvider>(LLM_PROVIDER) as CountingLlmProvider;
+    await workerModule.get(QuizGenerationService).generate({
+      chunks,
+      job: { documentId: upload.documentId, ownerId },
+    });
+    expect(provider.callCount).toBe(1);
+    expect(await dataSource.getRepository(QuizEntity).count()).toBe(1);
+    expect(await dataSource.getRepository(QuestionEntity).count()).toBe(1);
   });
 
   function ownerHeaders(id = ownerId): HeadersInit {
@@ -139,71 +199,3 @@ describe('Document HTTP flow', () => {
     return fetch(`http://127.0.0.1:${app.getHttpServer().address().port}${path}`, init);
   }
 });
-
-class TestStorageServer {
-  private readonly objects = new Map<string, Buffer>();
-
-  private constructor(private readonly server: Server) {}
-
-  static async start(): Promise<TestStorageServer> {
-    let storage: TestStorageServer;
-    const server = createServer(async (request, response) => {
-      if (request.method !== 'POST' || !request.url?.startsWith('/objects/')) {
-        response.statusCode = 404;
-        response.end();
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) {
-        chunks.push(Buffer.from(chunk));
-      }
-      const body = Buffer.concat(chunks);
-      const key = body.toString().match(/name="key"\r\n\r\n([^\r]+)/)?.[1];
-      const fileStart = body.indexOf(Buffer.from('%PDF'));
-      if (!key || fileStart < 0) {
-        response.statusCode = 400;
-        response.end();
-        return;
-      }
-      storage.objects.set(key, body.subarray(fileStart, body.indexOf('\r\n--', fileStart)));
-      response.statusCode = 200;
-      response.end();
-    });
-    storage = new TestStorageServer(server);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    return storage;
-  }
-
-  async createUploadForm(objectKey: string): Promise<{ formFields: Record<string, string>; url: string; expirySec: number }> {
-    const address = this.server.address();
-    if (!address || typeof address === 'string') {
-      throw new Error('Test storage server is not listening');
-    }
-
-    return {
-      formFields: { key: objectKey, policy: 'test-policy' },
-      url: `http://127.0.0.1:${address.port}/objects/upload`,
-      expirySec: 300,
-    };
-  }
-
-  async verify(objectKey: string): Promise<{
-    exists: boolean;
-    sizeBytes: number;
-    magicBytesValid: boolean;
-  }> {
-    const object = this.objects.get(objectKey);
-    return {
-      exists: object !== undefined,
-      sizeBytes: object?.length ?? 0,
-      magicBytesValid: object?.subarray(0, 4).equals(Buffer.from('%PDF')) ?? false,
-    };
-  }
-
-  async stop(): Promise<void> {
-    await new Promise<void>((resolve, reject) =>
-      this.server.close((error) => (error ? reject(error) : resolve())),
-    );
-  }
-}

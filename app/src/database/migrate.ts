@@ -119,7 +119,7 @@ export async function runUp(client: Client): Promise<void> {
   console.log(`Hoàn tất ${pending.length} migration.`);
 }
 
-async function runDown(client: Client): Promise<void> {
+export async function runDown(client: Client): Promise<void> {
   await ensureTrackingTable(client);
   const res = await client.query<{ version: string; name: string }>(
     `SELECT "version", "name" FROM "schema_migrations" ORDER BY "version" DESC LIMIT 1`,

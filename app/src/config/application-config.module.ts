@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
 import appConfig from './app.config';
+import aiConfig from './ai.config';
 import { ApplicationConfigService } from './application-config.service';
 import databaseConfig from './database.config';
 import storageConfig from './storage.config';
@@ -12,7 +13,7 @@ import workerConfig from './worker.config';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, storageConfig, workerConfig],
+      load: [aiConfig, appConfig, databaseConfig, storageConfig, workerConfig],
     }),
   ],
   providers: [ApplicationConfigService],

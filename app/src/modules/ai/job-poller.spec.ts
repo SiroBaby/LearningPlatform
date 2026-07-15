@@ -120,7 +120,8 @@ describe('JobPoller.tick', () => {
   it('rolls back the final job state when its return outbox write fails', async () => {
     const id = await seedPending();
     const processingJobs = new ProcessingJobRepository(ds);
-    await processingJobs.claimPending();
+    const claimed = await processingJobs.claimPending();
+    if (!claimed) throw new Error('Expected pending job to be claimed');
     await ds.query(`
       CREATE FUNCTION "ai"."reject_return_outbox"() RETURNS trigger
       LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced outbox failure'; END; $$;
@@ -130,7 +131,7 @@ describe('JobPoller.tick', () => {
     `);
 
     try {
-      await expect(processingJobs.complete(id)).rejects.toThrow(
+      await expect(processingJobs.complete(claimed)).rejects.toThrow(
         'forced outbox failure',
       );
     } finally {
@@ -157,5 +158,15 @@ describe('JobPoller.tick', () => {
 
     const second = await jobs.findOneByOrFail({ id });
     expect(second.updatedAt.getTime()).toBe(first.updatedAt.getTime());
+  });
+
+  it('does not finalize a newer job attempt from a stale worker', async () => {
+    const id = await seedPending();
+    await jobs.update({ id }, { attempts: 2, status: JobStatus.RUNNING });
+    const processingJobs = new ProcessingJobRepository(ds);
+
+    await expect(processingJobs.complete({ attempts: 1, id })).resolves.toBe(false);
+    expect((await jobs.findOneByOrFail({ id })).status).toBe(JobStatus.RUNNING);
+    expect(await outbox.find()).toHaveLength(0);
   });
 });
