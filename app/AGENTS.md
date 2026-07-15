@@ -48,6 +48,8 @@
 
 - Với TypeORM entity được hydrate bởi ORM, mapped property bắt buộc dùng definite-assignment assertion (`property!: Type`) khi không được khởi tạo trong constructor; không dùng `?` hoặc giá trị mặc định giả chỉ để qua strict initialization.
 - Test Jest phải import tường minh APIs từ `@jest/globals` (ví dụ `describe`, `it`, `expect`, `jest`) để editor type-check ổn định.
+- Test dùng dependency ESM-only như `pdfjs-dist` phải chạy qua script `npm run test`/`npm run test:e2e` đã bật `node --experimental-vm-modules`; không gọi trực tiếp binary `jest` vì native dynamic import sẽ lỗi trong Jest VM.
+- Migration test nhắm một version cụ thể không được giả định đó luôn là migration mới nhất; rollback theo version mục tiêu rồi chạy `runUp()` để test vẫn đúng khi có migration mới hơn.
 - Trong `.spec.ts`, nếu VS Code không áp dụng legacy decorator configuration, đăng ký custom `PropertyDecorator` trực tiếp trên prototype (ví dụ `IsNonBlankString()(TestDto.prototype, 'value')`) thay vì decorator syntax. Test DTO vẫn phải dùng `value!: Type` cho property được gán trong test.
 
 ## Swagger Security
@@ -73,6 +75,8 @@
 - Sau backend change, chạy `npm run build`.
 - Chạy test hẹp nhất liên quan. Testcontainers cần Docker; nếu không có Docker, ghi rõ đây là blocker môi trường.
 - Với route/shared symbol, chạy impact analysis trước edit.
+- Trong môi trường development cục bộ, AI được chủ động chạy app, worker, build, test và thao tác dữ liệu/database phục vụ phát triển hoặc xác minh mà không cần xin phép trước, miễn là không tác động staging, production hay hạ tầng dùng chung.
+- Phải hỏi trước khi thay đổi đáng kể cấu trúc dự án, tạo/sửa database schema hoặc migration, thực hiện thao tác database phá hủy/khó hoàn tác, hay có khả năng tác động staging, production hoặc tài nguyên dùng chung.
 - Tất cả `dependencies` và `devDependencies` dùng exact version; `package.json` không được có prefix range `^`, `~`, `>`, `<`, `*` hoặc workspace range. Chỉ nâng version qua security/dependency upgrade có audit và verification.
 - Sau mọi `npm install`, `npm uninstall` hoặc dependency upgrade: kiểm tra toàn bộ `package.json` để thay mọi range version bằng exact installed version, chạy `npm install --package-lock-only`, rồi chạy `npm audit`. Không kết thúc task khi package chưa được pin hoặc lockfile chưa đồng bộ.
 - Không commit/push/pull khi chưa có yêu cầu rõ.
@@ -81,4 +85,6 @@
 
 - Trước khi gọi một flow là production-ready, phải xác minh end-to-end behavior, failure handling, bounded resource usage, graceful shutdown và configuration validation; không dựa vào happy path hoặc hard-code interval/batch/credential.
 - Background processing phải chạy trong worker entrypoint/deployment role riêng, có typed configuration cho throughput/backoff, không overlap một worker loop, và không làm HTTP API process chạy worker ngầm.
+- LLM provider và credentials chỉ được khởi tạo trong worker composition root; API process không giữ API key. Production worker phải fail-fast nếu provider thật hoặc credentials/model bị thiếu, và SDK logging phải tắt để không lộ source chunk/prompt.
+- Mọi worker write/finalize phải mang attempt fence đã claim, dùng budget + batch hữu hạn, và chỉ log mã/lời nhắn an toàn thay vì payload hoặc lỗi thô.
 - Ưu tiên tái sử dụng module, port và repository hiện hữu; không duplicate orchestration hoặc tạo abstraction mới nếu composition root hiện có đủ. Source code theo runtime concern (`modules/`, `worker/`, `config/`); e2e test đặt ngoài `src/`.
