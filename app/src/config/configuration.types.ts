@@ -11,12 +11,18 @@ export interface ApplicationSettings {
 }
 
 export type LlmProviderType = 'fake' | 'openai';
+export type LlmStructuredOutputMode = 'json-object' | 'json-schema-strict';
+export type LlmTransport = 'chat-completions' | 'responses';
 
 export interface AiSettings {
   openai: {
     apiKey: string | undefined;
+    baseUrl: string | undefined;
+    capabilityVersion: string | undefined;
     model: string | undefined;
     requestTimeoutMs: number;
+    structuredOutputMode: LlmStructuredOutputMode | undefined;
+    transport: LlmTransport | undefined;
   };
   provider: LlmProviderType;
 }
@@ -59,8 +65,12 @@ export const CONFIG_PATH = {
   ai: {
     openai: {
       apiKey: 'ai.openai.apiKey',
+      baseUrl: 'ai.openai.baseUrl',
+      capabilityVersion: 'ai.openai.capabilityVersion',
       model: 'ai.openai.model',
       requestTimeoutMs: 'ai.openai.requestTimeoutMs',
+      structuredOutputMode: 'ai.openai.structuredOutputMode',
+      transport: 'ai.openai.transport',
     },
     provider: 'ai.provider',
   },

@@ -12,6 +12,7 @@ import { normalizeGenerationInput } from './quiz-generation.prompt';
 @Injectable()
 export class FakeLlmProvider implements LlmProvider {
   readonly model = 'fake-llm-v1';
+  readonly providerIdentity = 'fake:fake-llm-v1';
 
   async generate(request: LlmGenerationRequest): Promise<JsonValue> {
     const sourceText = normalizeGenerationInput(request.sourceText);

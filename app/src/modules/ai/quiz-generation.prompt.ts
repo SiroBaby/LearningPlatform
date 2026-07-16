@@ -19,8 +19,8 @@ export const QUIZ_GENERATION_PROMPT_TEMPLATE = [
 ].join('\n');
 
 export interface PromptFingerprintInput {
-  readonly model: string;
   readonly params: GenerationParameters;
+  readonly providerIdentity: string;
   readonly template: string;
 }
 
@@ -32,8 +32,8 @@ export function createPromptFingerprint(input: PromptFingerprintInput): string {
   return sha256([
     'prompt-template',
     input.template,
-    'model',
-    input.model,
+    'provider-identity',
+    input.providerIdentity,
     'parameters',
     canonicalizeJson(input.params),
   ].join('\n'));
@@ -45,8 +45,8 @@ export function createGenerationCacheKey(input: GenerationCacheKeyInput): string
     normalizeGenerationInput(input.sourceText),
     'prompt-template',
     input.template,
-    'model',
-    input.model,
+    'provider-identity',
+    input.providerIdentity,
     'parameters',
     canonicalizeJson(input.params),
   ].join('\n'));

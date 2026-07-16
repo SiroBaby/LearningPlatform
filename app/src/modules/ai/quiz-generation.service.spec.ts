@@ -109,6 +109,7 @@ describe('QuizGenerationService', () => {
 
 class RecordingProvider implements LlmProvider {
   readonly model = 'recording-model-v1';
+  readonly providerIdentity = 'fake:recording-model-v1';
   readonly requests: LlmGenerationRequest[] = [];
   wasCalledConcurrently = false;
   private isGenerating = false;

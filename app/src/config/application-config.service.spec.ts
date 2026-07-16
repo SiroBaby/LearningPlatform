@@ -35,11 +35,32 @@ describe('ApplicationConfigService', () => {
     expect(new ApplicationConfigService(config).ai).toEqual({
       openai: {
         apiKey: undefined,
+        baseUrl: undefined,
+        capabilityVersion: undefined,
         model: undefined,
         requestTimeoutMs: 60_000,
+        structuredOutputMode: undefined,
+        transport: undefined,
       },
       provider: 'fake',
     });
+  });
+
+  it('does not validate unused OpenAI-compatible settings for the fake provider', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      ai: {
+        openai: {
+          baseUrl: 'not-a-url',
+          requestTimeoutMs: 60_000,
+          structuredOutputMode: 'unsupported',
+          transport: 'automatic',
+        },
+        provider: 'fake',
+      },
+      app: { env: 'development' },
+    }));
+
+    expect(config.ai.provider).toBe('fake');
   });
 
   it('requires the OpenAI provider and credentials in production', () => {
@@ -60,7 +81,57 @@ describe('ApplicationConfigService', () => {
 
     expect(() => fake.ai).toThrow('AI_LLM_PROVIDER must be openai in production');
     expect(() => missingCredentials.ai).toThrow(
-      'OPENAI_API_KEY and OPENAI_MODEL are required for the OpenAI provider',
+      'OpenAI-compatible provider configuration is incomplete',
+    );
+  });
+
+  it('returns canonical operator-managed OpenAI-compatible settings', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      ai: {
+        openai: {
+          apiKey: 'proxy-key',
+          baseUrl: 'https://proxy.example.com/v1/',
+          capabilityVersion: 'responses-json-v1',
+          model: 'proxy-model',
+          requestTimeoutMs: 60_000,
+          structuredOutputMode: 'json-schema-strict',
+          transport: 'responses',
+        },
+        provider: 'openai',
+      },
+      app: { env: 'development' },
+    }));
+
+    expect(config.ai.openai).toMatchObject({
+      baseUrl: 'https://proxy.example.com/v1',
+      structuredOutputMode: 'json-schema-strict',
+      transport: 'responses',
+    });
+  });
+
+  it('rejects invalid OpenAI-compatible capabilities and endpoint URLs', () => {
+    const create = (baseUrl: string, transport: string): ApplicationConfigService =>
+      new ApplicationConfigService(new ConfigService({
+        ai: {
+          openai: {
+            apiKey: 'proxy-key',
+            baseUrl,
+            capabilityVersion: 'v1',
+            model: 'proxy-model',
+            requestTimeoutMs: 60_000,
+            structuredOutputMode: 'json-object',
+            transport,
+          },
+          provider: 'openai',
+        },
+        app: { env: 'development' },
+      }));
+
+    expect(() => create('https://proxy.example.com/v1?token=x', 'responses').ai).toThrow(
+      'OPENAI_BASE_URL must not contain credentials, query parameters, or a fragment',
+    );
+    expect(() => create('https://proxy.example.com/v1', 'automatic').ai).toThrow(
+      'OPENAI_TRANSPORT must be responses or chat-completions',
     );
   });
 });

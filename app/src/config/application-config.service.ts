@@ -6,6 +6,8 @@ import {
   ApplicationSettings,
   CONFIG_PATH,
   DatabaseSettings,
+  LlmStructuredOutputMode,
+  LlmTransport,
   StorageSettings,
   WorkerSettings,
 } from './configuration.types';
@@ -24,12 +26,50 @@ export class ApplicationConfigService {
     }
     const requestTimeoutMs = this.positiveInteger(CONFIG_PATH.ai.openai.requestTimeoutMs);
     const apiKey = this.config.get<string>(CONFIG_PATH.ai.openai.apiKey);
+    const configuredBaseUrl = this.config.get<string>(CONFIG_PATH.ai.openai.baseUrl);
+    const capabilityVersion = this.config.get<string>(CONFIG_PATH.ai.openai.capabilityVersion);
     const model = this.config.get<string>(CONFIG_PATH.ai.openai.model);
-    if (provider === 'openai' && (!apiKey?.trim() || !model?.trim())) {
-      throw new Error('OPENAI_API_KEY and OPENAI_MODEL are required for the OpenAI provider');
+    const configuredStructuredOutputMode = this.config.get<string>(
+      CONFIG_PATH.ai.openai.structuredOutputMode,
+    );
+    const configuredTransport = this.config.get<string>(CONFIG_PATH.ai.openai.transport);
+    if (provider === 'fake') {
+      return {
+        openai: {
+          apiKey,
+          baseUrl: configuredBaseUrl,
+          capabilityVersion,
+          model,
+          requestTimeoutMs,
+          structuredOutputMode: undefined,
+          transport: undefined,
+        },
+        provider,
+      };
     }
+    if (
+      !apiKey?.trim() ||
+        !configuredBaseUrl?.trim() ||
+        !capabilityVersion?.trim() ||
+        !model?.trim() ||
+        !configuredStructuredOutputMode?.trim() ||
+        !configuredTransport?.trim()
+    ) {
+      throw new Error('OpenAI-compatible provider configuration is incomplete');
+    }
+    const baseUrl = this.canonicalOpenAiBaseUrl(configuredBaseUrl);
+    const structuredOutputMode = this.openAiStructuredOutputMode(configuredStructuredOutputMode);
+    const transport = this.openAiTransport(configuredTransport);
     return {
-      openai: { apiKey, model, requestTimeoutMs },
+      openai: {
+        apiKey,
+        baseUrl,
+        capabilityVersion,
+        model,
+        requestTimeoutMs,
+        structuredOutputMode,
+        transport,
+      },
       provider,
     };
   }
@@ -103,6 +143,43 @@ export class ApplicationConfigService {
       throw new Error(`Missing required configuration: ${path}`);
     }
 
+    return value;
+  }
+
+  private canonicalOpenAiBaseUrl(value: string): string {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new Error('OPENAI_BASE_URL must be an absolute HTTP or HTTPS URL');
+      }
+      throw error;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('OPENAI_BASE_URL must be an absolute HTTP or HTTPS URL');
+    }
+    if (url.username || url.password || url.search || url.hash) {
+      throw new Error(
+        'OPENAI_BASE_URL must not contain credentials, query parameters, or a fragment',
+      );
+    }
+    return url.toString().replace(/\/$/u, '');
+  }
+
+  private openAiStructuredOutputMode(value: string): LlmStructuredOutputMode {
+    if (value !== 'json-object' && value !== 'json-schema-strict') {
+      throw new Error(
+        'OPENAI_STRUCTURED_OUTPUT_MODE must be json-schema-strict or json-object',
+      );
+    }
+    return value;
+  }
+
+  private openAiTransport(value: string): LlmTransport {
+    if (value !== 'chat-completions' && value !== 'responses') {
+      throw new Error('OPENAI_TRANSPORT must be responses or chat-completions');
+    }
     return value;
   }
 

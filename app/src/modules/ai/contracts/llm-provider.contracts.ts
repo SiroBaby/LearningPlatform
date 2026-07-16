@@ -37,5 +37,6 @@ export interface LlmGenerationRequest {
 
 export interface LlmProvider {
   readonly model: string;
+  readonly providerIdentity: string;
   generate(request: LlmGenerationRequest): Promise<unknown>;
 }

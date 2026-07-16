@@ -100,6 +100,7 @@ export function pdfJsWithText(text: string): PdfJsModule {
 
 export class CountingLlmProvider implements LlmProvider {
   readonly model = 'e2e-counting-v1';
+  readonly providerIdentity = 'fake:e2e-counting-v1';
   callCount = 0;
 
   async generate(request: LlmGenerationRequest): Promise<JsonValue> {

@@ -48,8 +48,8 @@ export class QuizGenerationService implements QuizGenerator {
       throw new Error('LLM provider is unavailable outside the worker runtime');
     }
     const promptVersion = createPromptFingerprint({
-      model: provider.model,
       params: QUIZ_GENERATION_PARAMETERS,
+      providerIdentity: provider.providerIdentity,
       template: QUIZ_GENERATION_PROMPT_TEMPLATE,
     });
     await this.promptVersions.record({
@@ -91,8 +91,8 @@ export class QuizGenerationService implements QuizGenerator {
     provider: LlmProvider,
   ): Promise<GeneratedQuestionOutput> {
     const cacheKey = createGenerationCacheKey({
-      model: provider.model,
       params: QUIZ_GENERATION_PARAMETERS,
+      providerIdentity: provider.providerIdentity,
       sourceText: chunk.text,
       template: QUIZ_GENERATION_PROMPT_TEMPLATE,
     });
