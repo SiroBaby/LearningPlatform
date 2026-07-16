@@ -1,17 +1,28 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource, EntityManager, In } from 'typeorm';
 
+import type {
+  GradingQuiz,
+  PersistedAttempt,
+  QuizAttemptStore,
+  ServedQuiz,
+} from '../contracts/quiz-attempt-store.port';
 import type { QuizPersistence } from '../contracts/quiz-persistence.port';
 import type { PersistedQuiz } from '../contracts/quiz-generation-handoff.contract';
 import { BaseRepository } from '../../../database/base.repository';
 import { AssessmentError, AssessmentErrorCode } from '../domain/assessment.error';
 import type { Quiz } from '../domain/quiz';
+import { AttemptAnswerEntity } from '../entities/attempt-answer.entity';
+import { AttemptEntity } from '../entities/attempt.entity';
 import { QuestionEntity } from '../entities/question.entity';
 import { QuestionOptionEntity } from '../entities/question-option.entity';
 import { QuizEntity } from '../entities/quiz.entity';
 
 @Injectable()
-export class QuizRepository extends BaseRepository<QuizEntity> implements QuizPersistence {
+export class QuizRepository
+  extends BaseRepository<QuizEntity>
+  implements QuizAttemptStore, QuizPersistence
+{
   constructor(private readonly dataSource: DataSource) {
     super(QuizEntity, dataSource);
   }
@@ -67,6 +78,130 @@ export class QuizRepository extends BaseRepository<QuizEntity> implements QuizPe
         questionIds: quiz.questions.map((question) => question.id),
         quizId: quiz.id,
       };
+    });
+  }
+
+  async findServedByOwnerId(ownerId: string, quizId: string): Promise<ServedQuiz | null> {
+    const quiz = await this.findOne({
+      select: { id: true },
+      where: { id: quizId, ownerId },
+    });
+    if (!quiz) {
+      return null;
+    }
+
+    const questions = await this.dataSource.getRepository(QuestionEntity).find({
+      order: { ordinal: 'ASC' },
+      select: { id: true, ordinal: true, stem: true },
+      where: { ownerId, quizId },
+    });
+    const options = questions.length === 0
+      ? []
+      : await this.dataSource.getRepository(QuestionOptionEntity).find({
+        order: { optionIndex: 'ASC' },
+        select: {
+          content: true,
+          id: true,
+          optionIndex: true,
+          questionId: true,
+        },
+        where: {
+          ownerId,
+          questionId: In(questions.map((question) => question.id)),
+        },
+      });
+
+    return {
+      id: quiz.id,
+      questions: questions.map((question) => ({
+        id: question.id,
+        ordinal: question.ordinal,
+        options: options
+          .filter((option) => option.questionId === question.id)
+          .map((option) => ({
+            content: option.content,
+            id: option.id,
+            optionIndex: option.optionIndex,
+          })),
+        stem: question.stem,
+      })),
+    };
+  }
+
+  async findForGradingByOwnerId(
+    ownerId: string,
+    quizId: string,
+  ): Promise<GradingQuiz | null> {
+    const quiz = await this.findOne({
+      select: { id: true },
+      where: { id: quizId, ownerId },
+    });
+    if (!quiz) {
+      return null;
+    }
+
+    const questions = await this.dataSource.getRepository(QuestionEntity).find({
+      order: { ordinal: 'ASC' },
+      where: { ownerId, quizId },
+    });
+    const options = questions.length === 0
+      ? []
+      : await this.dataSource.getRepository(QuestionOptionEntity).find({
+        order: { optionIndex: 'ASC' },
+        where: {
+          ownerId,
+          questionId: In(questions.map((question) => question.id)),
+        },
+      });
+
+    return {
+      id: quiz.id,
+      questions: questions.map((question) => ({
+        citation: question.citation,
+        explanation: question.explanation,
+        id: question.id,
+        ordinal: question.ordinal,
+        options: options
+          .filter((option) => option.questionId === question.id)
+          .map((option) => ({
+            content: option.content,
+            id: option.id,
+            isCorrect: option.isCorrect,
+            optionIndex: option.optionIndex,
+          })),
+        stem: question.stem,
+      })),
+    };
+  }
+
+  async persistAttempt(attempt: PersistedAttempt): Promise<boolean> {
+    return this.dataSource.transaction(async (manager) => {
+      const quiz = await manager.findOneBy(QuizEntity, {
+        id: attempt.quizId,
+        ownerId: attempt.ownerId,
+      });
+      if (!quiz) {
+        return false;
+      }
+
+      await manager.save(AttemptEntity, manager.create(AttemptEntity, {
+        id: attempt.id,
+        ownerId: attempt.ownerId,
+        questionCount: attempt.questionCount,
+        quizId: attempt.quizId,
+        score: attempt.score,
+      }));
+      await manager.save(
+        AttemptAnswerEntity,
+        attempt.results.map((result) => manager.create(AttemptAnswerEntity, {
+          attemptId: attempt.id,
+          isCorrect: result.isCorrect,
+          ownerId: attempt.ownerId,
+          questionId: result.questionId,
+          selectedOptionId: result.selectedOptionId,
+        })),
+      );
+      return true;
     });
   }
 

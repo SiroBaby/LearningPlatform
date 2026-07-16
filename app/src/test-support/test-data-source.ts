@@ -8,6 +8,8 @@ import { AiOutboxEvent } from '../modules/ai/entities/ai-outbox-event.entity';
 import { Chunk } from '../modules/ai/entities/chunk.entity';
 import { GenerationCacheRecord } from '../modules/ai/entities/generation-cache.entity';
 import { PromptVersion } from '../modules/ai/entities/prompt-version.entity';
+import { AttemptAnswerEntity } from '../modules/assessment/entities/attempt-answer.entity';
+import { AttemptEntity } from '../modules/assessment/entities/attempt.entity';
 import { QuestionEntity } from '../modules/assessment/entities/question.entity';
 import { QuestionOptionEntity } from '../modules/assessment/entities/question-option.entity';
 import { QuizEntity } from '../modules/assessment/entities/quiz.entity';
@@ -28,6 +30,8 @@ export async function createTestDataSource(
     database: container.getDatabase(),
     entities: [
       AiOutboxEvent,
+      AttemptAnswerEntity,
+      AttemptEntity,
       Chunk,
       Document,
       GenerationCacheRecord,

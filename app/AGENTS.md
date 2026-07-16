@@ -69,6 +69,7 @@
 - Generate Quiz bằng grounding per-chunk, không retrieval/OpenSearch.
 - Persist một Quiz per document/prompt-version, không quiz per chunk.
 - Citation tự chứa `{ chunkId, locator, snippet }` để serve-side không query `ai.chunks`.
+- Quiz serve projection phải tách khỏi grading projection và không được select/map `is_correct`, explanation hoặc citation trước khi Attempt được nộp.
 
 ## Verification
 

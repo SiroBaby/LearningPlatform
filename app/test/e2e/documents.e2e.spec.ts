@@ -26,6 +26,7 @@ import {
   pdfJsWithText,
   TestStorageServer,
 } from '../support/document-flow-test-doubles';
+import { verifyQuizAttemptFlow } from '../support/quiz-attempt-flow';
 
 describe('Document HTTP flow', () => {
   let db: TestDb;
@@ -181,6 +182,22 @@ describe('Document HTTP flow', () => {
     expect(await dataSource.getRepository(GenerationCacheRecord).count()).toBe(1);
     expect(await dataSource.getRepository(PromptVersion).count()).toBe(1);
 
+    const quiz = quizzes[0];
+    const question = questions[0];
+    if (!quiz || !question) {
+      throw new Error('Document flow must generate one Quiz and one Question');
+    }
+    await verifyQuizAttemptFlow({
+      dataSource,
+      options,
+      otherOwnerId,
+      ownerHeaders,
+      ownerId,
+      question,
+      quiz,
+      request,
+    });
+
     const provider = workerModule.get<LlmProvider>(LLM_PROVIDER) as CountingLlmProvider;
     await workerModule.get(QuizGenerationService).generate({
       chunks,
@@ -191,7 +208,7 @@ describe('Document HTTP flow', () => {
     expect(await dataSource.getRepository(QuestionEntity).count()).toBe(1);
   });
 
-  function ownerHeaders(id = ownerId): HeadersInit {
+  function ownerHeaders(id: string = ownerId): HeadersInit {
     return { 'Content-Type': 'application/json', 'X-User-Id': id };
   }
 
