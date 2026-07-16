@@ -37,6 +37,7 @@ describe('ContentService.confirm', () => {
       new ContentRepository(ds),
       /* storage */ null as never,
       verifier,
+      null as never,
     );
     await db.client.query('TRUNCATE "course"."documents", "course"."outbox"');
   });

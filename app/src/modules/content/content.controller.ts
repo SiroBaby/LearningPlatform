@@ -15,10 +15,12 @@ import {
 import { CurrentUser } from '../../common/current-user.decorator';
 import { MAPPER } from '../../common/mapping/mapper.provider';
 import { UploadUrlResult } from './contracts/upload-url.result';
+import { DocumentQuizResult } from './contracts/document-quiz.result';
 import { ConfirmDocumentResponseDto } from './dto/confirm-document.response.dto';
 import { ContentService } from './content.service';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { DocumentResponseDto } from './dto/document.response.dto';
+import { DocumentQuizResponseDto } from './dto/document-quiz.response.dto';
 import { UploadUrlResponseDto } from './dto/upload-url.response.dto';
 import { Document } from './entities/document.entity';
 
@@ -46,6 +48,26 @@ export class ContentController {
     });
 
     return this.mapper.map(result, UploadUrlResult, UploadUrlResponseDto);
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'List Documents owned by the current Owner.' })
+  @ApiOkResponse({ type: DocumentResponseDto, isArray: true })
+  async listDocuments(@CurrentUser() ownerId: string): Promise<DocumentResponseDto[]> {
+    const documents = await this.content.findAll(ownerId);
+    return this.mapper.mapArray(documents, Document, DocumentResponseDto);
+  }
+
+  @Get(':id/quiz')
+  @ApiOperation({ summary: 'Find the current Owner\'s Quiz for an owned Document.' })
+  @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner or has no Quiz.' })
+  @ApiOkResponse({ type: DocumentQuizResponseDto })
+  async getDocumentQuiz(
+    @CurrentUser() ownerId: string,
+    @Param('id', new ParseUUIDPipe()) documentId: string,
+  ): Promise<DocumentQuizResponseDto> {
+    const result = await this.content.findQuiz(ownerId, documentId);
+    return this.mapper.map(result, DocumentQuizResult, DocumentQuizResponseDto);
   }
 
   @Post(':id/confirm')

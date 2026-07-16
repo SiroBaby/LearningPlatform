@@ -4,10 +4,15 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 
 import { StorageService } from '../../storage/storage.service';
 import {
+  QUIZ_DISCOVERY,
+  type QuizDiscovery,
+} from '../assessment/contracts/quiz-discovery.port';
+import {
   STORAGE_VERIFIER,
   StorageVerifier,
 } from '../../storage/contracts/storage-verifier.port';
 import { CreateUploadUrlCommand } from './contracts/create-upload-url.command';
+import { DocumentQuizResult } from './contracts/document-quiz.result';
 import { resolveDocumentUploadPolicy } from './contracts/document-upload-policy';
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { Document } from './entities/document.entity';
@@ -20,6 +25,8 @@ export class ContentService {
     private readonly storage: StorageService,
     @Inject(STORAGE_VERIFIER)
     private readonly verifier: StorageVerifier,
+    @Inject(QUIZ_DISCOVERY)
+    private readonly quizzes: QuizDiscovery,
   ) {}
 
   /**
@@ -59,6 +66,22 @@ export class ContentService {
   // Ownership enforcement từ ngày 1 (ADR-0011): luôn lọc theo owner_id
   async findById(ownerId: string, id: string): Promise<Document | null> {
     return this.contentRepository.findByOwnerId(ownerId, id);
+  }
+
+  async findAll(ownerId: string): Promise<Document[]> {
+    return this.contentRepository.findAllByOwnerId(ownerId);
+  }
+
+  async findQuiz(ownerId: string, documentId: string): Promise<DocumentQuizResult> {
+    const document = await this.contentRepository.findByOwnerId(ownerId, documentId);
+    if (!document) {
+      throw new NotFoundException(`Document ${documentId} not found`);
+    }
+    const quiz = await this.quizzes.findByOwnerAndDocumentId(ownerId, documentId);
+    if (!quiz) {
+      throw new NotFoundException(`Quiz for Document ${documentId} not found`);
+    }
+    return Object.assign(new DocumentQuizResult(), quiz);
   }
 
   /**

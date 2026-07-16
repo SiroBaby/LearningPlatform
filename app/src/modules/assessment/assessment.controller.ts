@@ -22,9 +22,11 @@ import { CurrentUser } from '../../common/current-user.decorator';
 import { MAPPER } from '../../common/mapping/mapper.provider';
 import {
   GradedAttemptResult,
+  PersistedAttemptResult,
   ServedQuizResult,
 } from './contracts/quiz-attempt.result';
 import { GradedAttemptResponseDto } from './dto/graded-attempt.response.dto';
+import { AttemptResultResponseDto } from './dto/attempt-result.response.dto';
 import { QuizResponseDto } from './dto/quiz.response.dto';
 import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
 import { AssessmentService } from './assessment.service';
@@ -48,6 +50,19 @@ export class AssessmentController {
   ): Promise<QuizResponseDto> {
     const result = await this.assessment.getQuiz(ownerId, quizId);
     return this.mapper.map(result, ServedQuizResult, QuizResponseDto);
+  }
+
+  @Get(':id/attempts/:attemptId')
+  @ApiOperation({ summary: 'Get a persisted graded Attempt result owned by the current Owner.' })
+  @ApiNotFoundResponse({ description: 'Attempt does not belong to the current Owner or Quiz.' })
+  @ApiOkResponse({ type: AttemptResultResponseDto })
+  async getAttemptResult(
+    @CurrentUser() ownerId: string,
+    @Param('id', new ParseUUIDPipe()) quizId: string,
+    @Param('attemptId', new ParseUUIDPipe()) attemptId: string,
+  ): Promise<AttemptResultResponseDto> {
+    const result = await this.assessment.getAttemptResult(ownerId, quizId, attemptId);
+    return this.mapper.map(result, PersistedAttemptResult, AttemptResultResponseDto);
   }
 
   @Post(':id/attempts')

@@ -9,17 +9,20 @@ import { AttemptEntity } from '../entities/attempt.entity';
 import { createTestDataSource } from '../../../test-support/test-data-source';
 import { startTestDb, type TestDb } from '../../../test-support/test-db';
 import { QuizRepository } from './quiz.repository';
+import { AttemptResultRepository } from './attempt-result.repository';
 
 describe('QuizRepository attempt flow', () => {
   let db: TestDb;
   let dataSource: DataSource;
   let repository: QuizRepository;
+  let attemptResults: AttemptResultRepository;
 
   beforeAll(async () => { db = await startTestDb(); });
   afterAll(async () => { await db?.stop(); });
   beforeEach(async () => {
     dataSource = await createTestDataSource(db.container);
     repository = new QuizRepository(dataSource);
+    attemptResults = new AttemptResultRepository(dataSource);
     await db.client.query('TRUNCATE "quiz"."quizzes" CASCADE');
   });
   afterEach(async () => { await dataSource?.destroy(); });
@@ -56,6 +59,21 @@ describe('QuizRepository attempt flow', () => {
     await expect(repository.findForGradingByOwnerId(randomUUID(), fixture.quizId)).resolves.toBeNull();
   });
 
+  it('discovers only the owned Quiz summary for a Document', async () => {
+    const fixture = await insertQuizFixture();
+
+    await expect(
+      repository.findByOwnerAndDocumentId(fixture.ownerId, fixture.documentId),
+    ).resolves.toEqual({
+      documentId: fixture.documentId,
+      questionCount: 1,
+      quizId: fixture.quizId,
+    });
+    await expect(
+      repository.findByOwnerAndDocumentId(randomUUID(), fixture.documentId),
+    ).resolves.toBeNull();
+  });
+
   it('persists an Attempt and its answers atomically', async () => {
     const fixture = await insertQuizFixture();
     const attempt = persistedAttempt(fixture);
@@ -75,6 +93,105 @@ describe('QuizRepository attempt flow', () => {
         ownerId: fixture.ownerId,
         questionId: fixture.questionId,
         selectedOptionId: fixture.optionId,
+      }),
+    ]);
+  });
+
+  it('finds a persisted Attempt result only for its Owner and Quiz', async () => {
+    const fixture = await insertQuizFixture();
+    const attempt = persistedAttempt(fixture);
+    await repository.persistAttempt(attempt);
+
+    await expect(
+      attemptResults.findByOwnerQuizAndAttemptId(fixture.ownerId, fixture.quizId, attempt.id),
+    ).resolves.toMatchObject({
+      id: attempt.id,
+      questionCount: 1,
+      quizId: fixture.quizId,
+      results: [{
+        citation: fixture.citation,
+        correctOptionContent: 'Correct',
+        correctOptionId: fixture.optionId,
+        explanation: 'Explanation',
+        isCorrect: true,
+        ordinal: 0,
+        questionId: fixture.questionId,
+        selectedOptionContent: 'Correct',
+        selectedOptionId: fixture.optionId,
+        stem: 'Question?',
+      }],
+      score: 1,
+    });
+    await expect(
+      attemptResults.findByOwnerQuizAndAttemptId(randomUUID(), fixture.quizId, attempt.id),
+    ).resolves.toBeNull();
+    await expect(
+      attemptResults.findByOwnerQuizAndAttemptId(fixture.ownerId, randomUUID(), attempt.id),
+    ).resolves.toBeNull();
+  });
+
+  it('keeps selected option content scoped to each result Question', async () => {
+    const fixture = await insertQuizFixture();
+    const secondQuestionId = randomUUID();
+    const secondOptionId = randomUUID();
+    const attemptId = randomUUID();
+    await db.client.query(`
+      INSERT INTO "quiz"."questions"
+        ("id", "quiz_id", "owner_id", "chunk_id", "chunk_index", "ordinal", "stem", "explanation", "citation_ref", "idempotency_key")
+      VALUES ($1, $2, $3, $4, 1, 1, 'Second question?', 'Second explanation', $5::jsonb, $6)
+    `, [
+      secondQuestionId,
+      fixture.quizId,
+      fixture.ownerId,
+      fixture.citation.chunkId,
+      JSON.stringify(fixture.citation),
+      randomHash(),
+    ]);
+    await db.client.query(`
+      INSERT INTO "quiz"."options"
+        ("id", "question_id", "owner_id", "option_index", "content", "is_correct")
+      VALUES ($1, $2, $3, 0, 'Second correct', true)
+    `, [secondOptionId, secondQuestionId, fixture.ownerId]);
+    await dataSource.getRepository(AttemptEntity).save({
+      id: attemptId,
+      ownerId: fixture.ownerId,
+      questionCount: 2,
+      quizId: fixture.quizId,
+      score: 2,
+    });
+    await dataSource.getRepository(AttemptAnswerEntity).save([
+      {
+        attemptId,
+        isCorrect: true,
+        ownerId: fixture.ownerId,
+        questionId: fixture.questionId,
+        selectedOptionId: fixture.optionId,
+      },
+      {
+        attemptId,
+        isCorrect: true,
+        ownerId: fixture.ownerId,
+        questionId: secondQuestionId,
+        selectedOptionId: secondOptionId,
+      },
+    ]);
+
+    const result = await attemptResults.findByOwnerQuizAndAttemptId(
+      fixture.ownerId,
+      fixture.quizId,
+      attemptId,
+    );
+
+    expect(result?.results).toEqual([
+      expect.objectContaining({
+        questionId: fixture.questionId,
+        selectedOptionContent: 'Correct',
+        selectedOptionId: fixture.optionId,
+      }),
+      expect.objectContaining({
+        questionId: secondQuestionId,
+        selectedOptionContent: 'Second correct',
+        selectedOptionId: secondOptionId,
       }),
     ]);
   });
@@ -111,6 +228,7 @@ describe('QuizRepository attempt flow', () => {
         snippet: 'Source',
       },
       optionId: randomUUID(),
+      documentId: randomUUID(),
       ownerId: randomUUID(),
       questionId: randomUUID(),
       quizId: randomUUID(),
@@ -119,7 +237,7 @@ describe('QuizRepository attempt flow', () => {
       INSERT INTO "quiz"."quizzes"
         ("id", "document_id", "owner_id", "prompt_version", "idempotency_key")
       VALUES ($1, $2, $3, 'prompt-v1', $4)
-    `, [fixture.quizId, randomUUID(), fixture.ownerId, randomHash()]);
+    `, [fixture.quizId, fixture.documentId, fixture.ownerId, randomHash()]);
     await db.client.query(`
       INSERT INTO "quiz"."questions"
         ("id", "quiz_id", "owner_id", "chunk_id", "chunk_index", "ordinal", "stem", "explanation", "citation_ref", "idempotency_key")
@@ -169,6 +287,7 @@ interface QuizFixture {
     readonly snippet: string;
   };
   readonly optionId: string;
+  readonly documentId: string;
   readonly ownerId: string;
   readonly questionId: string;
   readonly quizId: string;

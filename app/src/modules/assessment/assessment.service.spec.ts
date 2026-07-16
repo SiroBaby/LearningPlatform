@@ -5,10 +5,11 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 import type {
   GradingQuiz,
-  PersistedAttempt,
+  PersistedAttemptResult,
   QuizAttemptStore,
   ServedQuiz,
 } from './contracts/quiz-attempt-store.port';
+import type { AttemptResultReader } from './contracts/attempt-result-reader.port';
 import { AssessmentService } from './assessment.service';
 
 describe('AssessmentService', () => {
@@ -20,7 +21,9 @@ describe('AssessmentService', () => {
   const firstWrongOptionId = randomUUID();
   const secondCorrectOptionId = randomUUID();
   const secondWrongOptionId = randomUUID();
+  const persistedResult = persistedAttemptResult();
   let store: QuizAttemptStore;
+  let attempts: AttemptResultReader;
   let service: AssessmentService;
 
   beforeEach(() => {
@@ -29,7 +32,10 @@ describe('AssessmentService', () => {
       findServedByOwnerId: jest.fn(async () => servedQuiz()),
       persistAttempt: jest.fn(async () => true),
     };
-    service = new AssessmentService(store);
+    attempts = {
+      findByOwnerQuizAndAttemptId: jest.fn(async () => persistedResult),
+    };
+    service = new AssessmentService(store, attempts);
   });
 
   it('serves only the quiz owned by the current Owner', async () => {
@@ -41,6 +47,23 @@ describe('AssessmentService', () => {
     store.findServedByOwnerId = jest.fn(async () => null);
 
     await expect(service.getQuiz(ownerId, quizId)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns an owner-scoped persisted Attempt result', async () => {
+    const attemptId = randomUUID();
+
+    await expect(service.getAttemptResult(ownerId, quizId, attemptId)).resolves.toEqual(
+      persistedResult,
+    );
+    expect(attempts.findByOwnerQuizAndAttemptId).toHaveBeenCalledWith(ownerId, quizId, attemptId);
+  });
+
+  it('returns not found when the owner-scoped persisted Attempt lookup misses', async () => {
+    attempts.findByOwnerQuizAndAttemptId = jest.fn(async () => null);
+
+    await expect(service.getAttemptResult(ownerId, quizId, randomUUID())).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it('grades every Question in ordinal order and persists the Attempt', async () => {
@@ -107,7 +130,7 @@ describe('AssessmentService', () => {
   });
 
   it('returns not found when ownership changes before the transactional write', async () => {
-    store.persistAttempt = jest.fn(async (_attempt: PersistedAttempt) => false);
+    store.persistAttempt = jest.fn(async () => false);
 
     await expect(service.submitAttempt(ownerId, quizId, validAnswers())).rejects.toBeInstanceOf(
       NotFoundException,
@@ -144,6 +167,28 @@ describe('AssessmentService', () => {
         gradingQuestion(firstQuestionId, firstCorrectOptionId, firstWrongOptionId, 0),
         gradingQuestion(secondQuestionId, secondCorrectOptionId, secondWrongOptionId, 1),
       ],
+    };
+  }
+
+  function persistedAttemptResult(): PersistedAttemptResult {
+    return {
+      id: randomUUID(),
+      questionCount: 2,
+      quizId,
+      results: [{
+        citation: gradingQuiz().questions[0].citation,
+        correctOptionContent: 'Correct',
+        correctOptionId: firstCorrectOptionId,
+        explanation: 'Explanation 0',
+        isCorrect: true,
+        ordinal: 0,
+        questionId: firstQuestionId,
+        selectedOptionContent: 'Correct',
+        selectedOptionId: firstCorrectOptionId,
+        stem: 'Question 0',
+      }],
+      score: 1,
+      submittedAt: new Date('2026-07-16T00:00:00.000Z'),
     };
   }
 

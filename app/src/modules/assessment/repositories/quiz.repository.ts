@@ -8,6 +8,7 @@ import type {
   ServedQuiz,
 } from '../contracts/quiz-attempt-store.port';
 import type { QuizPersistence } from '../contracts/quiz-persistence.port';
+import type { QuizDiscovery, QuizDiscoverySummary } from '../contracts/quiz-discovery.port';
 import type { PersistedQuiz } from '../contracts/quiz-generation-handoff.contract';
 import { BaseRepository } from '../../../database/base.repository';
 import { AssessmentError, AssessmentErrorCode } from '../domain/assessment.error';
@@ -21,7 +22,7 @@ import { QuizEntity } from '../entities/quiz.entity';
 @Injectable()
 export class QuizRepository
   extends BaseRepository<QuizEntity>
-  implements QuizAttemptStore, QuizPersistence
+  implements QuizAttemptStore, QuizDiscovery, QuizPersistence
 {
   constructor(private readonly dataSource: DataSource) {
     super(QuizEntity, dataSource);
@@ -172,6 +173,23 @@ export class QuizRepository
         stem: question.stem,
       })),
     };
+  }
+
+  async findByOwnerAndDocumentId(
+    ownerId: string,
+    documentId: string,
+  ): Promise<QuizDiscoverySummary | null> {
+    const quiz = await this.findOne({
+      select: { documentId: true, id: true },
+      where: { documentId, ownerId },
+    });
+    if (!quiz) {
+      return null;
+    }
+    const questionCount = await this.dataSource.getRepository(QuestionEntity).count({
+      where: { ownerId, quizId: quiz.id },
+    });
+    return { documentId: quiz.documentId, questionCount, quizId: quiz.id };
   }
 
   async persistAttempt(attempt: PersistedAttempt): Promise<boolean> {

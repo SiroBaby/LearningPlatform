@@ -60,6 +60,23 @@ export interface PersistedAttempt {
   readonly score: number;
 }
 
+export interface PersistedAttemptQuestionResult extends GradedAnswer {
+  readonly correctOptionContent: string;
+  readonly correctOptionId: string;
+  readonly ordinal: number;
+  readonly selectedOptionContent: string;
+  readonly stem: string;
+}
+
+export interface PersistedAttemptResult {
+  readonly id: string;
+  readonly questionCount: number;
+  readonly quizId: string;
+  readonly results: readonly PersistedAttemptQuestionResult[];
+  readonly score: number;
+  readonly submittedAt: Date;
+}
+
 export interface QuizAttemptStore {
   findForGradingByOwnerId(ownerId: string, quizId: string): Promise<GradingQuiz | null>;
   findServedByOwnerId(ownerId: string, quizId: string): Promise<ServedQuiz | null>;

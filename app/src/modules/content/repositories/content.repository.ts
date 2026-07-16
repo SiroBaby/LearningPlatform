@@ -35,6 +35,13 @@ export class ContentRepository extends BaseRepository<Document> {
     return this.findOne({ where: { id, ownerId } });
   }
 
+  async findAllByOwnerId(ownerId: string): Promise<Document[]> {
+    return this.find({
+      where: { ownerId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
   async confirmProcessing(ownerId: string, id: string): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       const result = await manager

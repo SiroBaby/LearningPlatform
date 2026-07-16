@@ -33,6 +33,26 @@ interface GradedAttemptBody {
   readonly score: number;
 }
 
+interface AttemptResultBody {
+  readonly attemptId: string;
+  readonly questionCount: number;
+  readonly quizId: string;
+  readonly results: readonly {
+    readonly citation: unknown;
+    readonly correctOptionContent: string;
+    readonly correctOptionId: string;
+    readonly explanation: string;
+    readonly isCorrect: boolean;
+    readonly ordinal: number;
+    readonly questionId: string;
+    readonly selectedOptionContent: string;
+    readonly selectedOptionId: string;
+    readonly stem: string;
+  }[];
+  readonly score: number;
+  readonly submittedAt: string;
+}
+
 export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Promise<void> {
   const servedQuiz = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}`, {
     headers: fixture.ownerHeaders(fixture.ownerId),
@@ -94,6 +114,43 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
       selectedOptionId: correctOption.id,
     }),
   ]);
+
+  const persistedResult = await fixture.request(
+    `/api/v1/quizzes/${fixture.quiz.id}/attempts/${graded.attemptId}`,
+    { headers: fixture.ownerHeaders(fixture.ownerId) },
+  );
+  expect(persistedResult.status).toBe(200);
+  const persistedBody = await persistedResult.json() as AttemptResultBody;
+  expect(persistedBody).toMatchObject({
+    attemptId: graded.attemptId,
+    questionCount: 1,
+    quizId: fixture.quiz.id,
+    results: [{
+      citation: fixture.question.citation,
+      correctOptionContent: correctOption.content,
+      correctOptionId: correctOption.id,
+      explanation: fixture.question.explanation,
+      isCorrect: true,
+      ordinal: fixture.question.ordinal,
+      questionId: fixture.question.id,
+      selectedOptionContent: correctOption.content,
+      selectedOptionId: correctOption.id,
+      stem: fixture.question.stem,
+    }],
+    score: 1,
+  });
+  expect(persistedBody.submittedAt).toMatch(/Z$/);
+
+  const hiddenPersistedResult = await fixture.request(
+    `/api/v1/quizzes/${fixture.quiz.id}/attempts/${graded.attemptId}`,
+    { headers: fixture.ownerHeaders(fixture.otherOwnerId) },
+  );
+  expect(hiddenPersistedResult.status).toBe(404);
+  const mismatchedQuizResult = await fixture.request(
+    `/api/v1/quizzes/${randomUUID()}/attempts/${graded.attemptId}`,
+    { headers: fixture.ownerHeaders(fixture.ownerId) },
+  );
+  expect(mismatchedQuizResult.status).toBe(404);
 
   const invalidAttempt = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}/attempts`, {
     method: 'POST',

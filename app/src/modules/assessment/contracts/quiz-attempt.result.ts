@@ -64,3 +64,53 @@ export class GradedAttemptResult {
   @AutoMap()
   score!: number;
 }
+
+export class PersistedAttemptQuestionResult {
+  citation!: CitationCandidate;
+
+  @AutoMap()
+  correctOptionContent!: string;
+
+  @AutoMap()
+  correctOptionId!: string;
+
+  @AutoMap()
+  explanation!: string;
+
+  @AutoMap()
+  isCorrect!: boolean;
+
+  @AutoMap()
+  ordinal!: number;
+
+  @AutoMap()
+  questionId!: string;
+
+  @AutoMap()
+  selectedOptionContent!: string;
+
+  @AutoMap()
+  selectedOptionId!: string;
+
+  @AutoMap()
+  stem!: string;
+}
+
+export class PersistedAttemptResult {
+  @AutoMap()
+  id!: string;
+
+  @AutoMap()
+  questionCount!: number;
+
+  @AutoMap()
+  quizId!: string;
+
+  @AutoMap(() => [PersistedAttemptQuestionResult])
+  results!: PersistedAttemptQuestionResult[];
+
+  @AutoMap()
+  score!: number;
+
+  submittedAt!: Date;
+}

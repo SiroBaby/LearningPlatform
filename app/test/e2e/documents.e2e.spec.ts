@@ -122,6 +122,44 @@ describe('Document HTTP flow', () => {
       sizeBytes: 22,
     });
 
+    const newerCreated = await request('/api/v1/documents/upload-url', {
+      method: 'POST',
+      headers: ownerHeaders(),
+      body: JSON.stringify({
+        originalName: 'newer-lecture.pdf',
+        sizeBytes: 22,
+        type: 'PDF',
+      }),
+    });
+    expect(newerCreated.status).toBe(201);
+    const newerUpload = await newerCreated.json() as { readonly documentId: string };
+
+    const listed = await request('/api/v1/documents', {
+      headers: ownerHeaders(),
+    });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual([
+      expect.objectContaining({
+        id: newerUpload.documentId,
+        status: 'UPLOADED',
+      }),
+      expect.objectContaining({
+        id: upload.documentId,
+        status: 'PROCESSING',
+      }),
+    ]);
+
+    const hiddenList = await request('/api/v1/documents', {
+      headers: ownerHeaders(otherOwnerId),
+    });
+    expect(hiddenList.status).toBe(200);
+    expect(await hiddenList.json()).toEqual([]);
+
+    const absentQuiz = await request(`/api/v1/documents/${newerUpload.documentId}/quiz`, {
+      headers: ownerHeaders(),
+    });
+    expect(absentQuiz.status).toBe(404);
+
     // A compiled WorkerModule executes the production relay/poller/return wiring
     // deterministically in-process, without a separate child process.
     const workerModule = await Test.createTestingModule({
@@ -187,6 +225,19 @@ describe('Document HTTP flow', () => {
     if (!quiz || !question) {
       throw new Error('Document flow must generate one Quiz and one Question');
     }
+    const discoveredQuiz = await request(`/api/v1/documents/${upload.documentId}/quiz`, {
+      headers: ownerHeaders(),
+    });
+    expect(discoveredQuiz.status).toBe(200);
+    expect(await discoveredQuiz.json()).toEqual({
+      documentId: upload.documentId,
+      questionCount: 1,
+      quizId: quiz.id,
+    });
+    const hiddenDiscovery = await request(`/api/v1/documents/${upload.documentId}/quiz`, {
+      headers: ownerHeaders(otherOwnerId),
+    });
+    expect(hiddenDiscovery.status).toBe(404);
     await verifyQuizAttemptFlow({
       dataSource,
       options,

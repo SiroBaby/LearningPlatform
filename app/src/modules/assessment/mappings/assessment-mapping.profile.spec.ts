@@ -5,11 +5,14 @@ import { beforeEach, describe, expect, it } from '@jest/globals';
 import {
   GradedAttemptResult,
   GradedQuestionResult,
+  PersistedAttemptQuestionResult,
+  PersistedAttemptResult,
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
 } from '../contracts/quiz-attempt.result';
 import { GradedAttemptResponseDto } from '../dto/graded-attempt.response.dto';
+import { AttemptResultResponseDto } from '../dto/attempt-result.response.dto';
 import { QuizResponseDto } from '../dto/quiz.response.dto';
 import { AssessmentMappingProfile } from './assessment-mapping.profile';
 
@@ -87,6 +90,44 @@ describe('AssessmentMappingProfile', () => {
         selectedOptionId: gradedQuestion.selectedOptionId,
       }],
       score: 1,
+    });
+  });
+
+  it('maps a persisted Attempt result with its Quiz and UTC submission time', () => {
+    const result = Object.assign(new PersistedAttemptQuestionResult(), {
+      citation: {
+        chunkId: 'ed9bf39e-8898-42f1-91b4-d45f6f7589de',
+        locator: { kind: 'page', page: 1 },
+        snippet: 'Source',
+      },
+      correctOptionContent: 'Correct',
+      correctOptionId: '5a8bc836-a508-4b2f-8bea-a0ee2518bbb6',
+      explanation: 'Explanation',
+      isCorrect: true,
+      ordinal: 0,
+      questionId: 'f387b115-f93f-4e21-8c8e-6433b155d55d',
+      selectedOptionContent: 'Correct',
+      selectedOptionId: '5a8bc836-a508-4b2f-8bea-a0ee2518bbb6',
+      stem: 'Question?',
+    });
+    const attempt = Object.assign(new PersistedAttemptResult(), {
+      id: 'aeb863c3-78ba-4e38-b86e-a5f04b9f8fc5',
+      questionCount: 1,
+      quizId: '4e248637-40c9-4d58-9de3-8d230fe56309',
+      results: [result],
+      score: 1,
+      submittedAt: new Date('2026-07-16T00:00:00.000Z'),
+    });
+
+    const actual = mapper.map(attempt, PersistedAttemptResult, AttemptResultResponseDto);
+
+    expect(actual).toEqual({
+      attemptId: attempt.id,
+      questionCount: 1,
+      quizId: attempt.quizId,
+      results: [result],
+      score: 1,
+      submittedAt: '2026-07-16T00:00:00.000Z',
     });
   });
 });

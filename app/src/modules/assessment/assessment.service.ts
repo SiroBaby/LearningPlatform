@@ -13,8 +13,14 @@ import {
   type QuizAttemptStore,
 } from './contracts/quiz-attempt-store.port';
 import {
+  ATTEMPT_RESULT_READER,
+  type AttemptResultReader,
+} from './contracts/attempt-result-reader.port';
+import {
   GradedAttemptResult,
   GradedQuestionResult,
+  PersistedAttemptQuestionResult,
+  PersistedAttemptResult,
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
@@ -26,6 +32,8 @@ export class AssessmentService {
   constructor(
     @Inject(QUIZ_ATTEMPT_STORE)
     private readonly store: QuizAttemptStore,
+    @Inject(ATTEMPT_RESULT_READER)
+    private readonly attempts: AttemptResultReader,
   ) {}
 
   async getQuiz(ownerId: string, quizId: string): Promise<ServedQuizResult> {
@@ -76,6 +84,28 @@ export class AssessmentService {
         gradedResult,
       )),
       score: result.attempt.score,
+    });
+  }
+
+  async getAttemptResult(
+    ownerId: string,
+    quizId: string,
+    attemptId: string,
+  ): Promise<PersistedAttemptResult> {
+    const attempt = await this.attempts.findByOwnerQuizAndAttemptId(ownerId, quizId, attemptId);
+    if (!attempt) {
+      throw new NotFoundException(`Attempt ${attemptId} not found`);
+    }
+    return Object.assign(new PersistedAttemptResult(), {
+      id: attempt.id,
+      questionCount: attempt.questionCount,
+      quizId: attempt.quizId,
+      results: attempt.results.map((result) => Object.assign(
+        new PersistedAttemptQuestionResult(),
+        result,
+      )),
+      score: attempt.score,
+      submittedAt: attempt.submittedAt,
     });
   }
 }
