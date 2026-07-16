@@ -18,6 +18,7 @@
 - Repository chỉ chứa persistence/query/transaction; không chứa DTO, HTTP concern, response mapping hoặc business policy.
 - Service không nhận DTO; controller chuyển DTO thành command/value raw. Response DTO không lộ `ownerId`, `storageRef`, khóa nội bộ hay dữ liệu nhạy cảm.
 - Response mapping dùng AutoMapper (`@AutoMap()` + profile theo module). Controller gọi mapper; không dùng constructor/static mapper thủ công. Mapping khác tên, datetime hoặc dữ liệu cần che giấu phải khai báo tường minh trong profile.
+- Nullable field trong response contract phải được map tường minh và có test xác nhận key vẫn tồn tại với giá trị `null`; không để AutoMapper biến `null` thành field bị omit.
 
 ## Database And Async
 
@@ -45,6 +46,7 @@
 ## TypeScript Entity And Test Conventions
 
 - Non-runtime TypeScript interfaces and external module shapes must use explicit Nest provider tokens/factories, with module-compilation coverage for the provider graph.
+- Tên class, interface, type, function, method, biến, constant, provider token, file và module phải mô tả trách nhiệm nghiệp vụ hoặc kỹ thuật ổn định; không gắn tiền tố/hậu tố theo giai đoạn triển khai như `Phase0`, `Mvp`, `Temporary`, `New` hoặc `Legacy` nếu thành phần dự kiến tiếp tục tồn tại. Chỉ dùng tên mang tính tạm thời khi thành phần có kế hoạch loại bỏ rõ ràng; nếu trách nhiệm là lâu dài, chọn một tên thống nhất ngay từ đầu và dùng xuyên suốt mọi lớp.
 
 - Với TypeORM entity được hydrate bởi ORM, mapped property bắt buộc dùng definite-assignment assertion (`property!: Type`) khi không được khởi tạo trong constructor; không dùng `?` hoặc giá trị mặc định giả chỉ để qua strict initialization.
 - Test Jest phải import tường minh APIs từ `@jest/globals` (ví dụ `describe`, `it`, `expect`, `jest`) để editor type-check ổn định.
