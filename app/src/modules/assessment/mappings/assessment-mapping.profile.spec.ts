@@ -7,6 +7,7 @@ import {
   GradedQuestionResult,
   PersistedAttemptQuestionResult,
   PersistedAttemptResult,
+  PracticeFeedbackResult,
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
@@ -14,6 +15,7 @@ import {
 import { GradedAttemptResponseDto } from '../dto/graded-attempt.response.dto';
 import { AttemptResultResponseDto } from '../dto/attempt-result.response.dto';
 import { QuizResponseDto } from '../dto/quiz.response.dto';
+import { PracticeFeedbackResponseDto } from '../dto/practice-feedback.response.dto';
 import { AssessmentMappingProfile } from './assessment-mapping.profile';
 
 describe('AssessmentMappingProfile', () => {
@@ -91,6 +93,32 @@ describe('AssessmentMappingProfile', () => {
       }],
       score: 1,
     });
+  });
+
+  it('maps practice feedback without disclosing a correct Option', () => {
+    const feedback = Object.assign(new PracticeFeedbackResult(), {
+      citation: {
+        chunkId: 'ed9bf39e-8898-42f1-91b4-d45f6f7589de',
+        locator: { kind: 'page', page: 1 },
+        snippet: 'Source',
+      },
+      explanation: 'Explanation',
+      isCorrect: false,
+      questionId: 'f387b115-f93f-4e21-8c8e-6433b155d55d',
+      selectedOptionId: '5a8bc836-a508-4b2f-8bea-a0ee2518bbb6',
+    });
+
+    const actual = mapper.map(feedback, PracticeFeedbackResult, PracticeFeedbackResponseDto);
+
+    expect(actual).toEqual({
+      citation: feedback.citation,
+      explanation: feedback.explanation,
+      isCorrect: false,
+      questionId: feedback.questionId,
+      selectedOptionId: feedback.selectedOptionId,
+    });
+    expect(JSON.stringify(actual)).not.toContain('correctOptionId');
+    expect(JSON.stringify(actual)).not.toContain('correctOptionContent');
   });
 
   it('maps a persisted Attempt result with its Quiz and UTC submission time', () => {

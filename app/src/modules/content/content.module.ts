@@ -12,6 +12,10 @@ import { ContentDocumentSourceReader } from './document-source-reader.service';
 import { ContentMappingProfile } from './mappings/content-mapping.profile';
 import { ContentRepository } from './repositories/content.repository';
 import { CourseOutboxRepository } from './repositories/course-outbox.repository';
+import { BudgetReservationRepository } from './repositories/budget-reservation.repository';
+import { BUDGET_RESERVATION } from './contracts/budget-reservation.port';
+import { OwnerEntitlementRepository } from './repositories/owner-entitlement.repository';
+import { OWNER_ENTITLEMENTS } from './contracts/owner-entitlement.port';
 
 @Module({
   imports: [AssessmentModule, forwardRef(() => AiModule)],
@@ -21,6 +25,8 @@ import { CourseOutboxRepository } from './repositories/course-outbox.repository'
     DocumentStatusProjectionService,
     ContentRepository,
     CourseOutboxRepository,
+    BudgetReservationRepository,
+    OwnerEntitlementRepository,
     ContentMappingProfile,
     ForwardRelay,
     ContentDocumentSourceReader,
@@ -29,7 +35,9 @@ import { CourseOutboxRepository } from './repositories/course-outbox.repository'
       useExisting: DocumentStatusProjectionService,
     },
     { provide: DOCUMENT_SOURCE_READER, useExisting: ContentDocumentSourceReader },
+    { provide: BUDGET_RESERVATION, useExisting: BudgetReservationRepository },
+    { provide: OWNER_ENTITLEMENTS, useExisting: OwnerEntitlementRepository },
   ],
-  exports: [ContentService, DOCUMENT_STATUS_PROJECTION, DOCUMENT_SOURCE_READER, ForwardRelay],
+  exports: [BUDGET_RESERVATION, ContentService, DOCUMENT_STATUS_PROJECTION, DOCUMENT_SOURCE_READER, ForwardRelay, OWNER_ENTITLEMENTS],
 })
 export class ContentModule {}

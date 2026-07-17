@@ -41,6 +41,30 @@ export class DocumentResponseDto {
   @AutoMap()
   readonly errorMessage: string | null;
 
+  @ApiProperty({ enum: ['PLAN', 'CUSTOM'], nullable: true, example: 'PLAN' })
+  @AutoMap()
+  readonly selectedModelKind: 'PLAN' | 'CUSTOM' | null;
+
+  @ApiProperty({ nullable: true, example: 'Fast platform model' })
+  @AutoMap()
+  readonly selectedModelLabel: string | null;
+
+  @ApiProperty({ nullable: true, example: 'COARSE' })
+  @AutoMap()
+  readonly estimateStatus: string | null;
+
+  @ApiProperty({ nullable: true, example: 1000 })
+  @AutoMap()
+  readonly estimatedCredits: number | null;
+
+  @ApiProperty({ nullable: true, example: null })
+  @AutoMap()
+  readonly settledCredits: number | null;
+
+  @ApiProperty({ nullable: true, example: 'RESERVED' })
+  @AutoMap()
+  readonly budgetStatus: string | null;
+
   @ApiProperty({ format: 'date-time', example: '2026-06-21T12:34:56.789Z' })
   @AutoMap()
   readonly createdAt: string;

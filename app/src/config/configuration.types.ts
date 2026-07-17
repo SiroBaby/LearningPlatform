@@ -15,6 +15,10 @@ export type LlmStructuredOutputMode = 'json-object' | 'json-schema-strict';
 export type LlmTransport = 'chat-completions' | 'responses';
 
 export interface AiSettings {
+  credentialEncryption: {
+    key: string | undefined;
+    mode: 'kms' | 'local';
+  };
   openai: {
     apiKey: string | undefined;
     baseUrl: string | undefined;
@@ -25,6 +29,18 @@ export interface AiSettings {
     transport: LlmTransport | undefined;
   };
   provider: LlmProviderType;
+  plans: {
+    free: { creditBalance: number };
+    paid: { creditBalance: number };
+  };
+  platformModels: readonly {
+    creditPerInputToken: number;
+    creditPerOutputToken: number;
+    id: string;
+    label: string;
+    model: string;
+    planIds: readonly string[];
+  }[];
 }
 
 export interface DatabaseSettings {
@@ -63,6 +79,7 @@ export interface WorkerSettings {
 
 export const CONFIG_PATH = {
   ai: {
+    credentialEncryption: { key: 'ai.credentialEncryption.key', mode: 'ai.credentialEncryption.mode' },
     openai: {
       apiKey: 'ai.openai.apiKey',
       baseUrl: 'ai.openai.baseUrl',

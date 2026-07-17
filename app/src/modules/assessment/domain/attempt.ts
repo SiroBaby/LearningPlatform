@@ -1,5 +1,6 @@
 import type {
   AttemptSelection,
+  GradedAnswer,
   GradingQuiz,
   PersistedAttempt,
 } from '../contracts/quiz-attempt-store.port';
@@ -13,6 +14,39 @@ export interface GradeAttemptCommand {
   readonly ownerId: string;
   readonly quiz: GradingQuiz;
   readonly selections: readonly AttemptSelection[];
+}
+
+export type GradePracticeFeedbackResult =
+  | { readonly feedback: GradedAnswer; readonly kind: 'graded' }
+  | { readonly kind: 'invalid' };
+
+export interface GradePracticeFeedbackCommand {
+  readonly quiz: GradingQuiz;
+  readonly selection: AttemptSelection;
+}
+
+export function gradePracticeFeedback(
+  command: GradePracticeFeedbackCommand,
+): GradePracticeFeedbackResult {
+  const question = command.quiz.questions.find(
+    (candidate) => candidate.id === command.selection.questionId,
+  );
+  const option = question?.options.find(
+    (candidate) => candidate.id === command.selection.optionId,
+  );
+  if (!question || !option) {
+    return { kind: 'invalid' };
+  }
+  return {
+    feedback: {
+      citation: question.citation,
+      explanation: question.explanation,
+      isCorrect: option.isCorrect,
+      questionId: question.id,
+      selectedOptionId: option.id,
+    },
+    kind: 'graded',
+  };
 }
 
 export function gradeAttempt(command: GradeAttemptCommand): GradeAttemptResult {

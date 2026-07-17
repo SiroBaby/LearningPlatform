@@ -16,13 +16,16 @@ import { CurrentUser } from '../../common/current-user.decorator';
 import { MAPPER } from '../../common/mapping/mapper.provider';
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { DocumentQuizResult } from './contracts/document-quiz.result';
+import { DocumentEstimateResult } from './contracts/document-estimate.result';
 import { ConfirmDocumentResponseDto } from './dto/confirm-document.response.dto';
 import { ContentService } from './content.service';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { DocumentResponseDto } from './dto/document.response.dto';
 import { DocumentQuizResponseDto } from './dto/document-quiz.response.dto';
 import { UploadUrlResponseDto } from './dto/upload-url.response.dto';
+import { DocumentEstimateResponseDto } from '../ai/dto/document-estimate.response.dto';
 import { Document } from './entities/document.entity';
+import { CreateDocumentEstimateDto } from './dto/create-document-estimate.dto';
 
 @ApiSecurity('ownerId')
 @ApiTags('Documents')
@@ -45,9 +48,31 @@ export class ContentController {
       originalName: dto.originalName,
       sizeBytes: dto.sizeBytes,
       type: dto.type,
+      selection: {
+        customModelConfigId: dto.customModelConfigId ?? null,
+        kind: dto.modelSelectionKind,
+        platformModelId: dto.platformModelId ?? null,
+      },
     });
 
     return this.mapper.map(result, UploadUrlResult, UploadUrlResponseDto);
+  }
+
+  @Post('estimate')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Validate a model selection and return a coarse pre-upload estimate without creating a Document or reservation.' })
+  @ApiBadRequestResponse({ description: 'Invalid file metadata or unavailable model selection.' })
+  @ApiOkResponse({ type: DocumentEstimateResponseDto })
+  async estimateBeforeUpload(
+    @CurrentUser() ownerId: string,
+    @Body() dto: CreateDocumentEstimateDto,
+  ): Promise<DocumentEstimateResponseDto> {
+    const result = await this.content.estimateBeforeUpload(ownerId, {
+      sizeBytes: dto.sizeBytes,
+      type: dto.type,
+      selection: { customModelConfigId: dto.customModelConfigId ?? null, kind: dto.modelSelectionKind, platformModelId: dto.platformModelId ?? null },
+    });
+    return this.mapper.map(result, DocumentEstimateResult, DocumentEstimateResponseDto);
   }
 
   @Get()

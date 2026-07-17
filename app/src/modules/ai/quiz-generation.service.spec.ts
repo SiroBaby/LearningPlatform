@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
+import { ConfigService } from '@nestjs/config';
 
 import type {
   PersistedQuiz,
@@ -17,10 +18,16 @@ import type {
   GeneratedQuestionOutput,
   JsonValue,
   LlmGenerationRequest,
+  LlmGenerationResult,
   LlmProvider,
 } from './contracts/llm-provider.contracts';
 import type { PromptVersionStore } from './contracts/prompt-version.contracts';
 import { QuizGenerationService } from './quiz-generation.service';
+import type { ProviderUsageStore } from './contracts/cost-guard.contracts';
+import type { BudgetReservationPort } from '../content/contracts/budget-reservation.port';
+import { ApplicationConfigService } from '../../config/application-config.service';
+import type { ProcessingJobModelSelection } from './contracts/processing-job-model-selection.port';
+import type { CustomModelProvider } from './contracts/custom-model-provider.port';
 
 describe('QuizGenerationService', () => {
   it('generates ordered chunks sequentially and hands off all grounded questions once', async () => {
@@ -49,6 +56,7 @@ describe('QuizGenerationService', () => {
       firstChunk.text,
       secondChunk.text,
     ]);
+    expect(handoff.handoffs[0]?.questions.map((question) => question.ordinal)).toEqual([0, 1]);
     expect(handoff.handoffs).toHaveLength(1);
     expect(handoff.handoffs[0]?.questions).toHaveLength(2);
   });
@@ -105,6 +113,81 @@ describe('QuizGenerationService', () => {
       code: 'INSUFFICIENT_VALID_QUESTIONS',
     });
   });
+
+  it('settles durable known usage when a later chunk fails after an earlier provider call', async () => {
+    const costs = new RecordingCostGuard({ hasUncertainDispatch: false, knownActualCredits: 15 });
+    const provider = new FailingSecondProvider();
+    const service = new QuizGenerationService(provider, new InMemoryGenerationCache(), new RecordingPromptVersions(), new RecordingHandoff(), costs, costs);
+
+    await expect(service.generate({ chunks: [chunk(0, 'first'), chunk(1, 'second')], job: job() })).rejects.toThrow('provider failed');
+
+    expect(costs.recordedUsage).toHaveLength(3);
+    expect(costs.recordedUsage.filter((record) => record.chargedCredits === null)).toHaveLength(2);
+    expect(costs.settlements).toEqual([expect.objectContaining({ hasUncertainDispatch: false, knownActualCredits: 15 })]);
+  });
+
+  it('keeps an uncertain dispatched request held after the provider throws without usage', async () => {
+    const costs = new RecordingCostGuard({ hasUncertainDispatch: true, knownActualCredits: 0 });
+    const provider = new ThrowingProvider();
+    const service = new QuizGenerationService(provider, new InMemoryGenerationCache(), new RecordingPromptVersions(), new RecordingHandoff(), costs, costs);
+
+    await expect(service.generate({ chunks: [chunk(0, 'source')], job: job() })).rejects.toThrow('provider failed');
+
+    expect(costs.recordedUsage).toEqual([expect.objectContaining({ cached: false, chargedCredits: null, usage: { inputTokens: null, outputTokens: null, status: 'UNAVAILABLE' } })]);
+    expect(costs.settlements).toEqual([expect.objectContaining({ hasUncertainDispatch: true, knownActualCredits: 0 })]);
+  });
+
+  it('records custom provider usage without reserving or settling platform credits', async () => {
+    const costs = new RecordingCostGuard({ hasUncertainDispatch: false, knownActualCredits: 0 });
+    const provider = new RecordingProvider();
+    const customProviders: CustomModelProvider = {
+      resolve: async (): Promise<LlmProvider> => provider,
+    };
+    const service = new QuizGenerationService(
+      provider,
+      new InMemoryGenerationCache(),
+      new RecordingPromptVersions(),
+      new RecordingHandoff(),
+      costs,
+      costs,
+      customProviders,
+    );
+
+    await service.generate({
+      chunks: [chunk(0, 'source')],
+      job: {
+        ...job(),
+        selection: {
+          customModelConfigId: randomUUID(),
+          kind: 'CUSTOM',
+          platformModelId: null,
+        },
+      },
+    });
+
+    expect(costs.recordedUsage).toEqual([
+      expect.objectContaining({ chargedCredits: null }),
+      expect.objectContaining({ chargedCredits: 0 }),
+    ]);
+    expect(costs.reservations).toEqual([]);
+    expect(costs.settlements).toEqual([]);
+  });
+
+  it('persists the configured default platform model before a legacy job calls a provider', async () => {
+    const selections: ProcessingJobModelSelection = { ensureDefaultPlatformModel: jest.fn(async () => true) };
+    const config = new ApplicationConfigService(new ConfigService({
+      ai: { openai: { requestTimeoutMs: 60_000 }, platformModels: [{ creditPerInputToken: 1, creditPerOutputToken: 2, id: 'configured-default', model: 'test', planIds: ['free'] }], provider: 'fake' },
+      app: { env: 'development' },
+    }));
+    const provider = new RecordingProvider();
+    const service = new QuizGenerationService(provider, new InMemoryGenerationCache(), new RecordingPromptVersions(), new RecordingHandoff(), undefined, undefined, undefined, config, selections);
+    const legacyJob = { ...job(), selection: undefined };
+
+    await service.generate({ chunks: [chunk(0, 'source')], job: legacyJob });
+
+    expect(selections.ensureDefaultPlatformModel).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'configured-default' }));
+    expect(provider.requests).toHaveLength(1);
+  });
 });
 
 class RecordingProvider implements LlmProvider {
@@ -116,13 +199,56 @@ class RecordingProvider implements LlmProvider {
 
   constructor(private readonly output?: JsonValue) {}
 
-  async generate(request: LlmGenerationRequest): Promise<JsonValue> {
+  async generate(request: LlmGenerationRequest): Promise<LlmGenerationResult> {
     if (this.isGenerating) this.wasCalledConcurrently = true;
     this.isGenerating = true;
     this.requests.push(request);
     await Promise.resolve();
     this.isGenerating = false;
-    return this.output ?? validOutput(request.sourceText);
+    return {
+      output: this.output ?? validOutput(request.sourceText),
+      usage: { inputTokens: null, outputTokens: null, status: 'UNAVAILABLE' },
+    };
+  }
+}
+
+class FailingSecondProvider extends RecordingProvider {
+  private callCount = 0;
+
+  override async generate(request: LlmGenerationRequest): Promise<LlmGenerationResult> {
+    this.callCount += 1;
+    if (this.callCount === 2) throw new Error('provider failed');
+    return super.generate(request);
+  }
+}
+
+class ThrowingProvider extends RecordingProvider {
+  override async generate(_request: LlmGenerationRequest): Promise<LlmGenerationResult> {
+    throw new Error('provider failed');
+  }
+}
+
+class RecordingCostGuard implements ProviderUsageStore, BudgetReservationPort {
+  readonly recordedUsage: Parameters<ProviderUsageStore['recordUsage']>[0][] = [];
+  readonly reservations: Parameters<BudgetReservationPort['reserve']>[0][] = [];
+  readonly settlements: Parameters<BudgetReservationPort['settle']>[0][] = [];
+
+  constructor(private readonly summary: Awaited<ReturnType<ProviderUsageStore['summarizeUsage']>>) {}
+
+  async reserve(input: Parameters<BudgetReservationPort['reserve']>[0]): Promise<void> {
+    this.reservations.push(input);
+  }
+
+  async recordUsage(input: Parameters<ProviderUsageStore['recordUsage']>[0]): Promise<void> {
+    this.recordedUsage.push(input);
+  }
+
+  async settle(input: Parameters<BudgetReservationPort['settle']>[0]): Promise<void> {
+    this.settlements.push(input);
+  }
+
+  async summarizeUsage(): Promise<Awaited<ReturnType<ProviderUsageStore['summarizeUsage']>>> {
+    return this.summary;
   }
 }
 
@@ -180,6 +306,18 @@ function chunk(chunkIndex: number, text: string): ChunkRecord {
   };
 }
 
-function job(): { readonly documentId: string; readonly ownerId: string } {
-  return { documentId: randomUUID(), ownerId: randomUUID() };
+function job(): {
+  readonly attempt: number;
+  readonly documentId: string;
+  readonly id: string;
+  readonly ownerId: string;
+  readonly selection: { readonly customModelConfigId: null; readonly kind: 'PLAN'; readonly platformModelId: 'platform-default' };
+} {
+  return {
+    attempt: 1,
+    documentId: randomUUID(),
+    id: randomUUID(),
+    ownerId: randomUUID(),
+    selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'platform-default' },
+  };
 }

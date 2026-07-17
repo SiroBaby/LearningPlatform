@@ -33,6 +33,7 @@ describe('Quiz', () => {
       handoff.questions[0].citation,
       handoff.questions[3].citation,
     ]);
+    expect(first.questions.map((question) => question.ordinal)).toEqual([0, 1]);
   });
 
   it('throws a stable typed error when valid candidates fall below the floor', () => {

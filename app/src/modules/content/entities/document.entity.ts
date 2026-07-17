@@ -10,6 +10,7 @@ import { AutoMap } from '@automapper/classes';
 
 import { DocumentStatus } from '../enums/document-status.enum';
 import { DocumentType } from '../enums/document-type.enum';
+import type { ModelSelectionKind } from '../../ai/contracts/model-selection.contracts';
 
 @Entity({ schema: 'course', name: 'documents' })
 @Index('idx_doc_owner', ['ownerId', 'createdAt'])
@@ -51,6 +52,30 @@ export class Document {
   })
   @AutoMap()
   status!: DocumentStatus;
+
+  @Column({ name: 'model_selection_kind', type: 'varchar', length: 10 })
+  modelSelectionKind!: ModelSelectionKind;
+
+  @Column({ name: 'platform_model_id', type: 'varchar', length: 100, nullable: true })
+  platformModelId!: string | null;
+
+  @Column({ name: 'custom_model_config_id', type: 'uuid', nullable: true })
+  customModelConfigId!: string | null;
+
+  @Column({ name: 'selected_model_label', type: 'varchar', length: 120, nullable: true })
+  selectedModelLabel!: string | null;
+
+  @Column({ name: 'estimate_status', type: 'varchar', length: 20, nullable: true })
+  estimateStatus!: string | null;
+
+  @Column({ name: 'estimated_credits', type: 'bigint', nullable: true })
+  estimatedCredits!: number | null;
+
+  @Column({ name: 'settled_credits', type: 'bigint', nullable: true })
+  settledCredits!: number | null;
+
+  @Column({ name: 'budget_status', type: 'varchar', length: 20, nullable: true })
+  budgetStatus!: string | null;
 
   @Column({ name: 'duration_sec', type: 'int', nullable: true })
   @AutoMap()

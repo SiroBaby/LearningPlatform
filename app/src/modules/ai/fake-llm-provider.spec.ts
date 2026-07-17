@@ -14,7 +14,7 @@ describe('FakeLlmProvider', () => {
 
     const first = await provider.generate(request);
     const second = await provider.generate(request);
-    const decoded = decodeGeneratedQuestionOutput(first);
+    const decoded = decodeGeneratedQuestionOutput(first.output);
 
     expect(first).toEqual(second);
     expect(decoded.questions).toHaveLength(1);
@@ -30,6 +30,6 @@ describe('FakeLlmProvider', () => {
       sourceText: ' \n ',
     });
 
-    expect(decodeGeneratedQuestionOutput(output).questions).toEqual([]);
+    expect(decodeGeneratedQuestionOutput(output.output).questions).toEqual([]);
   });
 });

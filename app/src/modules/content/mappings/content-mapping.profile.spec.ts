@@ -3,10 +3,12 @@ import { createMapper, Mapper } from '@automapper/core';
 
 import { UploadUrlResult } from '../contracts/upload-url.result';
 import { DocumentQuizResult } from '../contracts/document-quiz.result';
+import { DocumentEstimateResult } from '../contracts/document-estimate.result';
 import { ConfirmDocumentResponseDto } from '../dto/confirm-document.response.dto';
 import { DocumentQuizResponseDto } from '../dto/document-quiz.response.dto';
 import { DocumentResponseDto } from '../dto/document.response.dto';
 import { UploadUrlResponseDto } from '../dto/upload-url.response.dto';
+import { DocumentEstimateResponseDto } from '../../ai/dto/document-estimate.response.dto';
 import { Document } from '../entities/document.entity';
 import { DocumentStatus } from '../enums/document-status.enum';
 import { DocumentType } from '../enums/document-type.enum';
@@ -41,6 +43,7 @@ describe('ContentMappingProfile', () => {
 
     expect(actual).toMatchObject({
       createdAt: '2026-06-21T12:34:56.789Z',
+      budgetStatus: null,
       id: document.id,
       originalName: document.originalName,
       sizeBytes: 248320,
@@ -55,11 +58,16 @@ describe('ContentMappingProfile', () => {
       createdAt: new Date('2026-06-21T12:34:56.789Z'),
       durationSec: null,
       errorMessage: null,
+      estimateStatus: null,
+      estimatedCredits: null,
       id: 'c1ce6db5-3afd-4d8a-a134-902847cc4f87',
       language: null,
       originalName: 'bai-giang.pdf',
       ownerId: 'd9c63d87-9ec5-4f00-9ab7-32d35a5b1e7e',
       pageCount: null,
+      selectedModelKind: null,
+      selectedModelLabel: null,
+      settledCredits: null,
       sizeBytes: '248320',
       status: DocumentStatus.FAILED,
       storageRef: 'internal/object-key.pdf',
@@ -70,13 +78,19 @@ describe('ContentMappingProfile', () => {
     const actual = mapper.map(document, Document, DocumentResponseDto);
 
     expect(actual).toEqual({
+      budgetStatus: null,
       createdAt: '2026-06-21T12:34:56.789Z',
       durationSec: null,
       errorMessage: null,
+      estimateStatus: null,
+      estimatedCredits: null,
       id: document.id,
       language: null,
       originalName: document.originalName,
       pageCount: null,
+      selectedModelKind: null,
+      selectedModelLabel: null,
+      settledCredits: null,
       sizeBytes: 248320,
       status: DocumentStatus.FAILED,
       type: DocumentType.PDF,
@@ -86,6 +100,12 @@ describe('ContentMappingProfile', () => {
     expect(Object.prototype.hasOwnProperty.call(actual, 'durationSec')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'pageCount')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'errorMessage')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(actual, 'selectedModelKind')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(actual, 'selectedModelLabel')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(actual, 'estimateStatus')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(actual, 'estimatedCredits')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(actual, 'settledCredits')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(actual, 'budgetStatus')).toBe(true);
     expect(actual).not.toHaveProperty('ownerId');
     expect(actual).not.toHaveProperty('storageRef');
   });
@@ -107,6 +127,22 @@ describe('ContentMappingProfile', () => {
       expirySec: result.expirySec,
       uploadFields: result.uploadFields,
       uploadUrl: result.uploadUrl,
+    });
+  });
+
+  it('maps the pre-upload estimate through AutoMapper', () => {
+    const result = Object.assign(new DocumentEstimateResult(), {
+      estimatedCredits: 1024,
+      precision: 'COARSE' as const,
+      selectedModelKind: 'PLAN' as const,
+      selectedModelLabel: 'Configured model',
+    });
+
+    expect(mapper.map(result, DocumentEstimateResult, DocumentEstimateResponseDto)).toEqual({
+      estimatedCredits: 1024,
+      precision: 'COARSE',
+      selectedModelKind: 'PLAN',
+      selectedModelLabel: 'Configured model',
     });
   });
 

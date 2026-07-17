@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { AI_INGESTION, AiIngestion } from '../ai/contracts/ai-ingestion.port';
 import { JobType } from '../ai/enums/job-type.enum';
+import type { DocumentModelSelection } from '../ai/contracts/model-selection.contracts';
 import { CourseOutboxRepository } from './repositories/course-outbox.repository';
 
 /**
@@ -26,9 +27,12 @@ export class ForwardRelay {
 
     for (const row of pending) {
       const payload = row.payload as {
-        documentId: string;
-        ownerId: string;
-        jobType: string;
+        readonly customModelConfigId: string | null;
+        readonly documentId: string;
+        readonly kind: DocumentModelSelection['kind'];
+        readonly ownerId: string;
+        readonly jobType: string;
+        readonly platformModelId: string | null;
       };
 
       // Bước 1: enqueue idempotent (schema ai, qua port — ADR-0019)
@@ -37,6 +41,11 @@ export class ForwardRelay {
         ownerId: payload.ownerId,
         jobType: (payload.jobType as JobType) ?? JobType.FULL_PIPELINE,
         correlationId: row.aggregateId,
+        selection: {
+          customModelConfigId: payload.customModelConfigId,
+          kind: payload.kind,
+          platformModelId: payload.platformModelId,
+        },
       });
 
       // Bước 2: mark published (schema course, TX riêng)

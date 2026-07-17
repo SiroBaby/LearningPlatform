@@ -22,6 +22,7 @@ import type {
 } from '../../config/configuration.types';
 import type {
   LlmGenerationRequest,
+  LlmGenerationResult,
   LlmProvider,
 } from './contracts/llm-provider.contracts';
 import { FakeLlmProvider } from './fake-llm-provider';
@@ -32,19 +33,29 @@ interface OpenAiClient {
     readonly completions: {
       create(
         input: ChatCompletionCreateParamsNonStreaming,
-      ): Promise<Pick<ChatCompletion, 'choices'>>;
+      ): Promise<Pick<ChatCompletion, 'choices' | 'usage'>>;
     };
   };
   readonly responses: {
     create(
       input: ResponseCreateParamsNonStreaming,
-    ): Promise<Pick<Response, 'output_text' | 'status'>>;
+    ): Promise<Pick<Response, 'output_text' | 'status' | 'usage'>>;
   };
 }
 
 interface OpenAiProviderSettings {
   readonly model: string;
   readonly providerIdentity: string;
+  readonly structuredOutputMode: LlmStructuredOutputMode;
+  readonly transport: LlmTransport;
+}
+
+export interface OpenAiCompatibleProviderSettings {
+  readonly apiKey: string;
+  readonly baseUrl: string;
+  readonly capabilityVersion: string;
+  readonly model: string;
+  readonly requestTimeoutMs?: number;
   readonly structuredOutputMode: LlmStructuredOutputMode;
   readonly transport: LlmTransport;
 }
@@ -101,7 +112,7 @@ export class OpenAiLlmProvider implements LlmProvider {
     this.providerIdentity = settings.providerIdentity;
   }
 
-  async generate(request: LlmGenerationRequest): Promise<unknown> {
+  async generate(request: LlmGenerationRequest): Promise<LlmGenerationResult> {
     switch (this.settings.transport) {
       case 'chat-completions':
         return this.generateChatCompletion(request);
@@ -110,7 +121,7 @@ export class OpenAiLlmProvider implements LlmProvider {
     }
   }
 
-  private async generateChatCompletion(request: LlmGenerationRequest): Promise<unknown> {
+  private async generateChatCompletion(request: LlmGenerationRequest): Promise<LlmGenerationResult> {
     const response = await this.client.chat.completions.create({
       max_tokens: request.parameters.maxOutputTokens,
       messages: [
@@ -120,10 +131,10 @@ export class OpenAiLlmProvider implements LlmProvider {
       model: this.model,
       response_format: createChatResponseFormat(this.settings.structuredOutputMode),
     });
-    return parseGeneratedOutput(response.choices[0]?.message.content);
+    return { output: parseGeneratedOutput(response.choices[0]?.message.content), usage: mapUsage(response.usage) };
   }
 
-  private async generateResponse(request: LlmGenerationRequest): Promise<unknown> {
+  private async generateResponse(request: LlmGenerationRequest): Promise<LlmGenerationResult> {
     const response = await this.client.responses.create({
       input: request.sourceText,
       instructions: request.promptTemplate,
@@ -135,8 +146,22 @@ export class OpenAiLlmProvider implements LlmProvider {
     if (response.status !== 'completed') {
       throw new QuizGenerationError(QuizGenerationErrorCode.GENERATION_OUTPUT_INVALID);
     }
-    return parseGeneratedOutput(response.output_text);
+    return { output: parseGeneratedOutput(response.output_text), usage: mapUsage(response.usage) };
   }
+}
+
+function mapUsage(usage: { readonly input_tokens?: number; readonly output_tokens?: number; readonly prompt_tokens?: number; readonly completion_tokens?: number } | null | undefined): LlmGenerationResult['usage'] {
+  const inputTokens = usage?.input_tokens ?? usage?.prompt_tokens;
+  const outputTokens = usage?.output_tokens ?? usage?.completion_tokens;
+  if (
+    typeof inputTokens !== 'number' ||
+    typeof outputTokens !== 'number' ||
+    !Number.isSafeInteger(inputTokens) ||
+    !Number.isSafeInteger(outputTokens)
+  ) {
+    return { inputTokens: null, outputTokens: null, status: 'UNAVAILABLE' };
+  }
+  return { inputTokens, outputTokens, status: 'AVAILABLE' };
 }
 
 export function createOpenAiProviderIdentity(input: OpenAiProviderIdentityInput): string {
@@ -178,24 +203,16 @@ export function createLlmProvider(config: ApplicationConfigService): LlmProvider
   ) {
     throw new Error('OpenAI-compatible provider configuration was not validated');
   }
-  const client = new OpenAI({
-    apiKey,
-    baseURL: baseUrl,
-    logLevel: 'off',
-    maxRetries: 2,
-    timeout: requestTimeoutMs,
-  });
+  return createOpenAiCompatibleProvider({ apiKey, baseUrl, capabilityVersion, model, requestTimeoutMs, structuredOutputMode, transport });
+}
+
+export function createOpenAiCompatibleProvider(settings: OpenAiCompatibleProviderSettings): LlmProvider {
+  const client = new OpenAI({ apiKey: settings.apiKey, baseURL: settings.baseUrl, logLevel: 'off', maxRetries: 0, timeout: settings.requestTimeoutMs ?? 60_000 });
   return new OpenAiLlmProvider(client, {
-    model,
-    providerIdentity: createOpenAiProviderIdentity({
-      baseUrl,
-      capabilityVersion,
-      model,
-      structuredOutputMode,
-      transport,
-    }),
-    structuredOutputMode,
-    transport,
+    model: settings.model,
+    providerIdentity: createOpenAiProviderIdentity(settings),
+    structuredOutputMode: settings.structuredOutputMode,
+    transport: settings.transport,
   });
 }
 

@@ -8,6 +8,7 @@ import {
   GradedQuestionResult,
   PersistedAttemptQuestionResult,
   PersistedAttemptResult,
+  PracticeFeedbackResult,
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
@@ -25,6 +26,7 @@ import {
   QuizQuestionResponseDto,
   QuizResponseDto,
 } from '../dto/quiz.response.dto';
+import { PracticeFeedbackResponseDto } from '../dto/practice-feedback.response.dto';
 
 @Injectable()
 export class AssessmentMappingProfile {
@@ -36,6 +38,15 @@ export class AssessmentMappingProfile {
       mapper,
       GradedQuestionResult,
       GradedQuestionResponseDto,
+      forMember(
+        (destination) => destination.citation,
+        mapFrom((source) => source.citation),
+      ),
+    );
+    createMap(
+      mapper,
+      PracticeFeedbackResult,
+      PracticeFeedbackResponseDto,
       forMember(
         (destination) => destination.citation,
         mapFrom((source) => source.citation),

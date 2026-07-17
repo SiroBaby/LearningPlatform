@@ -9,7 +9,7 @@ import { Document } from '../../src/modules/content/entities/document.entity';
 import { Chunk } from '../../src/modules/ai/entities/chunk.entity';
 import { GenerationCacheRecord } from '../../src/modules/ai/entities/generation-cache.entity';
 import { PromptVersion } from '../../src/modules/ai/entities/prompt-version.entity';
-import { LLM_PROVIDER, type LlmProvider } from '../../src/modules/ai/contracts/llm-provider.contracts';
+import { LLM_PROVIDER } from '../../src/modules/ai/contracts/llm-provider.contracts';
 import { QuizGenerationService } from '../../src/modules/ai/quiz-generation.service';
 import { QuestionEntity } from '../../src/modules/assessment/entities/question.entity';
 import { QuestionOptionEntity } from '../../src/modules/assessment/entities/question-option.entity';
@@ -81,11 +81,33 @@ describe('Document HTTP flow', () => {
   });
 
   it('creates, confirms and exposes an owned document through HTTP', async () => {
+    const estimate = await request('/api/v1/documents/estimate', {
+      method: 'POST',
+      headers: ownerHeaders(),
+      body: JSON.stringify({
+        modelSelectionKind: 'PLAN',
+        platformModelId: 'platform-default',
+        sizeBytes: 22,
+        type: 'PDF',
+      }),
+    });
+    expect(estimate.status).toBe(200);
+    expect(await estimate.json()).toEqual({
+      estimatedCredits: 518,
+      precision: 'COARSE',
+      selectedModelKind: 'PLAN',
+      selectedModelLabel: 'Fast platform model',
+    });
+    expect(await dataSource.getRepository(Document).count()).toBe(0);
+    expect(await dataSource.query('SELECT count(*)::int AS "count" FROM "course"."credit_ledger_entries"')).toEqual([{ count: 0 }]);
+
     const created = await request('/api/v1/documents/upload-url', {
       method: 'POST',
       headers: ownerHeaders(),
       body: JSON.stringify({
         originalName: 'lecture.pdf',
+        modelSelectionKind: 'PLAN',
+        platformModelId: 'platform-default',
         sizeBytes: 22,
         type: 'PDF',
       }),
@@ -127,6 +149,8 @@ describe('Document HTTP flow', () => {
       headers: ownerHeaders(),
       body: JSON.stringify({
         originalName: 'newer-lecture.pdf',
+        modelSelectionKind: 'PLAN',
+        platformModelId: 'platform-default',
         sizeBytes: 22,
         type: 'PDF',
       }),
@@ -249,10 +273,14 @@ describe('Document HTTP flow', () => {
       request,
     });
 
-    const provider = workerModule.get<LlmProvider>(LLM_PROVIDER) as CountingLlmProvider;
+    const provider = workerModule.get<CountingLlmProvider>(LLM_PROVIDER);
     await workerModule.get(QuizGenerationService).generate({
       chunks,
-      job: { documentId: upload.documentId, ownerId },
+      job: {
+        documentId: upload.documentId,
+        ownerId,
+        selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'platform-default' },
+      },
     });
     expect(provider.callCount).toBe(1);
     expect(await dataSource.getRepository(QuizEntity).count()).toBe(1);

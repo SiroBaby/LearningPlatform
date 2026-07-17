@@ -35,8 +35,17 @@ export interface LlmGenerationRequest {
   readonly sourceText: string;
 }
 
+export interface LlmGenerationResult {
+  readonly output: unknown;
+  readonly usage: {
+    readonly inputTokens: number | null;
+    readonly outputTokens: number | null;
+    readonly status: 'AVAILABLE' | 'UNAVAILABLE';
+  };
+}
+
 export interface LlmProvider {
   readonly model: string;
   readonly providerIdentity: string;
-  generate(request: LlmGenerationRequest): Promise<unknown>;
+  generate(request: LlmGenerationRequest): Promise<LlmGenerationResult>;
 }

@@ -18,9 +18,10 @@ export class Quiz {
     const quizId = uuidFromSha256(idempotencyKey);
     const stems = new Set<string>();
     const questionKeys = new Set<string>();
+    const candidates = [...handoff.questions].sort(compareCandidates);
     const questions: Question[] = [];
 
-    for (const candidate of [...handoff.questions].sort(compareCandidates)) {
+    for (const candidate of candidates) {
       const question = Question.create(candidate, quizId);
       if (
         question &&
@@ -29,7 +30,13 @@ export class Quiz {
       ) {
         stems.add(question.normalizedStem);
         questionKeys.add(question.idempotencyKey);
-        questions.push(question);
+        const compactedQuestion = Question.create(
+          { ...candidate, ordinal: questions.length },
+          quizId,
+        );
+        if (compactedQuestion) {
+          questions.push(compactedQuestion);
+        }
       }
     }
 

@@ -76,6 +76,23 @@ describe('QuizGenerationHandoffService', () => {
     );
   });
 
+  it('returns existing legacy duplicate ordinals ordered by Question ID', async () => {
+    const input = validHandoff({ questions: [candidate(0), candidate(1)] });
+    const first = await handoff.persist(input);
+    const secondQuestionId = first.questionIds[1];
+    if (!secondQuestionId) {
+      throw new Error('Expected two persisted Questions');
+    }
+    await db.client.query(
+      'UPDATE "quiz"."questions" SET "ordinal" = 0 WHERE "id" = $1',
+      [secondQuestionId],
+    );
+
+    const existing = await handoff.persist(input);
+
+    expect(existing.questionIds).toEqual([...first.questionIds].sort());
+  });
+
   it('rolls back the Quiz when a database trigger rejects a child Question', async () => {
     await db.client.query(`
       CREATE FUNCTION "quiz"."reject_question_insert"() RETURNS trigger AS $$

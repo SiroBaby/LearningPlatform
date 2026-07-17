@@ -1,12 +1,18 @@
 import type {
   Phase0AttemptResultItem,
   Phase0AttemptResultResponse,
+  Phase0BudgetStatus,
   Phase0ConfirmDocumentResponse,
   Phase0Document,
   Phase0DocumentQuizResponse,
   Phase0DocumentStatus,
   Phase0DocumentType,
+  Phase0EstimatePrecision,
+  Phase0EstimateResponse,
   Phase0CitationLocator,
+  Phase0ModelOption,
+  Phase0ModelSelectionKind,
+  Phase0PracticeFeedbackResponse,
   Phase0QuizOption,
   Phase0QuizQuestion,
   Phase0QuizResponse,
@@ -77,6 +83,49 @@ function readDocumentStatus(value: unknown, field: string): Phase0DocumentStatus
   }
 }
 
+function readModelSelectionKind(value: unknown, field: string): Phase0ModelSelectionKind {
+  switch (readString(value, field)) {
+    case "PLAN":
+      return "PLAN";
+    case "CUSTOM":
+      return "CUSTOM";
+    default:
+      throw new TypeError(`Expected ${field} to be PLAN or CUSTOM.`);
+  }
+}
+
+function readNullableModelSelectionKind(value: unknown, field: string): Phase0ModelSelectionKind | null {
+  return value === null ? null : readModelSelectionKind(value, field);
+}
+
+function readEstimatePrecision(value: unknown, field: string): Phase0EstimatePrecision {
+  switch (readString(value, field)) {
+    case "COARSE":
+      return "COARSE";
+    default:
+      throw new TypeError(`Expected ${field} to be COARSE.`);
+  }
+}
+
+function readNullableEstimatePrecision(value: unknown, field: string): Phase0EstimatePrecision | null {
+  return value === null ? null : readEstimatePrecision(value, field);
+}
+
+function readBudgetStatus(value: unknown, field: string): Phase0BudgetStatus {
+  switch (readString(value, field)) {
+    case "WITHIN_BUDGET":
+      return "WITHIN_BUDGET";
+    case "EXCEEDED":
+      return "EXCEEDED";
+    default:
+      throw new TypeError(`Expected ${field} to be a valid budget status.`);
+  }
+}
+
+function readNullableBudgetStatus(value: unknown, field: string): Phase0BudgetStatus | null {
+  return value === null ? null : readBudgetStatus(value, field);
+}
+
 function mapCitationLocator(value: unknown): Phase0CitationLocator {
   const source = readObject(value);
   switch (readString(source.kind, "result.citation.locator.kind")) {
@@ -111,9 +160,31 @@ function mapDocument(value: unknown): Phase0Document {
     durationSec: readNullableNumber(source.durationSec, "document.durationSec"),
     pageCount: readNullableNumber(source.pageCount, "document.pageCount"),
     errorMessage: readNullableString(source.errorMessage, "document.errorMessage"),
+    selectedModelKind: readNullableModelSelectionKind(source.selectedModelKind, "document.selectedModelKind"),
+    selectedModelLabel: readNullableString(source.selectedModelLabel, "document.selectedModelLabel"),
+    estimateStatus: readNullableEstimatePrecision(source.estimateStatus, "document.estimateStatus"),
+    estimatedCredits: readNullableNumber(source.estimatedCredits, "document.estimatedCredits"),
+    settledCredits: readNullableNumber(source.settledCredits, "document.settledCredits"),
+    budgetStatus: readNullableBudgetStatus(source.budgetStatus, "document.budgetStatus"),
     createdAt: readString(source.createdAt, "document.createdAt"),
     updatedAt: readString(source.updatedAt, "document.updatedAt"),
   };
+}
+
+function mapModelOption(value: unknown): Phase0ModelOption {
+  const source = readObject(value);
+  const kind = readModelSelectionKind(source.kind, "model.kind");
+  const mapped = {
+    id: readString(source.id, "model.id"),
+    kind,
+    label: readString(source.label, "model.label"),
+  };
+
+  if ("apiKey" in source || "baseUrl" in source || "apiKeyCiphertext" in source) {
+    throw new TypeError("Model option payload contains unsupported private fields.");
+  }
+
+  return mapped;
 }
 
 function mapQuizOption(value: unknown): Phase0QuizOption {
@@ -182,6 +253,20 @@ export function mapUploadUrlResponse(value: unknown): Phase0UploadUrlResponse {
   };
 }
 
+export function mapModelOptionsResponse(value: unknown): readonly Phase0ModelOption[] {
+  return readArray(value, "models").map(mapModelOption);
+}
+
+export function mapEstimateResponse(value: unknown): Phase0EstimateResponse {
+  const source = readObject(value);
+  return {
+    estimatedCredits: readNumber(source.estimatedCredits, "estimatedCredits"),
+    precision: readEstimatePrecision(source.precision, "precision"),
+    selectedModelKind: readModelSelectionKind(source.selectedModelKind, "selectedModelKind"),
+    selectedModelLabel: readString(source.selectedModelLabel, "selectedModelLabel"),
+  };
+}
+
 export function mapConfirmDocumentResponse(value: unknown): Phase0ConfirmDocumentResponse {
   const source = readObject(value);
   return {
@@ -204,6 +289,25 @@ export function mapQuizResponse(value: unknown): Phase0QuizResponse {
   return {
     id: readString(source.id, "quiz.id"),
     questions: readArray(source.questions, "quiz.questions").map(mapQuizQuestion),
+  };
+}
+
+export function mapPracticeFeedbackResponse(value: unknown): Phase0PracticeFeedbackResponse {
+  const source = readObject(value);
+  const citation = readObject(source.citation);
+  if (typeof source.isCorrect !== "boolean") {
+    throw new TypeError("Expected practiceFeedback.isCorrect to be a boolean.");
+  }
+  return {
+    questionId: readString(source.questionId, "practiceFeedback.questionId"),
+    selectedOptionId: readString(source.selectedOptionId, "practiceFeedback.selectedOptionId"),
+    isCorrect: source.isCorrect,
+    explanation: readString(source.explanation, "practiceFeedback.explanation"),
+    citation: {
+      chunkId: readString(citation.chunkId, "practiceFeedback.citation.chunkId"),
+      locator: mapCitationLocator(citation.locator),
+      snippet: readString(citation.snippet, "practiceFeedback.citation.snippet"),
+    },
   };
 }
 

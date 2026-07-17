@@ -31,8 +31,12 @@ export class ReturnRelay {
       const payload = this.parseResult(row.payload);
       await this.projection.project({
         documentId: payload.documentId,
+        estimatedCredits: payload.estimatedCredits,
+        estimateStatus: payload.estimateStatus,
+        budgetStatus: payload.budgetStatus,
         errorMessage: payload.errorMessage,
         ownerId: payload.ownerId,
+        settledCredits: payload.settledCredits,
         status:
           payload.status === DocumentProcessingResultStatus.READY
             ? DocumentStatus.READY
@@ -44,11 +48,19 @@ export class ReturnRelay {
 
   private parseResult(payload: Record<string, unknown>): DocumentProcessingResult {
     const errorCode = this.parseFailureCode(payload.errorCode);
+    const budgetStatus = payload.budgetStatus ?? null;
+    const estimatedCredits = payload.estimatedCredits ?? null;
+    const estimateStatus = payload.estimateStatus ?? null;
+    const settledCredits = payload.settledCredits ?? null;
 
     if (
       payload.version !== 1 ||
       typeof payload.documentId !== 'string' ||
       typeof payload.ownerId !== 'string' ||
+      (budgetStatus !== null && typeof budgetStatus !== 'string') ||
+      (estimatedCredits !== null && typeof estimatedCredits !== 'number') ||
+      (estimateStatus !== null && typeof estimateStatus !== 'string') ||
+      (settledCredits !== null && typeof settledCredits !== 'number') ||
       (payload.errorMessage !== null && typeof payload.errorMessage !== 'string') ||
       errorCode === undefined ||
       (payload.status !== DocumentProcessingResultStatus.READY &&
@@ -59,9 +71,13 @@ export class ReturnRelay {
 
     return {
       documentId: payload.documentId,
+      budgetStatus,
+      estimatedCredits,
+      estimateStatus,
       errorCode,
       errorMessage: payload.errorMessage,
       ownerId: payload.ownerId,
+      settledCredits,
       status: payload.status,
       version: payload.version,
     };

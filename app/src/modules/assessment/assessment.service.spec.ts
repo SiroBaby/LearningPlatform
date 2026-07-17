@@ -87,6 +87,57 @@ describe('AssessmentService', () => {
     }));
   });
 
+  it('returns correct practice feedback without persisting an Attempt', async () => {
+    const actual = await service.getPracticeFeedback(ownerId, quizId, {
+      optionId: firstCorrectOptionId,
+      questionId: firstQuestionId,
+    });
+
+    expect(actual).toEqual(expect.objectContaining({
+      explanation: 'Explanation 0',
+      isCorrect: true,
+      questionId: firstQuestionId,
+      selectedOptionId: firstCorrectOptionId,
+    }));
+    expect(actual.citation).toEqual(expect.objectContaining({
+      locator: { kind: 'page', page: 1 },
+      snippet: 'Source 0',
+    }));
+    expect(store.findForGradingByOwnerId).toHaveBeenCalledWith(ownerId, quizId);
+    expect(store.persistAttempt).not.toHaveBeenCalled();
+  });
+
+  it('returns incorrect practice feedback without persisting an Attempt', async () => {
+    const actual = await service.getPracticeFeedback(ownerId, quizId, {
+      optionId: firstWrongOptionId,
+      questionId: firstQuestionId,
+    });
+
+    expect(actual.isCorrect).toBe(false);
+    expect(actual.selectedOptionId).toBe(firstWrongOptionId);
+    expect(store.persistAttempt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { optionId: firstCorrectOptionId, questionId: randomUUID() },
+    { optionId: secondCorrectOptionId, questionId: firstQuestionId },
+  ])('rejects an invalid practice Question or Option without persisting', async (selection) => {
+    await expect(service.getPracticeFeedback(ownerId, quizId, selection)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(store.persistAttempt).not.toHaveBeenCalled();
+  });
+
+  it('returns not found for a practice request to an inaccessible Quiz', async () => {
+    store.findForGradingByOwnerId = jest.fn(async () => null);
+
+    await expect(service.getPracticeFeedback(ownerId, quizId, {
+      optionId: firstCorrectOptionId,
+      questionId: firstQuestionId,
+    })).rejects.toBeInstanceOf(NotFoundException);
+    expect(store.persistAttempt).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       answers: [{ questionId: firstQuestionId, optionId: firstCorrectOptionId }],

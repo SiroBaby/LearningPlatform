@@ -31,7 +31,7 @@ export class AttemptResultRepository
       where: { attemptId, ownerId },
     });
     const questions = answers.length === 0 ? [] : await this.dataSource.getRepository(QuestionEntity).find({
-      order: { ordinal: 'ASC' },
+      order: { ordinal: 'ASC', id: 'ASC' },
       where: { id: In(answers.map((answer) => answer.questionId)), ownerId, quizId },
     });
     if (questions.length !== answers.length) {

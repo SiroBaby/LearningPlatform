@@ -1,109 +1,28 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Flag, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
-import { ProgressBar } from "@/components/ui/progress";
 import { useToast } from "@/components/ui/toast";
-import {
-  clearQuizDraft,
-  readQuizDraft,
-  writeQuizDraft,
-  type QuizDraftState,
-} from "@/components/quiz/quiz-session";
+import { clearQuizDraft } from "@/components/quiz/quiz-session";
 import { Phase0ClientError, submitPhase0QuizAttempt } from "@/lib/phase0/client";
 import type { Phase0QuizResponse } from "@/lib/phase0/contracts";
 import { routes } from "@/lib/routes";
 import type { QuizMode } from "@/lib/types";
+import { QuizLeaveDialog, QuizPaletteCard, QuizQuestionCard } from "./quiz-play-panels";
+import {
+  buildSubmitAnswers,
+  formatDuration,
+  getDisplayPosition,
+  type MissingAnswerSummary,
+} from "./quiz-play-utils";
+import { usePracticeFeedback } from "./use-practice-feedback";
+import { useQuizLeaveNavigation } from "./use-quiz-leave-navigation";
+import { useQuizSession } from "./use-quiz-session";
 
 interface QuizPlayScreenProps {
   readonly quiz: Phase0QuizResponse;
   readonly mode: QuizMode;
   readonly resume: boolean;
-}
-
-interface MissingAnswerItem {
-  readonly questionId: string;
-  readonly ordinal: number;
-}
-
-function formatDuration(totalSec: number): string {
-  const safeTotal = Math.max(0, totalSec);
-  const hours = Math.floor(safeTotal / 3600);
-  const minutes = Math.floor((safeTotal % 3600) / 60);
-  const seconds = safeTotal % 60;
-
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function createEmptyAnswers(quiz: Phase0QuizResponse): Record<string, string | null> {
-  return Object.fromEntries(quiz.questions.map((question) => [question.id, null]));
-}
-
-function buildSubmitAnswers(
-  quiz: Phase0QuizResponse,
-  answers: Readonly<Record<string, string | null>>,
-): Array<{ questionId: string; optionId: string }> {
-  return quiz.questions.flatMap((question) => {
-    const optionId = answers[question.id];
-    if (typeof optionId !== "string") {
-      return [];
-    }
-    return [{ questionId: question.id, optionId }];
-  });
-}
-
-function sanitizeDraft(quiz: Phase0QuizResponse, draft: QuizDraftState | null): QuizDraftState {
-  const validQuestionIds = new Set(quiz.questions.map((question) => question.id));
-  const validOptionsByQuestion = new Map(
-    quiz.questions.map((question) => [question.id, new Set(question.options.map((option) => option.id))]),
-  );
-  const answers = createEmptyAnswers(quiz);
-
-  if (draft) {
-    for (const question of quiz.questions) {
-      const selectedOptionId = draft.answers[question.id];
-      if (typeof selectedOptionId !== "string") {
-        continue;
-      }
-      if (validOptionsByQuestion.get(question.id)?.has(selectedOptionId)) {
-        answers[question.id] = selectedOptionId;
-      }
-    }
-  }
-
-  const currentIndex = draft ? Math.min(Math.max(draft.currentIndex, 0), Math.max(quiz.questions.length - 1, 0)) : 0;
-
-  return {
-    answers,
-    currentIndex,
-    elapsedSec: draft ? Math.max(0, draft.elapsedSec) : 0,
-    flaggedQuestionIds: draft
-      ? draft.flaggedQuestionIds.filter((questionId) => validQuestionIds.has(questionId))
-      : [],
-    mode: draft?.mode ?? "practice",
-    updatedAt: draft?.updatedAt ?? new Date().toISOString(),
-  };
-}
-
-function getQuestionTone(questionId: string, currentQuestionId: string, flaggedSet: ReadonlySet<string>, answers: Readonly<Record<string, string | null>>): string {
-  if (questionId === currentQuestionId) {
-    return "border-brand-300 bg-brand-50 text-brand-700";
-  }
-  if (flaggedSet.has(questionId)) {
-    return "border-warning-200 bg-warning-50 text-warning-800";
-  }
-  if (answers[questionId]) {
-    return "border-success-200 bg-success-50 text-success-800";
-  }
-  return "border-ink-200 bg-white text-ink-600 hover:border-brand-200 hover:bg-brand-50/40";
 }
 
 export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
@@ -112,15 +31,21 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
   const summaryId = useId();
   const errorSummaryRef = useRef<HTMLDivElement | null>(null);
   const questionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const savedDraft = resume ? readQuizDraft(quiz.id, mode) : null;
-  const initialDraft = useMemo(() => sanitizeDraft(quiz, savedDraft), [quiz, savedDraft]);
-  const [answers, setAnswers] = useState<Record<string, string | null>>(initialDraft.answers);
-  const [currentIndex, setCurrentIndex] = useState<number>(initialDraft.currentIndex);
-  const [elapsedSec, setElapsedSec] = useState<number>(initialDraft.elapsedSec);
-  const [flaggedQuestionIds, setFlaggedQuestionIds] = useState<string[]>([...initialDraft.flaggedQuestionIds]);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [missingAnswers, setMissingAnswers] = useState<readonly MissingAnswerItem[]>([]);
+  const [isLeaving, setIsLeaving] = useState<boolean>(false);
+  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState<boolean>(false);
+  const [missingAnswerSummary, setMissingAnswerSummary] = useState<MissingAnswerSummary | null>(null);
+  const { draftState, draftStateRef, isDraftReady, updateDraftState, persistDraftSnapshot } = useQuizSession({
+    quiz,
+    mode,
+    resume,
+  });
+  const { feedbackByQuestionId, loadPracticeFeedback, resetQuestionFeedback } = usePracticeFeedback({
+    answers: draftState.answers,
+  });
+
+  const { answers, currentIndex, elapsedSec, flaggedQuestionIds } = draftState;
 
   const currentQuestion = quiz.questions[currentIndex];
   const flaggedSet = useMemo(() => new Set(flaggedQuestionIds), [flaggedQuestionIds]);
@@ -130,53 +55,66 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
   );
   const unansweredCount = quiz.questions.length - answeredCount;
   const progressValue = quiz.questions.length === 0 ? 0 : Math.round(((currentIndex + 1) / quiz.questions.length) * 100);
+  const canCheckCurrentAnswer = mode === "practice" && typeof answers[currentQuestion?.id ?? ""] === "string";
+  const isCheckingCurrentAnswer = feedbackByQuestionId[currentQuestion?.id ?? ""]?.status === "loading";
+
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setElapsedSec((value) => value + 1);
-    }, 1000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, []);
-
-  useEffect(() => {
-    writeQuizDraft(quiz.id, mode, {
-      answers,
-      currentIndex,
-      elapsedSec,
-      flaggedQuestionIds,
-      mode,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [answers, currentIndex, elapsedSec, flaggedQuestionIds, mode, quiz.id]);
-
-  useEffect(() => {
-    if (missingAnswers.length > 0) {
+    if (missingAnswerSummary) {
       errorSummaryRef.current?.focus();
     }
-  }, [missingAnswers]);
+  }, [missingAnswerSummary]);
+
+  const confirmLeaveNavigation = useQuizLeaveNavigation({
+    isDraftReady,
+    quizId: quiz.id,
+    mode,
+    getDraftSnapshot: () => draftStateRef.current,
+    onBeforeConfirmedLeave: () => {
+      setIsLeaveDialogOpen(false);
+    },
+  });
+
+  async function leaveQuiz(): Promise<void> {
+    if (isSubmitting || isLeaving) {
+      return;
+    }
+
+    setIsLeaving(true);
+    confirmLeaveNavigation();
+    window.location.assign(routes.quizStart(quiz.id));
+  }
 
   function selectOption(questionId: string, optionId: string): void {
-    setAnswers((currentAnswers) => ({
-      ...currentAnswers,
-      [questionId]: optionId,
+    updateDraftState((currentDraft) => ({
+      ...currentDraft,
+      answers: {
+        ...currentDraft.answers,
+        [questionId]: optionId,
+      },
     }));
     setSubmitError(null);
-    setMissingAnswers((currentMissing) => currentMissing.filter((item) => item.questionId !== questionId));
+    setMissingAnswerSummary(null);
+
+    if (mode === "practice") {
+      resetQuestionFeedback(questionId, optionId);
+    }
   }
 
   function toggleFlag(questionId: string): void {
-    setFlaggedQuestionIds((currentFlags) => (
-      currentFlags.includes(questionId)
-        ? currentFlags.filter((currentQuestionId) => currentQuestionId !== questionId)
-        : [...currentFlags, questionId]
-    ));
+    updateDraftState((currentDraft) => ({
+      ...currentDraft,
+      flaggedQuestionIds: currentDraft.flaggedQuestionIds.includes(questionId)
+        ? currentDraft.flaggedQuestionIds.filter((currentQuestionId) => currentQuestionId !== questionId)
+        : [...currentDraft.flaggedQuestionIds, questionId],
+    }));
   }
 
   function moveToQuestion(index: number): void {
-    setCurrentIndex(Math.min(Math.max(index, 0), quiz.questions.length - 1));
+    updateDraftState((currentDraft) => ({
+      ...currentDraft,
+      currentIndex: Math.min(Math.max(index, 0), quiz.questions.length - 1),
+    }));
   }
 
   function focusQuestionPaletteButton(questionId: string): void {
@@ -185,28 +123,43 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
     });
   }
 
+  async function handleCheckAnswer(): Promise<void> {
+    if (!currentQuestion || !currentAnswer || isSubmitting || isLeaving) {
+      return;
+    }
+
+    await loadPracticeFeedback({
+      quizId: quiz.id,
+      questionId: currentQuestion.id,
+      optionId: currentAnswer,
+    });
+  }
+
   async function handleSubmit(): Promise<void> {
     if (isSubmitting) {
       return;
     }
 
-    const incompleteQuestions = quiz.questions
-      .filter((question) => typeof answers[question.id] !== "string")
-      .map((question) => ({ questionId: question.id, ordinal: question.ordinal }));
+    const firstIncompleteIndex = quiz.questions.findIndex((question) => typeof answers[question.id] !== "string");
 
-    if (incompleteQuestions.length > 0) {
-      const firstIncomplete = incompleteQuestions[0];
-      setMissingAnswers(incompleteQuestions);
-      setSubmitError(null);
+    if (firstIncompleteIndex >= 0) {
+      const firstIncomplete = quiz.questions[firstIncompleteIndex];
       if (firstIncomplete) {
-        moveToQuestion(quiz.questions.findIndex((question) => question.id === firstIncomplete.questionId));
-        focusQuestionPaletteButton(firstIncomplete.questionId);
+        setMissingAnswerSummary({
+          count: unansweredCount,
+          firstQuestionId: firstIncomplete.id,
+          firstDisplayPosition: getDisplayPosition(firstIncompleteIndex),
+        });
+        setSubmitError(null);
+        moveToQuestion(firstIncompleteIndex);
+        focusQuestionPaletteButton(firstIncomplete.id);
       }
       return;
     }
 
     setIsSubmitting(true);
     setSubmitError(null);
+    persistDraftSnapshot(draftStateRef.current);
 
     try {
       const response = await submitPhase0QuizAttempt(quiz.id, {
@@ -237,161 +190,75 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
     : currentAnswer
       ? "success"
       : "neutral";
+  const currentFeedback = feedbackByQuestionId[currentQuestion.id];
+  const visiblePracticeFeedback = currentAnswer && currentFeedback?.selectedOptionId === currentAnswer
+    ? currentFeedback
+    : null;
 
   return (
     <section className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_320px]">
-      <Card>
-        <CardHeader className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone="neutral">Câu {currentQuestion.ordinal + 1}/{quiz.questions.length}</Badge>
-                <Badge tone={currentQuestionTone}>{flaggedSet.has(currentQuestion.id) ? "Đã đánh dấu" : currentAnswer ? "Đã trả lời" : "Chưa trả lời"}</Badge>
-                <Badge>{mode === "test" ? "Chế độ kiểm tra" : "Chế độ luyện tập"}</Badge>
-              </div>
-              <CardTitle className="mt-3 text-xl">{currentQuestion.stem}</CardTitle>
-            </div>
-            <div className="text-sm font-medium text-ink-600">Thời gian · {formatDuration(elapsedSec)}</div>
-          </div>
-          <ProgressBar value={progressValue} />
-        </CardHeader>
-        <CardBody className="space-y-5">
-          {missingAnswers.length > 0 ? (
-            <div
-              ref={errorSummaryRef}
-              tabIndex={-1}
-              role="alert"
-              aria-live="polite"
-              className="rounded-2xl border border-error-100 bg-error-50 p-4 text-sm text-error-800 focus:outline-none focus:ring-2 focus:ring-error-500 focus:ring-offset-2"
-            >
-              <p className="font-semibold">Bạn cần trả lời tất cả câu hỏi trước khi nộp bài.</p>
-              <ul className="mt-2 list-inside list-disc space-y-1">
-                {missingAnswers.map((item) => (
-                  <li key={item.questionId}>Câu {item.ordinal + 1} chưa có đáp án.</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+      <QuizQuestionCard
+        quiz={quiz}
+        mode={mode}
+        currentIndex={currentIndex}
+        elapsedSecLabel={formatDuration(elapsedSec)}
+        progressValue={progressValue}
+        currentQuestionId={currentQuestion.id}
+        currentQuestionStem={currentQuestion.stem}
+        currentQuestionOptions={currentQuestion.options}
+        currentQuestionTone={currentQuestionTone}
+        currentAnswer={currentAnswer}
+        missingAnswerSummary={missingAnswerSummary}
+        submitError={submitError}
+        summaryId={summaryId}
+        errorSummaryRef={errorSummaryRef}
+        visiblePracticeFeedback={visiblePracticeFeedback}
+        flaggedSet={flaggedSet}
+        isSubmitting={isSubmitting}
+        isLeaving={isLeaving}
+        canCheckCurrentAnswer={canCheckCurrentAnswer}
+        isCheckingCurrentAnswer={isCheckingCurrentAnswer}
+        onSelectOption={selectOption}
+        onLeave={() => setIsLeaveDialogOpen(true)}
+        onPrevious={() => moveToQuestion(currentIndex - 1)}
+        onToggleFlag={() => toggleFlag(currentQuestion.id)}
+        onCheckAnswer={() => {
+          void handleCheckAnswer();
+        }}
+        onNext={() => moveToQuestion(currentIndex + 1)}
+        onSubmit={() => {
+          void handleSubmit();
+        }}
+      />
 
-          {submitError ? (
-            <div role="alert" aria-live="polite" className="rounded-2xl border border-error-100 bg-error-50 p-4 text-sm text-error-800">
-              {submitError}
-            </div>
-          ) : null}
+      <QuizPaletteCard
+        questionIds={quiz.questions.map((question) => question.id)}
+        currentQuestionId={currentQuestion.id}
+        flaggedSet={flaggedSet}
+        answers={answers}
+        isSubmitting={isSubmitting}
+        setQuestionRef={(questionId, node) => {
+          questionRefs.current[questionId] = node;
+        }}
+        onSelectQuestion={moveToQuestion}
+        answeredCount={answeredCount}
+        flaggedCount={flaggedQuestionIds.length}
+        unansweredCount={unansweredCount}
+      />
 
-          <fieldset className="space-y-3" aria-describedby={summaryId}>
-            <legend className="sr-only">Chọn một đáp án</legend>
-            {currentQuestion.options.map((option) => {
-              const inputId = `${currentQuestion.id}-${option.id}`;
-              const isChecked = currentAnswer === option.id;
-
-              return (
-                <label
-                  key={option.id}
-                  htmlFor={inputId}
-                  className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition-colors ${
-                    isChecked
-                      ? "border-brand-200 bg-brand-50"
-                      : "border-ink-100 bg-white hover:border-brand-200 hover:bg-brand-50/40"
-                  }`}
-                >
-                  <input
-                    id={inputId}
-                    type="radio"
-                    name={currentQuestion.id}
-                    value={option.id}
-                    checked={isChecked}
-                    onChange={() => selectOption(currentQuestion.id, option.id)}
-                    className="mt-1 h-4 w-4 border-ink-300 text-brand-600 focus:ring-brand-500"
-                  />
-                  <div>
-                    <p className="text-sm font-medium text-ink-900">{option.content}</p>
-                  </div>
-                </label>
-              );
-            })}
-          </fieldset>
-
-          <div id={summaryId} className="rounded-2xl border border-ink-100 bg-ink-50/70 p-4 text-sm leading-6 text-ink-600">
-            Bạn có thể xem lại câu đang làm, đáp án đã chọn và đánh dấu câu cần quay lại trước khi nộp bài.
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-100 pt-4">
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={() => moveToQuestion(currentIndex - 1)}
-                disabled={currentIndex === 0 || isSubmitting}
-              >
-                Câu trước
-              </Button>
-              <Button
-                variant={flaggedSet.has(currentQuestion.id) ? "secondary" : "outline"}
-                onClick={() => toggleFlag(currentQuestion.id)}
-                disabled={isSubmitting}
-              >
-                <Flag className="h-4 w-4" aria-hidden />
-                {flaggedSet.has(currentQuestion.id) ? "Đã đánh dấu" : "Đánh dấu xem lại"}
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                onClick={() => moveToQuestion(currentIndex + 1)}
-                disabled={currentIndex >= quiz.questions.length - 1 || isSubmitting}
-              >
-                Câu tiếp theo
-              </Button>
-              <Button onClick={() => void handleSubmit()} disabled={isSubmitting}>
-                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-                Nộp bài
-              </Button>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
-
-      <Card>
-          <CardHeader>
-            <CardTitle>Danh sách câu hỏi</CardTitle>
-          </CardHeader>
-
-        <CardBody className="space-y-4">
-          <div className="grid grid-cols-5 gap-2">
-            {quiz.questions.map((question, index) => (
-              <button
-                key={question.id}
-                ref={(node) => {
-                  questionRefs.current[question.id] = node;
-                }}
-                type="button"
-                onClick={() => moveToQuestion(index)}
-                className={`flex h-11 items-center justify-center rounded-xl border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${getQuestionTone(question.id, currentQuestion.id, flaggedSet, answers)}`}
-                aria-current={question.id === currentQuestion.id ? "step" : undefined}
-                aria-label={`Đi tới câu ${question.ordinal + 1}`}
-                disabled={isSubmitting}
-              >
-                {question.ordinal + 1}
-              </button>
-            ))}
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-              <div className="rounded-2xl border border-success-100 bg-success-50 px-4 py-3 text-sm text-success-800">
-                Đã trả lời: {answeredCount}
-              </div>
-              <div className="rounded-2xl border border-warning-100 bg-warning-50 px-4 py-3 text-sm text-warning-800">
-                Đã đánh dấu: {flaggedQuestionIds.length}
-              </div>
-              <div className="rounded-2xl border border-ink-100 bg-ink-50 px-4 py-3 text-sm text-ink-700">
-                Chưa trả lời: {unansweredCount}
-              </div>
-
-          </div>
-          <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4 text-sm leading-6 text-brand-700">
-            Phần làm dở của bạn được giữ lại trên thiết bị này để có thể tiếp tục khi quay lại.
-          </div>
-        </CardBody>
-      </Card>
+      <QuizLeaveDialog
+        isOpen={isLeaveDialogOpen}
+        isLeaving={isLeaving}
+        onClose={() => {
+          if (isLeaving) {
+            return;
+          }
+          setIsLeaveDialogOpen(false);
+        }}
+        onConfirmLeave={() => {
+          void leaveQuiz();
+        }}
+      />
     </section>
   );
 }

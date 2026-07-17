@@ -1,4 +1,4 @@
-import { IsEnum, IsInt, Max, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 import { IsNonBlankString } from '../../../common/validators/is-non-blank-string.validator';
@@ -8,6 +8,19 @@ import { DocumentType } from '../enums/document-type.enum';
 const MAX_SIZE_BYTES = 1024 * 1024 * 1024;
 
 export class CreateUploadUrlDto {
+  @ApiProperty({ enum: ['PLAN', 'CUSTOM'], example: 'PLAN' })
+  @IsEnum(['PLAN', 'CUSTOM'])
+  modelSelectionKind!: 'PLAN' | 'CUSTOM';
+
+  @ApiProperty({ example: 'platform-default', required: false, nullable: true })
+  @ValidateIf((dto: CreateUploadUrlDto) => dto.modelSelectionKind === 'PLAN')
+  @IsNonBlankString()
+  platformModelId?: string;
+
+  @ApiProperty({ format: 'uuid', required: false, nullable: true })
+  @ValidateIf((dto: CreateUploadUrlDto) => dto.modelSelectionKind === 'CUSTOM')
+  @IsUUID()
+  customModelConfigId?: string;
   @ApiProperty({
     description: 'Original file name, used only as display metadata.',
     example: 'bai-giang-cau-truc-du-lieu.pdf',

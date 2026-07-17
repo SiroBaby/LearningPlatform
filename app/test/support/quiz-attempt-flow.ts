@@ -53,6 +53,14 @@ interface AttemptResultBody {
   readonly submittedAt: string;
 }
 
+interface PracticeFeedbackBody {
+  readonly citation: unknown;
+  readonly explanation: string;
+  readonly isCorrect: boolean;
+  readonly questionId: string;
+  readonly selectedOptionId: string;
+}
+
 export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Promise<void> {
   const servedQuiz = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}`, {
     headers: fixture.ownerHeaders(fixture.ownerId),
@@ -76,6 +84,53 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
   if (!correctOption) {
     throw new Error('Quiz fixture requires one correct Option');
   }
+
+  const incorrectOption = fixture.options.find((option) => !option.isCorrect);
+  if (!incorrectOption) {
+    throw new Error('Quiz fixture requires one incorrect Option');
+  }
+
+  const practiceFeedback = await fixture.request(
+    `/api/v1/quizzes/${fixture.quiz.id}/practice-feedback`,
+    {
+      method: 'POST',
+      headers: fixture.ownerHeaders(fixture.ownerId),
+      body: JSON.stringify({ optionId: incorrectOption.id, questionId: fixture.question.id }),
+    },
+  );
+  expect(practiceFeedback.status).toBe(200);
+  const practiceBody = await practiceFeedback.json() as PracticeFeedbackBody;
+  expect(practiceBody).toEqual({
+    citation: fixture.question.citation,
+    explanation: fixture.question.explanation,
+    isCorrect: false,
+    questionId: fixture.question.id,
+    selectedOptionId: incorrectOption.id,
+  });
+  expect(JSON.stringify(practiceBody)).not.toContain('correctOptionId');
+  expect(JSON.stringify(practiceBody)).not.toContain('correctOptionContent');
+  expect(await fixture.dataSource.getRepository(AttemptEntity).count()).toBe(0);
+  expect(await fixture.dataSource.getRepository(AttemptAnswerEntity).count()).toBe(0);
+
+  const invalidPracticeFeedback = await fixture.request(
+    `/api/v1/quizzes/${fixture.quiz.id}/practice-feedback`,
+    {
+      method: 'POST',
+      headers: fixture.ownerHeaders(fixture.ownerId),
+      body: JSON.stringify({ optionId: randomUUID(), questionId: fixture.question.id }),
+    },
+  );
+  expect(invalidPracticeFeedback.status).toBe(400);
+
+  const hiddenPracticeFeedback = await fixture.request(
+    `/api/v1/quizzes/${fixture.quiz.id}/practice-feedback`,
+    {
+      method: 'POST',
+      headers: fixture.ownerHeaders(fixture.otherOwnerId),
+      body: JSON.stringify({ optionId: correctOption.id, questionId: fixture.question.id }),
+    },
+  );
+  expect(hiddenPracticeFeedback.status).toBe(404);
 
   const submitted = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}/attempts`, {
     method: 'POST',

@@ -51,6 +51,22 @@ export class GradedQuestionResult {
   selectedOptionId!: string;
 }
 
+export class PracticeFeedbackResult {
+  citation!: CitationCandidate;
+
+  @AutoMap()
+  explanation!: string;
+
+  @AutoMap()
+  isCorrect!: boolean;
+
+  @AutoMap()
+  questionId!: string;
+
+  @AutoMap()
+  selectedOptionId!: string;
+}
+
 export class GradedAttemptResult {
   @AutoMap()
   id!: string;

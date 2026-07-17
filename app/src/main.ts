@@ -1,25 +1,20 @@
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { randomUUID } from 'crypto';
-import type { Request, Response, NextFunction } from 'express';
 
 import { AppModule } from './app.module';
+import { createApplicationLogger } from './common/logging/application-logger.factory';
+import { createRequestLifecycleMiddleware } from './common/logging/request-lifecycle.middleware';
 import { ApplicationConfigService } from './config/application-config.service';
 import { createSwaggerBasicAuthMiddleware } from './common/swagger/swagger-basic-auth.middleware';
 
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+async function bootstrap(): Promise<void> {
+  const logger = createApplicationLogger({ environment: process.env.NODE_ENV });
+  const app = await NestFactory.create(AppModule, { logger });
+  app.enableShutdownHooks();
   const config = app.get(ApplicationConfigService);
 
-  // correlationId: tiền đề cho trace xuyên hệ thống (xem 06/08-docs)
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    const correlationId =
-      (req.headers['x-correlation-id'] as string) ?? randomUUID();
-    req.headers['x-correlation-id'] = correlationId;
-    res.setHeader('x-correlation-id', correlationId);
-    next();
-  });
+  app.use(createRequestLifecycleMiddleware());
 
   app.setGlobalPrefix('api/v1');
 
@@ -67,10 +62,13 @@ async function bootstrap() {
   }
 
   await app.listen(application.port);
-  Logger.log(
-    `App listening on http://localhost:${application.port}/api/v1`,
-    'Bootstrap',
-  );
+  logger.log({ event: 'api.started', port: application.port, runtime: 'api' }, 'ApiBootstrap');
 }
 
-void bootstrap();
+void bootstrap().catch(() => {
+  createApplicationLogger({ environment: process.env.NODE_ENV }).error(
+    { event: 'api.bootstrap.failed', runtime: 'api' },
+    undefined,
+    'ApiBootstrap',
+  );
+});

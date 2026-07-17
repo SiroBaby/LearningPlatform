@@ -3,6 +3,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Inject,
   Param,
   ParseUUIDPipe,
@@ -23,11 +25,14 @@ import { MAPPER } from '../../common/mapping/mapper.provider';
 import {
   GradedAttemptResult,
   PersistedAttemptResult,
+  PracticeFeedbackResult,
   ServedQuizResult,
 } from './contracts/quiz-attempt.result';
 import { GradedAttemptResponseDto } from './dto/graded-attempt.response.dto';
 import { AttemptResultResponseDto } from './dto/attempt-result.response.dto';
 import { QuizResponseDto } from './dto/quiz.response.dto';
+import { PracticeFeedbackRequestDto } from './dto/practice-feedback.request.dto';
+import { PracticeFeedbackResponseDto } from './dto/practice-feedback.response.dto';
 import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
 import { AssessmentService } from './assessment.service';
 
@@ -50,6 +55,24 @@ export class AssessmentController {
   ): Promise<QuizResponseDto> {
     const result = await this.assessment.getQuiz(ownerId, quizId);
     return this.mapper.map(result, ServedQuizResult, QuizResponseDto);
+  }
+
+  @Post(':id/practice-feedback')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Grade one owned Quiz Question without creating an Attempt.' })
+  @ApiBadRequestResponse({ description: 'Question or Option does not belong to the Quiz.' })
+  @ApiNotFoundResponse({ description: 'Quiz does not belong to the current Owner.' })
+  @ApiOkResponse({ type: PracticeFeedbackResponseDto })
+  async getPracticeFeedback(
+    @CurrentUser() ownerId: string,
+    @Param('id', new ParseUUIDPipe()) quizId: string,
+    @Body() dto: PracticeFeedbackRequestDto,
+  ): Promise<PracticeFeedbackResponseDto> {
+    const result = await this.assessment.getPracticeFeedback(ownerId, quizId, {
+      optionId: dto.optionId,
+      questionId: dto.questionId,
+    });
+    return this.mapper.map(result, PracticeFeedbackResult, PracticeFeedbackResponseDto);
   }
 
   @Get(':id/attempts/:attemptId')

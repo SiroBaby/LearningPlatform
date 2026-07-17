@@ -3,6 +3,11 @@ import type {
   Phase0ConfirmDocumentResponse,
   Phase0Document,
   Phase0DocumentQuizResponse,
+  Phase0EstimateRequest,
+  Phase0EstimateResponse,
+  Phase0ModelOption,
+  Phase0PracticeFeedbackRequest,
+  Phase0PracticeFeedbackResponse,
   Phase0QuizResponse,
   Phase0SubmitQuizAttemptRequest,
   Phase0SubmitQuizAttemptResponse,
@@ -15,6 +20,9 @@ import {
   mapDocumentsResponse,
   mapDocumentQuizResponse,
   mapDocumentResponse,
+  mapEstimateResponse,
+  mapModelOptionsResponse,
+  mapPracticeFeedbackResponse,
   mapQuizResponse,
   mapSubmitQuizAttemptResponse,
   mapUploadUrlResponse,
@@ -87,6 +95,14 @@ export function getPhase0Document(documentId: string): Promise<Phase0Document> {
   return requestPhase0Api(`/api/phase0/documents/${documentId}`, "GET", mapDocumentResponse);
 }
 
+export function getPhase0ModelOptions(): Promise<readonly Phase0ModelOption[]> {
+  return requestPhase0Api("/api/phase0/ai/models", "GET", mapModelOptionsResponse);
+}
+
+export function estimatePhase0DocumentUpload(request: Phase0EstimateRequest): Promise<Phase0EstimateResponse> {
+  return requestPhase0Api("/api/phase0/documents/estimate", "POST", mapEstimateResponse, request);
+}
+
 export function createPhase0UploadUrl(request: Phase0UploadUrlRequest): Promise<Phase0UploadUrlResponse> {
   return requestPhase0Api("/api/phase0/documents/upload-url", "POST", mapUploadUrlResponse, request);
 }
@@ -101,6 +117,18 @@ export function getPhase0DocumentQuiz(documentId: string): Promise<Phase0Documen
 
 export function getPhase0Quiz(quizId: string): Promise<Phase0QuizResponse> {
   return requestPhase0Api(`/api/phase0/quizzes/${quizId}`, "GET", mapQuizResponse);
+}
+
+export function requestPhase0PracticeFeedback(
+  quizId: string,
+  request: Phase0PracticeFeedbackRequest,
+): Promise<Phase0PracticeFeedbackResponse> {
+  return requestPhase0Api(
+    `/api/phase0/quizzes/${quizId}/practice-feedback`,
+    "POST",
+    mapPracticeFeedbackResponse,
+    request,
+  );
 }
 
 export function submitPhase0QuizAttempt(

@@ -57,7 +57,19 @@ export class ExtractionJobProcessor implements JobProcessor {
     const persistedChunks = await this.chunks.findForDocument(job.documentId, job.ownerId);
     await this.quizGeneration.generate({
       chunks: persistedChunks,
-      job: { documentId: job.documentId, ownerId: job.ownerId },
+      job: {
+        attempt: job.attempts,
+        documentId: job.documentId,
+        id: job.id,
+        ownerId: job.ownerId,
+        selection: job.modelSelectionKind === null
+          ? null
+          : {
+              customModelConfigId: job.customModelConfigId,
+              kind: job.modelSelectionKind,
+              platformModelId: job.platformModelId,
+            },
+      },
     });
   }
 }

@@ -36,7 +36,7 @@ describe('ExtractionJobProcessor', () => {
     }));
     expect(generator.generate).toHaveBeenCalledWith({
       chunks: [],
-      job: { documentId: job.documentId, ownerId: job.ownerId },
+      job: expect.objectContaining({ documentId: job.documentId, ownerId: job.ownerId }),
     });
   });
 
@@ -126,6 +126,12 @@ function createJob(): ProcessingJob {
     correlationId: randomUUID(),
     attempts: 0,
     errorMessage: null,
+    estimatedCredits: null,
+    settledCredits: null,
+    budgetStatus: null,
+    customModelConfigId: null,
+    modelSelectionKind: null,
+    platformModelId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };

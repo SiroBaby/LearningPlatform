@@ -7,7 +7,9 @@ import {
   describe,
   expect,
   it,
+  jest,
 } from '@jest/globals';
+import { ConsoleLogger } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 
 import { startTestDb, TestDb } from '../../test-support/test-db';
@@ -115,6 +117,51 @@ describe('JobPoller.tick', () => {
       errorMessage: 'Uploaded PDF has no extractable text layer',
       status: 'FAILED',
     });
+  });
+
+  it('logs the claimed and completed lifecycle with safe job identifiers', async () => {
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
+    const id = await seedPending();
+
+    await poller.tick();
+
+    expect(logger).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'ai.job.claimed',
+        jobId: id,
+        jobType: JobType.FULL_PIPELINE,
+      }),
+    );
+    expect(logger).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'ai.job.completed',
+        jobId: id,
+        jobType: JobType.FULL_PIPELINE,
+      }),
+    );
+  });
+
+  it('logs only a safe failure code after a claimed job fails', async () => {
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'warn').mockImplementation(() => undefined);
+    processor = {
+      process: async () => {
+        throw new Error('s3://private-bucket/secret.pdf');
+      },
+    };
+    poller = new JobPoller(new ProcessingJobRepository(ds), processor);
+    const id = await seedPending();
+
+    await poller.tick();
+
+    expect(logger).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: DocumentProcessingFailureCode.PROCESSING_FAILED,
+        event: 'ai.job.failed',
+        jobId: id,
+        jobType: JobType.FULL_PIPELINE,
+      }),
+    );
+    expect(JSON.stringify(logger.mock.calls)).not.toContain('private-bucket');
   });
 
   it('rolls back the final job state when its return outbox write fails', async () => {

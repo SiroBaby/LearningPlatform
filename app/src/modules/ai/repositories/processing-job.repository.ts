@@ -12,6 +12,8 @@ import {
 import { AiOutboxEvent } from '../entities/ai-outbox-event.entity';
 import { ProcessingJob } from '../entities/processing-job.entity';
 import { JobStatus } from '../enums/job-status.enum';
+import type { ProcessingJobModelSelection } from '../contracts/processing-job-model-selection.port';
+import type { ProcessingJobBudget } from '../contracts/processing-job-budget.port';
 
 export interface ProcessingJobAttempt {
   readonly attempts: number;
@@ -19,7 +21,7 @@ export interface ProcessingJobAttempt {
 }
 
 @Injectable()
-export class ProcessingJobRepository extends BaseRepository<ProcessingJob> {
+export class ProcessingJobRepository extends BaseRepository<ProcessingJob> implements ProcessingJobBudget, ProcessingJobModelSelection {
   constructor(private readonly dataSource: DataSource) {
     super(ProcessingJob, dataSource);
   }
@@ -29,8 +31,8 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> {
       `
       INSERT INTO "ai"."processing_jobs"
         ("document_id", "owner_id", "job_type", "status",
-         "idempotency_key", "correlation_id", "attempts")
-      VALUES ($1, $2, $3, 'PENDING', $4, $5, 0)
+         "idempotency_key", "correlation_id", "attempts", "model_selection_kind", "platform_model_id", "custom_model_config_id")
+      VALUES ($1, $2, $3, 'PENDING', $4, $5, 0, $6, $7, $8)
       ON CONFLICT ("document_id", "job_type") DO UPDATE
         SET "status"     = 'PENDING',
             "attempts"   = "processing_jobs"."attempts" + 1,
@@ -43,6 +45,9 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> {
         command.jobType,
         idempotencyKey,
         command.correlationId,
+        command.selection?.kind ?? null,
+        command.selection?.platformModelId ?? null,
+        command.selection?.customModelConfigId ?? null,
       ],
     );
   }
@@ -89,6 +94,39 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> {
       JobStatus.COMPLETED,
       DocumentProcessingResultStatus.READY,
       null,
+    );
+  }
+
+  async ensureDefaultPlatformModel(input: {
+    readonly attempt: number;
+    readonly jobId: string;
+    readonly modelId: string;
+    readonly ownerId: string;
+  }): Promise<boolean> {
+    const result = await this.query(
+      `
+      UPDATE "ai"."processing_jobs"
+      SET "model_selection_kind" = 'PLAN', "platform_model_id" = $4, "updated_at" = now()
+      WHERE "id" = $1 AND "attempts" = $2 AND "owner_id" = $3 AND "status" = 'RUNNING'
+        AND "model_selection_kind" IS NULL AND "platform_model_id" IS NULL AND "custom_model_config_id" IS NULL
+      `,
+      [input.jobId, input.attempt, input.ownerId, input.modelId],
+    );
+    return result.affected === 1;
+  }
+
+  async record(input: {
+    readonly attempt: number;
+    readonly budgetStatus: string;
+    readonly estimatedCredits: number;
+    readonly jobId: string;
+    readonly settledCredits: number;
+  }): Promise<void> {
+    await this.query(
+      `UPDATE "ai"."processing_jobs"
+       SET "estimated_credits" = $3, "settled_credits" = $4, "budget_status" = $5, "updated_at" = now()
+       WHERE "id" = $1 AND "attempts" = $2 AND "status" = 'RUNNING'`,
+      [input.jobId, input.attempt, input.estimatedCredits, input.settledCredits, input.budgetStatus],
     );
   }
 
@@ -146,9 +184,13 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> {
         eventType: DOCUMENT_PROCESSING_RESULT_EVENT,
         payload: {
           documentId: job.documentId,
+          budgetStatus: job.budgetStatus ?? (errorCode === DocumentProcessingFailureCode.BUDGET_EXHAUSTED ? 'EXHAUSTED' : null),
+          estimatedCredits: job.estimatedCredits === null ? null : Number(job.estimatedCredits),
+          estimateStatus: job.estimatedCredits === null ? null : 'AUTHORITATIVE',
           errorCode,
           errorMessage: this.failureMessage(errorCode),
           ownerId: job.ownerId,
+          settledCredits: job.settledCredits === null ? null : Number(job.settledCredits),
           status: documentStatus,
           version: DOCUMENT_PROCESSING_RESULT_VERSION,
         },
@@ -164,6 +206,9 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> {
     }
     if (errorCode === DocumentProcessingFailureCode.CHUNK_RESOURCE_LIMIT_EXCEEDED) {
       return 'Document exceeds configured chunk processing limits';
+    }
+    if (errorCode === DocumentProcessingFailureCode.BUDGET_EXHAUSTED) {
+      return 'Processing budget was exhausted';
     }
     if (errorCode === DocumentProcessingFailureCode.PROCESSING_FAILED) {
       return 'Processing failed';

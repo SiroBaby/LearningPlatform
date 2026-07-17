@@ -33,8 +33,35 @@ export class ApplicationConfigService {
       CONFIG_PATH.ai.openai.structuredOutputMode,
     );
     const configuredTransport = this.config.get<string>(CONFIG_PATH.ai.openai.transport);
+    const credentialEncryptionMode = this.config.get<string>(CONFIG_PATH.ai.credentialEncryption.mode) ?? 'local';
+    if (credentialEncryptionMode !== 'local' && credentialEncryptionMode !== 'kms') {
+      throw new Error('AI_CREDENTIAL_ENCRYPTION_MODE must be local or kms');
+    }
+    const credentialEncryption = {
+      key: this.config.get<string>(CONFIG_PATH.ai.credentialEncryption.key),
+      mode: credentialEncryptionMode,
+    } as const;
+    const platformModels = this.config.get<AiSettings['platformModels']>('ai.platformModels') ?? [{
+      creditPerInputToken: 1,
+      creditPerOutputToken: 2,
+      id: 'platform-default',
+      label: 'Fast platform model',
+      model: model ?? 'gpt-4.1-mini',
+      planIds: ['free', 'paid'],
+    }];
+    if (platformModels.length === 0 || platformModels.some((model) => !model.id.trim() || !model.model.trim() || model.creditPerInputToken < 0 || model.creditPerOutputToken < 0)) {
+      throw new Error('AI platform model catalog is invalid');
+    }
+    const plans = this.config.get<AiSettings['plans']>('ai.plans') ?? {
+      free: { creditBalance: 10_000 },
+      paid: { creditBalance: 100_000 },
+    };
+    if (!plans || !Number.isSafeInteger(plans.free.creditBalance) || plans.free.creditBalance < 0 || !Number.isSafeInteger(plans.paid.creditBalance) || plans.paid.creditBalance < 0) {
+      throw new Error('AI plan configuration is invalid');
+    }
     if (provider === 'fake') {
       return {
+        credentialEncryption,
         openai: {
           apiKey,
           baseUrl: configuredBaseUrl,
@@ -45,6 +72,8 @@ export class ApplicationConfigService {
           transport: undefined,
         },
         provider,
+        plans,
+        platformModels,
       };
     }
     if (
@@ -61,6 +90,7 @@ export class ApplicationConfigService {
     const structuredOutputMode = this.openAiStructuredOutputMode(configuredStructuredOutputMode);
     const transport = this.openAiTransport(configuredTransport);
     return {
+      credentialEncryption,
       openai: {
         apiKey,
         baseUrl,
@@ -71,6 +101,8 @@ export class ApplicationConfigService {
         transport,
       },
       provider,
+      plans,
+      platformModels,
     };
   }
 

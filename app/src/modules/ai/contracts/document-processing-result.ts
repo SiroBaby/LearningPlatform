@@ -8,6 +8,7 @@ export enum DocumentProcessingResultStatus {
 
 export enum DocumentProcessingFailureCode {
   CHUNK_RESOURCE_LIMIT_EXCEEDED = 'CHUNK_RESOURCE_LIMIT_EXCEEDED',
+  BUDGET_EXHAUSTED = 'BUDGET_EXHAUSTED',
   EXTRACTION_OBJECT_NOT_FOUND = 'EXTRACTION_OBJECT_NOT_FOUND',
   EXTRACTION_OBJECT_TOO_LARGE = 'EXTRACTION_OBJECT_TOO_LARGE',
   GENERATION_OUTPUT_INVALID = 'GENERATION_OUTPUT_INVALID',
@@ -19,10 +20,14 @@ export enum DocumentProcessingFailureCode {
 }
 
 export interface DocumentProcessingResult {
+  readonly budgetStatus: string | null;
   readonly documentId: string;
+  readonly estimatedCredits: number | null;
+  readonly estimateStatus: string | null;
   readonly errorCode: DocumentProcessingFailureCode | null;
   readonly errorMessage: string | null;
   readonly ownerId: string;
+  readonly settledCredits: number | null;
   readonly status: DocumentProcessingResultStatus;
   readonly version: typeof DOCUMENT_PROCESSING_RESULT_VERSION;
 }

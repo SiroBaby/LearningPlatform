@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
+import { createApplicationLogger } from '../../common/logging/application-logger.factory';
 import {
   DocumentProcessingFailureCode,
 } from './contracts/document-processing-result';
@@ -18,6 +19,8 @@ import { ProcessingJobRepository } from './repositories/processing-job.repositor
  */
 @Injectable()
 export class JobPoller {
+  private readonly logger = createApplicationLogger({ context: JobPoller.name });
+
   constructor(
     private readonly processingJobs: ProcessingJobRepository,
     @Inject(JOB_PROCESSOR) private readonly processor: JobProcessor,
@@ -27,16 +30,29 @@ export class JobPoller {
     const job = await this.processingJobs.claimPending();
     if (!job) return false;
     const attempt = { attempts: job.attempts, id: job.id };
+    const jobLog = {
+      attempt: job.attempts,
+      correlationId: job.correlationId,
+      jobId: job.id,
+      jobType: job.jobType,
+      runtime: 'worker',
+    };
+    this.logger.log({ event: 'ai.job.claimed', ...jobLog });
     try {
       await this.processor.process(job);
-      await this.processingJobs.complete(attempt);
+      if (await this.processingJobs.complete(attempt)) {
+        this.logger.log({ event: 'ai.job.completed', ...jobLog });
+      }
     } catch (error) {
-      await this.processingJobs.fail(
+      const errorCode = error instanceof ExtractionError
+        ? error.code
+        : DocumentProcessingFailureCode.PROCESSING_FAILED;
+      if (await this.processingJobs.fail(
         attempt,
-        error instanceof ExtractionError
-          ? error.code
-          : DocumentProcessingFailureCode.PROCESSING_FAILED,
-      );
+        errorCode,
+      )) {
+        this.logger.warn({ errorCode, event: 'ai.job.failed', ...jobLog });
+      }
     }
     return true;
   }

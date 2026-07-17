@@ -50,7 +50,7 @@ export default async function QuizPlayPage({ params, searchParams }: QuizPlayPag
       title={mode === "test" ? "Quiz · Chế độ kiểm tra" : "Quiz · Chế độ luyện tập"}
       subtitle="Trả lời từng câu, đánh dấu câu cần xem lại và nộp bài khi đã sẵn sàng."
     >
-      <QuizPlayScreen quiz={quiz} mode={mode} resume={resume} />
+      <QuizPlayScreen key={`${quiz.id}:${mode}:${resume ? "resume" : "fresh"}`} quiz={quiz} mode={mode} resume={resume} />
     </LearnerShell>
   );
 }

@@ -6,6 +6,18 @@ export const phase0DocumentStatuses = ["UPLOADED", "PROCESSING", "READY", "FAILE
 
 export type Phase0DocumentStatus = (typeof phase0DocumentStatuses)[number];
 
+export const phase0ModelSelectionKinds = ["PLAN", "CUSTOM"] as const;
+
+export type Phase0ModelSelectionKind = (typeof phase0ModelSelectionKinds)[number];
+
+export const phase0EstimatePrecisionLevels = ["COARSE"] as const;
+
+export type Phase0EstimatePrecision = (typeof phase0EstimatePrecisionLevels)[number];
+
+export const phase0BudgetStatuses = ["WITHIN_BUDGET", "EXCEEDED"] as const;
+
+export type Phase0BudgetStatus = (typeof phase0BudgetStatuses)[number];
+
 export interface Phase0Document {
   readonly id: string;
   readonly originalName: string;
@@ -16,14 +28,65 @@ export interface Phase0Document {
   readonly durationSec: number | null;
   readonly pageCount: number | null;
   readonly errorMessage: string | null;
+  readonly selectedModelKind: Phase0ModelSelectionKind | null;
+  readonly selectedModelLabel: string | null;
+  readonly estimateStatus: Phase0EstimatePrecision | null;
+  readonly estimatedCredits: number | null;
+  readonly settledCredits: number | null;
+  readonly budgetStatus: Phase0BudgetStatus | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
-export interface Phase0UploadUrlRequest {
+export interface Phase0PlanModelOption {
+  readonly id: string;
+  readonly kind: "PLAN";
+  readonly label: string;
+}
+
+export interface Phase0CustomModelOption {
+  readonly id: string;
+  readonly kind: "CUSTOM";
+  readonly label: string;
+}
+
+export type Phase0ModelOption = Phase0PlanModelOption | Phase0CustomModelOption;
+
+export type Phase0UploadModelSelection =
+  | {
+      readonly modelSelectionKind: "PLAN";
+      readonly platformModelId: string;
+      readonly customModelConfigId?: never;
+    }
+  | {
+      readonly modelSelectionKind: "CUSTOM";
+      readonly customModelConfigId: string;
+      readonly platformModelId?: never;
+    };
+
+export type Phase0UploadUrlRequest = {
   readonly originalName: string;
   readonly type: "PDF" | "TEXT";
   readonly sizeBytes: number;
+} & Phase0UploadModelSelection;
+
+export type Phase0EstimateRequest = {
+  readonly type: "PDF" | "TEXT";
+  readonly sizeBytes: number;
+} & Phase0UploadModelSelection;
+
+export interface Phase0EstimateResponse {
+  readonly estimatedCredits: number;
+  readonly precision: Phase0EstimatePrecision;
+  readonly selectedModelKind: Phase0ModelSelectionKind;
+  readonly selectedModelLabel: string;
+}
+
+export interface Phase0ModelOptionGroup {
+  readonly kind: Phase0ModelSelectionKind;
+  readonly title: string;
+  readonly description: string;
+  readonly options: readonly Phase0ModelOption[];
 }
 
 export interface Phase0UploadUrlResponse {
@@ -67,6 +130,23 @@ export interface Phase0SubmitQuizAttemptRequest {
     readonly questionId: string;
     readonly optionId: string;
   }[];
+}
+
+export interface Phase0PracticeFeedbackRequest {
+  readonly questionId: string;
+  readonly optionId: string;
+}
+
+export interface Phase0PracticeFeedbackResponse {
+  readonly questionId: string;
+  readonly selectedOptionId: string;
+  readonly isCorrect: boolean;
+  readonly explanation: string;
+  readonly citation: {
+    readonly chunkId: string;
+    readonly locator: Phase0CitationLocator;
+    readonly snippet: string;
+  };
 }
 
 export interface Phase0SubmitQuizAttemptResponse {

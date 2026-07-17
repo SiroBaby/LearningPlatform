@@ -59,6 +59,31 @@ describe('QuizRepository attempt flow', () => {
     await expect(repository.findForGradingByOwnerId(randomUUID(), fixture.quizId)).resolves.toBeNull();
   });
 
+  it('orders legacy duplicate ordinals by Question ID for serving and grading', async () => {
+    const fixture = await insertQuizFixture();
+    const secondChunkId = randomUUID();
+    const secondQuestionId = randomUUID();
+    await db.client.query(`
+      INSERT INTO "quiz"."questions"
+        ("id", "quiz_id", "owner_id", "chunk_id", "chunk_index", "ordinal", "stem", "explanation", "citation_ref", "idempotency_key")
+      VALUES ($1, $2, $3, $4, 1, 0, 'Second question?', 'Second explanation', $5::jsonb, $6)
+    `, [
+      secondQuestionId,
+      fixture.quizId,
+      fixture.ownerId,
+      secondChunkId,
+      JSON.stringify({ ...fixture.citation, chunkId: secondChunkId }),
+      randomHash(),
+    ]);
+    const expectedQuestionIds = [fixture.questionId, secondQuestionId].sort();
+
+    const served = await repository.findServedByOwnerId(fixture.ownerId, fixture.quizId);
+    const grading = await repository.findForGradingByOwnerId(fixture.ownerId, fixture.quizId);
+
+    expect(served?.questions.map((question) => question.id)).toEqual(expectedQuestionIds);
+    expect(grading?.questions.map((question) => question.id)).toEqual(expectedQuestionIds);
+  });
+
   it('discovers only the owned Quiz summary for a Document', async () => {
     const fixture = await insertQuizFixture();
 

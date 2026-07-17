@@ -72,6 +72,7 @@
 - Persist một Quiz per document/prompt-version, không quiz per chunk.
 - Citation tự chứa `{ chunkId, locator, snippet }` để serve-side không query `ai.chunks`.
 - Quiz serve projection phải tách khỏi grading projection và không được select/map `is_correct`, explanation hoặc citation trước khi Attempt được nộp.
+- Ordinal của Question trong một Quiz mới phải liên tục `0..N-1` sau validation/deduplication; khi đọc dữ liệu cũ có ordinal trùng, luôn dùng thêm khóa ổn định làm tie-breaker và không coi ordinal persisted là số hiển thị duy nhất cho người học.
 
 ## Verification
 
@@ -89,5 +90,8 @@
 - Trước khi gọi một flow là production-ready, phải xác minh end-to-end behavior, failure handling, bounded resource usage, graceful shutdown và configuration validation; không dựa vào happy path hoặc hard-code interval/batch/credential.
 - Background processing phải chạy trong worker entrypoint/deployment role riêng, có typed configuration cho throughput/backoff, không overlap một worker loop, và không làm HTTP API process chạy worker ngầm.
 - LLM provider và credentials chỉ được khởi tạo trong worker composition root; API process không giữ API key. Production worker phải fail-fast nếu provider thật hoặc credentials/model bị thiếu, và SDK logging phải tắt để không lộ source chunk/prompt.
+- Entitlement, credit wallet và credit ledger thuộc schema `course`; schema `ai` chỉ giữ execution snapshot và provider usage. Không được gom billing transaction vào AI repository hoặc query chéo schema để tiện settlement.
+- Provider dispatch phải có usage record idempotent trước call và cập nhật usage thật sau response. Khi dispatch không xác định được usage, giữ phần reservation chưa rõ bằng trạng thái hold; không được mặc định usage bằng 0 hoặc hoàn toàn bộ credit.
 - Mọi worker write/finalize phải mang attempt fence đã claim, dùng budget + batch hữu hạn, và chỉ log mã/lời nhắn an toàn thay vì payload hoặc lỗi thô.
+- API/worker production log dùng JSON event có tên ổn định và metadata truy vết tối thiểu (`correlationId`, `cycleId`, `jobId`, status/duration khi phù hợp); development giữ format Nest có màu, level và context, đồng thời format event metadata trên một dòng dễ đọc. Polling cycle thành công hoặc không có việc phải im lặng; chỉ log startup/shutdown, công việc thật và failure/backoff. Không log request body, query string, source text, prompt, đáp án, credential, raw error message hoặc stack.
 - Ưu tiên tái sử dụng module, port và repository hiện hữu; không duplicate orchestration hoặc tạo abstraction mới nếu composition root hiện có đủ. Source code theo runtime concern (`modules/`, `worker/`, `config/`); e2e test đặt ngoài `src/`.

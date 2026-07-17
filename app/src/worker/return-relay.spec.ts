@@ -75,9 +75,13 @@ describe('ReturnRelay', () => {
         eventType: 'DocumentProcessingResult',
         payload: {
           documentId: document.id,
+          budgetStatus: status === DocumentStatus.FAILED ? 'EXHAUSTED' : 'SETTLED',
+          estimatedCredits: 100,
+          estimateStatus: 'AUTHORITATIVE',
           errorCode: null,
           errorMessage: status === DocumentStatus.FAILED ? 'Processing failed' : null,
           ownerId,
+          settledCredits: status === DocumentStatus.FAILED ? 0 : 25,
           status,
           version: 1,
         },
@@ -85,19 +89,24 @@ describe('ReturnRelay', () => {
     );
   }
 
-  it('projects READY then marks ai outbox published', async () => {
+  it('idempotently projects READY then marks ai outbox published', async () => {
     const document = await seedProcessingDocument();
     const event = await seedResult(document, DocumentStatus.READY);
 
+    await relay.pump(10);
     await relay.pump(10);
 
     expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(
       DocumentStatus.READY,
     );
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+    expect((await documents.findOneByOrFail({ id: document.id })).budgetStatus).toBe('SETTLED');
+    expect((await documents.findOneByOrFail({ id: document.id })).estimateStatus).toBe('AUTHORITATIVE');
+    expect((await documents.findOneByOrFail({ id: document.id })).estimatedCredits).toBe('100');
+    expect((await documents.findOneByOrFail({ id: document.id })).settledCredits).toBe('25');
   });
 
-  it('retries idempotently after a projection failure', async () => {
+  it('idempotently projects FAILED after a projection failure retry', async () => {
     const document = await seedProcessingDocument();
     const event = await seedResult(document, DocumentStatus.FAILED);
     const failingProjection: DocumentStatusProjection = {
@@ -145,6 +154,40 @@ describe('ReturnRelay', () => {
       'The uploaded PDF does not contain extractable text.',
     );
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+  });
+
+  it('preserves the Course coarse estimate when a legacy result has no authoritative estimate', async () => {
+    const document = await documents.save(documents.create({
+      ownerId: randomUUID(),
+      originalName: 'lecture.pdf',
+      sizeBytes: 100,
+      status: DocumentStatus.PROCESSING,
+      storageRef: `documents/${randomUUID()}.pdf`,
+      type: DocumentType.PDF,
+      budgetStatus: 'CUSTOM_ZERO_COST',
+      estimatedCredits: 0,
+      estimateStatus: 'COARSE',
+    }));
+    await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        documentId: document.id,
+        errorCode: null,
+        errorMessage: null,
+        ownerId: document.ownerId,
+        status: DocumentStatus.READY,
+        version: 1,
+      },
+    }));
+
+    await relay.pump(10);
+
+    const projected = await documents.findOneByOrFail({ id: document.id });
+    expect(projected.budgetStatus).toBe('CUSTOM_ZERO_COST');
+    expect(projected.estimatedCredits).toBe('0');
+    expect(projected.estimateStatus).toBe('COARSE');
+    expect(projected.status).toBe(DocumentStatus.READY);
   });
 
   it('accepts the safe chunk resource-limit failure code', async () => {

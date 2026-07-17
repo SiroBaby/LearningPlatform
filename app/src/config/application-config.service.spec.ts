@@ -32,7 +32,7 @@ describe('ApplicationConfigService', () => {
       app: { env: 'development' },
     });
 
-    expect(new ApplicationConfigService(config).ai).toEqual({
+    expect(new ApplicationConfigService(config).ai).toMatchObject({
       openai: {
         apiKey: undefined,
         baseUrl: undefined,

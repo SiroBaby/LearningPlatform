@@ -21,11 +21,12 @@ import {
   GradedQuestionResult,
   PersistedAttemptQuestionResult,
   PersistedAttemptResult,
+  PracticeFeedbackResult,
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
 } from './contracts/quiz-attempt.result';
-import { gradeAttempt } from './domain/attempt';
+import { gradeAttempt, gradePracticeFeedback } from './domain/attempt';
 
 @Injectable()
 export class AssessmentService {
@@ -85,6 +86,22 @@ export class AssessmentService {
       )),
       score: result.attempt.score,
     });
+  }
+
+  async getPracticeFeedback(
+    ownerId: string,
+    quizId: string,
+    selection: AttemptSelection,
+  ): Promise<PracticeFeedbackResult> {
+    const quiz = await this.store.findForGradingByOwnerId(ownerId, quizId);
+    if (!quiz) {
+      throw new NotFoundException(`Quiz ${quizId} not found`);
+    }
+    const result = gradePracticeFeedback({ quiz, selection });
+    if (result.kind === 'invalid') {
+      throw new BadRequestException('Selected Option must belong to the specified Question');
+    }
+    return Object.assign(new PracticeFeedbackResult(), result.feedback);
   }
 
   async getAttemptResult(

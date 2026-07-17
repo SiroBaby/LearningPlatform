@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 
 import { StorageService } from '../../storage/storage.service';
 import {
@@ -13,10 +13,20 @@ import {
 } from '../../storage/contracts/storage-verifier.port';
 import { CreateUploadUrlCommand } from './contracts/create-upload-url.command';
 import { DocumentQuizResult } from './contracts/document-quiz.result';
+import { DocumentEstimateResult } from './contracts/document-estimate.result';
 import { resolveDocumentUploadPolicy } from './contracts/document-upload-policy';
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { Document } from './entities/document.entity';
 import { ContentRepository } from './repositories/content.repository';
+import {
+  MODEL_CATALOG,
+  type DocumentModelSelection,
+  type ModelCatalog,
+  type PlanModelCatalogItem,
+} from '../ai/contracts/model-selection.contracts';
+
+const COARSE_INPUT_TOKEN_BYTES = 4;
+const COARSE_OUTPUT_TOKEN_CAP = 256;
 
 @Injectable()
 export class ContentService {
@@ -27,6 +37,7 @@ export class ContentService {
     private readonly verifier: StorageVerifier,
     @Inject(QUIZ_DISCOVERY)
     private readonly quizzes: QuizDiscovery,
+    @Optional() @Inject(MODEL_CATALOG) private readonly models?: ModelCatalog,
   ) {}
 
   /**
@@ -39,13 +50,11 @@ export class ContentService {
     command: CreateUploadUrlCommand,
   ): Promise<UploadUrlResult> {
     const policy = resolveDocumentUploadPolicy(command.type, command.originalName);
+    const estimate = await this.estimateModelSelection(ownerId, command.sizeBytes, command.selection);
     const objectKey = `${ownerId}/${randomUUID()}${policy.extension}`;
 
-    const saved = await this.contentRepository.createUploaded(
-      ownerId,
-      command,
-      objectKey,
-    );
+    const persistedCommand = { ...command, estimatedCredits: estimate.estimatedCredits, selectedModelLabel: estimate.selectedModelLabel };
+    const saved = await this.contentRepository.createUploaded(ownerId, persistedCommand, objectKey);
 
     const { url, formFields, expirySec } = await this.storage.createPresignedPostUrl(
       objectKey,
@@ -63,6 +72,49 @@ export class ContentService {
     });
   }
 
+  private async estimateModelSelection(
+    ownerId: string,
+    sizeBytes: number,
+    selection: DocumentModelSelection,
+  ): Promise<{ readonly estimatedCredits: number; readonly selectedModelLabel: string }> {
+    if (!this.models) throw new Error('Model catalog is unavailable');
+    let plan: PlanModelCatalogItem | null = null;
+    if (selection.kind === 'PLAN') {
+      plan = selection.platformModelId
+        ? await this.models.resolvePlan(ownerId, selection.platformModelId)
+        : null;
+      if (!selection.platformModelId || selection.customModelConfigId || !plan) {
+        throw new BadRequestException('Selected platform model is unavailable');
+      }
+    } else if (!selection.customModelConfigId || selection.platformModelId) {
+      throw new BadRequestException('Selected custom model is invalid');
+    }
+    const catalog = await this.models.listForOwner(ownerId);
+    const selectedId = selection.kind === 'PLAN' ? selection.platformModelId : selection.customModelConfigId;
+    const selected = catalog.find((model) => model.id === selectedId && model.kind === selection.kind);
+    if (!selected) {
+      throw new BadRequestException('Selected custom model is unavailable');
+    }
+    return {
+      estimatedCredits: plan
+        ? this.estimatePlatformCredits(sizeBytes, plan)
+        : 0,
+      selectedModelLabel: selected.label,
+    };
+  }
+
+  private estimatePlatformCredits(
+    sizeBytes: number,
+    model: PlanModelCatalogItem,
+  ): number {
+    const estimatedInputTokens = Math.ceil(sizeBytes / COARSE_INPUT_TOKEN_BYTES);
+    return Math.max(
+      1,
+      estimatedInputTokens * model.creditPerInputToken +
+        COARSE_OUTPUT_TOKEN_CAP * model.creditPerOutputToken,
+    );
+  }
+
   // Ownership enforcement từ ngày 1 (ADR-0011): luôn lọc theo owner_id
   async findById(ownerId: string, id: string): Promise<Document | null> {
     return this.contentRepository.findByOwnerId(ownerId, id);
@@ -70,6 +122,19 @@ export class ContentService {
 
   async findAll(ownerId: string): Promise<Document[]> {
     return this.contentRepository.findAllByOwnerId(ownerId);
+  }
+
+  async estimateBeforeUpload(
+    ownerId: string,
+    input: { readonly sizeBytes: number; readonly type: string; readonly selection: DocumentModelSelection },
+  ): Promise<DocumentEstimateResult> {
+    const estimate = await this.estimateModelSelection(ownerId, input.sizeBytes, input.selection);
+    return Object.assign(new DocumentEstimateResult(), {
+      estimatedCredits: estimate.estimatedCredits,
+      precision: 'COARSE',
+      selectedModelKind: input.selection.kind,
+      selectedModelLabel: estimate.selectedModelLabel,
+    });
   }
 
   async findQuiz(ownerId: string, documentId: string): Promise<DocumentQuizResult> {
@@ -105,7 +170,11 @@ export class ContentService {
       throw new BadRequestException('Uploaded file failed verification');
     }
 
-    const confirmed = await this.contentRepository.confirmProcessing(ownerId, id);
+    const confirmed = await this.contentRepository.confirmProcessing(ownerId, id, {
+      customModelConfigId: document.customModelConfigId,
+      kind: document.modelSelectionKind,
+      platformModelId: document.platformModelId,
+    });
     if (!confirmed) {
       throw new NotFoundException(`Document ${id} not found`);
     }

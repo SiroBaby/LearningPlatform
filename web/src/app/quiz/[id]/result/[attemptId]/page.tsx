@@ -108,11 +108,11 @@ export default async function QuizResultPage({ params }: QuizResultPageProps) {
             <CardTitle>Xem lại từng câu</CardTitle>
           </CardHeader>
           <CardBody className="space-y-4">
-            {attempt.results.map((item) => (
+            {attempt.results.map((item, index) => (
               <div key={item.questionId} className="rounded-2xl border border-ink-100 bg-white p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={item.isCorrect ? "success" : "error"}>{item.isCorrect ? "Đúng" : "Sai"}</Badge>
-                  <Badge>Câu {item.ordinal + 1}</Badge>
+                  <Badge>Câu {index + 1}</Badge>
                 </div>
                 <p className="mt-3 text-sm font-semibold text-ink-900">{item.stem}</p>
                 <div className="mt-3 grid gap-2 text-sm">

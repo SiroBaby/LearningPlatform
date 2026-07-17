@@ -7,6 +7,7 @@ import { DocumentStatusProjectionCommand } from '../contracts/document-status-pr
 import { Document } from '../entities/document.entity';
 import { DocumentStatus } from '../enums/document-status.enum';
 import { OutboxEvent } from '../entities/outbox-event.entity';
+import type { DocumentModelSelection } from '../../ai/contracts/model-selection.contracts';
 
 @Injectable()
 export class ContentRepository extends BaseRepository<Document> {
@@ -16,7 +17,7 @@ export class ContentRepository extends BaseRepository<Document> {
 
   async createUploaded(
     ownerId: string,
-    command: CreateUploadUrlCommand,
+    command: CreateUploadUrlCommand & { readonly estimatedCredits: number; readonly selectedModelLabel: string },
     storageRef: string,
   ): Promise<Document> {
     const document = this.create({
@@ -25,6 +26,13 @@ export class ContentRepository extends BaseRepository<Document> {
       originalName: command.originalName,
       storageRef,
       sizeBytes: command.sizeBytes,
+      customModelConfigId: command.selection.customModelConfigId,
+      modelSelectionKind: command.selection.kind,
+      platformModelId: command.selection.platformModelId,
+      selectedModelLabel: command.selectedModelLabel,
+      estimateStatus: 'COARSE',
+      estimatedCredits: command.estimatedCredits,
+      budgetStatus: command.selection.kind === 'CUSTOM' ? 'CUSTOM_ZERO_COST' : 'NOT_RESERVED',
       status: DocumentStatus.UPLOADED,
     });
 
@@ -42,7 +50,11 @@ export class ContentRepository extends BaseRepository<Document> {
     });
   }
 
-  async confirmProcessing(ownerId: string, id: string): Promise<Document | null> {
+  async confirmProcessing(
+    ownerId: string,
+    id: string,
+    selection: DocumentModelSelection,
+  ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       const result = await manager
         .createQueryBuilder()
@@ -56,11 +68,11 @@ export class ContentRepository extends BaseRepository<Document> {
         .execute();
 
       if (result.affected) {
-        await manager.insert(OutboxEvent, {
-          aggregateId: id,
-          eventType: 'DocumentReadyForProcessing',
-          payload: { documentId: id, ownerId, jobType: 'FULL_PIPELINE' },
-        });
+        const outbox = new OutboxEvent();
+        outbox.aggregateId = id;
+        outbox.eventType = 'DocumentReadyForProcessing';
+        outbox.payload = { documentId: id, ownerId, jobType: 'FULL_PIPELINE', ...selection };
+        await manager.save(outbox);
       }
 
       return manager.findOne(Document, { where: { id, ownerId } });
@@ -74,6 +86,13 @@ export class ContentRepository extends BaseRepository<Document> {
       .update(Document)
       .set({
         errorMessage: command.errorMessage,
+        budgetStatus: () =>
+          'COALESCE(CAST(:budgetStatus AS varchar), "budget_status")',
+        estimatedCredits: () =>
+          'CASE WHEN CAST(:estimateStatus AS varchar) IS NULL THEN "estimated_credits" ELSE CAST(:estimatedCredits AS bigint) END',
+        estimateStatus: () =>
+          'COALESCE(CAST(:estimateStatus AS varchar), "estimate_status")',
+        settledCredits: command.settledCredits,
         status: command.status,
       })
       .where(
@@ -82,6 +101,9 @@ export class ContentRepository extends BaseRepository<Document> {
           documentId: command.documentId,
           ownerId: command.ownerId,
           processingStatus: DocumentStatus.PROCESSING,
+          budgetStatus: command.budgetStatus,
+          estimatedCredits: command.estimatedCredits,
+          estimateStatus: command.estimateStatus,
         },
       )
       .execute();

@@ -15,7 +15,7 @@ describe('quiz attempt migration', () => {
     expect(await tableName('quiz.attempts')).toBe('quiz.attempts');
     expect(await tableName('quiz.attempt_answers')).toBe('quiz.attempt_answers');
 
-    await runDown(db.client);
+    await revertThroughMigration('1780835014100');
 
     expect(await tableName('quiz.attempts')).toBeNull();
     expect(await tableName('quiz.attempt_answers')).toBeNull();
@@ -25,6 +25,17 @@ describe('quiz attempt migration', () => {
 
     await runUp(db.client);
   });
+
+  async function revertThroughMigration(version: string): Promise<void> {
+    while (true) {
+      const latest = await db.client.query<{ readonly version: string }>(
+        'SELECT "version" FROM "schema_migrations" ORDER BY "version" DESC LIMIT 1',
+      );
+      const current = latest.rows[0]?.version;
+      if (!current || current < version) return;
+      await runDown(db.client);
+    }
+  }
 
   it('enforces attempt score and answer uniqueness constraints', async () => {
     const fixture = await insertQuizFixture();

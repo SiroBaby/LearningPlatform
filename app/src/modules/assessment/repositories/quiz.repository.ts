@@ -92,7 +92,7 @@ export class QuizRepository
     }
 
     const questions = await this.dataSource.getRepository(QuestionEntity).find({
-      order: { ordinal: 'ASC' },
+      order: { ordinal: 'ASC', id: 'ASC' },
       select: { id: true, ordinal: true, stem: true },
       where: { ownerId, quizId },
     });
@@ -142,7 +142,7 @@ export class QuizRepository
     }
 
     const questions = await this.dataSource.getRepository(QuestionEntity).find({
-      order: { ordinal: 'ASC' },
+      order: { ordinal: 'ASC', id: 'ASC' },
       where: { ownerId, quizId },
     });
     const options = questions.length === 0
@@ -234,7 +234,7 @@ export class QuizRepository
     }
     const questions = await manager.find(QuestionEntity, {
       where: { ownerId, quizId: quiz.id },
-      order: { ordinal: 'ASC' },
+      order: { ordinal: 'ASC', id: 'ASC' },
     });
     const optionCount = questions.length === 0
       ? 0

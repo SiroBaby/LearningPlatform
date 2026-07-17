@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Clock3, PlayCircle, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, LinkButton } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/toast";
 import {
   clearQuizDraft,
   readQuizDraft,
+  type QuizDraftState,
 } from "@/components/quiz/quiz-session";
 import { routes } from "@/lib/routes";
 import type { Phase0QuizResponse } from "@/lib/phase0/contracts";
@@ -26,12 +27,12 @@ const MODE_OPTIONS: ReadonlyArray<{
   {
     value: "practice",
     title: "Chế độ luyện tập",
-    description: "Làm bài rồi xem lại giải thích sau khi nộp.",
+    description: "Chọn đáp án rồi bấm Kiểm tra đáp án để xem phản hồi cho từng câu.",
   },
   {
     value: "test",
     title: "Chế độ kiểm tra",
-    description: "Tập trung làm bài trước, xem kết quả sau khi nộp.",
+    description: "Làm trọn bài trước, chỉ xem kết quả sau khi nộp.",
   },
 ];
 
@@ -42,7 +43,8 @@ function getResumeHref(quizId: string, mode: QuizMode): string {
 export function QuizStartScreen({ quiz }: QuizStartScreenProps) {
   const { notify } = useToast();
   const [mode, setMode] = useState<QuizMode>("practice");
-  const draft = readQuizDraft(quiz.id, mode);
+  const [draftByMode, setDraftByMode] = useState<Readonly<Partial<Record<QuizMode, QuizDraftState>>>>({});
+  const draft = draftByMode[mode] ?? null;
   const answeredCount = useMemo(
     () => Object.values(draft?.answers ?? {}).filter((value) => typeof value === "string").length,
     [draft],
@@ -50,10 +52,22 @@ export function QuizStartScreen({ quiz }: QuizStartScreenProps) {
   const startHref = `${routes.quizPlay(quiz.id)}?mode=${mode}`;
   const resumeHref = draft ? getResumeHref(quiz.id, mode) : null;
 
+  useEffect(() => {
+    queueMicrotask(() => {
+      setDraftByMode({
+        practice: readQuizDraft(quiz.id, "practice") ?? undefined,
+        test: readQuizDraft(quiz.id, "test") ?? undefined,
+      });
+    });
+  }, [quiz.id]);
+
   function handleResetDraft(): void {
     clearQuizDraft(quiz.id, mode);
+    setDraftByMode((currentDraftByMode) => ({
+      ...currentDraftByMode,
+      [mode]: undefined,
+    }));
     notify("Đã xóa phần làm dở. Bạn có thể bắt đầu lại từ đầu.", "success");
-    window.location.reload();
   }
 
   return (
@@ -132,7 +146,9 @@ export function QuizStartScreen({ quiz }: QuizStartScreenProps) {
                 })}
 
                 <div className="rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm text-ink-600">
-                  Trong lúc làm bài, bạn có thể chuyển câu, đánh dấu câu cần xem lại và nộp khi đã sẵn sàng.
+                  {mode === "practice"
+                    ? "Ở chế độ luyện tập, bạn chọn đáp án rồi bấm Kiểm tra đáp án khi muốn xem phản hồi."
+                    : "Ở chế độ kiểm tra, bạn làm trọn bài trước rồi xem kết quả sau khi nộp."}
                 </div>
               </CardBody>
             </Card>

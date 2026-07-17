@@ -103,9 +103,10 @@ export class CountingLlmProvider implements LlmProvider {
   readonly providerIdentity = 'fake:e2e-counting-v1';
   callCount = 0;
 
-  async generate(request: LlmGenerationRequest): Promise<JsonValue> {
+  async generate(request: LlmGenerationRequest): Promise<{ readonly output: JsonValue; readonly usage: { readonly inputTokens: null; readonly outputTokens: null; readonly status: 'UNAVAILABLE' } }> {
     this.callCount += 1;
     return {
+      output: {
       questions: [{
         explanation: 'The answer is grounded in the supplied source.',
         options: [
@@ -114,6 +115,8 @@ export class CountingLlmProvider implements LlmProvider {
         ],
         stem: 'Which statement appears in the source?',
       }],
+      },
+      usage: { inputTokens: null, outputTokens: null, status: 'UNAVAILABLE' },
     };
   }
 }

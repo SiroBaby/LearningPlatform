@@ -60,7 +60,7 @@ describe('OpenAiLlmProvider', () => {
         sourceText: 'One grounded chunk.',
       });
 
-      expect(decodeGeneratedQuestionOutput(output).questions).toHaveLength(1);
+      expect(decodeGeneratedQuestionOutput(output.output).questions).toHaveLength(1);
       if (transport === 'responses') {
         expect(client.responseRequests[0]).toMatchObject({
           input: 'One grounded chunk.',
