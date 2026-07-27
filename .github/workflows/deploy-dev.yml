@@ -255,7 +255,7 @@ jobs:
                   print(target)
           PY
           while IFS= read -r target; do
-            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo k3s kubectl rollout status deployment/$target --namespace learning-platform-dev --timeout=180s"
+            ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo k3s kubectl rollout status deployment/$target --namespace learning-platform-dev --timeout=180s"
           done < "$DEPLOYMENT_DIR/selected-targets"
       - name: Remove ephemeral deployment files
         if: always()
