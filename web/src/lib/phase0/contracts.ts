@@ -10,7 +10,7 @@ export const phase0ModelSelectionKinds = ["PLAN", "CUSTOM"] as const;
 
 export type Phase0ModelSelectionKind = (typeof phase0ModelSelectionKinds)[number];
 
-export const phase0EstimatePrecisionLevels = ["COARSE"] as const;
+export const phase0EstimatePrecisionLevels = ["COARSE", "AUTHORITATIVE"] as const;
 
 export type Phase0EstimatePrecision = (typeof phase0EstimatePrecisionLevels)[number];
 
@@ -210,5 +210,7 @@ export interface Phase0AttemptResultResponse {
 }
 
 export interface Phase0ApiError {
+  readonly code?: string;
   readonly message: string;
+  readonly retryable?: boolean;
 }

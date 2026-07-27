@@ -1,5 +1,9 @@
 import "server-only";
 
+import {
+  mapSafeBackendError,
+  sanitizeBackendErrorText,
+} from "@/lib/phase0/backend-error";
 import { getPhase0ServerConfig } from "@/lib/phase0/server-config";
 
 interface BackendRequest {
@@ -8,38 +12,14 @@ interface BackendRequest {
   readonly body?: unknown;
 }
 
-const MAX_ERROR_MESSAGE_LENGTH = 512;
-
-function sanitizeMessage(value: string): string {
-  const compactValue = value.replace(/[\u0000-\u001F\u007F]/g, " ").trim();
-  return compactValue.slice(0, MAX_ERROR_MESSAGE_LENGTH) || "The Phase 0 API request failed.";
-}
-
-function readErrorMessage(value: unknown): string | null {
-  if (typeof value === "string") {
-    return sanitizeMessage(value);
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  const message = Object.entries(value).find(([key]) => key === "message")?.[1];
-  if (typeof message === "string") {
-    return sanitizeMessage(message);
-  }
-  if (Array.isArray(message) && message.every((entry) => typeof entry === "string")) {
-    return sanitizeMessage(message.join(" "));
-  }
-  return null;
-}
-
 async function toErrorResponse(response: Response): Promise<Response> {
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
-    const message = readErrorMessage(await response.json());
-    return Response.json({ message: message ?? "The Phase 0 API request failed." }, { status: response.status });
+    const error = mapSafeBackendError(await response.json());
+    return Response.json(error ?? { message: "The Phase 0 API request failed." }, { status: response.status });
   }
   return Response.json(
-    { message: sanitizeMessage(await response.text()) },
+    { message: sanitizeBackendErrorText(await response.text()) },
     { status: response.status },
   );
 }

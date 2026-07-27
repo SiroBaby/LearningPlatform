@@ -4,7 +4,9 @@ import { Mapper } from '@automapper/core';
 import {
   ApiAcceptedResponse,
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCreatedResponse,
+  ApiInternalServerErrorResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -85,7 +87,9 @@ export class ContentController {
 
   @Get(':id/quiz')
   @ApiOperation({ summary: 'Find the current Owner\'s Quiz for an owned Document.' })
-  @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner or has no Quiz.' })
+  @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner.' })
+  @ApiConflictResponse({ description: 'Quiz is not ready or Document processing failed.' })
+  @ApiInternalServerErrorResponse({ description: 'A READY Document has no persisted Quiz.' })
   @ApiOkResponse({ type: DocumentQuizResponseDto })
   async getDocumentQuiz(
     @CurrentUser() ownerId: string,

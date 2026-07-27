@@ -102,8 +102,10 @@ function readEstimatePrecision(value: unknown, field: string): Phase0EstimatePre
   switch (readString(value, field)) {
     case "COARSE":
       return "COARSE";
+    case "AUTHORITATIVE":
+      return "AUTHORITATIVE";
     default:
-      throw new TypeError(`Expected ${field} to be COARSE.`);
+      throw new TypeError(`Expected ${field} to be COARSE or AUTHORITATIVE.`);
   }
 }
 
