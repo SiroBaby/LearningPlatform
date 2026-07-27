@@ -1,0 +1,211 @@
+---
+- name: Validate host Prometheus integration configuration
+  ansible.builtin.assert:
+    that:
+      - kube_state_metrics_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+$')
+      - kube_state_metrics_manifest_url is match('^https://')
+      - kube_state_metrics_manifest_url is not search('REPLACE_WITH')
+      - kube_state_metrics_manifest_sha256 is match('^[a-f0-9]{64}$')
+      - monitoring_install_node_exporter is boolean
+      - node_exporter_service_name is string
+      - node_exporter_service_name | length > 0
+      - node_exporter_config_path is string
+      - node_exporter_config_path | length > 0
+      - node_exporter_listen_address == '127.0.0.1'
+      - node_exporter_listen_port | int > 1024
+      - node_exporter_listen_port | int < 65536
+      - node_exporter_target_address == '127.0.0.1'
+      - prometheus_service_name is string
+      - prometheus_service_name | length > 0
+      - prometheus_service_name is not search('REPLACE_WITH')
+      - prometheus_config_path is string
+      - prometheus_config_path | length > 0
+      - prometheus_config_path is not search('REPLACE_WITH')
+      - prometheus_scrape_config_path is string
+      - prometheus_scrape_config_path | length > 0
+      - prometheus_scrape_config_path is not search('REPLACE_WITH')
+      - prometheus_file_sd_target_path is string
+      - prometheus_file_sd_target_path | length > 0
+      - prometheus_file_sd_target_path is not search('REPLACE_WITH')
+      - prometheus_port | int > 0
+      - prometheus_port | int < 65536
+      - kube_state_metrics_port_forward_address == '127.0.0.1'
+      - kube_state_metrics_port_forward_port | int > 1024
+      - kube_state_metrics_port_forward_port | int < 65536
+      - prometheus_manage_target_directories is boolean
+      - prometheus_target_file_owner is string
+      - prometheus_target_file_group is string
+    fail_msg: Set explicit existing Prometheus paths, service name, port, and loopback port-forward values.
+
+- name: Gather package facts before node exporter handling
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Gather service facts before node exporter handling
+  ansible.builtin.service_facts:
+
+- name: Require the configured existing Prometheus service
+  ansible.builtin.assert:
+    that:
+      - prometheus_service_name in ansible_facts.services
+    fail_msg: >-
+      Configured Prometheus service {{ prometheus_service_name }} was not found.
+      This baseline will not guess, install, or replace Prometheus.
+
+- name: Inspect configured existing Prometheus main configuration
+  ansible.builtin.stat:
+    path: '{{ prometheus_config_path }}'
+  register: monitoring_prometheus_main_config
+
+- name: Require configured existing Prometheus main configuration
+  ansible.builtin.assert:
+    that:
+      - monitoring_prometheus_main_config.stat.exists
+      - monitoring_prometheus_main_config.stat.isreg
+    fail_msg: >-
+      Configured Prometheus main config {{ prometheus_config_path }} is missing
+      or not a regular file. This baseline will not create or replace it.
+
+- name: Read configured existing Prometheus main configuration
+  ansible.builtin.slurp:
+    path: '{{ prometheus_config_path }}'
+  register: monitoring_prometheus_main_config_content
+
+- name: Require existing Prometheus to include the managed scrape snippet
+  ansible.builtin.assert:
+    that:
+      - >-
+        prometheus_scrape_config_path in
+        (monitoring_prometheus_main_config_content.content | b64decode) or
+        (prometheus_scrape_config_path | dirname) in
+        (monitoring_prometheus_main_config_content.content | b64decode)
+    fail_msg: >-
+      Existing Prometheus config {{ prometheus_config_path }} does not reference
+      {{ prometheus_scrape_config_path }} or its include directory. Add the
+      host's established scrape-config include before this role manages files;
+      this baseline will not rewrite the main Prometheus config.
+
+- name: Record whether node exporter is already present
+  ansible.builtin.set_fact:
+    monitoring_node_exporter_present: >-
+      {{ 'prometheus-node-exporter' in ansible_facts.packages or
+         'node_exporter' in ansible_facts.packages or
+         'prometheus-node-exporter.service' in ansible_facts.services or
+         'node_exporter.service' in ansible_facts.services }}
+
+- name: Install distro node exporter only when explicitly enabled and absent
+  ansible.builtin.package:
+    name: prometheus-node-exporter
+    state: present
+  when:
+    - monitoring_install_node_exporter | bool
+    - not monitoring_node_exporter_present | bool
+
+- name: Record whether this baseline installed node exporter
+  ansible.builtin.set_fact:
+    monitoring_node_exporter_installed_by_baseline: >-
+      {{ monitoring_install_node_exporter | bool and not monitoring_node_exporter_present | bool }}
+
+- name: Configure loopback binding for baseline-installed node exporter
+  ansible.builtin.template:
+    src: prometheus-node-exporter.j2
+    dest: '{{ node_exporter_config_path }}'
+    owner: root
+    group: root
+    mode: '0644'
+  when: monitoring_node_exporter_installed_by_baseline | bool
+  notify: Restart baseline-installed node exporter
+
+- name: Enable and start baseline-installed node exporter
+  ansible.builtin.systemd:
+    name: '{{ node_exporter_service_name }}'
+    enabled: true
+    state: started
+  when: monitoring_node_exporter_installed_by_baseline | bool
+
+- name: Inspect Prometheus target parent directories
+  ansible.builtin.stat:
+    path: '{{ item }}'
+  loop:
+    - '{{ prometheus_scrape_config_path | dirname }}'
+    - '{{ prometheus_file_sd_target_path | dirname }}'
+  register: monitoring_prometheus_target_directories
+
+- name: Create Prometheus target directories only when explicitly managed
+  ansible.builtin.file:
+    path: '{{ item.item }}'
+    state: directory
+    owner: '{{ prometheus_target_file_owner }}'
+    group: '{{ prometheus_target_file_group }}'
+    mode: '{{ prometheus_target_directory_mode }}'
+  loop: '{{ monitoring_prometheus_target_directories.results }}'
+  when:
+    - prometheus_manage_target_directories | bool
+    - not item.stat.exists
+
+- name: Require pre-existing Prometheus target directories when unmanaged
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isdir
+    fail_msg: >-
+      Prometheus target directory {{ item.item }} is missing or not a directory.
+      Set prometheus_manage_target_directories=true only after confirming the
+      configured owner, group, and path are safe to manage.
+  loop: '{{ monitoring_prometheus_target_directories.results }}'
+  when: not prometheus_manage_target_directories | bool
+
+- name: Download pinned kube-state-metrics manifest
+  ansible.builtin.get_url:
+    url: '{{ kube_state_metrics_manifest_url }}'
+    dest: /usr/local/src/kube-state-metrics-{{ kube_state_metrics_version }}.yaml
+    mode: '0644'
+    checksum: sha256:{{ kube_state_metrics_manifest_sha256 }}
+
+- name: Apply pinned kube-state-metrics manifest
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    src: /usr/local/src/kube-state-metrics-{{ kube_state_metrics_version }}.yaml
+
+- name: Create kube-state-metrics loopback port-forward service
+  ansible.builtin.template:
+    src: kube-state-metrics-port-forward.service.j2
+    dest: /etc/systemd/system/kube-state-metrics-port-forward.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd daemon
+    - Restart kube-state-metrics port-forward
+
+- name: Flush systemd handlers before starting the new port-forward unit
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable kube-state-metrics loopback port-forward
+  ansible.builtin.systemd:
+    name: kube-state-metrics-port-forward.service
+    enabled: true
+    state: started
+
+- name: Render Prometheus file service-discovery target
+  ansible.builtin.template:
+    src: monitoring-targets.json.j2
+    dest: '{{ prometheus_file_sd_target_path }}'
+    owner: '{{ prometheus_target_file_owner }}'
+    group: '{{ prometheus_target_file_group }}'
+    mode: '0644'
+  notify:
+    - Validate Prometheus configuration
+    - Reload existing Prometheus
+
+- name: Render narrow kube-state-metrics scrape configuration
+  ansible.builtin.template:
+    src: monitoring-scrape.yml.j2
+    dest: '{{ prometheus_scrape_config_path }}'
+    owner: '{{ prometheus_target_file_owner }}'
+    group: '{{ prometheus_target_file_group }}'
+    mode: '0644'
+  notify:
+    - Validate Prometheus configuration
+    - Reload existing Prometheus

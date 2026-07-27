@@ -1,0 +1,133 @@
+---
+- name: Validate immutable application image references and resource variables
+  ansible.builtin.assert:
+    that:
+      - web_image is match('^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')
+      - api_image is match('^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')
+      - worker_image is match('^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')
+      - web_resources is mapping
+      - api_resources is mapping
+      - worker_resources is mapping
+      - deployment_targets is sequence
+      - deployment_targets is not string
+      - deployment_targets | length > 0
+      - deployment_targets | difference(['web', 'api', 'worker']) | length == 0
+      - deployment_targets | unique | length == deployment_targets | length
+      - ghcr_pull_secret_name is string
+      - ghcr_pull_secret_name | length > 0
+      - ghcr_pull_secret_name is not search('REPLACE_WITH')
+        - web_public_host is string
+        - web_public_host | length > 0
+        - web_public_host is not search('REPLACE_WITH')
+        - api_public_host is string
+        - api_public_host | length > 0
+        - api_public_host is not search('REPLACE_WITH')
+        - web_public_host != api_public_host
+        - phase0_api_base_url == 'http://api:3000'
+        - phase0_dev_owner_id is match('^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+        - ingress_tls_secret_name is string
+    fail_msg: >-
+      Application images must be lowercase ghcr.io immutable sha256 digests,
+      deployment_targets must contain only web, api, and worker, and GHCR/
+      ingress configuration must be explicit.
+
+- name: Discover existing Learning Platform workload deployments
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ learning_platform_namespace }}'
+    label_selectors:
+      - app.kubernetes.io/name=learning-platform
+  register: applications_learning_platform_deployments
+
+- name: Require complete target selection for the first application deployment
+  ansible.builtin.assert:
+    that:
+      - deployment_targets | sort == ['api', 'web', 'worker'] | sort
+    fail_msg: >-
+      The first application deployment must select web, api, and worker so
+      their shared runtime contract is established together.
+  when: applications_learning_platform_deployments.resources | length == 0
+
+- name: Verify manually provisioned GHCR pull Secret
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: v1
+    kind: Secret
+    namespace: '{{ learning_platform_namespace }}'
+    name: '{{ ghcr_pull_secret_name }}'
+  register: applications_ghcr_pull_secret
+
+- name: Require a dockerconfigjson GHCR pull Secret before workload rollout
+  ansible.builtin.assert:
+    that:
+      - applications_ghcr_pull_secret.resources | length == 1
+      - applications_ghcr_pull_secret.resources[0].type | default('') == 'kubernetes.io/dockerconfigjson'
+      - "'.dockerconfigjson' in (applications_ghcr_pull_secret.resources[0].data | default({}))"
+    fail_msg: >-
+      Manually provision Secret {{ ghcr_pull_secret_name }} in namespace
+      {{ learning_platform_namespace }} with type kubernetes.io/dockerconfigjson
+      before deploying application pods.
+
+- name: Verify configured ingress TLS Secret exists
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: v1
+    kind: Secret
+    namespace: '{{ learning_platform_namespace }}'
+    name: '{{ ingress_tls_secret_name }}'
+  register: applications_ingress_tls_secret
+  when: ingress_tls_secret_name | length > 0
+
+- name: Require configured ingress TLS Secret
+  ansible.builtin.assert:
+    that:
+      - applications_ingress_tls_secret.resources | length == 1
+      - applications_ingress_tls_secret.resources[0].type | default('') == 'kubernetes.io/tls'
+    fail_msg: >-
+      ingress_tls_secret_name is configured but the referenced kubernetes.io/tls
+      Secret does not exist in {{ learning_platform_namespace }}.
+  when: ingress_tls_secret_name | length > 0
+
+- name: Wait for API runtime ExternalSecret readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    namespace: '{{ learning_platform_namespace }}'
+    name: learning-platform-api-runtime
+  register: applications_api_runtime_external_secret
+  retries: 30
+  delay: 2
+  until: >-
+    applications_api_runtime_external_secret.resources | length == 1 and
+    (applications_api_runtime_external_secret.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  when: "'api' in deployment_targets"
+
+- name: Wait for worker runtime ExternalSecret readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    namespace: '{{ learning_platform_namespace }}'
+    name: learning-platform-worker-runtime
+  register: applications_worker_runtime_external_secret
+  retries: 30
+  delay: 2
+  until: >-
+    applications_worker_runtime_external_secret.resources | length == 1 and
+    (applications_worker_runtime_external_secret.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  when: "'worker' in deployment_targets"
+
+- name: Apply selected stateless Learning Platform workloads
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition: "{{ lookup('template', playbook_dir ~ '/../../k8s/apps.yaml.j2') | from_yaml_all | list }}"

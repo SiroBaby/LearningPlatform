@@ -1,0 +1,15 @@
+[
+  {
+    "targets": ["{{ node_exporter_target_address }}:{{ node_exporter_listen_port }}"],
+    "labels": {
+      "metrics_source": "node-exporter"
+    }
+  },
+  {
+    "targets": ["{{ kube_state_metrics_port_forward_address }}:{{ kube_state_metrics_port_forward_port }}"],
+    "labels": {
+      "metrics_source": "kube-state-metrics",
+      "cluster": "{{ learning_platform_namespace }}"
+    }
+  }
+]

@@ -1,0 +1,44 @@
+services:
+  web:
+    image: ${WEB_IMAGE:?WEB_IMAGE must be an immutable ghcr.io digest reference}
+    restart: unless-stopped
+    env_file:
+      - ../env/web.env
+    ports:
+      - "${DEPLOY_BIND_ADDRESS:-127.0.0.1}:3401:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http=require('node:http');const request=http.get({host:'127.0.0.1',port:3000,path:'/',timeout:3000},response=>process.exit(response.statusCode>=200&&response.statusCode<400?0:1));request.on('error',()=>process.exit(1));request.on('timeout',()=>{request.destroy();process.exit(1)});"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  api:
+    image: ${API_IMAGE:?API_IMAGE must be an immutable ghcr.io digest reference}
+    command: ["npm", "run", "start:prod"]
+    restart: unless-stopped
+    env_file:
+      - ../env/api.env
+    ports:
+      - "${DEPLOY_BIND_ADDRESS:-127.0.0.1}:3402:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http=require('node:http');const request=http.get({host:'127.0.0.1',port:3000,path:'/api/v1/health',timeout:3000},response=>process.exit(response.statusCode===200?0:1));request.on('error',()=>process.exit(1));request.on('timeout',()=>{request.destroy();process.exit(1)});"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  worker:
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be an immutable ghcr.io digest reference}
+    command: ["npm", "run", "start:worker"]
+    restart: unless-stopped
+    env_file:
+      - ../env/worker.env
+    ports:
+      - "${DEPLOY_BIND_ADDRESS:-127.0.0.1}:3403:3403"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http=require('node:http');const request=http.get({host:'127.0.0.1',port:3403,path:'/health',timeout:3000},response=>process.exit(response.statusCode===200?0:1));request.on('error',()=>process.exit(1));request.on('timeout',()=>{request.destroy();process.exit(1)});"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
