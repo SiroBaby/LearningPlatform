@@ -1,0 +1,13 @@
+# Agent-specific files — không đẩy lên remote
+docs/agents/
+.scratch/
+.cursor/
+.gitnexus/
+.omo/
+data/
+key/
+web/MODIFIED_FILES.txt
+
+# Local deployment inventory and non-runtime host configuration
+infra/ansible/inventory/hosts.yml
+infra/ansible/inventory/group_vars/k3s_nodes.yml

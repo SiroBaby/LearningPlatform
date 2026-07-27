@@ -1,0 +1,263 @@
+{% if 'web' in deployment_targets %}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: {{ learning_platform_namespace }}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: learning-platform
+        app.kubernetes.io/component: web
+    spec:
+      imagePullSecrets:
+        - name: {{ ghcr_pull_secret_name }}
+      containers:
+        - name: web
+          image: {{ web_image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: '3000'
+            - name: HOSTNAME
+              value: 0.0.0.0
+            - name: PHASE0_API_BASE_URL
+              value: {{ phase0_api_base_url }}
+            - name: PHASE0_DEV_OWNER_ID
+              value: {{ phase0_dev_owner_id }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources: {{ web_resources | to_json }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: {{ learning_platform_namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: learning-platform
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+{% endif %}
+{% if 'api' in deployment_targets %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: {{ learning_platform_namespace }}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: learning-platform
+        app.kubernetes.io/component: api
+    spec:
+      imagePullSecrets:
+        - name: {{ ghcr_pull_secret_name }}
+      containers:
+        - name: api
+          image: {{ api_image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: '3000'
+            - name: SWAGGER_ENABLED
+              value: 'false'
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'AI_CREDENTIAL_ENCRYPTION_KEY'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-api-runtime
+                  key: {{ key }}
+{% endfor %}
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources: {{ api_resources | to_json }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: {{ learning_platform_namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: learning-platform
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+{% endif %}
+{% if 'worker' in deployment_targets %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: {{ learning_platform_namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: learning-platform
+        app.kubernetes.io/component: worker
+    spec:
+      imagePullSecrets:
+        - name: {{ ghcr_pull_secret_name }}
+      containers:
+        - name: worker
+          image: {{ worker_image }}
+          imagePullPolicy: IfNotPresent
+          command: ['node', 'dist/worker.js']
+          ports:
+            - name: health
+              containerPort: 3403
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: WORKER_HEALTH_HOST
+              value: 0.0.0.0
+            - name: WORKER_HEALTH_PORT
+              value: '3403'
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'AI_CREDENTIAL_ENCRYPTION_KEY', 'OPENAI_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_MODEL'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-worker-runtime
+                  key: {{ key }}
+{% endfor %}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources: {{ worker_resources | to_json }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: {{ learning_platform_namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: learning-platform
+    app.kubernetes.io/component: worker
+  ports:
+    - name: health
+      port: 3403
+      targetPort: health
+{% endif %}
+{% if 'web' in deployment_targets or 'api' in deployment_targets %}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: learning-platform
+  namespace: {{ learning_platform_namespace }}
+{% if ingress_tls_secret_name | length > 0 %}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+{% endif %}
+spec:
+  ingressClassName: traefik
+{% if ingress_tls_secret_name | length > 0 %}
+  tls:
+    - hosts:
+        - {{ web_public_host }}
+        - {{ api_public_host }}
+      secretName: {{ ingress_tls_secret_name }}
+{% endif %}
+  rules:
+    - host: {{ api_public_host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  name: http
+    - host: {{ web_public_host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+{% endif %}

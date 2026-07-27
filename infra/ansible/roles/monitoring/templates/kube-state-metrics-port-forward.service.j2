@@ -1,0 +1,18 @@
+[Unit]
+Description=Loopback-only kube-state-metrics port-forward for host Prometheus
+After=k3s.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml --namespace kube-system port-forward service/kube-state-metrics {{ kube_state_metrics_port_forward_address }}:{{ kube_state_metrics_port_forward_port }}:8080
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run
+
+[Install]
+WantedBy=multi-user.target

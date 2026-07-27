@@ -1,0 +1,26 @@
+---
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart kube-state-metrics port-forward
+  ansible.builtin.systemd:
+    name: kube-state-metrics-port-forward.service
+    state: restarted
+
+- name: Restart baseline-installed node exporter
+  ansible.builtin.systemd:
+    name: '{{ node_exporter_service_name }}'
+    state: restarted
+  when: monitoring_node_exporter_installed_by_baseline | default(false) | bool
+
+- name: Validate Prometheus configuration
+  ansible.builtin.command:
+    cmd: '{{ prometheus_promtool_path }} check config {{ prometheus_config_path }}'
+  changed_when: false
+  when: prometheus_validate_with_promtool | bool
+
+- name: Reload existing Prometheus
+  ansible.builtin.systemd:
+    name: '{{ prometheus_service_name }}'
+    state: reloaded
