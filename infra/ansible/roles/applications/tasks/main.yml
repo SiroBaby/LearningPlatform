@@ -16,16 +16,16 @@
       - ghcr_pull_secret_name is string
       - ghcr_pull_secret_name | length > 0
       - ghcr_pull_secret_name is not search('REPLACE_WITH')
-        - web_public_host is string
-        - web_public_host | length > 0
-        - web_public_host is not search('REPLACE_WITH')
-        - api_public_host is string
-        - api_public_host | length > 0
-        - api_public_host is not search('REPLACE_WITH')
-        - web_public_host != api_public_host
-        - phase0_api_base_url == 'http://api:3000'
-        - phase0_dev_owner_id is match('^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
-        - ingress_tls_secret_name is string
+      - web_public_host is string
+      - web_public_host | length > 0
+      - web_public_host is not search('REPLACE_WITH')
+      - api_public_host is string
+      - api_public_host | length > 0
+      - api_public_host is not search('REPLACE_WITH')
+      - web_public_host != api_public_host
+      - phase0_api_base_url == 'http://api:3000'
+      - phase0_dev_owner_id is match('^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+      - ingress_tls_secret_name is string
     fail_msg: >-
       Application images must be lowercase ghcr.io immutable sha256 digests,
       deployment_targets must contain only web, api, and worker, and GHCR/

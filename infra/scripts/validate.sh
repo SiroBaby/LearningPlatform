@@ -125,6 +125,17 @@ check_application_edge_contract() {
     || ! grep -q 'Require complete target selection for the first application deployment' "${app_tasks}"; then
     fail 'Applications role must validate GHCR auth and selective rollout targets.'
   fi
+
+  for required_assertion in \
+    "ghcr_pull_secret_name is not search('REPLACE_WITH')" \
+    'web_public_host is string' \
+    'api_public_host is string' \
+    "phase0_api_base_url == 'http://api:3000'" \
+    'ingress_tls_secret_name is string'; do
+    if ! grep -Fqx "      - ${required_assertion}" "${app_tasks}"; then
+      fail "Application assertion must use the exact list indentation: ${required_assertion}."
+    fi
+  done
 }
 
 check_yaml_when_supported() {
