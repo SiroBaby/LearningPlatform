@@ -1,0 +1,245 @@
+name: Deploy development VPS
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Services to build and deploy; overrides repository diff classification.
+        required: true
+        default: all
+        type: choice
+        options:
+          - web
+          - api
+          - worker
+          - all
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    name: Classify deploy changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      web: ${{ steps.classify.outputs.web }}
+      api: ${{ steps.classify.outputs.api }}
+      worker: ${{ steps.classify.outputs.worker }}
+      backend: ${{ steps.classify.outputs.backend }}
+      deploy_any: ${{ steps.classify.outputs.deploy_any }}
+    steps:
+      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          TARGET: ${{ inputs.target || 'auto' }}
+          BEFORE_SHA: ${{ github.event.before || github.sha }}
+          AFTER_SHA: ${{ github.sha }}
+        run: deploy/dev/classify-changes.sh "$TARGET" "$BEFORE_SHA" "$AFTER_SHA" >> "$GITHUB_OUTPUT"
+
+  backend-quality:
+    name: Backend quality
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # actions/setup-node v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm test -- --runInBand
+      - run: npm run test:e2e -- --runInBand
+      - run: npm run build
+      - run: npx tsc -p tsconfig.spec.json --noEmit
+
+  frontend-quality:
+    name: Frontend quality
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # actions/setup-node v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm run build
+
+  build-images:
+    name: Build and push images
+    needs: [changes, backend-quality, frontend-quality]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api_digest: ${{ steps.api-build.outputs.digest }}
+      web_digest: ${{ steps.web-build.outputs.digest }}
+    steps:
+      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # docker/login-action v3, verified against refs/tags/v3 on 2026-07-18.
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # docker/build-push-action v6, verified against refs/tags/v6 on 2026-07-18.
+      - id: api-build
+        if: needs.changes.outputs.backend == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: app
+          push: true
+          tags: ghcr.io/sirobaby/learningplatform-api:sha-${{ github.sha }}
+      # docker/build-push-action v6, verified against refs/tags/v6 on 2026-07-18.
+      - id: web-build
+        if: needs.changes.outputs.web == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: web
+          push: true
+          tags: ghcr.io/sirobaby/learningplatform-web:sha-${{ github.sha }}
+
+  deploy:
+    name: Deploy immutable digests to K3s
+    needs: [changes, build-images]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.build-images.result == 'success'
+    runs-on: ubuntu-24.04
+    environment: dev
+    permissions:
+      contents: read
+    steps:
+      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Configure SSH trust
+        env:
+          SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Install pinned Ansible tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ansible-venv"
+          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir 'ansible-core==2.21.2'
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-galaxy" collection install -r infra/ansible/requirements.yml
+      - name: Create ephemeral Ansible inventory and deployment overrides
+        env:
+          VPS_HOST: ${{ vars.DEV_VPS_HOST }}
+          VPS_USER: ${{ vars.DEV_VPS_USER }}
+          ANSIBLE_VARS_B64: ${{ secrets.DEV_K3S_ANSIBLE_VARS_B64 }}
+          SELECT_WEB: ${{ needs.changes.outputs.web }}
+          SELECT_API: ${{ needs.changes.outputs.api }}
+          SELECT_WORKER: ${{ needs.changes.outputs.worker }}
+          WEB_DIGEST: ${{ needs.build-images.outputs.web_digest }}
+          BACKEND_DIGEST: ${{ needs.build-images.outputs.api_digest }}
+        run: |
+          DEPLOYMENT_DIR="$(mktemp -d "$RUNNER_TEMP/dev-k3s-deploy.XXXXXX")"
+          printf '%s\n' "$DEPLOYMENT_DIR" > "$RUNNER_TEMP/dev-k3s-deploy-path"
+          chmod 700 "$DEPLOYMENT_DIR"
+          install -d -m 700 "$DEPLOYMENT_DIR/group_vars"
+          # This Environment secret contains only non-runtime host configuration,
+          # checksums, resource limits, domains, and Kubernetes Secret names;
+          # it never contains runtime secret values, AWS credentials, Aiven values,
+          # or GHCR pull credentials.
+          printf '%s' "$ANSIBLE_VARS_B64" | base64 --decode > "$DEPLOYMENT_DIR/group_vars/k3s_nodes.yml"
+          chmod 600 "$DEPLOYMENT_DIR/group_vars/k3s_nodes.yml"
+          export DEPLOYMENT_DIR
+          python3 - <<'PY'
+          import os
+          import re
+          import sys
+          import json
+
+          host, user = os.environ['VPS_HOST'], os.environ['VPS_USER']
+          if not re.fullmatch(r'[A-Za-z0-9._-]+', user): sys.exit('VPS_USER contains unsupported characters')
+          if not re.fullmatch(r'[A-Za-z0-9.-]+', host): sys.exit('VPS_HOST contains unsupported characters')
+          selected = [name for name in ('web', 'api', 'worker') if os.environ[f'SELECT_{name.upper()}'] == 'true']
+          if not selected: sys.exit('no services were selected for deployment')
+          image_overrides = {}
+          if 'web' in selected:
+              digest = os.environ['WEB_DIGEST']
+              if not re.fullmatch(r'sha256:[a-f0-9]{64}', digest): sys.exit('web digest is not immutable')
+              image_overrides['web_image'] = f'ghcr.io/sirobaby/learningplatform-web@{digest}'
+          backend_digest = os.environ['BACKEND_DIGEST']
+          if 'api' in selected or 'worker' in selected:
+              if not re.fullmatch(r'sha256:[a-f0-9]{64}', backend_digest): sys.exit('backend digest is not immutable')
+              if 'api' in selected:
+                  image_overrides['api_image'] = f'ghcr.io/sirobaby/learningplatform-api@{backend_digest}'
+              if 'worker' in selected:
+                  image_overrides['worker_image'] = f'ghcr.io/sirobaby/learningplatform-api@{backend_digest}'
+          deployment_dir = os.environ['DEPLOYMENT_DIR']
+          with open(f'{deployment_dir}/hosts.yml', 'w', encoding='utf-8') as inventory:
+              json.dump({'k3s_nodes': {'hosts': {'dev': {'ansible_host': host, 'ansible_user': user}}}}, inventory)
+          with open(f'{deployment_dir}/overrides.yml', 'w', encoding='utf-8') as overrides:
+              json.dump({'deployment_targets': selected, **image_overrides}, overrides)
+          PY
+          chmod 600 "$DEPLOYMENT_DIR/hosts.yml" "$DEPLOYMENT_DIR/overrides.yml"
+      - name: Apply selected applications through Ansible
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/infra/ansible/ansible.cfg
+          ANSIBLE_HOST_KEY_CHECKING: "True"
+          ANSIBLE_STDOUT_CALLBACK: default
+        run: |
+          DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags applications -e "@$DEPLOYMENT_DIR/overrides.yml"
+      - name: Wait for selected K3s rollouts
+        env:
+          VPS_HOST: ${{ vars.DEV_VPS_HOST }}
+          VPS_USER: ${{ vars.DEV_VPS_USER }}
+        run: |
+          DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
+          export DEPLOYMENT_DIR
+          python3 - <<'PY' > "$DEPLOYMENT_DIR/selected-targets"
+          import json
+          import os
+          with open(f"{os.environ['DEPLOYMENT_DIR']}/overrides.yml", encoding='utf-8') as overrides:
+              for target in json.load(overrides)['deployment_targets']:
+                  print(target)
+          PY
+          while IFS= read -r target; do
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo k3s kubectl rollout status deployment/$target --namespace learning-platform-dev --timeout=180s"
+          done < "$DEPLOYMENT_DIR/selected-targets"
+      - name: Remove ephemeral deployment files
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/dev-k3s-deploy-path" ]]; then
+            DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
+            rm -rf -- "$DEPLOYMENT_DIR"
+            rm -f -- "$RUNNER_TEMP/dev-k3s-deploy-path"
+          fi
