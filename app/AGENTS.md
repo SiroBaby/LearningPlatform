@@ -87,6 +87,7 @@
 
 ## Production Quality
 
+- Object-storage bucket production phải được provision ngoài application. Startup chỉ kiểm tra quyền truy cập bucket và fail-fast; không tự tạo bucket hoặc yêu cầu `CreateBucket`.
 - Trước khi gọi một flow là production-ready, phải xác minh end-to-end behavior, failure handling, bounded resource usage, graceful shutdown và configuration validation; không dựa vào happy path hoặc hard-code interval/batch/credential.
 - Background processing phải chạy trong worker entrypoint/deployment role riêng, có typed configuration cho throughput/backoff, không overlap một worker loop, và không làm HTTP API process chạy worker ngầm.
 - LLM provider và credentials chỉ được khởi tạo trong worker composition root; API process không giữ API key. Production worker phải fail-fast nếu provider thật hoặc credentials/model bị thiếu, và SDK logging phải tắt để không lộ source chunk/prompt.

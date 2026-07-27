@@ -6,6 +6,8 @@ export default registerAs('worker', () => ({
   chunkOverlapChars: parseInt(process.env.WORKER_CHUNK_OVERLAP_CHARS ?? '150', 10),
   chunkTargetChars: parseInt(process.env.WORKER_CHUNK_TARGET_CHARS ?? '1200', 10),
   errorBackoffMs: parseInt(process.env.WORKER_ERROR_BACKOFF_MS ?? '5000', 10),
+  healthHost: process.env.WORKER_HEALTH_HOST ?? '0.0.0.0',
+  healthPort: parseInt(process.env.WORKER_HEALTH_PORT ?? '3403', 10),
   maxExtractableObjectBytes: parseInt(
     process.env.WORKER_MAX_EXTRACTABLE_OBJECT_BYTES ?? '20971520',
     10,

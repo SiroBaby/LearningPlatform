@@ -4,7 +4,7 @@ import { StorageObjectReader } from './contracts/storage-object-reader.port';
 import { StorageService } from './storage.service';
 
 @Injectable()
-export class MinioStorageObjectReader implements StorageObjectReader {
+export class ObjectStorageObjectReader implements StorageObjectReader {
   constructor(private readonly storage: StorageService) {}
 
   async read(objectKey: string, maxBytes: number): Promise<Buffer> {

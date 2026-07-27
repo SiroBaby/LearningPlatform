@@ -182,7 +182,7 @@ export function createOpenAiProviderIdentity(input: OpenAiProviderIdentityInput)
 }
 
 export function createLlmProvider(config: ApplicationConfigService): LlmProvider {
-  const settings = config.ai;
+  const settings = config.llmProvider;
   if (settings.provider === 'fake') return new FakeLlmProvider();
   const {
     apiKey,

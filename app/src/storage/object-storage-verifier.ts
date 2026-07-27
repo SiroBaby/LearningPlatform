@@ -1,20 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { isUtf8 } from 'buffer';
 
-import { StorageService } from './storage.service';
 import {
   ObjectVerification,
   StorageVerifier,
 } from './contracts/storage-verifier.port';
+import { StorageService } from './storage.service';
 
-// Magic bytes theo loại (docs/07: không tin Content-Type client gửi).
 const MAGIC: Record<string, Buffer[]> = {
   PDF: [Buffer.from('%PDF')],
-    TEXT: [],
+  TEXT: [],
 };
 
 @Injectable()
-export class MinioStorageVerifier implements StorageVerifier {
+export class ObjectStorageVerifier implements StorageVerifier {
   constructor(private readonly storage: StorageService) {}
 
   async verify(

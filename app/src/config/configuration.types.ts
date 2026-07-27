@@ -13,21 +13,24 @@ export interface ApplicationSettings {
 export type LlmProviderType = 'fake' | 'openai';
 export type LlmStructuredOutputMode = 'json-object' | 'json-schema-strict';
 export type LlmTransport = 'chat-completions' | 'responses';
+export type DatabaseSslMode = 'disabled' | 'verify-ca';
+
+export interface OpenAiGeneralSettings {
+  apiKey: string | undefined;
+  baseUrl: string | undefined;
+  capabilityVersion: string | undefined;
+  model: string | undefined;
+  requestTimeoutMs: number;
+  structuredOutputMode: string | undefined;
+  transport: string | undefined;
+}
 
 export interface AiSettings {
   credentialEncryption: {
     key: string | undefined;
     mode: 'kms' | 'local';
   };
-  openai: {
-    apiKey: string | undefined;
-    baseUrl: string | undefined;
-    capabilityVersion: string | undefined;
-    model: string | undefined;
-    requestTimeoutMs: number;
-    structuredOutputMode: LlmStructuredOutputMode | undefined;
-    transport: LlmTransport | undefined;
-  };
+  openai: OpenAiGeneralSettings;
   provider: LlmProviderType;
   plans: {
     free: { creditBalance: number };
@@ -43,11 +46,36 @@ export interface AiSettings {
   }[];
 }
 
+export type LlmProviderSettings =
+  | {
+      provider: 'fake';
+    }
+  | {
+      openai: {
+        apiKey: string;
+        baseUrl: string;
+        capabilityVersion: string;
+        model: string;
+        requestTimeoutMs: number;
+        structuredOutputMode: LlmStructuredOutputMode;
+        transport: LlmTransport;
+      };
+      provider: 'openai';
+    };
+
 export interface DatabaseSettings {
   host: string;
   name: string;
   password: string;
   port: number;
+  readonly ssl:
+    | {
+        readonly mode: 'disabled';
+      }
+    | {
+        readonly ca: string;
+        readonly mode: 'verify-ca';
+      };
   user: string;
 }
 
@@ -57,6 +85,7 @@ export interface StorageSettings {
   endpoint: string;
   port: number;
   presignExpiry: number;
+  region: string;
   secretKey: string;
   useSSL: boolean;
 }
@@ -69,6 +98,8 @@ export interface WorkerSettings {
   chunkOverlapChars: number;
   chunkTargetChars: number;
   errorBackoffMs: number;
+  healthHost: string;
+  healthPort: number;
   maxExtractableObjectBytes: number;
   jobBatchSize: number;
   outboxBatchSize: number;
@@ -105,6 +136,10 @@ export const CONFIG_PATH = {
     name: 'database.name',
     password: 'database.password',
     port: 'database.port',
+    ssl: {
+      ca: 'database.ssl.ca',
+      mode: 'database.ssl.mode',
+    },
     user: 'database.user',
   },
   storage: {
@@ -113,6 +148,7 @@ export const CONFIG_PATH = {
     endpoint: 'storage.endpoint',
     port: 'storage.port',
     presignExpiry: 'storage.presignExpiry',
+    region: 'storage.region',
     secretKey: 'storage.secretKey',
     useSSL: 'storage.useSSL',
   },
@@ -124,6 +160,8 @@ export const CONFIG_PATH = {
     chunkOverlapChars: 'worker.chunkOverlapChars',
     chunkTargetChars: 'worker.chunkTargetChars',
     errorBackoffMs: 'worker.errorBackoffMs',
+    healthHost: 'worker.healthHost',
+    healthPort: 'worker.healthPort',
     maxExtractableObjectBytes: 'worker.maxExtractableObjectBytes',
     jobBatchSize: 'worker.jobBatchSize',
     outboxBatchSize: 'worker.outboxBatchSize',

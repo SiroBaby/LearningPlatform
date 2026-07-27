@@ -8,6 +8,7 @@ import { AiModule } from '../modules/ai/ai.module';
 import { LlmProviderModule } from '../modules/ai/llm-provider.module';
 import { ContentModule } from '../modules/content/content.module';
 import { StorageModule } from '../storage/storage.module';
+import { WorkerHealthServer } from './worker-health-server.service';
 import { WorkerRunner } from './worker-runner.service';
 import { ReturnRelay } from './return-relay.service';
 
@@ -24,6 +25,6 @@ import { ReturnRelay } from './return-relay.service';
     AiModule,
     ContentModule,
   ],
-  providers: [ReturnRelay, WorkerRunner],
+  providers: [ReturnRelay, WorkerHealthServer, WorkerRunner],
 })
 export class WorkerModule {}

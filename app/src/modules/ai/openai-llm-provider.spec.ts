@@ -170,6 +170,28 @@ describe('OpenAiLlmProvider', () => {
     expect(createLlmProvider(fakeConfig)).toBeInstanceOf(FakeLlmProvider);
     expect(createLlmProvider(openAiConfig)).toBeInstanceOf(OpenAiLlmProvider);
   });
+
+  it('fails fast for missing worker OpenAI credentials even when general ai config is readable', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      ai: {
+        openai: {
+          baseUrl: 'https://proxy.example.com/v1',
+          capabilityVersion: 'v1',
+          model: 'gpt-test',
+          requestTimeoutMs: 60_000,
+          structuredOutputMode: 'json-object',
+          transport: 'chat-completions',
+        },
+        provider: 'openai',
+      },
+      app: { env: 'production' },
+    }));
+
+    expect(config.ai.provider).toBe('openai');
+    expect(() => createLlmProvider(config)).toThrow(
+      'OpenAI-compatible provider configuration is incomplete',
+    );
+  });
 });
 
 class RecordingOpenAiClient {

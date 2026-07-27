@@ -22,20 +22,23 @@ export class StorageService implements OnModuleInit {
     this.client = new MinioClient({
       endPoint: storage.endpoint,
       port: storage.port,
+      region: storage.region,
       useSSL: storage.useSSL,
       accessKey: storage.accessKey,
       secretKey: storage.secretKey,
     });
   }
 
-  // Đảm bảo bucket tồn tại khi app khởi động
   async onModuleInit(): Promise<void> {
-    const exists = await this.client.bucketExists(this.bucket).catch(() => false);
-    if (!exists) {
-      await this.client.makeBucket(this.bucket, '');
-      this.logger.log(`Created bucket "${this.bucket}"`);
-    } else {
+    try {
+      const exists = await this.client.bucketExists(this.bucket);
+      if (!exists) {
+        throw new Error('Configured object-storage bucket does not exist');
+      }
       this.logger.log(`Bucket "${this.bucket}" ready`);
+    } catch (error) {
+      const cause = error instanceof Error ? error : undefined;
+      throw new Error('Object storage bucket is unavailable or misconfigured', cause ? { cause } : undefined);
     }
   }
 

@@ -6,4 +6,8 @@ export default registerAs('database', () => ({
   user: process.env.DB_USER ?? 'learning',
   password: process.env.DB_PASSWORD ?? 'learning',
   name: process.env.DB_NAME ?? 'learning',
+  ssl: {
+    ca: process.env.DB_SSL_CA,
+    mode: process.env.DB_SSL_MODE ?? 'disabled',
+  },
 }));
