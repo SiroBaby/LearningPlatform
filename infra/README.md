@@ -31,7 +31,7 @@ Do not run `kubectl`, K3s installer, or Ansible directly on the VPS. Run Ansible
    cp infra/ansible/inventory/group_vars/k3s_nodes.yml.example infra/ansible/inventory/group_vars/k3s_nodes.yml
    ```
 
-   Set `web_public_host` and `api_public_host`, manually create the namespaced `ghcr_pull_secret_name` as `kubernetes.io/dockerconfigjson`, and leave `ingress_tls_secret_name` empty until an existing `kubernetes.io/tls` Secret is available. Set `monitoring_enabled: false` until the real Prometheus process type, config path, scrape-snippet path, file-SD target path, and reload mechanism have been verified. These values are deliberately not guessed.
+   Set `web_public_host` and `api_public_host`, manually create the namespaced `ghcr_pull_secret_name` as `kubernetes.io/dockerconfigjson`, and leave `ingress_tls_secret_name` empty until an existing `kubernetes.io/tls` Secret is available. The inventory must include exact SSM paths for `swagger_username` and `swagger_password`; the IAM principal must be allowed to read those two exact parameter ARNs. Set `monitoring_enabled: false` until the real Prometheus process type, config path, scrape-snippet path, file-SD target path, and reload mechanism have been verified. These values are deliberately not guessed.
 
 3. On a first host only, bootstrap K3s first. This also creates the empty application namespace idempotently, but creates no application secret:
 
@@ -79,7 +79,7 @@ When K3s is absent or at another version, `--check` emits a clear bootstrap pred
 
 ESO uses a namespace-scoped `SecretStore` in `learning-platform-dev`. Every `ExternalSecret` enumerates `spec.data[].remoteRef.key` exactly; it deliberately does not use `find`, a path selector, or a prefix-wide import.
 
-The `learning-platform-api-runtime` Secret includes database, Aiven TLS (`DB_SSL_MODE`, `DB_SSL_CA`), object-storage, and encryption-key values. `learning-platform-worker-runtime` additionally holds OpenAI provider values. API does not receive the worker provider API key. Aiven PostgreSQL remains external and is configured solely through exact `DB_*` SSM values from ESO; this repository contains no database workload manifests.
+The `learning-platform-api-runtime` Secret includes database, Aiven TLS (`DB_SSL_MODE`, `DB_SSL_CA`), object-storage, and encryption-key values. `learning-platform-worker-runtime` holds the OpenAI API key, base URL, and model; provider, capability, structured-output mode, and transport are explicit non-secret manifest literals. The dedicated `learning-platform-swagger-runtime` Secret maps exactly the two Swagger Basic Auth parameters and is referenced only by API. API does not receive the worker provider API key, and worker or migration does not receive Swagger credentials. Aiven PostgreSQL remains external and is configured solely through exact `DB_*` SSM values from ESO; this repository contains no database workload manifests.
 
 ### Aiven TLS application contract
 
@@ -87,7 +87,7 @@ ESO maps the exact `db_ssl_mode` and `db_ssl_ca` SSM keys to `DB_SSL_MODE` and `
 
 ## Application edge and image pulls
 
-The shared `networking.k8s.io/v1` Ingress uses `ingressClassName: traefik`, routes `https?://<api_public_host>/` to the API Service, and routes `https?://<web_public_host>/` to the web Service. Worker remains `ClusterIP` only and has no Ingress path. HTTP is available by default. TLS is emitted only when `ingress_tls_secret_name` is non-empty and the named `kubernetes.io/tls` Secret already exists in the namespace; this baseline does not provision ACME, cert-manager, certificates, or storage.
+The shared `networking.k8s.io/v1` Ingress uses `ingressClassName: traefik`, routes `https?://<api_public_host>/` to the API Service, and routes `https?://<web_public_host>/` to the web Service. Worker remains `ClusterIP` only and has no Ingress path. HTTP is available internally by default. TLS is emitted only when `ingress_tls_secret_name` is non-empty and the named `kubernetes.io/tls` Secret already exists in the namespace; this baseline does not provision ACME, cert-manager, certificates, or storage. The packaged Traefik NodePort is loopback-only and existing host Nginx terminates public TLS. Swagger Basic Auth at `/api/v1/docs` must be used only through that verified HTTPS edge; never send its credentials over public HTTP.
 
 All application Pods reference the manually provisioned `ghcr_pull_secret_name`. The applications role verifies that it exists and is type `kubernetes.io/dockerconfigjson` with `.dockerconfigjson` data before any selected workload is applied. It never writes registry credentials.
 

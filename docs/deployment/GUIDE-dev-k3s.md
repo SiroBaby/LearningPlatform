@@ -5,7 +5,7 @@ Mục đích của tài liệu này là giúp chủ hệ thống lấy đủ m�
 | Hạng mục | Trạng thái cần đạt |
 | --- | --- |
 | Aiven | Đã có `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, file CA và IP VPS đã được allowlist |
-| AWS SSM | Đã tạo đủ 18 parameter đúng tên, đúng type |
+| AWS SSM | Đã tạo đủ 20 parameter đúng tên, đúng type |
 | IAM | Đã có IAM user bootstrap, policy chỉ đọc đúng parameter ARN, và một access key đang dùng tạm |
 | VPS | Đã có host Debian hoặc Ubuntu, user deploy riêng, SSH key, passwordless sudo, firewall, `known_hosts` đã được kiểm tra fingerprint |
 | Prometheus | Đã thu đúng service name, file config, file scrape, file target, port, promtool path, node exporter service và config path |
@@ -74,6 +74,8 @@ VPS không nhận và không lưu các biến shell, file request hoặc file CA
 | `/learning-platform/dev/openai-base-url` | `String` | base URL provider |
 | `/learning-platform/dev/openai-api-key` | `SecureString` | API key provider |
 | `/learning-platform/dev/openai-model` | `String` | model name |
+| `/learning-platform/dev/swagger-username` | `SecureString` | username Basic Auth cho Swagger |
+| `/learning-platform/dev/swagger-password` | `SecureString` | password Basic Auth cho Swagger |
 
 ### 2.2. Chuẩn bị biến path local
 Chạy trên máy cá nhân quản trị. Các biến dưới đây chỉ tồn tại trong phiên terminal hiện tại và chỉ chứa đường dẫn SSM, không chứa secret:
@@ -98,6 +100,8 @@ export AI_CREDENTIAL_ENCRYPTION_KEY_PARAM='/learning-platform/dev/ai-credential-
 export OPENAI_BASE_URL_PARAM='/learning-platform/dev/openai-base-url'
 export OPENAI_API_KEY_PARAM='/learning-platform/dev/openai-api-key'
 export OPENAI_MODEL_PARAM='/learning-platform/dev/openai-model'
+export SWAGGER_USERNAME_PARAM='/learning-platform/dev/swagger-username'
+export SWAGGER_PASSWORD_PARAM='/learning-platform/dev/swagger-password'
 ```
 
 ### 2.3. Ghi giá trị `String`
@@ -135,7 +139,7 @@ aws ssm put-parameter --region "$AWS_REGION" --cli-input-json "file://$SSM_REQUE
 rm -f -- "$SSM_REQUEST_FILE"
 trap - EXIT
 ```
-Áp dụng cùng mẫu cho `object-storage-access-key`, `object-storage-secret-key`, `ai-credential-encryption-key`, `openai-api-key`.
+Áp dụng cùng mẫu cho `object-storage-access-key`, `object-storage-secret-key`, `ai-credential-encryption-key`, `openai-api-key`, `swagger-username` và `swagger-password`. Dùng username riêng cho môi trường dev và password mạnh, không tái sử dụng credential khác.
 
 ### 2.5. Ghi CA nhiều dòng
 Chạy trên máy cá nhân quản trị. File CA chỉ là file tạm trên máy cá nhân; AWS CLI ghi nội dung file vào SSM `SecureString`:
@@ -204,7 +208,9 @@ cat > "$POLICY_FILE" <<'EOF'
         "arn:aws:ssm:<aws-region>:<account-id>:parameter/learning-platform/dev/ai-credential-encryption-key",
         "arn:aws:ssm:<aws-region>:<account-id>:parameter/learning-platform/dev/openai-base-url",
         "arn:aws:ssm:<aws-region>:<account-id>:parameter/learning-platform/dev/openai-api-key",
-        "arn:aws:ssm:<aws-region>:<account-id>:parameter/learning-platform/dev/openai-model"
+        "arn:aws:ssm:<aws-region>:<account-id>:parameter/learning-platform/dev/openai-model",
+        "arn:aws:ssm:<aws-region>:<account-id>:parameter/learning-platform/dev/swagger-username",
+        "arn:aws:ssm:<aws-region>:<account-id>:parameter/learning-platform/dev/swagger-password"
       ]
     }
   ]
@@ -484,7 +490,7 @@ Payload này chỉ được chứa non-runtime host configuration, checksums, re
 
 ## 9. Kiểm tra trước khi chuyển sang vận hành
 1. Đã thu đủ thông tin Aiven và add IP VPS vào allowlist.
-2. Đã tạo đủ 18 SSM parameter đúng type.
+2. Đã tạo đủ 20 SSM parameter đúng type, gồm hai credential Swagger.
 3. Đã tạo IAM policy, IAM user và đúng một access key bootstrap.
 4. Đã có user deploy riêng trên VPS, SSH key riêng, passwordless sudo và firewall phù hợp.
 5. Đã kiểm tra fingerprint host key trước khi lấy `DEV_VPS_KNOWN_HOSTS`.
@@ -495,3 +501,5 @@ Payload này chỉ được chứa non-runtime host configuration, checksums, re
 10. Đã chuẩn bị lệnh tạo Secret AWS và Secret GHCR sau khi tag `k3s` tạo namespace.
 11. GitHub Environment `dev` đã có đủ `DEV_VPS_HOST`, `DEV_VPS_USER`, `DEV_VPS_SSH_KEY`, `DEV_VPS_KNOWN_HOSTS`, `DEV_K3S_ANSIBLE_VARS_B64`.
 12. GUIDE dừng ở đây. Các bước chạy và vận hành hệ thống nằm trong `docs/deployment/RUNBOOK-dev-k3s.md`.
+
+Swagger Basic Auth chỉ được sử dụng qua public HTTPS edge. Với baseline hiện tại, Nginx trên host terminate TLS trước khi proxy tới Traefik NodePort chỉ bind loopback; không gửi Swagger credential qua URL HTTP công khai.

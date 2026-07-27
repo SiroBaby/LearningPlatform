@@ -23,9 +23,15 @@
       - api_public_host | length > 0
       - api_public_host is not search('REPLACE_WITH')
       - web_public_host != api_public_host
-      - phase0_api_base_url == 'http://api:3000'
+      - phase0_api_base_url == 'http://api:3000/api/v1'
       - phase0_dev_owner_id is match('^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
       - ingress_tls_secret_name is string
+      - ssm_parameter_keys.swagger_username is string
+      - ssm_parameter_keys.swagger_password is string
+      - ssm_parameter_keys.swagger_username is search('^/')
+      - ssm_parameter_keys.swagger_password is search('^/')
+      - ssm_parameter_keys.swagger_username is not search('REPLACE_WITH')
+      - ssm_parameter_keys.swagger_password is not search('REPLACE_WITH')
     fail_msg: >-
       Application images must be lowercase ghcr.io immutable sha256 digests,
       deployment_targets must contain only web, api, and worker, and GHCR/
@@ -107,6 +113,31 @@
       ingress_tls_secret_name is configured but the referenced kubernetes.io/tls
       Secret does not exist in {{ learning_platform_namespace }}.
   when: ingress_tls_secret_name | length > 0
+
+- name: Apply API-only Swagger runtime ExternalSecret
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition: "{{ lookup('template', playbook_dir ~ '/../../k8s/swagger-external-secret.yaml.j2') | from_yaml }}"
+  when: "'api' in deployment_targets"
+
+- name: Wait for API-only Swagger runtime ExternalSecret readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    namespace: '{{ learning_platform_namespace }}'
+    name: learning-platform-swagger-runtime
+  register: applications_swagger_runtime_external_secret
+  retries: 30
+  delay: 2
+  until: >-
+    applications_swagger_runtime_external_secret.resources | length == 1 and
+    (applications_swagger_runtime_external_secret.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  when: "'api' in deployment_targets"
 
 - name: Wait for API runtime ExternalSecret readiness
   kubernetes.core.k8s_info:

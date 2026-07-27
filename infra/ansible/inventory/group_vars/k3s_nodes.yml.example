@@ -51,6 +51,8 @@ ssm_parameter_keys:
   openai_base_url: /REPLACE/WITH/EXACT/openai-base-url
   openai_api_key: /REPLACE/WITH/EXACT/openai-api-key
   openai_model: /REPLACE/WITH/EXACT/openai-model
+  swagger_username: /REPLACE/WITH/EXACT/swagger-username
+  swagger_password: /REPLACE/WITH/EXACT/swagger-password
 
 # Immutable image digests are required. Replace every placeholder with an
 # image reference ending in @sha256:<64 hexadecimal characters>.
@@ -61,7 +63,7 @@ worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:REPLACE_WITH_64_HEX_D
 ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET
 web_public_host: REPLACE_WITH_WEB_PUBLIC_HOST
 api_public_host: REPLACE_WITH_API_PUBLIC_HOST
-phase0_api_base_url: http://api:3000
+phase0_api_base_url: http://api:3000/api/v1
 phase0_dev_owner_id: REPLACE_WITH_DEV_OWNER_UUID
 ingress_tls_secret_name: ''
 deployment_targets: [web, api, worker]

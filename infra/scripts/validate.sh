@@ -94,15 +94,18 @@ check_application_edge_contract() {
   local eso_template="${ANSIBLE_DIR}/roles/external_secrets/templates/external-secrets.yaml.j2"
   local app_template="${INFRA_DIR}/k8s/apps.yaml.j2"
   local migration_template="${INFRA_DIR}/k8s/migration-job.yaml.j2"
+  local swagger_external_secret_template="${INFRA_DIR}/k8s/swagger-external-secret.yaml.j2"
   local app_vars="${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"
 
   for required_pattern in \
     '^  db_ssl_mode: /REPLACE/WITH/EXACT/db-ssl-mode$' \
     '^  db_ssl_ca: /REPLACE/WITH/EXACT/db-ssl-ca$' \
+    '^  swagger_username: /REPLACE/WITH/EXACT/swagger-username$' \
+    '^  swagger_password: /REPLACE/WITH/EXACT/swagger-password$' \
     '^ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET$' \
     '^web_public_host: REPLACE_WITH_WEB_PUBLIC_HOST$' \
     '^api_public_host: REPLACE_WITH_API_PUBLIC_HOST$' \
-    '^phase0_api_base_url: http://api:3000$' \
+    '^phase0_api_base_url: http://api:3000/api/v1$' \
     '^phase0_dev_owner_id: REPLACE_WITH_DEV_OWNER_UUID$' \
     '^deployment_targets: \[web, api, worker\]$'; do
     if ! grep -qE "${required_pattern}" "${app_vars}"; then
@@ -131,12 +134,103 @@ check_application_edge_contract() {
     "ghcr_pull_secret_name is not search('REPLACE_WITH')" \
     'web_public_host is string' \
     'api_public_host is string' \
-    "phase0_api_base_url == 'http://api:3000'" \
+    "phase0_api_base_url == 'http://api:3000/api/v1'" \
     'ingress_tls_secret_name is string'; do
     if ! grep -Fqx "      - ${required_assertion}" "${app_tasks}"; then
       fail "Application assertion must use the exact list indentation: ${required_assertion}."
     fi
   done
+
+  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 3 ] \
+    || grep -Fqx '           env:' "${app_template}"; then
+    fail 'Each workload env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
+  fi
+
+  for required_worker_literal in \
+    '            - name: AI_LLM_PROVIDER' \
+    '              value: openai' \
+    '            - name: OPENAI_CAPABILITY_VERSION' \
+    '              value: responses-json-v1' \
+    '            - name: OPENAI_STRUCTURED_OUTPUT_MODE' \
+    '              value: json-schema-strict' \
+    '            - name: OPENAI_TRANSPORT' \
+    '              value: responses'; do
+    if ! grep -Fqx "${required_worker_literal}" "${app_template}"; then
+      fail "Worker manifest must include explicit runtime literal: ${required_worker_literal}."
+    fi
+  done
+
+  for forbidden_secret_contract in \
+    'AI_LLM_PROVIDER' \
+    'OPENAI_CAPABILITY_VERSION' \
+    'OPENAI_STRUCTURED_OUTPUT_MODE' \
+    'OPENAI_TRANSPORT'; do
+    if grep -Fq "'${forbidden_secret_contract}':" "${eso_template}" \
+      || grep -Fq "  ${forbidden_secret_contract,,}:" "${app_vars}"; then
+      fail "Non-secret worker runtime config must not be sourced from ExternalSecret or SSM contract: ${forbidden_secret_contract}."
+    fi
+  done
+
+  if [ "$(grep -Fc 'name: learning-platform-swagger-runtime' "${swagger_external_secret_template}")" -ne 2 ] \
+    || ! grep -Fqx '    name: aws-parameter-store' "${swagger_external_secret_template}" \
+    || [ "$(grep -Fc '    - secretKey:' "${swagger_external_secret_template}")" -ne 2 ] \
+    || ! grep -Fqx '    - secretKey: SWAGGER_USERNAME' "${swagger_external_secret_template}" \
+    || ! grep -Fqx '        key: {{ ssm_parameter_keys.swagger_username }}' "${swagger_external_secret_template}" \
+    || ! grep -Fqx '    - secretKey: SWAGGER_PASSWORD' "${swagger_external_secret_template}" \
+    || ! grep -Fqx '        key: {{ ssm_parameter_keys.swagger_password }}' "${swagger_external_secret_template}"; then
+    fail 'Swagger runtime ExternalSecret must map exactly the two API-only Swagger SSM keys through aws-parameter-store.'
+  fi
+
+  if grep -Fq 'learning-platform-swagger-runtime' "${eso_template}"; then
+    fail 'Swagger runtime ExternalSecret must not be duplicated in the baseline ESO template.'
+  fi
+
+  local api_block
+  api_block="$(awk '/{% if '\''api'\'' in deployment_targets %}/{capture=1} capture {print} /{% endif %}/{if (capture) exit}' "${app_template}")"
+  if [ "$(grep -Fc '            - name: SWAGGER_ENABLED' "${app_template}")" -ne 1 ] \
+    || ! grep -Fqx "              value: 'true'" "${app_template}" \
+    || [ "$(grep -Fc '            - name: SWAGGER_USERNAME' "${app_template}")" -ne 1 ] \
+    || [ "$(grep -Fc '            - name: SWAGGER_PASSWORD' "${app_template}")" -ne 1 ] \
+    || [ "$(grep -Fc '                  name: learning-platform-swagger-runtime' "${app_template}")" -ne 2 ] \
+    || [ "$(grep -Fc '                  key: SWAGGER_USERNAME' "${app_template}")" -ne 1 ] \
+    || [ "$(grep -Fc '                  key: SWAGGER_PASSWORD' "${app_template}")" -ne 1 ] \
+    || ! grep -Fq '            - name: SWAGGER_ENABLED' <<<"${api_block}" \
+    || ! grep -Fq "              value: 'true'" <<<"${api_block}" \
+    || ! grep -Fq '            - name: SWAGGER_USERNAME' <<<"${api_block}" \
+    || ! grep -Fq '            - name: SWAGGER_PASSWORD' <<<"${api_block}" \
+    || [ "$(grep -Fc '                  name: learning-platform-swagger-runtime' <<<"${api_block}")" -ne 2 ] \
+    || grep -Fq 'SWAGGER_' "${migration_template}"; then
+    fail 'Swagger must be enabled only for API with both dedicated Secret references, never for migration.'
+  fi
+
+  local worker_block
+  worker_block="$(awk '/{% if '\''worker'\'' in deployment_targets %}/{capture=1} capture {print} /{% endif %}/{if (capture) exit}' "${app_template}")"
+  if grep -Fq 'SWAGGER_' <<<"${worker_block}"; then
+    fail 'Worker workload must not receive Swagger configuration or credentials.'
+  fi
+
+  for required_task in \
+    'Apply API-only Swagger runtime ExternalSecret' \
+    'Wait for API-only Swagger runtime ExternalSecret readiness'; do
+    if ! grep -Fq -- "- name: ${required_task}" "${app_tasks}"; then
+      fail "Applications role is missing Swagger reconciliation task: ${required_task}."
+    fi
+  done
+
+  if [ "$(grep -Fc "when: \"'api' in deployment_targets\"" "${app_tasks}")" -lt 2 ] \
+    || ! grep -Fq "swagger-external-secret.yaml.j2') | from_yaml" "${app_tasks}" \
+    || ! grep -Fq 'name: learning-platform-swagger-runtime' "${app_tasks}"; then
+    fail 'Applications role must apply and wait for the API-only Swagger ExternalSecret.'
+  fi
+
+  local swagger_apply_line swagger_wait_line workload_apply_line
+  swagger_apply_line="$(grep -nF -- '- name: Apply API-only Swagger runtime ExternalSecret' "${app_tasks}" | cut -d: -f1)"
+  swagger_wait_line="$(grep -nF -- '- name: Wait for API-only Swagger runtime ExternalSecret readiness' "${app_tasks}" | cut -d: -f1)"
+  workload_apply_line="$(grep -nF -- '- name: Apply selected stateless Learning Platform workloads' "${app_tasks}" | cut -d: -f1)"
+  if [ -z "${swagger_apply_line}" ] || [ -z "${swagger_wait_line}" ] || [ -z "${workload_apply_line}" ] \
+    || [ "${swagger_apply_line}" -ge "${swagger_wait_line}" ] || [ "${swagger_wait_line}" -ge "${workload_apply_line}" ]; then
+    fail 'Swagger ExternalSecret apply and readiness wait must precede workload application.'
+  fi
 
   if ! grep -qE '^api_resources:$' "${app_vars}" \
     || ! grep -Fqx '      - api_resources is mapping' "${app_tasks}" \

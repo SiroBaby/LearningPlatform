@@ -136,9 +136,10 @@ sudo k3s kubectl -n learning-platform-dev rollout status deployment/worker --tim
 ```bash
 sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-api-runtime -o yaml
 sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-worker-runtime -o yaml
+sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-swagger-runtime -o yaml
 ```
 
-Hai resource này phải có `Ready=True`.
+Ba resource này phải có `Ready=True`. `learning-platform-swagger-runtime` chỉ chứa hai key `SWAGGER_USERNAME` và `SWAGGER_PASSWORD`, và chỉ API được tham chiếu Secret này.
 
 ### 5.3. Kiểm tra host monitoring
 
@@ -199,7 +200,7 @@ sudo k3s kubectl -n learning-platform-dev exec deploy/worker -- /bin/sh -lc 'tes
 
 ### 6.1. Qua Traefik
 
-HTTP mode:
+HTTP mode chỉ dùng cho health check không chứa credential:
 
 ```bash
 curl -I http://<dev-public-host>/
@@ -213,13 +214,29 @@ curl -I https://<dev-public-host>/
 curl -fsS https://<dev-public-host>/api/v1/health
 ```
 
+Swagger Basic Auth chỉ được kiểm tra qua public HTTPS edge đã xác minh certificate. Không truyền credential qua HTTP và không đưa credential trực tiếp vào command line. Dùng file netrc tạm quyền `0600`:
+
+```bash
+NETRC_FILE="$(mktemp)"
+chmod 600 "$NETRC_FILE"
+read -r SWAGGER_USERNAME
+read -r -s SWAGGER_PASSWORD
+printf 'machine %s login %s password %s\n' '<dev-api-public-host>' "$SWAGGER_USERNAME" "$SWAGGER_PASSWORD" > "$NETRC_FILE"
+unset SWAGGER_USERNAME SWAGGER_PASSWORD
+curl -fsS -o /dev/null -w '%{http_code}\n' --netrc-file "$NETRC_FILE" "https://<dev-api-public-host>/api/v1/docs"
+rm -f -- "$NETRC_FILE"
+```
+
+Kết quả phải là `200`. Một request HTTPS không có Basic Auth phải trả `401`. Không dùng `-k` và không log response header chứa thông tin nhạy cảm.
+
 ### 6.2. Điều kiện pass tối thiểu
 
 1. `web`, `api`, `worker` rollout thành công
-2. `learning-platform-api-runtime` và `learning-platform-worker-runtime` đều `Ready=True`
+2. `learning-platform-api-runtime`, `learning-platform-worker-runtime` và `learning-platform-swagger-runtime` đều `Ready=True`
 3. endpoint `/api/v1/health` trả kết quả thành công
 4. worker `/health` trả kết quả thành công qua port-forward
 5. target monitoring lên `up`
+6. `/api/v1/docs` qua HTTPS trả `401` khi không có credential và `200` với credential đúng
 
 ## 7. Rollback
 
@@ -288,6 +305,14 @@ Tiếp tục dùng password qua stdin và Docker config tạm như trong GUIDE.
 3. xác minh `ExternalSecret` đã sync
 4. restart `api` và `worker` để ép reconnect nếu cần
 5. chạy lại health check qua Traefik và worker health
+
+### 8.4. Rotate Swagger Basic Auth
+
+1. cập nhật `/learning-platform/dev/swagger-username` và `/learning-platform/dev/swagger-password` trong SSM bằng mẫu `SecureString` của GUIDE
+2. xác minh `learning-platform-swagger-runtime` đã sync và vẫn `Ready=True`
+3. restart `api` để process nhận credential mới
+4. xác minh HTTPS Swagger trả `401` với credential cũ và `200` với credential mới
+5. xóa file netrc tạm và không ghi credential vào log hoặc shell history
 
 ## 9. Common failure diagnosis
 
@@ -375,9 +400,10 @@ Khi cần thay VPS mới, làm theo đúng thứ tự này:
 Khi một đợt bootstrap hoặc deploy hoàn tất, nên lưu ít nhất các bằng chứng sau:
 
 1. output rollout status của `web`, `api`, `worker`
-2. trạng thái `Ready=True` của hai `ExternalSecret`
+2. trạng thái `Ready=True` của ba `ExternalSecret`, gồm `learning-platform-swagger-runtime`
 3. kết quả health của `http(s)://<dev-public-host>/api/v1/health`
 4. kết quả worker `/health` qua port-forward
 5. trạng thái target Prometheus `node-exporter` và `kube-state-metrics`
+6. kết quả Swagger HTTPS `401` không credential và `200` với credential đúng
 
 Nếu chưa có các bằng chứng này, chưa nên xem rollout là đã xác minh xong.

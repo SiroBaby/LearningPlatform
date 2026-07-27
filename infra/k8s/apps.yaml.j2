@@ -101,7 +101,17 @@ spec:
             - name: PORT
               value: '3000'
             - name: SWAGGER_ENABLED
-              value: 'false'
+              value: 'true'
+            - name: SWAGGER_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-swagger-runtime
+                  key: SWAGGER_USERNAME
+            - name: SWAGGER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-swagger-runtime
+                  key: SWAGGER_PASSWORD
 {% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'AI_CREDENTIAL_ENCRYPTION_KEY'] %}
             - name: {{ key }}
               valueFrom:
@@ -174,6 +184,14 @@ spec:
           env:
             - name: NODE_ENV
               value: production
+            - name: AI_LLM_PROVIDER
+              value: openai
+            - name: OPENAI_CAPABILITY_VERSION
+              value: responses-json-v1
+            - name: OPENAI_STRUCTURED_OUTPUT_MODE
+              value: json-schema-strict
+            - name: OPENAI_TRANSPORT
+              value: responses
             - name: WORKER_HEALTH_HOST
               value: 0.0.0.0
             - name: WORKER_HEALTH_PORT
