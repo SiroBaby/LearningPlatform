@@ -93,6 +93,7 @@ check_application_edge_contract() {
   local app_tasks="${ANSIBLE_DIR}/roles/applications/tasks/main.yml"
   local eso_template="${ANSIBLE_DIR}/roles/external_secrets/templates/external-secrets.yaml.j2"
   local app_template="${INFRA_DIR}/k8s/apps.yaml.j2"
+  local migration_template="${INFRA_DIR}/k8s/migration-job.yaml.j2"
   local app_vars="${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"
 
   for required_pattern in \
@@ -136,6 +137,60 @@ check_application_edge_contract() {
       fail "Application assertion must use the exact list indentation: ${required_assertion}."
     fi
   done
+
+  if ! grep -qE '^api_resources:$' "${app_vars}" \
+    || ! grep -Fqx '      - api_resources is mapping' "${app_tasks}" \
+    || grep -Fq 'migration_resources' "${migration_template}" "${app_tasks}" "${app_vars}" \
+    || ! grep -Fqx '  name: database-migrate' "${migration_template}" \
+    || ! grep -Fqx 'kind: Job' "${migration_template}" \
+    || ! grep -Fqx '  backoffLimit: 2' "${migration_template}" \
+    || ! grep -Fqx '  activeDeadlineSeconds: 600' "${migration_template}" \
+    || ! grep -Fqx '  ttlSecondsAfterFinished: 3600' "${migration_template}" \
+    || ! grep -Fqx '  parallelism: 1' "${migration_template}" \
+    || ! grep -Fqx '  completions: 1' "${migration_template}" \
+    || ! grep -Fqx '      restartPolicy: Never' "${migration_template}" \
+    || ! grep -Fqx "          command: ['node', 'dist/database/migrate.js', 'up']" "${migration_template}" \
+    || ! grep -Fqx '          image: {{ migration_image }}' "${migration_template}" \
+    || ! grep -Fqx '          resources: {{ api_resources | to_json }}' "${migration_template}"; then
+    fail 'Database migration Job must be bounded, use the selected immutable backend image, and reuse API resources.'
+  fi
+
+  if [ "$(grep -c 'name: learning-platform-api-runtime' "${migration_template}")" -ne 1 ] \
+    || [ "$(grep -c 'secretKeyRef:' "${migration_template}")" -ne 1 ] \
+    || [ "$(grep -c "\['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA'\]" "${migration_template}")" -ne 1 ] \
+    || grep -qE 'ports:|[Pp]robe:|kind: (Service|Ingress)' "${migration_template}"; then
+    fail 'Database migration Job must expose only the seven API runtime database keys and no network workload resources.'
+  fi
+
+  for required_task in \
+    'Derive whether a selected backend requires database migration' \
+    'Require identical API and worker images for a shared migration rollout' \
+    'Inspect existing database migration Job' \
+    'Refuse to replace a non-terminal database migration Job' \
+    'Delete a terminal database migration Job before rerunning it' \
+    'Wait for terminal database migration Job deletion' \
+    'Apply database migration Job for the selected backend image' \
+    'Wait for database migration Job to reach a terminal state' \
+    'Require database migration Job completion before workload rollout'; do
+    if ! grep -Fq -- "- name: ${required_task}" "${app_tasks}"; then
+      fail "Applications role is missing migration gate task: ${required_task}."
+    fi
+  done
+
+  if ! grep -Fq 'when: applications_backend_selected | bool' "${app_tasks}" \
+    || ! grep -Fq "when: \"'api' in deployment_targets and 'worker' in deployment_targets\"" "${app_tasks}" \
+    || ! grep -Fq "migration_image: \"{{ api_image if 'api' in deployment_targets else worker_image }}\"" "${app_tasks}" \
+    || ! grep -Fq 'api_image == worker_image' "${app_tasks}"; then
+    fail 'Applications role must select migration only for backend targets and require a shared backend image.'
+  fi
+
+  if grep -Fq 'status.active' "${app_tasks}" \
+    || ! grep -Fq 'Complete=True or' "${app_tasks}" \
+    || ! grep -Fq 'Failed=True' "${app_tasks}" \
+    || [ "$(grep -Fc 'status.conditions | default([])' "${app_tasks}")" -lt 4 ] \
+    || ! grep -Fq 'Delete a terminal database migration Job before rerunning it' "${app_tasks}"; then
+    fail 'Database migration replacement must delete only terminal Complete=True or Failed=True Jobs.'
+  fi
 }
 
 check_yaml_when_supported() {

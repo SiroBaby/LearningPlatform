@@ -6,7 +6,7 @@ Setup guide: `../docs/deployment/GUIDE-dev-k3s.md`.
 
 Operations runbook: `../docs/deployment/RUNBOOK-dev-k3s.md`.
 
-It does not replace or install Prometheus or Grafana, does not create PostgreSQL, PersistentVolumes, PersistentVolumeClaims, StatefulSets, database migrations, Terraform, or public worker ingress. The existing Compose fallback in `deploy/` remains unchanged.
+It does not replace or install Prometheus or Grafana, and it does not create PostgreSQL, PersistentVolumes, PersistentVolumeClaims, StatefulSets, Terraform, or public worker ingress. Before a selected backend rollout, it runs the repository's existing SQL migrations through a bounded one-shot K3s Job and blocks workload application unless that Job completes successfully. The existing Compose fallback in `deploy/` remains unchanged.
 
 ## Layout
 

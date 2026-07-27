@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { config as loadEnv } from 'dotenv';
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { Client } from 'pg';
+import { Client, type ClientConfig } from 'pg';
 
 loadEnv();
 
@@ -24,20 +24,64 @@ const MIGRATIONS_DIR = join(__dirname, 'migrations');
 const LOCK_KEY = 4815162342; // advisory lock id cố định cho migration
 
 interface MigrationFile {
-  version: string; // timestamp prefix
-  name: string; // <timestamp>_<name>
-  upPath: string;
-  downPath: string;
+  readonly version: string; // timestamp prefix
+  readonly name: string; // <timestamp>_<name>
+  readonly upPath: string;
+  readonly downPath: string;
+}
+
+interface MigrationEnvironment {
+  readonly DB_HOST?: string;
+  readonly DB_NAME?: string;
+  readonly DB_PASSWORD?: string;
+  readonly DB_PORT?: string;
+  readonly DB_SSL_CA?: string;
+  readonly DB_SSL_MODE?: string;
+  readonly DB_USER?: string;
+}
+
+function parsePort(value: string): number {
+  if (!/^\d+$/u.test(value)) {
+    throw new Error('DB_PORT must be a valid integer');
+  }
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('DB_PORT must be a valid integer');
+  }
+  return port;
+}
+
+export function buildClientConfig(environment: MigrationEnvironment): ClientConfig {
+  const sslMode = environment.DB_SSL_MODE ?? 'disabled';
+  if (sslMode !== 'disabled' && sslMode !== 'verify-ca') {
+    throw new Error('DB_SSL_MODE must be disabled or verify-ca');
+  }
+  const config: ClientConfig = {
+    database: environment.DB_NAME ?? 'learning',
+    host: environment.DB_HOST ?? 'localhost',
+    options: '-c timezone=UTC',
+    password: environment.DB_PASSWORD ?? 'learning',
+    port: parsePort(environment.DB_PORT ?? '5432'),
+    user: environment.DB_USER ?? 'learning',
+  };
+  if (sslMode === 'verify-ca') {
+    const certificateAuthority = environment.DB_SSL_CA;
+    if (!certificateAuthority?.trim()) {
+      throw new Error('DB_SSL_CA must be a non-blank string when DB_SSL_MODE is verify-ca');
+    }
+    return {
+      ...config,
+      ssl: {
+        ca: certificateAuthority,
+        rejectUnauthorized: true,
+      },
+    };
+  }
+  return config;
 }
 
 function buildClient(): Client {
-  return new Client({
-    host: process.env.DB_HOST ?? 'localhost',
-    port: parseInt(process.env.DB_PORT ?? '5432', 10),
-    user: process.env.DB_USER ?? 'learning',
-    password: process.env.DB_PASSWORD ?? 'learning',
-    database: process.env.DB_NAME ?? 'learning',
-  });
+  return new Client(buildClientConfig(process.env));
 }
 
 function discoverMigrations(): MigrationFile[] {
@@ -88,6 +132,10 @@ async function withLock<T>(client: Client, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function runUp(client: Client): Promise<void> {
   await ensureTrackingTable(client);
   const applied = await appliedVersions(client);
@@ -113,7 +161,7 @@ export async function runUp(client: Client): Promise<void> {
       console.log(`  ✓ ${m.name}`);
     } catch (err) {
       await client.query('ROLLBACK');
-      throw new Error(`Migration "${m.name}" thất bại: ${(err as Error).message}`);
+      throw new Error(`Migration "${m.name}" thất bại: ${formatErrorMessage(err)}`);
     }
   }
   console.log(`Hoàn tất ${pending.length} migration.`);
@@ -147,7 +195,7 @@ export async function runDown(client: Client): Promise<void> {
     console.log(`  ✓ reverted ${target.name}`);
   } catch (err) {
     await client.query('ROLLBACK');
-    throw new Error(`Revert "${target.name}" thất bại: ${(err as Error).message}`);
+    throw new Error(`Revert "${target.name}" thất bại: ${formatErrorMessage(err)}`);
   }
 }
 
