@@ -13,6 +13,7 @@
     "start:worker:dev": "ts-node src/worker.ts",
     "migration:new": "node scripts/new-migration.js",
     "migration:run": "ts-node -T src/database/migrate.ts up",
+    "migration:run:prod": "node dist/database/migrate.js up",
     "migration:revert": "ts-node -T src/database/migrate.ts down",
     "migration:status": "ts-node -T src/database/migrate.ts status",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
