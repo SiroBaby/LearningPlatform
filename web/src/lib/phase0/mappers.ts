@@ -113,10 +113,16 @@ function readNullableEstimatePrecision(value: unknown, field: string): Phase0Est
 
 function readBudgetStatus(value: unknown, field: string): Phase0BudgetStatus {
   switch (readString(value, field)) {
-    case "WITHIN_BUDGET":
-      return "WITHIN_BUDGET";
-    case "EXCEEDED":
-      return "EXCEEDED";
+    case "NOT_RESERVED":
+      return "NOT_RESERVED";
+    case "CUSTOM_ZERO_COST":
+      return "CUSTOM_ZERO_COST";
+    case "SETTLED":
+      return "SETTLED";
+    case "HELD":
+      return "HELD";
+    case "EXHAUSTED":
+      return "EXHAUSTED";
     default:
       throw new TypeError(`Expected ${field} to be a valid budget status.`);
   }
