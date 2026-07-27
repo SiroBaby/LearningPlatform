@@ -211,6 +211,7 @@ jobs:
           PY
           chmod 600 "$DEPLOYMENT_DIR/hosts.yml" "$DEPLOYMENT_DIR/overrides.yml"
       - name: Apply selected applications through Ansible
+        id: apply-applications
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/infra/ansible/ansible.cfg
           ANSIBLE_HOST_KEY_CHECKING: "True"
@@ -218,6 +219,27 @@ jobs:
         run: |
           DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
           "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags applications -e "@$DEPLOYMENT_DIR/overrides.yml"
+      - name: Diagnose failed database migration gate
+        if: failure() && steps.apply-applications.outcome == 'failure' && needs.changes.outputs.backend == 'true'
+        env:
+          VPS_HOST: ${{ vars.DEV_VPS_HOST }}
+          VPS_USER: ${{ vars.DEV_VPS_USER }}
+        run: |
+          DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
+          if ! python3 - "$DEPLOYMENT_DIR/overrides.yml" >/dev/null 2>&1 <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding='utf-8') as overrides:
+              targets = json.load(overrides)['deployment_targets']
+          sys.exit(not any(target in ('api', 'worker') for target in targets))
+          PY
+          then
+            exit 0
+          fi
+          if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" 'if ! sudo k3s kubectl get job/database-migrate --namespace learning-platform-dev >/dev/null 2>&1; then exit 0; fi; sudo k3s kubectl describe job/database-migrate --namespace learning-platform-dev || true; sudo k3s kubectl logs job/database-migrate --all-containers=true --namespace learning-platform-dev 2>/dev/null || true'; then
+            true
+          fi
       - name: Wait for selected K3s rollouts
         env:
           VPS_HOST: ${{ vars.DEV_VPS_HOST }}

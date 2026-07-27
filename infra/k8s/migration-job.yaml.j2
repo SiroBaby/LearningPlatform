@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: database-migrate
+  namespace: {{ learning_platform_namespace }}
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 3600
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: {{ ghcr_pull_secret_name }}
+      containers:
+        - name: database-migrate
+          image: {{ migration_image }}
+          imagePullPolicy: IfNotPresent
+          command: ['node', 'dist/database/migrate.js', 'up']
+          env:
+            - name: NODE_ENV
+              value: production
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-api-runtime
+                  key: {{ key }}
+{% endfor %}
+          resources: {{ api_resources | to_json }}

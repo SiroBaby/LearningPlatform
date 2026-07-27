@@ -31,6 +31,24 @@
       deployment_targets must contain only web, api, and worker, and GHCR/
       ingress configuration must be explicit.
 
+- name: Derive whether a selected backend requires database migration
+  ansible.builtin.set_fact:
+    applications_backend_selected: "{{ 'api' in deployment_targets or 'worker' in deployment_targets }}"
+
+- name: Require identical API and worker images for a shared migration rollout
+  ansible.builtin.assert:
+    that:
+      - api_image == worker_image
+    fail_msg: >-
+      Selecting both api and worker requires identical images because the
+      database migration Job must run the same backend release.
+  when: "'api' in deployment_targets and 'worker' in deployment_targets"
+
+- name: Select the backend image for database migration
+  ansible.builtin.set_fact:
+    migration_image: "{{ api_image if 'api' in deployment_targets else worker_image }}"
+  when: applications_backend_selected | bool
+
 - name: Discover existing Learning Platform workload deployments
   kubernetes.core.k8s_info:
     kubeconfig: /etc/rancher/k3s/k3s.yaml
@@ -106,7 +124,7 @@
       | selectattr('type', 'equalto', 'Ready')
       | selectattr('status', 'equalto', 'True')
       | list | length) == 1
-  when: "'api' in deployment_targets"
+  when: applications_backend_selected | bool
 
 - name: Wait for worker runtime ExternalSecret readiness
   kubernetes.core.k8s_info:
@@ -125,6 +143,113 @@
       | selectattr('status', 'equalto', 'True')
       | list | length) == 1
   when: "'worker' in deployment_targets"
+
+- name: Inspect existing database migration Job
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: batch/v1
+    kind: Job
+    namespace: '{{ learning_platform_namespace }}'
+    name: database-migrate
+  register: applications_database_migration_job
+  when: applications_backend_selected | bool
+
+- name: Refuse to replace a non-terminal database migration Job
+  ansible.builtin.assert:
+    that:
+      - >-
+        applications_database_migration_job.resources | length == 0 or
+        ((applications_database_migration_job.resources[0].status.conditions | default([])
+           | selectattr('type', 'equalto', 'Complete')
+           | selectattr('status', 'equalto', 'True')
+           | list | length) == 1 or
+         (applications_database_migration_job.resources[0].status.conditions | default([])
+           | selectattr('type', 'equalto', 'Failed')
+           | selectattr('status', 'equalto', 'True')
+           | list | length) == 1)
+    fail_msg: >-
+      The existing database-migrate Job has not reached Complete=True or
+      Failed=True. Wait for its terminal state before starting another backend
+      rollout.
+  when: applications_backend_selected | bool
+
+- name: Delete a terminal database migration Job before rerunning it
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: batch/v1
+    kind: Job
+    namespace: '{{ learning_platform_namespace }}'
+    name: database-migrate
+    state: absent
+  when:
+    - applications_backend_selected | bool
+    - applications_database_migration_job.resources | length == 1
+    - >-
+      (applications_database_migration_job.resources[0].status.conditions | default([])
+        | selectattr('type', 'equalto', 'Complete')
+        | selectattr('status', 'equalto', 'True')
+        | list | length) == 1 or
+      (applications_database_migration_job.resources[0].status.conditions | default([])
+        | selectattr('type', 'equalto', 'Failed')
+        | selectattr('status', 'equalto', 'True')
+        | list | length) == 1
+
+- name: Wait for terminal database migration Job deletion
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: batch/v1
+    kind: Job
+    namespace: '{{ learning_platform_namespace }}'
+    name: database-migrate
+  register: applications_database_migration_job_deleted
+  retries: 30
+  delay: 2
+  until: applications_database_migration_job_deleted.resources | length == 0
+  when:
+    - applications_backend_selected | bool
+    - applications_database_migration_job.resources | length == 1
+
+- name: Apply database migration Job for the selected backend image
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition: "{{ lookup('template', playbook_dir ~ '/../../k8s/migration-job.yaml.j2') | from_yaml }}"
+  when: applications_backend_selected | bool
+
+- name: Wait for database migration Job to reach a terminal state
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: batch/v1
+    kind: Job
+    namespace: '{{ learning_platform_namespace }}'
+    name: database-migrate
+  register: applications_database_migration_result
+  retries: 310
+  delay: 2
+  until: >-
+    applications_database_migration_result.resources | length == 1 and
+    ((applications_database_migration_result.resources[0].status.conditions | default([])
+       | selectattr('type', 'equalto', 'Complete')
+       | selectattr('status', 'equalto', 'True')
+       | list | length) == 1 or
+     (applications_database_migration_result.resources[0].status.conditions | default([])
+       | selectattr('type', 'equalto', 'Failed')
+       | selectattr('status', 'equalto', 'True')
+       | list | length) == 1)
+  when: applications_backend_selected | bool
+
+- name: Require database migration Job completion before workload rollout
+  ansible.builtin.assert:
+    that:
+      - >-
+        (applications_database_migration_result.resources[0].status.conditions | default([])
+          | selectattr('type', 'equalto', 'Complete')
+          | selectattr('status', 'equalto', 'True')
+          | list | length) == 1
+    fail_msg: >-
+      The database-migrate Job did not complete successfully. Selected
+      application workloads were not applied.
+  when: applications_backend_selected | bool
 
 - name: Apply selected stateless Learning Platform workloads
   kubernetes.core.k8s:
