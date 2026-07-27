@@ -1,6 +1,14 @@
 import { randomUUID } from 'crypto';
 
-import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 
 import { StorageService } from '../../storage/storage.service';
 import {
@@ -17,6 +25,7 @@ import { DocumentEstimateResult } from './contracts/document-estimate.result';
 import { resolveDocumentUploadPolicy } from './contracts/document-upload-policy';
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { Document } from './entities/document.entity';
+import { DocumentStatus } from './enums/document-status.enum';
 import { ContentRepository } from './repositories/content.repository';
 import {
   MODEL_CATALOG,
@@ -140,11 +149,35 @@ export class ContentService {
   async findQuiz(ownerId: string, documentId: string): Promise<DocumentQuizResult> {
     const document = await this.contentRepository.findByOwnerId(ownerId, documentId);
     if (!document) {
-      throw new NotFoundException(`Document ${documentId} not found`);
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: `Document ${documentId} not found`,
+      });
     }
     const quiz = await this.quizzes.findByOwnerAndDocumentId(ownerId, documentId);
     if (!quiz) {
-      throw new NotFoundException(`Quiz for Document ${documentId} not found`);
+      if (
+        document.status === DocumentStatus.UPLOADED ||
+        document.status === DocumentStatus.PROCESSING
+      ) {
+        throw new ConflictException({
+          code: 'QUIZ_NOT_READY',
+          message: 'Quiz is still being prepared. Please try again shortly.',
+          retryable: true,
+        });
+      }
+      if (document.status === DocumentStatus.FAILED) {
+        throw new ConflictException({
+          code: 'DOCUMENT_PROCESSING_FAILED',
+          message: document.errorMessage ?? 'Document processing failed. Please try again later.',
+          retryable: document.budgetStatus === 'EXHAUSTED',
+        });
+      }
+      throw new InternalServerErrorException({
+        code: 'QUIZ_INVARIANT_VIOLATION',
+        message: 'Quiz is unavailable due to a system error. Please try again later.',
+        retryable: false,
+      });
     }
     return Object.assign(new DocumentQuizResult(), quiz);
   }

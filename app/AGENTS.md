@@ -72,6 +72,7 @@
 - Persist một Quiz per document/prompt-version, không quiz per chunk.
 - Citation tự chứa `{ chunkId, locator, snippet }` để serve-side không query `ai.chunks`.
 - Quiz serve projection phải tách khỏi grading projection và không được select/map `is_correct`, explanation hoặc citation trước khi Attempt được nộp.
+- Document-scoped Quiz discovery phải xét `Document.status`: chỉ trả `404` khi Document không tồn tại/không thuộc Owner; dùng trạng thái riêng cho Quiz chưa sẵn sàng, processing thất bại và bất biến `READY` nhưng thiếu Quiz.
 - Ordinal của Question trong một Quiz mới phải liên tục `0..N-1` sau validation/deduplication; khi đọc dữ liệu cũ có ordinal trùng, luôn dùng thêm khóa ổn định làm tie-breaker và không coi ordinal persisted là số hiển thị duy nhất cho người học.
 
 ## Verification

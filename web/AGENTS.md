@@ -13,4 +13,5 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Khi người dùng xác nhận rời màn hình làm quiz, phải persist snapshot mới nhất và tháo `beforeunload`/`popstate` guard trước khi điều hướng. Với history sentinel, dùng full navigation cho lần rời đã xác nhận để tránh App Router transition bị sentinel giữ lại.
 - Practice chỉ gọi feedback API sau action `Kiểm tra đáp án`; chọn option hoặc chuyển câu không được tự gọi feedback, và thay đổi option phải vô hiệu feedback/request cũ.
 - Runtime response parser phải dùng đúng toàn bộ literal values mà backend thực sự persist hoặc phát qua API, bao gồm trạng thái trung gian; khi backend thêm một literal mới, cập nhật frontend union, parser và regression test trong cùng thay đổi.
+- BFF error sanitization phải giữ các field máy đọc an toàn như `code`, `message`, `retryable`; không rút gọn mọi lỗi thành message khiến client phải đoán nghiệp vụ từ text, và không chuyển tiếp field backend tùy ý chưa allowlist.
 <!-- END:nextjs-agent-rules -->

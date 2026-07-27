@@ -36,3 +36,27 @@ for (const budgetStatus of budgetStatuses) {
     assert.equal(document.budgetStatus, budgetStatus);
   });
 }
+
+test("maps a document with AUTHORITATIVE estimate status", () => {
+  const document = mapDocumentResponse({
+    budgetStatus: "SETTLED",
+    createdAt: "2026-07-27T00:00:00.000Z",
+    durationSec: null,
+    errorMessage: null,
+    estimateStatus: "AUTHORITATIVE",
+    estimatedCredits: 100,
+    id: "document-id",
+    language: null,
+    originalName: "lesson.pdf",
+    pageCount: null,
+    selectedModelKind: "PLAN",
+    selectedModelLabel: "Fast platform model",
+    settledCredits: 80,
+    sizeBytes: 1024,
+    status: "READY",
+    type: "PDF",
+    updatedAt: "2026-07-27T00:00:00.000Z",
+  });
+
+  assert.equal(document.estimateStatus, "AUTHORITATIVE");
+});

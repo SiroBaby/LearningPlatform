@@ -182,7 +182,12 @@ describe('Document HTTP flow', () => {
     const absentQuiz = await request(`/api/v1/documents/${newerUpload.documentId}/quiz`, {
       headers: ownerHeaders(),
     });
-    expect(absentQuiz.status).toBe(404);
+    expect(absentQuiz.status).toBe(409);
+    expect(await absentQuiz.json()).toEqual({
+      code: 'QUIZ_NOT_READY',
+      message: 'Quiz is still being prepared. Please try again shortly.',
+      retryable: true,
+    });
 
     // A compiled WorkerModule executes the production relay/poller/return wiring
     // deterministically in-process, without a separate child process.

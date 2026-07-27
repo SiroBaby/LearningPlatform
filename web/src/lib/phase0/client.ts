@@ -1,4 +1,5 @@
 import type {
+  Phase0ApiError,
   Phase0AttemptResultResponse,
   Phase0ConfirmDocumentResponse,
   Phase0Document,
@@ -14,6 +15,7 @@ import type {
   Phase0UploadUrlRequest,
   Phase0UploadUrlResponse,
 } from "@/lib/phase0/contracts";
+import { mapSafeBackendError } from "@/lib/phase0/backend-error";
 import {
   mapAttemptResultResponse,
   mapConfirmDocumentResponse,
@@ -29,26 +31,21 @@ import {
 } from "@/lib/phase0/mappers";
 
 export class Phase0ClientError extends Error {
+  public readonly code?: string;
+  public readonly retryable?: boolean;
   public readonly status: number;
 
-  public constructor(status: number, message: string) {
-    super(message);
+  public constructor(status: number, error: Phase0ApiError) {
+    super(error.message);
     this.name = "Phase0ClientError";
     this.status = status;
+    this.code = error.code;
+    this.retryable = error.retryable;
   }
 }
 
-function readErrorMessage(value: unknown): string {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
-  }
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    const message = Object.entries(value).find(([key]) => key === "message")?.[1];
-    if (typeof message === "string") {
-      return message;
-    }
-  }
-  return "The Phase 0 API request failed.";
+function readApiError(value: unknown): Phase0ApiError {
+  return mapSafeBackendError(value) ?? { message: "The Phase 0 API request failed." };
 }
 
 async function readResponseBody(response: Response): Promise<unknown> {
@@ -82,7 +79,7 @@ async function requestPhase0Api<T>(
   });
   const responseBody = await readResponseBody(response);
   if (!response.ok) {
-    throw new Phase0ClientError(response.status, readErrorMessage(responseBody));
+    throw new Phase0ClientError(response.status, readApiError(responseBody));
   }
   return mapResponse(responseBody);
 }
