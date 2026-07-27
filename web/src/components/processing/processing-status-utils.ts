@@ -93,15 +93,20 @@ export function getSettledCreditsLabel(document: Phase0Document | null): string 
 }
 
 export function getBudgetStatusLabel(status: Phase0BudgetStatus | null): string {
-  if (status === "WITHIN_BUDGET") {
-    return "Trong mức dự kiến";
+  switch (status) {
+    case "NOT_RESERVED":
+      return "Chưa giữ credit";
+    case "CUSTOM_ZERO_COST":
+      return "Không dùng credit gói";
+    case "SETTLED":
+      return "Đã chốt credit";
+    case "HELD":
+      return "Đang giữ credit";
+    case "EXHAUSTED":
+      return "Đã dùng hết credit";
+    case null:
+      return "Đang cập nhật";
   }
-
-  if (status === "EXCEEDED") {
-    return "Vượt mức dự kiến";
-  }
-
-  return "Đang cập nhật";
 }
 
 export function getBudgetMessage(document: Phase0Document | null): string {

@@ -14,7 +14,13 @@ export const phase0EstimatePrecisionLevels = ["COARSE"] as const;
 
 export type Phase0EstimatePrecision = (typeof phase0EstimatePrecisionLevels)[number];
 
-export const phase0BudgetStatuses = ["WITHIN_BUDGET", "EXCEEDED"] as const;
+export const phase0BudgetStatuses = [
+  "NOT_RESERVED",
+  "CUSTOM_ZERO_COST",
+  "SETTLED",
+  "HELD",
+  "EXHAUSTED",
+] as const;
 
 export type Phase0BudgetStatus = (typeof phase0BudgetStatuses)[number];
 
