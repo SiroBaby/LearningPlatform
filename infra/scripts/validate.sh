@@ -131,6 +131,9 @@ check_application_edge_contract() {
   fi
 
   for required_assertion in \
+    "\"'web' not in deployment_targets or web_image is match('^ghcr\\\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')\"" \
+    "\"'api' not in deployment_targets or api_image is match('^ghcr\\\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')\"" \
+    "\"'worker' not in deployment_targets or worker_image is match('^ghcr\\\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')\"" \
     "ghcr_pull_secret_name is not search('REPLACE_WITH')" \
     'web_public_host is string' \
     'api_public_host is string' \
@@ -140,6 +143,12 @@ check_application_edge_contract() {
       fail "Application assertion must use the exact list indentation: ${required_assertion}."
     fi
   done
+
+  if grep -Fqx "      - web_image is match('^ghcr\\\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')" "${app_tasks}" \
+    || grep -Fqx "      - api_image is match('^ghcr\\\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')" "${app_tasks}" \
+    || grep -Fqx "      - worker_image is match('^ghcr\\\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')" "${app_tasks}"; then
+    fail 'Unselected workload images must not block selective application deployment.'
+  fi
 
   if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 3 ] \
     || grep -Fqx '           env:' "${app_template}"; then
