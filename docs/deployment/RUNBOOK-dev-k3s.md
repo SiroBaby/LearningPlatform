@@ -248,7 +248,7 @@ sudo k3s kubectl -n learning-platform-dev rollout undo deployment/api
 sudo k3s kubectl -n learning-platform-dev rollout undo deployment/worker
 ```
 
-Sau rollback nhanh, vẫn phải đưa desired state về digest tốt đã biết.
+Sau rollback nhanh, vẫn phải đưa desired state về digest tốt đã biết. Trước khi digest đó ra khỏi 10 version mới nhất và không còn được ReplicaSet tham chiếu, gắn thêm tag `rollback-<tên-ngắn>` cho cùng package version để retention selector bỏ qua version đó.
 
 ### 7.2. Rollback chuẩn theo digest cũ
 
@@ -314,9 +314,38 @@ Tiếp tục dùng password qua stdin và Docker config tạm như trong GUIDE.
 4. xác minh HTTPS Swagger trả `401` với credential cũ và `200` với credential mới
 5. xóa file netrc tạm và không ghi credential vào log hoặc shell history
 
-## 9. Common failure diagnosis
+## 9. GHCR retention cleanup
 
-### 9.1. Tag `k3s` fail trước khi cài
+Workflow `.github/workflows/cleanup-ghcr.yml` hoàn toàn tách biệt với deploy. Nó chạy mỗi tuần lúc 03:00 UTC và có thể chạy thủ công qua **Actions → Clean GHCR development images → Run workflow**.
+
+### 9.1. Điều kiện và policy
+
+1. `GITHUB_TOKEN` của workflow phải có `contents: read` và `packages: write`; không cấu hình PAT hoặc secret token riêng.
+2. Token chỉ có quyền xoá/restore package khi người khởi chạy có quyền **admin** trên repository/package GHCR. Nếu package chưa kế thừa quyền từ repository hoặc admin không được cấp, GitHub API sẽ fail và workflow dừng.
+3. Hai package được xử lý độc lập: `learningplatform-api` (dùng chung cho `api` và `worker`) và `learningplatform-web`.
+4. Với từng package, selector giữ 10 version mới nhất có đúng một tag `sha-<40 hex>`, chỉ xét xoá version cũ ít nhất 30 ngày. Version không tag, tag không phải SHA, nhiều tag/mixed tag, hoặc metadata malformed đều bị bỏ qua; không có wildcard delete. Operator phải pin một digest known-good cần giữ lâu hơn bằng tag bổ sung `rollback-<tên-ngắn>`; version đó trở thành multi-tag và không đủ điều kiện xoá.
+5. Trước khi chọn xoá, workflow đọc-only qua SSH strict host checking với `ssh -n` từ cả Deployment và ReplicaSet trong namespace `learning-platform-dev`. Mọi digest còn được tham chiếu đều được bảo vệ để rollout undo và rollback theo digest còn an toàn.
+6. Lỗi SSH, REST list/pagination, parse JSON, selector hoặc protected-digest discovery đều fail closed: không có thao tác xoá tiếp theo.
+
+### 9.2. Dry-run và xoá có xác nhận
+
+Manual run mặc định là dry-run. Để xem exact version ID được chọn, chạy workflow và để trống `confirmation`; log chỉ in ID, không gọi DELETE. Muốn xoá bằng manual run, nhập đúng `DELETE` vào `confirmation`. Lịch chạy hàng tuần được phép thực hiện xoá theo policy.
+
+Mỗi DELETE gọi endpoint REST user-owned chính thức theo exact ID:
+
+```text
+DELETE /user/packages/container/<package>/versions/<version_id>
+```
+
+Không chạy `docker system prune`, không prune image node/containerd trên VPS và không thao tác các untagged version.
+
+### 9.3. Khôi phục sau cleanup
+
+GitHub Packages có thể cho restore version vừa xoá trong thời hạn do GitHub quy định, nhưng `GITHUB_TOKEN` preview restore cũng cần repository/package admin; không xem restore là thay thế cho rollback-safe retention. Cleanup chỉ bảo đảm giữ digest còn được Deployment/ReplicaSet tham chiếu, 10 SHA-tagged version mới nhất và version được operator pin bằng tag `rollback-*`; không bảo đảm giữ mọi digest lịch sử chỉ vì từng được xem là known-good. Khi một digest cũ đã bị xoá vĩnh viễn, cần build/push lại từ commit đã biết rồi deploy immutable digest mới; node/containerd cache không phải cơ chế restore và workflow không dọn cache đó.
+
+## 10. Common failure diagnosis
+
+### 10.1. Tag `k3s` fail trước khi cài
 
 Kiểm tra:
 
@@ -333,7 +362,7 @@ sudo ss -ltnp '( sport = :80 or sport = :443 )'
 sudo -l -U <ssh-user>
 ```
 
-### 9.2. `external_secrets` fail hoặc `Ready=False`
+### 10.2. `external_secrets` fail hoặc `Ready=False`
 
 Kiểm tra:
 
@@ -343,7 +372,7 @@ Kiểm tra:
 4. IAM policy có thiếu ARN hoặc thiếu `kms:Decrypt` khi dùng CMK không
 5. `ssm_parameter_keys.*` có trỏ đúng exact path không
 
-### 9.3. Ứng dụng không lên dù ESO đã `Ready=True`
+### 10.3. Ứng dụng không lên dù ESO đã `Ready=True`
 
 Kiểm tra:
 
@@ -352,7 +381,7 @@ Kiểm tra:
 3. `ghcr_pull_secret_name` có đúng với Secret thật không
 4. `DB_SSL_MODE` có là `verify-ca` và `DB_SSL_CA` có mặt không
 
-### 9.4. Monitoring không lên target
+### 10.4. Monitoring không lên target
 
 Kiểm tra:
 
@@ -362,7 +391,7 @@ Kiểm tra:
 4. `promtool` có tồn tại ở `prometheus_promtool_path` không
 5. service `kube-state-metrics-port-forward.service` có chạy không
 
-### 9.5. Workflow GitHub fail trước bước Ansible
+### 10.5. Workflow GitHub fail trước bước Ansible
 
 Kiểm tra environment `dev`:
 
@@ -378,7 +407,7 @@ Kiểm tra thêm:
 2. payload không chứa ký tự xuống dòng lỗi hoặc file sai nội dung
 3. user và host chỉ chứa ký tự mà workflow chấp nhận
 
-## 10. VPS replacement sequence
+## 11. VPS replacement sequence
 
 Khi cần thay VPS mới, làm theo đúng thứ tự này:
 
@@ -395,7 +424,7 @@ Khi cần thay VPS mới, làm theo đúng thứ tự này:
 11. chuyển DNS hoặc endpoint công khai sang host mới nếu cần
 12. sau khi host mới ổn định mới gỡ allowlist IP cũ và decommission host cũ
 
-## 11. Mốc kết thúc
+## 12. Mốc kết thúc
 
 Khi một đợt bootstrap hoặc deploy hoàn tất, nên lưu ít nhất các bằng chứng sau:
 
