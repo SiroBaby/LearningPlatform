@@ -57,6 +57,10 @@ export class ContentMappingProfile {
         mapFrom((source) => source.errorMessage ?? null),
       ),
       forMember(
+        (destination) => destination.errorCode,
+        mapFrom((source) => source.errorCode ?? null),
+      ),
+      forMember(
         (destination) => destination.selectedModelKind,
         mapFrom((source) => source.modelSelectionKind ?? null),
       ),

@@ -5,6 +5,7 @@ import type { QuizDiscovery, QuizDiscoverySummary } from '../assessment/contract
 import { ContentService } from './content.service';
 import { Document } from './entities/document.entity';
 import { DocumentStatus } from './enums/document-status.enum';
+import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
 
 describe('ContentService.findQuiz', () => {
   it('returns DOCUMENT_NOT_FOUND when the Document is missing or not owned by the requester', async () => {
@@ -82,6 +83,7 @@ describe('ContentService.findQuiz', () => {
   it('marks exhausted processing budget as retryable', async () => {
     const document = createDocument(DocumentStatus.FAILED, 'Processing budget was exhausted');
     document.budgetStatus = 'EXHAUSTED';
+    document.errorCode = DocumentProcessingFailureCode.BUDGET_EXHAUSTED;
     const repository = new RecordingContentRepository(document);
     const quizzes = new RecordingQuizDiscovery(null);
     const service = new ContentService(repository as never, null as never, null as never, quizzes);
@@ -96,6 +98,52 @@ describe('ContentService.findQuiz', () => {
       },
     );
   });
+
+  it('marks an unavailable provider failure as retryable from its stable code', async () => {
+    const document = createDocument(
+      DocumentStatus.FAILED,
+      'Document processing is temporarily unavailable. Please try again later.',
+    );
+    document.errorCode = DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE;
+    const repository = new RecordingContentRepository(document);
+    const quizzes = new RecordingQuizDiscovery(null);
+    const service = new ContentService(repository as never, null as never, null as never, quizzes);
+
+    await expectQuizException(
+      service.findQuiz('owner-1', 'document-1'),
+      409,
+      {
+        code: 'DOCUMENT_PROCESSING_FAILED',
+        message: 'Document processing is temporarily unavailable. Please try again later.',
+        retryable: true,
+      },
+    );
+  });
+
+  it.each([
+    [DocumentProcessingFailureCode.GENERATION_OUTPUT_INVALID, true],
+    [DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS, false],
+    [DocumentProcessingFailureCode.PROCESSING_TIMED_OUT, true],
+  ] satisfies readonly (readonly [DocumentProcessingFailureCode, boolean])[])(
+    'uses the retryability policy for %s',
+    async (errorCode, retryable) => {
+      const document = createDocument(DocumentStatus.FAILED, 'Safe failure message');
+      document.errorCode = errorCode;
+      const repository = new RecordingContentRepository(document);
+      const quizzes = new RecordingQuizDiscovery(null);
+      const service = new ContentService(repository as never, null as never, null as never, quizzes);
+
+      await expectQuizException(
+        service.findQuiz('owner-1', 'document-1'),
+        409,
+        {
+          code: 'DOCUMENT_PROCESSING_FAILED',
+          message: 'Safe failure message',
+          retryable,
+        },
+      );
+    },
+  );
 
   it('returns QUIZ_INVARIANT_VIOLATION when an owned READY Document has no Quiz', async () => {
     const repository = new RecordingContentRepository(createDocument(DocumentStatus.READY, null));

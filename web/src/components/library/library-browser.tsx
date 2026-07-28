@@ -8,7 +8,13 @@ import { Badge, EmptyState, LinkButton, SectionHeading, StatusPill, TypeBadge } 
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 import { Phase0ClientError, getPhase0Documents } from "@/lib/phase0/client";
-import type { Phase0Document, Phase0DocumentStatus, Phase0DocumentType } from "@/lib/phase0/contracts";
+import type {
+  Phase0Document,
+  Phase0DocumentProcessingFailureCode,
+  Phase0DocumentStatus,
+  Phase0DocumentType,
+} from "@/lib/phase0/contracts";
+import { getDocumentFailurePresentation } from "@/lib/phase0/document-failure";
 import { routes } from "@/lib/routes";
 import { useEffect, useState } from "react";
 
@@ -29,7 +35,7 @@ type Phase0DocumentPresentation = {
   language: string | null;
   pageCount: number | null;
   durationSec: number | null;
-  errorMessage: string | null;
+  errorCode: Phase0DocumentProcessingFailureCode | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -75,7 +81,7 @@ function toPresentationDocument(document: Phase0Document): Phase0DocumentPresent
     language: document.language,
     pageCount: document.pageCount,
     durationSec: document.durationSec,
-    errorMessage: document.errorMessage,
+    errorCode: document.errorCode,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };
@@ -232,6 +238,9 @@ function LibraryDocumentCard({
   view: LibraryView;
 }) {
   const isList = view === "list";
+  const failurePresentation = document.status === "failed"
+    ? getDocumentFailurePresentation(document.errorCode)
+    : null;
 
   return (
     <Card className={cn("h-full", isList && "overflow-hidden")}>
@@ -275,10 +284,10 @@ function LibraryDocumentCard({
             </div>
           ) : null}
 
-          {document.status === "failed" && document.errorMessage ? (
+          {failurePresentation ? (
             <div className="rounded-2xl border border-error-100 bg-error-50 p-3 text-sm text-error-700">
-              <p className="font-medium">Xử lý chưa thành công</p>
-              <p className="mt-1">{document.errorMessage}</p>
+              <p className="font-medium">{failurePresentation.title}</p>
+              <p className="mt-1">{failurePresentation.description}</p>
             </div>
           ) : null}
         </div>

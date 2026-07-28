@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Phase0ClientError, getPhase0Document } from "@/lib/phase0/client";
 import type { Phase0BudgetStatus, Phase0Document, Phase0ModelSelectionKind } from "@/lib/phase0/contracts";
 
@@ -145,6 +145,7 @@ interface UseProcessingDocumentStatusResult {
   readonly document: Phase0Document | null;
   readonly isLoading: boolean;
   readonly error: string | null;
+  readonly refresh: () => Promise<void>;
 }
 
 export function useProcessingDocumentStatus(documentId: string): UseProcessingDocumentStatusResult {
@@ -152,56 +153,77 @@ export function useProcessingDocumentStatus(documentId: string): UseProcessingDo
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const pollingTimerRef = useRef<number | null>(null);
+  const pollingGenerationRef = useRef(0);
+  const schedulePollRef = useRef<((generation: number) => void) | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function poll(): Promise<void> {
-      try {
-        const nextDocument = await getPhase0Document(documentId);
-        if (cancelled) {
-          return;
-        }
-
-        setDocument(nextDocument);
-        setError(null);
-
-        if (nextDocument.status === "READY" || nextDocument.status === "FAILED") {
-          setIsLoading(false);
-          return;
-        }
-      } catch (pollError) {
-        if (cancelled) {
-          return;
-        }
-
-        setError(getClientErrorMessage(pollError));
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+  const pollOnce = useCallback(async (generation: number): Promise<void> => {
+    try {
+      const nextDocument = await getPhase0Document(documentId);
+      if (pollingGenerationRef.current !== generation) {
+        return;
       }
 
-      if (!cancelled) {
-        pollingTimerRef.current = window.setTimeout(() => {
-          void poll();
-        }, 3000);
+      setDocument(nextDocument);
+      setError(null);
+
+      if (nextDocument.status === "READY" || nextDocument.status === "FAILED") {
+        setIsLoading(false);
+        return;
+      }
+    } catch (pollError) {
+      if (pollingGenerationRef.current !== generation) {
+        return;
+      }
+
+      setError(getClientErrorMessage(pollError));
+    } finally {
+      if (pollingGenerationRef.current === generation) {
+        setIsLoading(false);
       }
     }
 
-    void poll();
+    if (pollingGenerationRef.current === generation) {
+      schedulePollRef.current?.(generation);
+    }
+  }, [documentId]);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    pollingGenerationRef.current += 1;
+    const generation = pollingGenerationRef.current;
+
+    if (pollingTimerRef.current !== null) {
+      window.clearTimeout(pollingTimerRef.current);
+      pollingTimerRef.current = null;
+    }
+
+    setIsLoading(true);
+    await pollOnce(generation);
+  }, [pollOnce]);
+
+  useEffect(() => {
+    schedulePollRef.current = (generation: number) => {
+      pollingTimerRef.current = window.setTimeout(() => {
+        void pollOnce(generation);
+      }, 3000);
+    };
+
+    queueMicrotask(() => {
+      void refresh();
+    });
 
     return () => {
-      cancelled = true;
+      pollingGenerationRef.current += 1;
+      schedulePollRef.current = null;
       if (pollingTimerRef.current !== null) {
         window.clearTimeout(pollingTimerRef.current);
       }
     };
-  }, [documentId]);
+  }, [pollOnce, refresh]);
 
   return {
     document,
     isLoading,
     error,
+    refresh,
   };
 }

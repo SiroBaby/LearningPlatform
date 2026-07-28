@@ -8,6 +8,7 @@ import type {
   ResponseCreateParamsNonStreaming,
 } from 'openai/resources/responses/responses';
 import { ConfigService } from '@nestjs/config';
+import OpenAI from 'openai';
 
 import { ApplicationConfigService } from '../../config/application-config.service';
 import type {
@@ -15,6 +16,7 @@ import type {
   LlmTransport,
 } from '../../config/configuration.types';
 import { FakeLlmProvider } from './fake-llm-provider';
+import { DocumentProcessingFailureCode } from './contracts/document-processing-result';
 import { decodeGeneratedQuestionOutput } from './quiz-generation-output.decoder';
 import {
   createOpenAiProviderIdentity,
@@ -126,6 +128,63 @@ describe('OpenAiLlmProvider', () => {
     });
   });
 
+  it.each(['chat-completions', 'responses'] satisfies readonly LlmTransport[])(
+    'classifies the credential-unavailable gateway 404 as a safe provider failure with %s',
+    async (transport) => {
+      const rawGatewayMessage = 'No active credentials for provider: minimax-cn';
+      const provider = new OpenAiLlmProvider(
+        new RejectingOpenAiClient(
+          new OpenAI.NotFoundError(
+            404,
+            { message: rawGatewayMessage },
+            undefined,
+            new Headers(),
+          ),
+        ),
+        providerSettings(transport),
+      );
+
+      const failure = await provider.generate({
+        parameters: {
+          format: 'mcq-single-select-v1',
+          maxOutputTokens: 1000,
+          questionsPerChunk: 1,
+        },
+        promptTemplate: 'template',
+        sourceText: 'source',
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({
+        code: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+      });
+      expect(String(failure)).not.toContain(rawGatewayMessage);
+    },
+  );
+
+  it('does not classify an unrelated gateway 404 as provider unavailable', async () => {
+    const provider = new OpenAiLlmProvider(
+      new RejectingOpenAiClient(
+        new OpenAI.NotFoundError(
+          404,
+          { message: 'Route was not found' },
+          undefined,
+          new Headers(),
+        ),
+      ),
+      providerSettings('responses'),
+    );
+
+    await expect(provider.generate({
+      parameters: {
+        format: 'mcq-single-select-v1',
+        maxOutputTokens: 1000,
+        questionsPerChunk: 1,
+      },
+      promptTemplate: 'template',
+      sourceText: 'source',
+    })).rejects.toThrow('Route was not found');
+  });
+
   it('builds identity from endpoint capabilities but not the API key', () => {
     const base = {
       baseUrl: 'https://proxy.example.com/v1',
@@ -227,6 +286,27 @@ class RecordingOpenAiClient {
     private readonly output: string | null,
     private readonly responseStatus: Response['status'] = 'completed',
   ) {}
+}
+
+class RejectingOpenAiClient {
+  readonly chat = {
+    completions: {
+      create: async (
+        _request: ChatCompletionCreateParamsNonStreaming,
+      ): Promise<Pick<ChatCompletion, 'choices' | 'usage'>> => {
+        throw this.error;
+      },
+    },
+  };
+  readonly responses = {
+    create: async (
+      _request: ResponseCreateParamsNonStreaming,
+    ): Promise<Pick<Response, 'output_text' | 'status' | 'usage'>> => {
+      throw this.error;
+    },
+  };
+
+  constructor(private readonly error: Error) {}
 }
 
 function providerSettings(transport: LlmTransport): {

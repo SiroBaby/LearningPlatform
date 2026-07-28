@@ -17,6 +17,16 @@ export enum DocumentProcessingFailureCode {
   PDF_TEXT_NOT_FOUND = 'PDF_TEXT_NOT_FOUND',
   PROCESSING_FAILED = 'PROCESSING_FAILED',
   PROCESSING_TIMED_OUT = 'PROCESSING_TIMED_OUT',
+  PROVIDER_UNAVAILABLE = 'PROVIDER_UNAVAILABLE',
+}
+
+export function isDocumentProcessingFailureRetryable(
+  errorCode: DocumentProcessingFailureCode | null,
+): boolean {
+  return errorCode === DocumentProcessingFailureCode.BUDGET_EXHAUSTED ||
+    errorCode === DocumentProcessingFailureCode.GENERATION_OUTPUT_INVALID ||
+    errorCode === DocumentProcessingFailureCode.PROCESSING_TIMED_OUT ||
+    errorCode === DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE;
 }
 
 export interface DocumentProcessingResult {

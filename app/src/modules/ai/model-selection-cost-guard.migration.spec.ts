@@ -22,6 +22,7 @@ describe('model selection and cost guard migration', () => {
     expect(await documentColumnName('estimated_credits')).toBe('estimated_credits');
     expect(await documentColumnName('settled_credits')).toBe('settled_credits');
     expect(await documentColumnName('budget_status')).toBe('budget_status');
+    expect(await documentColumnName('error_code')).toBe('error_code');
 
     await revertThroughMigration('1780835014400');
 
@@ -33,6 +34,7 @@ describe('model selection and cost guard migration', () => {
     expect(await tableName('ai.credit_ledger_entries')).toBe('ai.credit_ledger_entries');
     expect(await tableName('course.documents')).toBe('course.documents');
     expect(await documentColumnName('estimate_status')).toBeNull();
+    expect(await documentColumnName('error_code')).toBeNull();
 
     await runUp(db.client);
   });

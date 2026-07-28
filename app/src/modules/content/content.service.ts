@@ -26,6 +26,7 @@ import { resolveDocumentUploadPolicy } from './contracts/document-upload-policy'
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { Document } from './entities/document.entity';
 import { DocumentStatus } from './enums/document-status.enum';
+import { isDocumentProcessingFailureRetryable } from '../ai/contracts/document-processing-result';
 import { ContentRepository } from './repositories/content.repository';
 import {
   MODEL_CATALOG,
@@ -170,7 +171,7 @@ export class ContentService {
         throw new ConflictException({
           code: 'DOCUMENT_PROCESSING_FAILED',
           message: document.errorMessage ?? 'Document processing failed. Please try again later.',
-          retryable: document.budgetStatus === 'EXHAUSTED',
+          retryable: isDocumentProcessingFailureRetryable(document.errorCode),
         });
       }
       throw new InternalServerErrorException({

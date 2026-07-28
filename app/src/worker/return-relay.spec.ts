@@ -11,6 +11,7 @@ import {
 import { DataSource, Repository } from 'typeorm';
 
 import { AiOutboxEvent } from '../modules/ai/entities/ai-outbox-event.entity';
+import { DocumentProcessingFailureCode } from '../modules/ai/contracts/document-processing-result';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
 import {
   DocumentStatusProjection,
@@ -156,6 +157,29 @@ describe('ReturnRelay', () => {
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
   });
 
+  it('clears a failed document error code and message when it is reconfirmed', async () => {
+    const document = await seedProcessingDocument();
+    await documents.update(
+      { id: document.id },
+      {
+        errorCode: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+        errorMessage: 'Document processing is temporarily unavailable. Please try again later.',
+        status: DocumentStatus.FAILED,
+      },
+    );
+
+    await new ContentRepository(ds).confirmProcessing(document.ownerId, document.id, {
+      customModelConfigId: null,
+      kind: 'PLAN',
+      platformModelId: null,
+    });
+
+    const reconfirmed = await documents.findOneByOrFail({ id: document.id });
+    expect(reconfirmed.status).toBe(DocumentStatus.PROCESSING);
+    expect(reconfirmed.errorCode).toBeNull();
+    expect(reconfirmed.errorMessage).toBeNull();
+  });
+
   it('preserves the Course coarse estimate when a legacy result has no authoritative estimate', async () => {
     const document = await documents.save(documents.create({
       ownerId: randomUUID(),
@@ -216,6 +240,7 @@ describe('ReturnRelay', () => {
   it.each([
     ['GENERATION_OUTPUT_INVALID', 'Generated question output is invalid'],
     ['INSUFFICIENT_VALID_QUESTIONS', 'Not enough valid questions were generated'],
+    ['PROVIDER_UNAVAILABLE', 'Document processing is temporarily unavailable. Please try again later.'],
   ])('accepts the safe generation failure code %s', async (errorCode, errorMessage) => {
     const document = await seedProcessingDocument();
     const event = await outbox.save(outbox.create({
@@ -233,7 +258,9 @@ describe('ReturnRelay', () => {
 
     await relay.pump(10);
 
-    expect((await documents.findOneByOrFail({ id: document.id })).errorMessage).toBe(errorMessage);
+    const projected = await documents.findOneByOrFail({ id: document.id });
+    expect(projected.errorCode).toBe(errorCode);
+    expect(projected.errorMessage).toBe(errorMessage);
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
   });
 

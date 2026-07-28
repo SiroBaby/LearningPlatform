@@ -34,6 +34,7 @@ export class ReturnRelay {
         estimatedCredits: payload.estimatedCredits,
         estimateStatus: payload.estimateStatus,
         budgetStatus: payload.budgetStatus,
+        errorCode: payload.errorCode,
         errorMessage: payload.errorMessage,
         ownerId: payload.ownerId,
         settledCredits: payload.settledCredits,
