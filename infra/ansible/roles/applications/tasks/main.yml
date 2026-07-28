@@ -61,9 +61,15 @@
     api_version: apps/v1
     kind: Deployment
     namespace: '{{ learning_platform_namespace }}'
-    label_selectors:
-      - app.kubernetes.io/name=learning-platform
   register: applications_learning_platform_deployments
+
+- name: Select existing Learning Platform workload deployment names
+  ansible.builtin.set_fact:
+    applications_existing_workload_names: >-
+      {{ applications_learning_platform_deployments.resources
+         | map(attribute='metadata.name')
+         | list
+         | intersect(['web', 'api', 'worker']) }}
 
 - name: Require complete target selection for the first application deployment
   ansible.builtin.assert:
@@ -72,7 +78,7 @@
     fail_msg: >-
       The first application deployment must select web, api, and worker so
       their shared runtime contract is established together.
-  when: applications_learning_platform_deployments.resources | length == 0
+  when: applications_existing_workload_names | length == 0
 
 - name: Verify manually provisioned GHCR pull Secret
   kubernetes.core.k8s_info:

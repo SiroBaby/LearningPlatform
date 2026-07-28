@@ -126,7 +126,10 @@ check_application_edge_contract() {
 
   if ! grep -q 'kubernetes.io/dockerconfigjson' "${app_tasks}" \
     || ! grep -q 'deployment_targets' "${app_tasks}" \
-    || ! grep -q 'Require complete target selection for the first application deployment' "${app_tasks}"; then
+    || ! grep -q 'Require complete target selection for the first application deployment' "${app_tasks}" \
+    || grep -q 'label_selectors:' "${app_tasks}" \
+    || ! grep -Fq "| intersect(['web', 'api', 'worker'])" "${app_tasks}" \
+    || ! grep -Fq 'when: applications_existing_workload_names | length == 0' "${app_tasks}"; then
     fail 'Applications role must validate GHCR auth and selective rollout targets.'
   fi
 
