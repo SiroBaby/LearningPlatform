@@ -8,6 +8,7 @@ import {
   DatabaseSslMode,
   DatabaseSettings,
   LlmProviderSettings,
+  LlmCapabilityVersion,
   LlmStructuredOutputMode,
   LlmTransport,
   OpenAiGeneralSettings,
@@ -76,15 +77,24 @@ export class ApplicationConfigService {
       throw new Error('OpenAI-compatible provider configuration is incomplete');
     }
 
+    const capabilityVersion = this.openAiCapabilityVersion(openai.capabilityVersion);
+    const transport = this.openAiTransport(openai.transport);
+    if (
+      (capabilityVersion === 'responses-json-v1' && transport !== 'responses') ||
+      (capabilityVersion === 'chat-completions-json-v1' && transport !== 'chat-completions')
+    ) {
+      throw new Error('OPENAI_CAPABILITY_VERSION must match OPENAI_TRANSPORT');
+    }
+
     return {
       openai: {
         apiKey: openai.apiKey,
         baseUrl: this.canonicalOpenAiBaseUrl(openai.baseUrl),
-        capabilityVersion: openai.capabilityVersion,
+        capabilityVersion,
         model: openai.model,
         requestTimeoutMs: openai.requestTimeoutMs,
         structuredOutputMode: this.openAiStructuredOutputMode(openai.structuredOutputMode),
-        transport: this.openAiTransport(openai.transport),
+        transport,
       },
       provider,
     };
@@ -234,6 +244,13 @@ export class ApplicationConfigService {
       throw new Error(
         'OPENAI_STRUCTURED_OUTPUT_MODE must be json-schema-strict or json-object',
       );
+    }
+    return value;
+  }
+
+  private openAiCapabilityVersion(value: string): LlmCapabilityVersion {
+    if (value !== 'chat-completions-json-v1' && value !== 'responses-json-v1') {
+      throw new Error('OPENAI_CAPABILITY_VERSION must be responses-json-v1 or chat-completions-json-v1');
     }
     return value;
   }

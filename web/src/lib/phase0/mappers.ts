@@ -150,6 +150,8 @@ function readDocumentProcessingFailureCode(
       return "EXTRACTION_OBJECT_TOO_LARGE";
     case "GENERATION_OUTPUT_INVALID":
       return "GENERATION_OUTPUT_INVALID";
+    case "GENERATION_OUTPUT_TRUNCATED":
+      return "GENERATION_OUTPUT_TRUNCATED";
     case "INSUFFICIENT_VALID_QUESTIONS":
       return "INSUFFICIENT_VALID_QUESTIONS";
     case "PDF_INVALID":

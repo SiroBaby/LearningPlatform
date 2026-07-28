@@ -12,6 +12,7 @@ export enum DocumentProcessingFailureCode {
   EXTRACTION_OBJECT_NOT_FOUND = 'EXTRACTION_OBJECT_NOT_FOUND',
   EXTRACTION_OBJECT_TOO_LARGE = 'EXTRACTION_OBJECT_TOO_LARGE',
   GENERATION_OUTPUT_INVALID = 'GENERATION_OUTPUT_INVALID',
+  GENERATION_OUTPUT_TRUNCATED = 'GENERATION_OUTPUT_TRUNCATED',
   INSUFFICIENT_VALID_QUESTIONS = 'INSUFFICIENT_VALID_QUESTIONS',
   PDF_INVALID = 'PDF_INVALID',
   PDF_TEXT_NOT_FOUND = 'PDF_TEXT_NOT_FOUND',
@@ -25,6 +26,7 @@ export function isDocumentProcessingFailureRetryable(
 ): boolean {
   return errorCode === DocumentProcessingFailureCode.BUDGET_EXHAUSTED ||
     errorCode === DocumentProcessingFailureCode.GENERATION_OUTPUT_INVALID ||
+    errorCode === DocumentProcessingFailureCode.GENERATION_OUTPUT_TRUNCATED ||
     errorCode === DocumentProcessingFailureCode.PROCESSING_TIMED_OUT ||
     errorCode === DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE;
 }

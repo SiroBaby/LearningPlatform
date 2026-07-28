@@ -11,6 +11,7 @@ export interface ApplicationSettings {
 }
 
 export type LlmProviderType = 'fake' | 'openai';
+export type LlmCapabilityVersion = 'chat-completions-json-v1' | 'responses-json-v1';
 export type LlmStructuredOutputMode = 'json-object' | 'json-schema-strict';
 export type LlmTransport = 'chat-completions' | 'responses';
 export type DatabaseSslMode = 'disabled' | 'verify-ca';
@@ -54,7 +55,7 @@ export type LlmProviderSettings =
       openai: {
         apiKey: string;
         baseUrl: string;
-        capabilityVersion: string;
+        capabilityVersion: LlmCapabilityVersion;
         model: string;
         requestTimeoutMs: number;
         structuredOutputMode: LlmStructuredOutputMode;

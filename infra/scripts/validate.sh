@@ -159,11 +159,11 @@ check_application_edge_contract() {
     '            - name: AI_LLM_PROVIDER' \
     '              value: openai' \
     '            - name: OPENAI_CAPABILITY_VERSION' \
-    '              value: responses-json-v1' \
+    '              value: chat-completions-json-v1' \
     '            - name: OPENAI_STRUCTURED_OUTPUT_MODE' \
     '              value: json-schema-strict' \
     '            - name: OPENAI_TRANSPORT' \
-    '              value: responses'; do
+    '              value: chat-completions'; do
     if ! grep -Fqx "${required_worker_literal}" "${app_template}"; then
       fail "Worker manifest must include explicit runtime literal: ${required_worker_literal}."
     fi

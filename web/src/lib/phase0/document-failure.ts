@@ -9,6 +9,7 @@ export interface Phase0DocumentFailurePresentation {
 const RETRYABLE_FAILURE_CODES: readonly Phase0DocumentProcessingFailureCode[] = [
   "BUDGET_EXHAUSTED",
   "GENERATION_OUTPUT_INVALID",
+  "GENERATION_OUTPUT_TRUNCATED",
   "PROCESSING_TIMED_OUT",
   "PROVIDER_UNAVAILABLE",
 ] as const;
@@ -51,6 +52,12 @@ export function getDocumentFailurePresentation(
       return {
         title: "Chưa thể tạo bộ câu hỏi ổn định",
         description: "Hãy thử lại sau. Nếu lỗi lặp lại, bạn có thể rút gọn hoặc làm rõ nội dung tài liệu rồi tải lại.",
+        retryable: true,
+      };
+    case "GENERATION_OUTPUT_TRUNCATED":
+      return {
+        title: "Chưa thể tạo bộ câu hỏi hoàn chỉnh",
+        description: "Hãy thử lại sau để tạo lại bộ câu hỏi.",
         retryable: true,
       };
     case "INSUFFICIENT_VALID_QUESTIONS":

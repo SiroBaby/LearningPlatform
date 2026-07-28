@@ -55,7 +55,7 @@ describe('OpenAiLlmProvider', () => {
       const output = await provider.generate({
         parameters: {
           format: 'mcq-single-select-v1',
-          maxOutputTokens: 1000,
+        maxOutputTokens: 4000,
           questionsPerChunk: 1,
         },
         promptTemplate: 'Use only the supplied source.',
@@ -67,7 +67,7 @@ describe('OpenAiLlmProvider', () => {
         expect(client.responseRequests[0]).toMatchObject({
           input: 'One grounded chunk.',
           instructions: 'Use only the supplied source.',
-          max_output_tokens: 1000,
+          max_output_tokens: 4000,
           model: 'gpt-test',
           store: false,
           text: {
@@ -80,7 +80,7 @@ describe('OpenAiLlmProvider', () => {
         return;
       }
       expect(client.chatRequests[0]).toMatchObject({
-        max_tokens: 1000,
+        max_tokens: 4000,
         messages: [
           { content: 'Use only the supplied source.', role: 'system' },
           { content: 'One grounded chunk.', role: 'user' },
@@ -98,7 +98,7 @@ describe('OpenAiLlmProvider', () => {
     const request = {
       parameters: {
         format: 'mcq-single-select-v1' as const,
-        maxOutputTokens: 1000 as const,
+        maxOutputTokens: 4000 as const,
         questionsPerChunk: 1 as const,
       },
       promptTemplate: 'template',
@@ -128,6 +128,56 @@ describe('OpenAiLlmProvider', () => {
     });
   });
 
+  it('accepts exactly one complete outer json fence from chat completions', async () => {
+    const provider = new OpenAiLlmProvider(
+      new RecordingOpenAiClient(`\n\`\`\`json\n${VALID_OUTPUT}\n\`\`\`\n`),
+      providerSettings('chat-completions'),
+    );
+
+    const result = await provider.generate({
+      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+      promptTemplate: 'template',
+      sourceText: 'source',
+    });
+
+    expect(decodeGeneratedQuestionOutput(result.output).questions).toHaveLength(1);
+  });
+
+  it.each([
+    `Prose before\n\`\`\`json\n${VALID_OUTPUT}\n\`\`\``,
+    `\`\`\`json\n${VALID_OUTPUT}\n\`\`\`\n\`\`\`json\n${VALID_OUTPUT}\n\`\`\``,
+    `\`\`\`json\n${VALID_OUTPUT}`,
+    '```json\n\n```',
+    `\`\`\`text\n${VALID_OUTPUT}\n\`\`\``,
+  ])('rejects non-canonical fenced chat output', async (output) => {
+    const provider = new OpenAiLlmProvider(
+      new RecordingOpenAiClient(output),
+      providerSettings('chat-completions'),
+    );
+
+    await expect(provider.generate({
+      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+      promptTemplate: 'template',
+      sourceText: 'source',
+    })).rejects.toMatchObject({ code: 'GENERATION_OUTPUT_INVALID' });
+  });
+
+  it.each(['max_tokens', 'length'] as const)(
+    'classifies chat completion %s as generation output truncation before parsing',
+    async (finishReason) => {
+      const provider = new OpenAiLlmProvider(
+        new RecordingOpenAiClient('{', 'completed', finishReason),
+        providerSettings('chat-completions'),
+      );
+
+      await expect(provider.generate({
+        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+        promptTemplate: 'template',
+        sourceText: 'source',
+      })).rejects.toMatchObject({ code: 'GENERATION_OUTPUT_TRUNCATED' });
+    },
+  );
+
   it.each(['chat-completions', 'responses'] satisfies readonly LlmTransport[])(
     'classifies the credential-unavailable gateway 404 as a safe provider failure with %s',
     async (transport) => {
@@ -147,7 +197,7 @@ describe('OpenAiLlmProvider', () => {
       const failure = await provider.generate({
         parameters: {
           format: 'mcq-single-select-v1',
-          maxOutputTokens: 1000,
+          maxOutputTokens: 4000,
           questionsPerChunk: 1,
         },
         promptTemplate: 'template',
@@ -177,7 +227,7 @@ describe('OpenAiLlmProvider', () => {
     await expect(provider.generate({
       parameters: {
         format: 'mcq-single-select-v1',
-        maxOutputTokens: 1000,
+          maxOutputTokens: 4000,
         questionsPerChunk: 1,
       },
       promptTemplate: 'template',
@@ -188,7 +238,7 @@ describe('OpenAiLlmProvider', () => {
   it('builds identity from endpoint capabilities but not the API key', () => {
     const base = {
       baseUrl: 'https://proxy.example.com/v1',
-      capabilityVersion: 'v1',
+      capabilityVersion: 'responses-json-v1',
       model: 'proxy-model',
       structuredOutputMode: 'json-schema-strict' as const,
       transport: 'responses' as const,
@@ -215,7 +265,7 @@ describe('OpenAiLlmProvider', () => {
         openai: {
           apiKey: 'test-key',
           baseUrl: 'https://proxy.example.com/v1',
-          capabilityVersion: 'v1',
+          capabilityVersion: 'chat-completions-json-v1',
           model: 'gpt-test',
           requestTimeoutMs: 60_000,
           structuredOutputMode: 'json-object',
@@ -235,7 +285,7 @@ describe('OpenAiLlmProvider', () => {
       ai: {
         openai: {
           baseUrl: 'https://proxy.example.com/v1',
-          capabilityVersion: 'v1',
+          capabilityVersion: 'chat-completions-json-v1',
           model: 'gpt-test',
           requestTimeoutMs: 60_000,
           structuredOutputMode: 'json-object',
@@ -260,14 +310,17 @@ class RecordingOpenAiClient {
     completions: {
       create: async (
         request: ChatCompletionCreateParamsNonStreaming,
-      ): Promise<Pick<ChatCompletion, 'choices'>> => {
+      ): Promise<{
+        readonly choices: readonly {
+          readonly finish_reason: string | null;
+          readonly message: { readonly content: string | null };
+        }[];
+      }> => {
         this.chatRequests.push(request);
         return {
           choices: this.output === null ? [] : [{
-            finish_reason: 'stop',
-            index: 0,
-            logprobs: null,
-            message: { content: this.output, refusal: null, role: 'assistant' },
+            finish_reason: this.chatFinishReason,
+            message: { content: this.output },
           }],
         };
       },
@@ -285,6 +338,7 @@ class RecordingOpenAiClient {
   constructor(
     private readonly output: string | null,
     private readonly responseStatus: Response['status'] = 'completed',
+    private readonly chatFinishReason: 'length' | 'max_tokens' | 'stop' = 'stop',
   ) {}
 }
 

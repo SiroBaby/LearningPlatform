@@ -225,6 +225,77 @@ describe('ApplicationConfigService', () => {
     });
   });
 
+  it.each([
+    ['responses-json-v1', 'responses'],
+    ['chat-completions-json-v1', 'chat-completions'],
+  ] as const)('accepts the coherent %s capability and %s transport pair', (capabilityVersion, transport) => {
+    const config = new ApplicationConfigService(new ConfigService({
+      ai: {
+        openai: {
+          apiKey: 'proxy-key',
+          baseUrl: 'https://proxy.example.com/v1',
+          capabilityVersion,
+          model: 'proxy-model',
+          requestTimeoutMs: 60_000,
+          structuredOutputMode: 'json-schema-strict',
+          transport,
+        },
+        provider: 'openai',
+      },
+      app: { env: 'development' },
+    }));
+
+    expect(config.llmProvider).toMatchObject({
+      openai: { capabilityVersion, transport },
+      provider: 'openai',
+    });
+  });
+
+  it.each([
+    ['responses-json-v1', 'chat-completions'],
+    ['chat-completions-json-v1', 'responses'],
+  ] as const)('rejects incoherent %s capability and %s transport pair', (capabilityVersion, transport) => {
+    const config = new ApplicationConfigService(new ConfigService({
+      ai: {
+        openai: {
+          apiKey: 'proxy-key',
+          baseUrl: 'https://proxy.example.com/v1',
+          capabilityVersion,
+          model: 'proxy-model',
+          requestTimeoutMs: 60_000,
+          structuredOutputMode: 'json-schema-strict',
+          transport,
+        },
+        provider: 'openai',
+      },
+      app: { env: 'development' },
+    }));
+
+    expect(() => config.llmProvider).toThrow('OPENAI_CAPABILITY_VERSION must match OPENAI_TRANSPORT');
+  });
+
+  it('rejects an unknown OpenAI capability version', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      ai: {
+        openai: {
+          apiKey: 'proxy-key',
+          baseUrl: 'https://proxy.example.com/v1',
+          capabilityVersion: 'unknown',
+          model: 'proxy-model',
+          requestTimeoutMs: 60_000,
+          structuredOutputMode: 'json-schema-strict',
+          transport: 'responses',
+        },
+        provider: 'openai',
+      },
+      app: { env: 'development' },
+    }));
+
+    expect(() => config.llmProvider).toThrow(
+      'OPENAI_CAPABILITY_VERSION must be responses-json-v1 or chat-completions-json-v1',
+    );
+  });
+
   it('rejects invalid OpenAI-compatible capabilities and endpoint URLs', () => {
     const create = (baseUrl: string, transport: string): ApplicationConfigService =>
       new ApplicationConfigService(new ConfigService({
@@ -232,7 +303,7 @@ describe('ApplicationConfigService', () => {
           openai: {
             apiKey: 'proxy-key',
             baseUrl,
-            capabilityVersion: 'v1',
+            capabilityVersion: 'responses-json-v1',
             model: 'proxy-model',
             requestTimeoutMs: 60_000,
             structuredOutputMode: 'json-object',
