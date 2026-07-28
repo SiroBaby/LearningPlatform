@@ -12,6 +12,7 @@ main() {
   local actual malformed_protected
   actual="$(python3 "$SELECTOR" --versions "$FIXTURES/ghcr-versions.json" --protected-digests "$FIXTURES/ghcr-protected-digests.txt" --as-of 2026-07-28T00:00:00Z)"
   [[ "$actual" == $'18\n11' ]] || fail "expected exact-age ID 18 and old unprotected ID 11; got: ${actual:-<none>}"
+  [[ "$actual" != *$'\n13' && "$actual" != 13 ]] || fail 'operator-pinned rollback version was selected'
   if python3 "$SELECTOR" --versions "$FIXTURES/ghcr-versions.json" --protected-digests /dev/null --as-of invalid >/dev/null 2>&1; then
     fail 'malformed timestamps must fail closed'
   fi
