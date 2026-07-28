@@ -45,8 +45,10 @@ jobs:
           VPS_USER: ${{ vars.DEV_VPS_USER }}
         run: |
           : > "$RUNNER_TEMP/protected-digests"
+          : > "$RUNNER_TEMP/protected-images"
           jsonpath='{range .items[*].spec.template.spec.containers[*]}'
           jsonpath+='{.image}{"\n"}{end}'
+          printf -v quoted_jsonpath '%q' "$jsonpath"
           protected_image_pattern='^ghcr\.io/sirobaby/'
           protected_image_pattern+='(learningplatform-api|learningplatform-web)'
           protected_image_pattern+='@sha256:[a-f0-9]{64}$'
@@ -57,7 +59,7 @@ jobs:
               "$VPS_USER@$VPS_HOST" \
               "sudo k3s kubectl get $resource \
               --namespace learning-platform-dev \
-              -o jsonpath="$jsonpath" \
+              -o jsonpath=$quoted_jsonpath" \
               >> "$RUNNER_TEMP/protected-images"
           done
           grep -E \
