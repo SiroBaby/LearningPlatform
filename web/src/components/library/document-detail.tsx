@@ -5,6 +5,7 @@ import { BookOpen, CircleAlert, FileText, Loader2, RefreshCcw } from "lucide-rea
 import { Button, Card, CardBody, CardHeader, CardTitle, LinkButton, StatusPill, TypeBadge } from "@/components/ui";
 import { Phase0ClientError, getPhase0DocumentQuiz } from "@/lib/phase0/client";
 import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
+import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
 import { routes } from "@/lib/routes";
 
 interface DocumentDetailProps {
@@ -72,6 +73,14 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
 
   const type = useMemo(() => mapType(document.type), [document.type]);
   const status = useMemo(() => mapStatus(document.status), [document.status]);
+  const failurePresentation = useMemo(
+    () => document.status === "FAILED" ? getDocumentFailurePresentation(document.errorCode) : null,
+    [document.errorCode, document.status],
+  );
+  const canRetryFailure = useMemo(
+    () => document.status === "FAILED" && isRetryableDocumentFailureCode(document.errorCode),
+    [document.errorCode, document.status],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +125,9 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
     ? { href: routes.quizStart(quizDiscovery.quizId), label: "Bắt đầu quiz" }
     : status === "processing"
       ? { href: routes.processing(document.id), label: "Theo dõi xử lý" }
-      : { href: routes.upload, label: "Tải tài liệu lên" };
+      : canRetryFailure
+        ? { href: routes.processing(document.id), label: "Mở lại trang xử lý" }
+        : { href: routes.upload, label: "Tải tài liệu lên" };
 
   return (
     <div className="space-y-6">
@@ -151,13 +162,13 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
             </div>
           </div>
 
-          {status === "failed" && document.errorMessage ? (
+          {failurePresentation ? (
             <div className="rounded-2xl border border-error-100 bg-error-50 p-4 text-sm text-error-700">
               <div className="flex items-start gap-3">
                 <CircleAlert className="mt-0.5 h-5 w-5 shrink-0" />
                 <div>
-                  <p className="font-semibold">Xử lý chưa thành công</p>
-                  <p className="mt-1">{document.errorMessage}</p>
+                  <p className="font-semibold">{failurePresentation.title}</p>
+                  <p className="mt-1">{failurePresentation.description}</p>
                 </div>
               </div>
             </div>

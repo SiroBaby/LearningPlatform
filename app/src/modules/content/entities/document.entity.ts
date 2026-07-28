@@ -10,6 +10,7 @@ import { AutoMap } from '@automapper/classes';
 
 import { DocumentStatus } from '../enums/document-status.enum';
 import { DocumentType } from '../enums/document-type.enum';
+import type { DocumentProcessingFailureCode } from '../../ai/contracts/document-processing-result';
 import type { ModelSelectionKind } from '../../ai/contracts/model-selection.contracts';
 
 @Entity({ schema: 'course', name: 'documents' })
@@ -88,6 +89,10 @@ export class Document {
   @Column({ name: 'error_message', type: 'text', nullable: true })
   @AutoMap()
   errorMessage!: string | null;
+
+  @Column({ name: 'error_code', type: 'varchar', length: 50, nullable: true })
+  @AutoMap()
+  errorCode!: DocumentProcessingFailureCode | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   @AutoMap()

@@ -14,4 +14,5 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Practice chỉ gọi feedback API sau action `Kiểm tra đáp án`; chọn option hoặc chuyển câu không được tự gọi feedback, và thay đổi option phải vô hiệu feedback/request cũ.
 - Runtime response parser phải dùng đúng toàn bộ literal values mà backend thực sự persist hoặc phát qua API, bao gồm trạng thái trung gian; khi backend thêm một literal mới, cập nhật frontend union, parser và regression test trong cùng thay đổi.
 - BFF error sanitization phải giữ các field máy đọc an toàn như `code`, `message`, `retryable`; không rút gọn mọi lỗi thành message khiến client phải đoán nghiệp vụ từ text, và không chuyển tiếp field backend tùy ý chưa allowlist.
+- Nút retry cho async processing phải gọi command re-arm hiện hữu và chặn submit trùng; reload hoặc polling chỉ dùng để đọc trạng thái sau command, không được giả làm retry. UI chỉ hiển thị message đã qua typed client error sanitizer, còn lỗi runtime không xác định phải dùng copy fallback an toàn.
 <!-- END:nextjs-agent-rules -->

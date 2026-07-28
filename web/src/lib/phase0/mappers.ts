@@ -2,14 +2,15 @@ import type {
   Phase0AttemptResultItem,
   Phase0AttemptResultResponse,
   Phase0BudgetStatus,
+  Phase0CitationLocator,
   Phase0ConfirmDocumentResponse,
   Phase0Document,
+  Phase0DocumentProcessingFailureCode,
   Phase0DocumentQuizResponse,
   Phase0DocumentStatus,
   Phase0DocumentType,
   Phase0EstimatePrecision,
   Phase0EstimateResponse,
-  Phase0CitationLocator,
   Phase0ModelOption,
   Phase0ModelSelectionKind,
   Phase0PracticeFeedbackResponse,
@@ -134,6 +135,45 @@ function readNullableBudgetStatus(value: unknown, field: string): Phase0BudgetSt
   return value === null ? null : readBudgetStatus(value, field);
 }
 
+function readDocumentProcessingFailureCode(
+  value: unknown,
+  field: string,
+): Phase0DocumentProcessingFailureCode {
+  switch (readString(value, field)) {
+    case "BUDGET_EXHAUSTED":
+      return "BUDGET_EXHAUSTED";
+    case "CHUNK_RESOURCE_LIMIT_EXCEEDED":
+      return "CHUNK_RESOURCE_LIMIT_EXCEEDED";
+    case "EXTRACTION_OBJECT_NOT_FOUND":
+      return "EXTRACTION_OBJECT_NOT_FOUND";
+    case "EXTRACTION_OBJECT_TOO_LARGE":
+      return "EXTRACTION_OBJECT_TOO_LARGE";
+    case "GENERATION_OUTPUT_INVALID":
+      return "GENERATION_OUTPUT_INVALID";
+    case "INSUFFICIENT_VALID_QUESTIONS":
+      return "INSUFFICIENT_VALID_QUESTIONS";
+    case "PDF_INVALID":
+      return "PDF_INVALID";
+    case "PDF_TEXT_NOT_FOUND":
+      return "PDF_TEXT_NOT_FOUND";
+    case "PROCESSING_FAILED":
+      return "PROCESSING_FAILED";
+    case "PROCESSING_TIMED_OUT":
+      return "PROCESSING_TIMED_OUT";
+    case "PROVIDER_UNAVAILABLE":
+      return "PROVIDER_UNAVAILABLE";
+    default:
+      throw new TypeError(`Expected ${field} to be a valid document processing failure code.`);
+  }
+}
+
+function readNullableDocumentProcessingFailureCode(
+  value: unknown,
+  field: string,
+): Phase0DocumentProcessingFailureCode | null {
+  return value === null ? null : readDocumentProcessingFailureCode(value, field);
+}
+
 function mapCitationLocator(value: unknown): Phase0CitationLocator {
   const source = readObject(value);
   switch (readString(source.kind, "result.citation.locator.kind")) {
@@ -167,6 +207,7 @@ function mapDocument(value: unknown): Phase0Document {
     status: readDocumentStatus(source.status, "document.status"),
     durationSec: readNullableNumber(source.durationSec, "document.durationSec"),
     pageCount: readNullableNumber(source.pageCount, "document.pageCount"),
+    errorCode: readNullableDocumentProcessingFailureCode(source.errorCode, "document.errorCode"),
     errorMessage: readNullableString(source.errorMessage, "document.errorMessage"),
     selectedModelKind: readNullableModelSelectionKind(source.selectedModelKind, "document.selectedModelKind"),
     selectedModelLabel: readNullableString(source.selectedModelLabel, "document.selectedModelLabel"),

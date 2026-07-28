@@ -57,6 +57,7 @@ describe('ContentMappingProfile', () => {
     const document = Object.assign(new Document(), {
       createdAt: new Date('2026-06-21T12:34:56.789Z'),
       durationSec: null,
+      errorCode: null,
       errorMessage: null,
       estimateStatus: null,
       estimatedCredits: null,
@@ -81,6 +82,7 @@ describe('ContentMappingProfile', () => {
       budgetStatus: null,
       createdAt: '2026-06-21T12:34:56.789Z',
       durationSec: null,
+      errorCode: null,
       errorMessage: null,
       estimateStatus: null,
       estimatedCredits: null,
@@ -100,6 +102,7 @@ describe('ContentMappingProfile', () => {
     expect(Object.prototype.hasOwnProperty.call(actual, 'durationSec')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'pageCount')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'errorMessage')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(actual, 'errorCode')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'selectedModelKind')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'selectedModelLabel')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'estimateStatus')).toBe(true);

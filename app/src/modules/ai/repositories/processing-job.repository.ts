@@ -204,6 +204,9 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     if (errorCode === DocumentProcessingFailureCode.PROCESSING_TIMED_OUT) {
       return 'Processing timed out';
     }
+    if (errorCode === DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE) {
+      return 'Document processing is temporarily unavailable. Please try again later.';
+    }
     if (errorCode === DocumentProcessingFailureCode.CHUNK_RESOURCE_LIMIT_EXCEEDED) {
       return 'Document exceeds configured chunk processing limits';
     }

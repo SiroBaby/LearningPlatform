@@ -1,6 +1,7 @@
-import { CircleAlert, Loader2 } from "lucide-react";
+import { CircleAlert, Loader2, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, LinkButton, StatusPill, TypeBadge } from "@/components/ui";
 import type { Phase0Document } from "@/lib/phase0/contracts";
+import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
 import {
   formatBytes,
   formatDateTime,
@@ -87,9 +88,24 @@ export function ProcessingHeader({ document, detailHref, libraryHref, error }: P
 interface ProcessingStatusPanelProps {
   readonly document: Phase0Document | null;
   readonly isLoading: boolean;
+  readonly isRetrySubmitting: boolean;
+  readonly retryError: string | null;
+  readonly onRetryConfirm: () => void;
 }
 
-export function ProcessingStatusPanel({ document, isLoading }: ProcessingStatusPanelProps) {
+export function ProcessingStatusPanel({
+  document,
+  isLoading,
+  isRetrySubmitting,
+  retryError,
+  onRetryConfirm,
+}: ProcessingStatusPanelProps) {
+  const failurePresentation = document?.status === "FAILED"
+    ? getDocumentFailurePresentation(document.errorCode)
+    : null;
+  const canRetryFailure = document?.status === "FAILED"
+    && isRetryableDocumentFailureCode(document.errorCode);
+
   return (
     <Card>
       <CardHeader>
@@ -117,10 +133,23 @@ export function ProcessingStatusPanel({ document, isLoading }: ProcessingStatusP
           <SpecItem label="Cập nhật gần nhất" value={document ? formatDateTime(document.updatedAt) : "Chưa có"} />
         </div>
 
-        {document?.errorMessage ? (
-          <div className="rounded-2xl border border-error-100 bg-error-50 p-4 text-sm text-error-700">
-            <p className="font-semibold">Không thể xử lý tài liệu</p>
-            <p className="mt-1">{document.errorMessage}</p>
+        {failurePresentation ? (
+          <div className="space-y-3 rounded-2xl border border-error-100 bg-error-50 p-4 text-sm text-error-700">
+            <div>
+              <p className="font-semibold">{failurePresentation.title}</p>
+              <p className="mt-1">{failurePresentation.description}</p>
+            </div>
+            {canRetryFailure ? (
+              <Button type="button" variant="outline" onClick={onRetryConfirm} disabled={isRetrySubmitting} aria-busy={isRetrySubmitting}>
+                <RefreshCcw className={isRetrySubmitting ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                {isRetrySubmitting ? "Đang thử lại…" : "Thử lại"}
+              </Button>
+            ) : null}
+            {retryError ? (
+              <div className="rounded-2xl border border-warning-100 bg-white/80 p-3 text-warning-800" role="status">
+                {retryError}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

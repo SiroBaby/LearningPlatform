@@ -3,6 +3,7 @@ import { AutoMap } from '@automapper/classes';
 
 import { DocumentStatus } from '../enums/document-status.enum';
 import { DocumentType } from '../enums/document-type.enum';
+import { DocumentProcessingFailureCode } from '../../ai/contracts/document-processing-result';
 
 export class DocumentResponseDto {
   @ApiProperty({ format: 'uuid' })
@@ -40,6 +41,15 @@ export class DocumentResponseDto {
   @ApiProperty({ nullable: true, example: null })
   @AutoMap()
   readonly errorMessage: string | null;
+
+  @ApiProperty({
+    enum: DocumentProcessingFailureCode,
+    enumName: 'DocumentProcessingFailureCode',
+    nullable: true,
+    example: null,
+  })
+  @AutoMap()
+  readonly errorCode: DocumentProcessingFailureCode | null;
 
   @ApiProperty({ enum: ['PLAN', 'CUSTOM'], nullable: true, example: 'PLAN' })
   @AutoMap()

@@ -14,6 +14,7 @@ import { DataSource, Repository } from 'typeorm';
 
 import { startTestDb, TestDb } from '../../test-support/test-db';
 import { createTestDataSource } from '../../test-support/test-data-source';
+import { BudgetExhaustedError } from './budget-exhausted.error';
 import { JobPoller } from './job-poller.service';
 import { JobProcessor } from './contracts/job-processor.port';
 import { ExtractionError } from './contracts/extraction-error';
@@ -118,6 +119,39 @@ describe('JobPoller.tick', () => {
       status: 'FAILED',
     });
   });
+
+  it.each([
+    [
+      new ExtractionError(DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE),
+      DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+      'Document processing is temporarily unavailable. Please try again later.',
+    ],
+    [
+      new BudgetExhaustedError(),
+      DocumentProcessingFailureCode.BUDGET_EXHAUSTED,
+      'Processing budget was exhausted',
+    ],
+  ] satisfies readonly (readonly [Error, DocumentProcessingFailureCode, string])[])(
+    'preserves the stable failure code %s through the failed job result',
+    async (processorError, expectedCode, expectedMessage) => {
+      processor = {
+        process: async () => {
+          throw processorError;
+        },
+      };
+      poller = new JobPoller(new ProcessingJobRepository(ds), processor);
+      const id = await seedPending();
+
+      await poller.tick();
+
+      expect((await jobs.findOneByOrFail({ id })).status).toBe(JobStatus.FAILED);
+      expect((await outbox.find())[0].payload).toMatchObject({
+        errorCode: expectedCode,
+        errorMessage: expectedMessage,
+        status: 'FAILED',
+      });
+    },
+  );
 
   it('logs the claimed and completed lifecycle with safe job identifiers', async () => {
     const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);

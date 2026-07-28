@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { phase0DocumentProcessingFailureCodes } from "./contracts.ts";
 import { mapDocumentResponse } from "./mappers.ts";
 
 const budgetStatuses = [
@@ -11,39 +12,14 @@ const budgetStatuses = [
   "EXHAUSTED",
 ];
 
-for (const budgetStatus of budgetStatuses) {
-  test(`maps a document with ${budgetStatus} budget status`, () => {
-    const document = mapDocumentResponse({
-      budgetStatus,
-      createdAt: "2026-07-27T00:00:00.000Z",
-      durationSec: null,
-      errorMessage: null,
-      estimateStatus: "COARSE",
-      estimatedCredits: 100,
-      id: "document-id",
-      language: null,
-      originalName: "lesson.pdf",
-      pageCount: null,
-      selectedModelKind: "PLAN",
-      selectedModelLabel: "Fast platform model",
-      settledCredits: null,
-      sizeBytes: 1024,
-      status: "PROCESSING",
-      type: "PDF",
-      updatedAt: "2026-07-27T00:00:00.000Z",
-    });
-
-    assert.equal(document.budgetStatus, budgetStatus);
-  });
-}
-
-test("maps a document with AUTHORITATIVE estimate status", () => {
-  const document = mapDocumentResponse({
+function buildDocumentOverrides(overrides = {}) {
+  return {
     budgetStatus: "SETTLED",
     createdAt: "2026-07-27T00:00:00.000Z",
     durationSec: null,
+    errorCode: null,
     errorMessage: null,
-    estimateStatus: "AUTHORITATIVE",
+    estimateStatus: "COARSE",
     estimatedCredits: 100,
     id: "document-id",
     language: null,
@@ -51,12 +27,47 @@ test("maps a document with AUTHORITATIVE estimate status", () => {
     pageCount: null,
     selectedModelKind: "PLAN",
     selectedModelLabel: "Fast platform model",
-    settledCredits: 80,
+    settledCredits: null,
     sizeBytes: 1024,
-    status: "READY",
+    status: "PROCESSING",
     type: "PDF",
     updatedAt: "2026-07-27T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+for (const budgetStatus of budgetStatuses) {
+  test(`maps a document with ${budgetStatus} budget status`, () => {
+    const document = mapDocumentResponse(buildDocumentOverrides({ budgetStatus }));
+
+    assert.equal(document.budgetStatus, budgetStatus);
   });
+}
+
+test("maps a document with AUTHORITATIVE estimate status", () => {
+  const document = mapDocumentResponse(buildDocumentOverrides({
+    budgetStatus: "SETTLED",
+    estimateStatus: "AUTHORITATIVE",
+    settledCredits: 80,
+    status: "READY",
+  }));
 
   assert.equal(document.estimateStatus, "AUTHORITATIVE");
 });
+
+test("maps a document with null errorCode", () => {
+  const document = mapDocumentResponse(buildDocumentOverrides({ errorCode: null }));
+
+  assert.equal(document.errorCode, null);
+});
+
+for (const errorCode of phase0DocumentProcessingFailureCodes) {
+  test(`maps a document with ${errorCode} error code`, () => {
+    const document = mapDocumentResponse(buildDocumentOverrides({
+      errorCode,
+      status: "FAILED",
+    }));
+
+    assert.equal(document.errorCode, errorCode);
+  });
+}

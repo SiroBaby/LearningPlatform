@@ -59,7 +59,11 @@ export class ContentRepository extends BaseRepository<Document> {
       const result = await manager
         .createQueryBuilder()
         .update(Document)
-        .set({ status: DocumentStatus.PROCESSING })
+        .set({
+          errorCode: null,
+          errorMessage: null,
+          status: DocumentStatus.PROCESSING,
+        })
         .where('id = :id AND owner_id = :ownerId AND status IN (:...allowed)', {
           id,
           ownerId,
@@ -85,6 +89,7 @@ export class ContentRepository extends BaseRepository<Document> {
     await this.createQueryBuilder()
       .update(Document)
       .set({
+        errorCode: command.errorCode,
         errorMessage: command.errorMessage,
         budgetStatus: () =>
           'COALESCE(CAST(:budgetStatus AS varchar), "budget_status")',

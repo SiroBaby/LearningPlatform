@@ -25,6 +25,8 @@ import type {
   LlmGenerationResult,
   LlmProvider,
 } from './contracts/llm-provider.contracts';
+import { DocumentProcessingFailureCode } from './contracts/document-processing-result';
+import { ExtractionError } from './contracts/extraction-error';
 import { FakeLlmProvider } from './fake-llm-provider';
 import { QuizGenerationError, QuizGenerationErrorCode } from './quiz-generation-error';
 
@@ -113,11 +115,18 @@ export class OpenAiLlmProvider implements LlmProvider {
   }
 
   async generate(request: LlmGenerationRequest): Promise<LlmGenerationResult> {
-    switch (this.settings.transport) {
-      case 'chat-completions':
-        return this.generateChatCompletion(request);
-      case 'responses':
-        return this.generateResponse(request);
+    try {
+      switch (this.settings.transport) {
+        case 'chat-completions':
+          return await this.generateChatCompletion(request);
+        case 'responses':
+          return await this.generateResponse(request);
+      }
+    } catch (error) {
+      if (isCredentialUnavailableProviderError(error)) {
+        throw new ExtractionError(DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE);
+      }
+      throw error;
     }
   }
 
@@ -260,4 +269,10 @@ function parseGeneratedOutput(value: string | null | undefined): unknown {
     }
     throw error;
   }
+}
+
+function isCredentialUnavailableProviderError(error: unknown): boolean {
+  return error instanceof OpenAI.APIError &&
+    error.status === 404 &&
+    error.message.includes('No active credentials for provider');
 }

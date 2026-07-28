@@ -24,6 +24,23 @@ export const phase0BudgetStatuses = [
 
 export type Phase0BudgetStatus = (typeof phase0BudgetStatuses)[number];
 
+export const phase0DocumentProcessingFailureCodes = [
+  "BUDGET_EXHAUSTED",
+  "CHUNK_RESOURCE_LIMIT_EXCEEDED",
+  "EXTRACTION_OBJECT_NOT_FOUND",
+  "EXTRACTION_OBJECT_TOO_LARGE",
+  "GENERATION_OUTPUT_INVALID",
+  "INSUFFICIENT_VALID_QUESTIONS",
+  "PDF_INVALID",
+  "PDF_TEXT_NOT_FOUND",
+  "PROCESSING_FAILED",
+  "PROCESSING_TIMED_OUT",
+  "PROVIDER_UNAVAILABLE",
+] as const;
+
+export type Phase0DocumentProcessingFailureCode =
+  (typeof phase0DocumentProcessingFailureCodes)[number];
+
 export interface Phase0Document {
   readonly id: string;
   readonly originalName: string;
@@ -33,6 +50,7 @@ export interface Phase0Document {
   readonly status: Phase0DocumentStatus;
   readonly durationSec: number | null;
   readonly pageCount: number | null;
+  readonly errorCode: Phase0DocumentProcessingFailureCode | null;
   readonly errorMessage: string | null;
   readonly selectedModelKind: Phase0ModelSelectionKind | null;
   readonly selectedModelLabel: string | null;
