@@ -1,0 +1,137 @@
+---
+name: Clean GHCR development images
+
+"on":
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: >-
+          Type DELETE to remove selected version IDs; all other values are
+          dry-run.
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: cleanup-ghcr
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Retain rollback-safe GHCR versions
+    runs-on: ubuntu-24.04
+    environment: dev
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Configure SSH trust
+        env:
+          SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Collect protected K3s image digests
+        env:
+          VPS_HOST: ${{ vars.DEV_VPS_HOST }}
+          VPS_USER: ${{ vars.DEV_VPS_USER }}
+        run: |
+          : > "$RUNNER_TEMP/protected-digests"
+          jsonpath='{range .items[*].spec.template.spec.containers[*]}'
+          jsonpath+='{.image}{"\n"}{end}'
+          protected_image_pattern='^ghcr\.io/sirobaby/'
+          protected_image_pattern+='(learningplatform-api|learningplatform-web)'
+          protected_image_pattern+='@sha256:[a-f0-9]{64}$'
+          for resource in deployments replicasets; do
+            ssh -n -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              "$VPS_USER@$VPS_HOST" \
+              "sudo k3s kubectl get $resource \
+              --namespace learning-platform-dev \
+              -o jsonpath="$jsonpath" \
+              >> "$RUNNER_TEMP/protected-images"
+          done
+          grep -E \
+            "$protected_image_pattern" \
+            "$RUNNER_TEMP/protected-images" \
+            | sed -E 's|^.*@||' \
+            | sort -u > "$RUNNER_TEMP/protected-digests"
+          if [[ ! -s "$RUNNER_TEMP/protected-digests" ]]; then
+            printf '%s\n' \
+              'no protected K3s digests were discovered; refusing cleanup' >&2
+            exit 1
+          fi
+      - name: List and select eligible versions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          : > "$RUNNER_TEMP/all-versions.jsonl"
+          for package in learningplatform-api learningplatform-web; do
+            api_path="/users/${OWNER}/packages/container/${package}/versions"
+            endpoint="https://api.github.com${api_path}"
+            page=1
+            while :; do
+              response="$RUNNER_TEMP/${package}-${page}.json"
+              curl --fail-with-body --silent --show-error --retry 3 \
+                --retry-all-errors \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                "${endpoint}?per_page=100&page=${page}" > "$response"
+              count="$(
+                python3 - \
+                  "$response" \
+                  "$RUNNER_TEMP/all-versions.jsonl" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding='utf-8') as source:
+              page = json.load(source)
+          if not isinstance(page, list):
+              raise SystemExit('GHCR version list is not an array')
+          with open(sys.argv[2], 'a', encoding='utf-8') as target:
+              for version in page:
+                  target.write(
+                      json.dumps(version, separators=(',', ':')) + '\n',
+                  )
+          print(len(page))
+          PY
+              )"
+              (( count == 100 )) || break
+              ((page += 1))
+            done
+            python3 - \
+              "$RUNNER_TEMP/all-versions.jsonl" \
+              "$RUNNER_TEMP/${package}-versions.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding='utf-8') as source:
+              versions = [json.loads(line) for line in source if line.strip()]
+          with open(sys.argv[2], 'w', encoding='utf-8') as target:
+              json.dump(versions, target)
+          PY
+            python3 deploy/dev/select-ghcr-versions.py \
+              --versions "$RUNNER_TEMP/${package}-versions.json" \
+              --protected-digests "$RUNNER_TEMP/protected-digests" \
+              --as-of "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
+              > "$RUNNER_TEMP/${package}-delete-ids"
+            : > "$RUNNER_TEMP/all-versions.jsonl"
+          done
+      - name: Delete selected version IDs
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIRMATION: ${{ inputs.confirmation || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: bash deploy/dev/delete-ghcr-versions.sh
