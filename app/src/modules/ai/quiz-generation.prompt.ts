@@ -14,8 +14,9 @@ export const QUIZ_GENERATION_PARAMETERS: GenerationParameters = {
 
 export const QUIZ_GENERATION_PROMPT_TEMPLATE = [
   'Generate grounded multiple-choice questions from only the supplied source text.',
-  'Return JSON with a questions array. Each question contains stem, explanation, and options.',
+  'Return exactly one question in a questions array. Each question contains stem, explanation, and options.',
   'Each options item contains content and isCorrect. Exactly one option must be correct.',
+  'Return JSON only, with no markdown fences or prose.',
 ].join('\n');
 
 export interface PromptFingerprintInput {

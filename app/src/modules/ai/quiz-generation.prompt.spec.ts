@@ -4,11 +4,18 @@ import {
   createGenerationCacheKey,
   createPromptFingerprint,
   QUIZ_GENERATION_PARAMETERS,
+  QUIZ_GENERATION_PROMPT_TEMPLATE,
 } from './quiz-generation.prompt';
 
 describe('quiz generation prompt fingerprints', () => {
   it('allows 4000 output tokens for complete quiz generation', () => {
     expect(QUIZ_GENERATION_PARAMETERS.maxOutputTokens).toBe(4000);
+  });
+
+  it('instructs the provider to return one JSON-only question per chunk', () => {
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('exactly one question');
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('JSON only');
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('no markdown fences or prose');
   });
 
   it('normalizes Unicode and line endings for cache identity', () => {

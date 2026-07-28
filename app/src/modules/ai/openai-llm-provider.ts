@@ -103,6 +103,8 @@ const QUIZ_RESPONSE_SCHEMA = {
         required: ['explanation', 'options', 'stem'],
         type: 'object',
       },
+      maxItems: 1,
+      minItems: 1,
       type: 'array',
     },
   },
@@ -131,7 +133,7 @@ export class OpenAiLlmProvider implements LlmProvider {
           return await this.generateResponse(request);
       }
     } catch (error) {
-      if (isCredentialUnavailableProviderError(error)) {
+      if (isProviderUnavailableError(error)) {
         throw new ExtractionError(DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE);
       }
       throw error;
@@ -298,8 +300,9 @@ function isGenerationOutputTruncated(finishReason: string | null | undefined): b
   return finishReason === 'length' || finishReason === 'max_tokens';
 }
 
-function isCredentialUnavailableProviderError(error: unknown): boolean {
-  return error instanceof OpenAI.APIError &&
-    error.status === 404 &&
-    error.message.includes('No active credentials for provider');
+function isProviderUnavailableError(error: unknown): boolean {
+  if (!(error instanceof OpenAI.APIError)) return false;
+  if (error instanceof OpenAI.APIConnectionError) return true;
+  if (error.status === 429 || (error.status !== undefined && error.status >= 500)) return true;
+  return error.status === 404 && error.message.includes('No active credentials for provider');
 }

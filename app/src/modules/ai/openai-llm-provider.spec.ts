@@ -94,6 +94,33 @@ describe('OpenAiLlmProvider', () => {
     },
   );
 
+  it.each(['responses', 'chat-completions'] satisfies readonly LlmTransport[])(
+    'enforces exactly one question in the strict schema for %s',
+    async (transport) => {
+      const client = new RecordingOpenAiClient(VALID_OUTPUT);
+      const provider = new OpenAiLlmProvider(client, {
+        ...providerSettings(transport),
+        structuredOutputMode: 'json-schema-strict',
+      });
+
+      await provider.generate({
+        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+        promptTemplate: 'template',
+        sourceText: 'source',
+      });
+
+      if (transport === 'responses') {
+        expect(client.responseRequests[0]?.text?.format).toMatchObject({
+          schema: { properties: { questions: { maxItems: 1, minItems: 1 } } },
+        });
+        return;
+      }
+      expect(client.chatRequests[0]?.response_format).toMatchObject({
+        json_schema: { schema: { properties: { questions: { maxItems: 1, minItems: 1 } } } },
+      });
+    },
+  );
+
   it('maps incomplete, missing, or non-JSON output to a safe generation error', async () => {
     const request = {
       parameters: {
@@ -178,6 +205,33 @@ describe('OpenAiLlmProvider', () => {
     },
   );
 
+  it.each([
+    ['rate limit', new OpenAI.APIError(429, { message: 'provider overloaded' }, undefined, new Headers())],
+    ['server failure', new OpenAI.APIError(503, { message: 'upstream error' }, undefined, new Headers())],
+    ['connection failure', new OpenAI.APIConnectionError({ message: 'socket reset' })],
+    ['timeout', new OpenAI.APIConnectionTimeoutError({ message: 'request timed out' })],
+  ] satisfies readonly (readonly [string, Error])[])(
+    'classifies transient %s as a safe provider failure',
+    async (_kind, error) => {
+      const provider = new OpenAiLlmProvider(
+        new RejectingOpenAiClient(error),
+        providerSettings('responses'),
+      );
+
+      const failure = await provider.generate({
+        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+        promptTemplate: 'template',
+        sourceText: 'source',
+      }).catch((caught: unknown) => caught);
+
+      expect(failure).toMatchObject({
+        code: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+      });
+      expect(failure).toBeInstanceOf(Error);
+      expect(String(failure)).not.toContain(error.message);
+    },
+  );
+
   it.each(['chat-completions', 'responses'] satisfies readonly LlmTransport[])(
     'classifies the credential-unavailable gateway 404 as a safe provider failure with %s',
     async (transport) => {
@@ -233,6 +287,21 @@ describe('OpenAiLlmProvider', () => {
       promptTemplate: 'template',
       sourceText: 'source',
     })).rejects.toThrow('Route was not found');
+  });
+
+  it('does not classify an unknown provider 400 as provider unavailable', async () => {
+    const provider = new OpenAiLlmProvider(
+      new RejectingOpenAiClient(
+        new OpenAI.APIError(400, { message: 'invalid provider request' }, undefined, new Headers()),
+      ),
+      providerSettings('responses'),
+    );
+
+    await expect(provider.generate({
+      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+      promptTemplate: 'template',
+      sourceText: 'source',
+    })).rejects.toThrow('invalid provider request');
   });
 
   it('builds identity from endpoint capabilities but not the API key', () => {
