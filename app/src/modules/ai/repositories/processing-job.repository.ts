@@ -225,6 +225,9 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     if (errorCode === DocumentProcessingFailureCode.GENERATION_OUTPUT_INVALID) {
       return 'Generated question output is invalid';
     }
+    if (errorCode === DocumentProcessingFailureCode.GENERATION_OUTPUT_TRUNCATED) {
+      return 'Generated question output was truncated. Please try again later.';
+    }
     if (errorCode === DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS) {
       return 'Not enough valid questions were generated';
     }

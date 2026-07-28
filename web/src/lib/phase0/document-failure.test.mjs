@@ -10,6 +10,7 @@ import { phase0DocumentProcessingFailureCodes } from "./contracts.ts";
 const retryableCodes = new Set([
   "BUDGET_EXHAUSTED",
   "GENERATION_OUTPUT_INVALID",
+  "GENERATION_OUTPUT_TRUNCATED",
   "PROCESSING_TIMED_OUT",
   "PROVIDER_UNAVAILABLE",
 ]);
@@ -38,4 +39,12 @@ test("returns safe fallback presentation for null error code", () => {
 
 test("never marks null error code as retryable", () => {
   assert.equal(isRetryableDocumentFailureCode(null), false);
+});
+
+test("uses safe retryable Vietnamese copy for truncated generation", () => {
+  const presentation = getDocumentFailurePresentation("GENERATION_OUTPUT_TRUNCATED");
+
+  assert.equal(presentation.retryable, true);
+  assert.equal(presentation.title, "Chưa thể tạo bộ câu hỏi hoàn chỉnh");
+  assert.equal(presentation.description, "Hãy thử lại sau để tạo lại bộ câu hỏi.");
 });

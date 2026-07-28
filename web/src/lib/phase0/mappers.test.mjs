@@ -71,3 +71,12 @@ for (const errorCode of phase0DocumentProcessingFailureCodes) {
     assert.equal(document.errorCode, errorCode);
   });
 }
+
+test("maps a document with truncated generation failure code", () => {
+  const document = mapDocumentResponse(buildDocumentOverrides({
+    errorCode: "GENERATION_OUTPUT_TRUNCATED",
+    status: "FAILED",
+  }));
+
+  assert.equal(document.errorCode, "GENERATION_OUTPUT_TRUNCATED");
+});

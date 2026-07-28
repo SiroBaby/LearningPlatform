@@ -239,6 +239,7 @@ describe('ReturnRelay', () => {
 
   it.each([
     ['GENERATION_OUTPUT_INVALID', 'Generated question output is invalid'],
+    ['GENERATION_OUTPUT_TRUNCATED', 'Generated question output was truncated. Please try again later.'],
     ['INSUFFICIENT_VALID_QUESTIONS', 'Not enough valid questions were generated'],
     ['PROVIDER_UNAVAILABLE', 'Document processing is temporarily unavailable. Please try again later.'],
   ])('accepts the safe generation failure code %s', async (errorCode, errorMessage) => {

@@ -4,6 +4,7 @@ import { ExtractionError } from './contracts/extraction-error';
 export const QuizGenerationErrorCode = {
   INSUFFICIENT_VALID_QUESTIONS: DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS,
   GENERATION_OUTPUT_INVALID: DocumentProcessingFailureCode.GENERATION_OUTPUT_INVALID,
+  GENERATION_OUTPUT_TRUNCATED: DocumentProcessingFailureCode.GENERATION_OUTPUT_TRUNCATED,
 } as const;
 
 export type QuizGenerationErrorCode =

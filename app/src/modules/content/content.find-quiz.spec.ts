@@ -122,6 +122,7 @@ describe('ContentService.findQuiz', () => {
 
   it.each([
     [DocumentProcessingFailureCode.GENERATION_OUTPUT_INVALID, true],
+    [DocumentProcessingFailureCode.GENERATION_OUTPUT_TRUNCATED, true],
     [DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS, false],
     [DocumentProcessingFailureCode.PROCESSING_TIMED_OUT, true],
   ] satisfies readonly (readonly [DocumentProcessingFailureCode, boolean])[])(

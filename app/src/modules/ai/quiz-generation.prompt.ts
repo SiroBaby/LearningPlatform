@@ -8,7 +8,7 @@ import type {
 
 export const QUIZ_GENERATION_PARAMETERS: GenerationParameters = {
   format: 'mcq-single-select-v1',
-  maxOutputTokens: 1000,
+  maxOutputTokens: 4000,
   questionsPerChunk: 1,
 };
 

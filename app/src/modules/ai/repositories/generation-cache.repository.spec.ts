@@ -64,7 +64,7 @@ function cacheEntry(answer: string): GenerationCacheEntry {
         stem: 'What is supported?',
       }],
     },
-    parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 1000, questionsPerChunk: 1 },
+    parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
     promptFingerprint: 'b'.repeat(64),
   };
 }

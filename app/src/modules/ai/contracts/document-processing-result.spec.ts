@@ -12,6 +12,7 @@ describe('isDocumentProcessingFailureRetryable', () => {
     [DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND, false],
     [DocumentProcessingFailureCode.EXTRACTION_OBJECT_TOO_LARGE, false],
     [DocumentProcessingFailureCode.GENERATION_OUTPUT_INVALID, true],
+    [DocumentProcessingFailureCode.GENERATION_OUTPUT_TRUNCATED, true],
     [DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS, false],
     [DocumentProcessingFailureCode.PDF_INVALID, false],
     [DocumentProcessingFailureCode.PDF_TEXT_NOT_FOUND, false],

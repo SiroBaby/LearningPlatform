@@ -35,7 +35,7 @@ interface OpenAiClient {
     readonly completions: {
       create(
         input: ChatCompletionCreateParamsNonStreaming,
-      ): Promise<Pick<ChatCompletion, 'choices' | 'usage'>>;
+      ): Promise<OpenAiChatCompletionResult>;
     };
   };
   readonly responses: {
@@ -43,6 +43,14 @@ interface OpenAiClient {
       input: ResponseCreateParamsNonStreaming,
     ): Promise<Pick<Response, 'output_text' | 'status' | 'usage'>>;
   };
+}
+
+interface OpenAiChatCompletionResult {
+  readonly choices: readonly {
+    readonly finish_reason: string | null;
+    readonly message: { readonly content: string | null };
+  }[];
+  readonly usage?: ChatCompletion['usage'];
 }
 
 interface OpenAiProviderSettings {
@@ -140,6 +148,9 @@ export class OpenAiLlmProvider implements LlmProvider {
       model: this.model,
       response_format: createChatResponseFormat(this.settings.structuredOutputMode),
     });
+    if (isGenerationOutputTruncated(response.choices[0]?.finish_reason)) {
+      throw new QuizGenerationError(QuizGenerationErrorCode.GENERATION_OUTPUT_TRUNCATED);
+    }
     return { output: parseGeneratedOutput(response.choices[0]?.message.content), usage: mapUsage(response.usage) };
   }
 
@@ -258,17 +269,33 @@ function createResponsesFormat(mode: LlmStructuredOutputMode): ResponseFormatTex
 }
 
 function parseGeneratedOutput(value: string | null | undefined): unknown {
-  if (!value?.trim()) {
+  const normalized = normalizeGeneratedJsonOutput(value);
+  if (!normalized) {
     throw new QuizGenerationError(QuizGenerationErrorCode.GENERATION_OUTPUT_INVALID);
   }
   try {
-    return JSON.parse(value);
+    return JSON.parse(normalized);
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new QuizGenerationError(QuizGenerationErrorCode.GENERATION_OUTPUT_INVALID);
     }
     throw error;
   }
+}
+
+function normalizeGeneratedJsonOutput(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (!trimmed.startsWith('```')) return trimmed;
+  const openingFence = '```json\n';
+  const closingFence = '\n```';
+  if (!trimmed.startsWith(openingFence) || !trimmed.endsWith(closingFence)) return null;
+  const inner = trimmed.slice(openingFence.length, -closingFence.length);
+  return inner.trim() ? inner : null;
+}
+
+function isGenerationOutputTruncated(finishReason: string | null | undefined): boolean {
+  return finishReason === 'length' || finishReason === 'max_tokens';
 }
 
 function isCredentialUnavailableProviderError(error: unknown): boolean {
