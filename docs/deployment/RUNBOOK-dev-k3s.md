@@ -248,7 +248,7 @@ sudo k3s kubectl -n learning-platform-dev rollout undo deployment/api
 sudo k3s kubectl -n learning-platform-dev rollout undo deployment/worker
 ```
 
-Sau rollback nhanh, vẫn phải đưa desired state về digest tốt đã biết.
+Sau rollback nhanh, vẫn phải đưa desired state về digest tốt đã biết. Trước khi digest đó ra khỏi 10 version mới nhất và không còn được ReplicaSet tham chiếu, gắn thêm tag `rollback-<tên-ngắn>` cho cùng package version để retention selector bỏ qua version đó.
 
 ### 7.2. Rollback chuẩn theo digest cũ
 
@@ -323,7 +323,7 @@ Workflow `.github/workflows/cleanup-ghcr.yml` hoàn toàn tách biệt với dep
 1. `GITHUB_TOKEN` của workflow phải có `contents: read` và `packages: write`; không cấu hình PAT hoặc secret token riêng.
 2. Token chỉ có quyền xoá/restore package khi người khởi chạy có quyền **admin** trên repository/package GHCR. Nếu package chưa kế thừa quyền từ repository hoặc admin không được cấp, GitHub API sẽ fail và workflow dừng.
 3. Hai package được xử lý độc lập: `learningplatform-api` (dùng chung cho `api` và `worker`) và `learningplatform-web`.
-4. Với từng package, selector giữ 10 version mới nhất có đúng một tag `sha-<40 hex>`, chỉ xét xoá version cũ ít nhất 30 ngày. Version không tag, tag không phải SHA, nhiều tag/mixed tag, hoặc metadata malformed đều bị bỏ qua; không có wildcard delete.
+4. Với từng package, selector giữ 10 version mới nhất có đúng một tag `sha-<40 hex>`, chỉ xét xoá version cũ ít nhất 30 ngày. Version không tag, tag không phải SHA, nhiều tag/mixed tag, hoặc metadata malformed đều bị bỏ qua; không có wildcard delete. Operator phải pin một digest known-good cần giữ lâu hơn bằng tag bổ sung `rollback-<tên-ngắn>`; version đó trở thành multi-tag và không đủ điều kiện xoá.
 5. Trước khi chọn xoá, workflow đọc-only qua SSH strict host checking với `ssh -n` từ cả Deployment và ReplicaSet trong namespace `learning-platform-dev`. Mọi digest còn được tham chiếu đều được bảo vệ để rollout undo và rollback theo digest còn an toàn.
 6. Lỗi SSH, REST list/pagination, parse JSON, selector hoặc protected-digest discovery đều fail closed: không có thao tác xoá tiếp theo.
 
@@ -341,7 +341,7 @@ Không chạy `docker system prune`, không prune image node/containerd trên VP
 
 ### 9.3. Khôi phục sau cleanup
 
-GitHub Packages có thể cho restore version vừa xoá trong thời hạn do GitHub quy định, nhưng `GITHUB_TOKEN` preview restore cũng cần repository/package admin; không xem restore là thay thế cho rollback-safe retention. Nếu cần rollback, ưu tiên digest vẫn được Deployment/ReplicaSet bảo vệ hoặc version còn trong 10 SHA-tagged version được giữ. Khi một digest cũ đã bị xoá vĩnh viễn, cần build/push lại từ commit đã biết rồi deploy immutable digest mới; node/containerd cache không phải cơ chế restore và workflow không dọn cache đó.
+GitHub Packages có thể cho restore version vừa xoá trong thời hạn do GitHub quy định, nhưng `GITHUB_TOKEN` preview restore cũng cần repository/package admin; không xem restore là thay thế cho rollback-safe retention. Cleanup chỉ bảo đảm giữ digest còn được Deployment/ReplicaSet tham chiếu, 10 SHA-tagged version mới nhất và version được operator pin bằng tag `rollback-*`; không bảo đảm giữ mọi digest lịch sử chỉ vì từng được xem là known-good. Khi một digest cũ đã bị xoá vĩnh viễn, cần build/push lại từ commit đã biết rồi deploy immutable digest mới; node/containerd cache không phải cơ chế restore và workflow không dọn cache đó.
 
 ## 10. Common failure diagnosis
 
