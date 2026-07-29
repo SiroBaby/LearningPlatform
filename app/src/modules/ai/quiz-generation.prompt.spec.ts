@@ -23,11 +23,15 @@ describe('quiz generation prompt fingerprints', () => {
 
   it('requires Vietnamese-first learner-facing content while preserving reused English source terms exactly', () => {
     expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
-      'Write the stem, every option content, and the explanation in natural Vietnamese even when the source text is fully English or mixed-language.',
+      'Write the stem, every option content, and the entire explanation in natural Vietnamese even when the source text is fully English or mixed-language.',
     );
     expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
-      'When reusing English technical terms, abbreviations, proper names, product names, API names, code identifiers, or quoted source phrases, preserve them exactly as they appear in the source.',
+      'Preserve only English technical terms, abbreviations, proper names, product names, API names, and code identifiers exactly as they appear in the source.',
     );
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
+      'Translate all other English prose into Vietnamese; do not copy a complete English sentence or clause into the stem, options, or explanation.',
+    );
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).not.toContain('quoted source phrases');
   });
 
   it('normalizes Unicode and line endings for cache identity', () => {

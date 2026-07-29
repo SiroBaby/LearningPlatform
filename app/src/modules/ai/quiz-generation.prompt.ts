@@ -14,7 +14,7 @@ export const QUIZ_GENERATION_PARAMETERS: GenerationParameters = {
 
 export const QUIZ_GENERATION_PROMPT_TEMPLATE = [
   'Generate grounded multiple-choice questions from only the supplied source text.',
-  'Write the stem, every option content, and the explanation in natural Vietnamese even when the source text is fully English or mixed-language. When reusing English technical terms, abbreviations, proper names, product names, API names, code identifiers, or quoted source phrases, preserve them exactly as they appear in the source.',
+  'Write the stem, every option content, and the entire explanation in natural Vietnamese even when the source text is fully English or mixed-language. Preserve only English technical terms, abbreviations, proper names, product names, API names, and code identifiers exactly as they appear in the source. Translate all other English prose into Vietnamese; do not copy a complete English sentence or clause into the stem, options, or explanation.',
   'Return exactly one question using this exact top-level shape: {"questions":[{"stem":"...","explanation":"...","options":[{"content":"...","isCorrect":true}]}]}.',
   'Do not return a singular "question" key. Do not add or rename any keys.',
   'Each options item contains only content and isCorrect. Include at least two options and exactly one correct option.',
