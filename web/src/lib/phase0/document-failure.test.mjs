@@ -48,3 +48,12 @@ test("uses safe retryable Vietnamese copy for truncated generation", () => {
   assert.equal(presentation.title, "Chưa thể tạo bộ câu hỏi hoàn chỉnh");
   assert.equal(presentation.description, "Hãy thử lại sau để tạo lại bộ câu hỏi.");
 });
+
+test("uses coherent failed copy for generic processing failure", () => {
+  const presentation = getDocumentFailurePresentation("PROCESSING_FAILED");
+
+  assert.equal(presentation.retryable, false);
+  assert.equal(presentation.title, "Chưa thể xử lý tài liệu");
+  assert.doesNotMatch(presentation.description, /đang xử lý|xử lý xong/i);
+  assert.match(presentation.description, /kiểm tra lại file|tải lại/i);
+});

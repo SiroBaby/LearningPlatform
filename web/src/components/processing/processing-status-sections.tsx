@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import { CircleAlert, Loader2, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, LinkButton, StatusPill, TypeBadge } from "@/components/ui";
 import type { Phase0Document } from "@/lib/phase0/contracts";
@@ -43,6 +44,11 @@ interface ProcessingHeaderProps {
 export function ProcessingHeader({ document, detailHref, libraryHref, error }: ProcessingHeaderProps) {
   const mappedStatus = document ? mapStatus(document.status) : "uploaded";
   const mappedType = document ? mapType(document.type) : "pdf";
+  const isFailed = document?.status === "FAILED";
+  const title = document?.originalName ?? "Đang tải trạng thái tài liệu";
+  const description = isFailed
+    ? "Tài liệu này chưa xử lý thành công. Bạn có thể xem lý do bên dưới và thử lại nếu hệ thống hỗ trợ."
+    : "Theo dõi tiến độ xử lý, model đã chọn cùng mức ước tính và credit chốt khi có dữ liệu mới.";
 
   return (
     <Card>
@@ -55,12 +61,8 @@ export function ProcessingHeader({ document, detailHref, libraryHref, error }: P
               <Badge tone="brand">Tự cập nhật</Badge>
             </div>
             <div>
-              <h2 className="text-2xl font-semibold tracking-tight text-ink-900">
-                {document?.originalName ?? "Đang tải trạng thái tài liệu"}
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-ink-600">
-                Tài liệu của bạn đang được xử lý. Trang này sẽ tự cập nhật model đã chọn cùng mức ước tính và credit chốt khi có dữ liệu mới.
-              </p>
+              <h2 className="text-2xl font-semibold tracking-tight text-ink-900">{title}</h2>
+              <p className="mt-2 text-sm leading-6 text-ink-600">{description}</p>
             </div>
           </div>
 
@@ -90,6 +92,7 @@ interface ProcessingStatusPanelProps {
   readonly isLoading: boolean;
   readonly isRetrySubmitting: boolean;
   readonly retryError: string | null;
+  readonly retryButtonRef: RefObject<HTMLButtonElement | null>;
   readonly onRetryConfirm: () => void;
 }
 
@@ -98,6 +101,7 @@ export function ProcessingStatusPanel({
   isLoading,
   isRetrySubmitting,
   retryError,
+  retryButtonRef,
   onRetryConfirm,
 }: ProcessingStatusPanelProps) {
   const failurePresentation = document?.status === "FAILED"
@@ -105,6 +109,9 @@ export function ProcessingStatusPanel({
     : null;
   const canRetryFailure = document?.status === "FAILED"
     && isRetryableDocumentFailureCode(document.errorCode);
+  const statusSummary = document?.status === "FAILED"
+    ? "Tài liệu chưa xử lý thành công"
+    : document ? getStatusLabel(document.status) : "Đang chờ cập nhật";
 
   return (
     <Card>
@@ -121,7 +128,7 @@ export function ProcessingStatusPanel({
 
         <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4 text-sm text-ink-700">
           <p className="font-semibold text-ink-900">Trạng thái hiện tại</p>
-          <p className="mt-1">{document ? getStatusLabel(document.status) : "Đang chờ cập nhật"}</p>
+          <p className="mt-1">{statusSummary}</p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -140,13 +147,24 @@ export function ProcessingStatusPanel({
               <p className="mt-1">{failurePresentation.description}</p>
             </div>
             {canRetryFailure ? (
-              <Button type="button" variant="outline" onClick={onRetryConfirm} disabled={isRetrySubmitting} aria-busy={isRetrySubmitting}>
+              <Button
+                ref={retryButtonRef}
+                type="button"
+                variant="outline"
+                onClick={onRetryConfirm}
+                disabled={isRetrySubmitting}
+                aria-busy={isRetrySubmitting}
+              >
                 <RefreshCcw className={isRetrySubmitting ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
                 {isRetrySubmitting ? "Đang thử lại…" : "Thử lại"}
               </Button>
             ) : null}
             {retryError ? (
-              <div className="rounded-2xl border border-warning-100 bg-white/80 p-3 text-warning-800" role="status">
+              <div
+                className="rounded-2xl border border-warning-100 bg-white/80 p-3 text-warning-800"
+                role="alert"
+                aria-live="assertive"
+              >
                 {retryError}
               </div>
             ) : null}

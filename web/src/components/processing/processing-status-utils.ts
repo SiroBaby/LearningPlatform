@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { formatVietnameseDateTime } from "@/lib/date-time";
 import { Phase0ClientError, getPhase0Document } from "@/lib/phase0/client";
 import type { Phase0BudgetStatus, Phase0Document, Phase0ModelSelectionKind } from "@/lib/phase0/contracts";
 
 export function formatDateTime(iso: string): string {
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(iso));
+  return formatVietnameseDateTime(iso);
 }
 
 export function formatBytes(sizeBytes: number): string {
@@ -115,7 +113,7 @@ export function getBudgetMessage(document: Phase0Document | null): string {
   }
 
   if (document.status === "FAILED") {
-    return "Nếu tài liệu chưa xử lý xong, mức credit chốt có thể chưa xuất hiện hoặc chưa hoàn tất.";
+    return "Lần xử lý này chưa thành công nên credit chốt có thể chưa xuất hiện hoặc chưa được ghi nhận đầy đủ.";
   }
 
   if (document.selectedModelKind === "CUSTOM") {

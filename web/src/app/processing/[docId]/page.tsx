@@ -7,9 +7,9 @@ interface ProcessingPageProps {
 }
 
 export const metadata: Metadata = {
-  title: "Đang xử lý tài liệu",
+  title: "Trạng thái tài liệu",
   description:
-    "Theo dõi tiến trình xử lý tài liệu và xem khi nào quiz sẵn sàng.",
+    "Theo dõi trạng thái xử lý tài liệu và xem khi nào quiz sẵn sàng.",
 };
 
 export default async function ProcessingPage({ params }: ProcessingPageProps) {
@@ -17,8 +17,8 @@ export default async function ProcessingPage({ params }: ProcessingPageProps) {
 
   return (
     <LearnerShell
-      title="Đang xử lý tài liệu"
-      subtitle="Tài liệu của bạn đang được xử lý. Bạn có thể theo dõi tại đây và mở lại khi xong."
+      title="Trạng thái tài liệu"
+      subtitle="Theo dõi tiến độ xử lý, xem lỗi nếu có và mở lại tài liệu khi đã sẵn sàng."
     >
       <ProcessingStatusScreen documentId={docId} />
     </LearnerShell>

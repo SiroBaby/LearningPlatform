@@ -5,6 +5,7 @@ import {
   createDocumentProcessingRetryAction,
   getRetryConfirmErrorMessage,
 } from "./processing-retry.ts";
+import { shouldRestoreRetryFocus } from "./processing-focus.ts";
 
 class SafeClientError extends Error {
   constructor(status, message) {
@@ -108,5 +109,43 @@ test("maps unknown retry confirm failures to safe fallback copy", () => {
   assert.equal(
     getRetryConfirmErrorMessage(new Error("connect ECONNREFUSED 127.0.0.1:3000")),
     "Chưa thể thử lại tài liệu lúc này. Bạn hãy đợi một chút rồi thử lại.",
+  );
+});
+
+test("restores retry focus only when a new retry error appears after submit finishes", () => {
+  assert.equal(
+    shouldRestoreRetryFocus({
+      previousRetryError: null,
+      retryError: "Bạn hãy đợi một chút rồi thử lại.",
+      isRetrySubmitting: false,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldRestoreRetryFocus({
+      previousRetryError: "Bạn hãy đợi một chút rồi thử lại.",
+      retryError: "Bạn hãy đợi một chút rồi thử lại.",
+      isRetrySubmitting: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldRestoreRetryFocus({
+      previousRetryError: null,
+      retryError: "Bạn hãy đợi một chút rồi thử lại.",
+      isRetrySubmitting: true,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldRestoreRetryFocus({
+      previousRetryError: null,
+      retryError: null,
+      isRetrySubmitting: false,
+    }),
+    false,
   );
 });

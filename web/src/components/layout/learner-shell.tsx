@@ -54,7 +54,7 @@ export function LearnerShell({
 
   return (
     <div className="min-h-screen bg-ink-50">
-      <div className="mx-auto flex max-w-[1600px] gap-6 px-4 pb-24 pt-4 sm:px-6 lg:px-8 lg:pb-8">
+      <div className="mx-auto flex max-w-[1600px] gap-6 px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-4 sm:px-6 lg:px-8 lg:pb-8">
         <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-72 shrink-0 rounded-[var(--radius-card)] border border-ink-200 bg-white p-4 card-shadow lg:flex lg:flex-col">
           <Link href={routes.home} className="mb-6 flex items-center gap-3 px-2">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand-600 font-bold text-white">
@@ -143,7 +143,7 @@ export function LearnerShell({
         </div>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-200 bg-white/95 backdrop-blur lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-2 py-2">
           {learnerBottomNav.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || (href !== routes.home && pathname.startsWith(href));
