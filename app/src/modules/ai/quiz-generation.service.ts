@@ -31,6 +31,7 @@ import {
 import type { GenerateQuizCommand, QuizGenerator } from './contracts/quiz-generator.port';
 import { QuizGenerationError, QuizGenerationErrorCode } from './quiz-generation-error';
 import { decodeGeneratedQuestionOutput } from './quiz-generation-output.decoder';
+import { validateGeneratedQuestionOutputAgainstSource } from './quiz-generation-output.source-validation';
 import {
   createGenerationCacheKey,
   createPromptFingerprint,
@@ -153,6 +154,7 @@ export class QuizGenerationService implements QuizGenerator {
     });
     const cached = await this.cache.findDecodedOutput(cacheKey);
     if (cached) {
+      validateGeneratedQuestionOutputAgainstSource(chunk.text, cached);
       const usageRecord = this.resolveUsageRecord(job, cacheKey, provider.providerIdentity, true, unavailableUsage(), 0);
       if (usageRecord) await this.usage?.recordUsage(usageRecord);
       return { credits: 0, output: cached, usageAvailable: true };
@@ -167,6 +169,7 @@ export class QuizGenerationService implements QuizGenerator {
     const usageRecord = this.resolveUsageRecord(job, cacheKey, provider.providerIdentity, false, generated.usage, platform ? this.creditsForUsage(job, generated.usage) : 0);
     if (usageRecord) await this.usage?.recordUsage(usageRecord);
     const output = decodeGeneratedQuestionOutput(generated.output);
+    validateGeneratedQuestionOutputAgainstSource(chunk.text, output);
     await this.cache.saveDecodedOutput({
       cacheKey,
       model: provider.model,
