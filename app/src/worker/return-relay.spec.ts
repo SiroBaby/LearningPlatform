@@ -7,7 +7,9 @@ import {
   describe,
   expect,
   it,
+  jest,
 } from '@jest/globals';
+import { ConsoleLogger } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 
 import { AiOutboxEvent } from '../modules/ai/entities/ai-outbox-event.entity';
@@ -93,6 +95,7 @@ describe('ReturnRelay', () => {
   it('idempotently projects READY then marks ai outbox published', async () => {
     const document = await seedProcessingDocument();
     const event = await seedResult(document, DocumentStatus.READY);
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
 
     await relay.pump(10);
     await relay.pump(10);
@@ -105,6 +108,17 @@ describe('ReturnRelay', () => {
     expect((await documents.findOneByOrFail({ id: document.id })).estimateStatus).toBe('AUTHORITATIVE');
     expect((await documents.findOneByOrFail({ id: document.id })).estimatedCredits).toBe('100');
     expect((await documents.findOneByOrFail({ id: document.id })).settledCredits).toBe('25');
+    expect(logger).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: document.id,
+      durationMs: expect.any(Number),
+      event: 'ai.job.return.projected',
+      jobId: event.aggregateId,
+      projectionDurationMs: expect.any(Number),
+      publishDurationMs: expect.any(Number),
+      queueWaitMs: expect.any(Number),
+      runtime: 'worker',
+    }));
+    logger.mockRestore();
   });
 
   it('idempotently projects FAILED after a projection failure retry', async () => {

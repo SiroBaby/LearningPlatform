@@ -105,6 +105,7 @@ export interface WorkerSettings {
   jobBatchSize: number;
   outboxBatchSize: number;
   pollIntervalMs: number;
+  quizGenerationConcurrency: number;
   stuckJobBatchSize: number;
   stuckJobTimeoutMs: number;
 }
@@ -167,6 +168,7 @@ export const CONFIG_PATH = {
     jobBatchSize: 'worker.jobBatchSize',
     outboxBatchSize: 'worker.outboxBatchSize',
     pollIntervalMs: 'worker.pollIntervalMs',
+    quizGenerationConcurrency: 'worker.quizGenerationConcurrency',
     stuckJobBatchSize: 'worker.stuckJobBatchSize',
     stuckJobTimeoutMs: 'worker.stuckJobTimeoutMs',
   },

@@ -169,6 +169,7 @@ export class ApplicationConfigService {
       jobBatchSize: this.positiveInteger(CONFIG_PATH.worker.jobBatchSize),
       outboxBatchSize: this.positiveInteger(CONFIG_PATH.worker.outboxBatchSize),
       pollIntervalMs: this.positiveInteger(CONFIG_PATH.worker.pollIntervalMs),
+      quizGenerationConcurrency: this.positiveInteger(CONFIG_PATH.worker.quizGenerationConcurrency),
       stuckJobBatchSize: this.positiveInteger(CONFIG_PATH.worker.stuckJobBatchSize),
       stuckJobTimeoutMs: this.positiveInteger(CONFIG_PATH.worker.stuckJobTimeoutMs),
     };

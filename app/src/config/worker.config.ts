@@ -17,6 +17,7 @@ export default registerAs('worker', () => ({
   jobBatchSize: parseInt(process.env.WORKER_JOB_BATCH_SIZE ?? '10', 10),
   outboxBatchSize: parseInt(process.env.WORKER_OUTBOX_BATCH_SIZE ?? '100', 10),
   pollIntervalMs: parseInt(process.env.WORKER_POLL_INTERVAL_MS ?? '1000', 10),
+  quizGenerationConcurrency: parseInt(process.env.WORKER_QUIZ_GENERATION_CONCURRENCY ?? '8', 10),
   stuckJobBatchSize: parseInt(process.env.WORKER_STUCK_JOB_BATCH_SIZE ?? '100', 10),
   stuckJobTimeoutMs: parseInt(process.env.WORKER_STUCK_JOB_TIMEOUT_MS ?? '300000', 10),
 }));

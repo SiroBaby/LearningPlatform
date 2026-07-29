@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { ConsoleLogger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
 import { StorageObjectReader } from '../../storage/contracts/storage-object-reader.port';
@@ -108,6 +109,49 @@ describe('ExtractionJobProcessor', () => {
     const processor = new ExtractionJobProcessor(source, objects, new ExtractionService(), new ChunkService(), chunks, generator);
 
     await expect(processor.process(createJob())).rejects.toThrow('assessment unavailable');
+  });
+
+  it('emits safe duration events for extraction, chunk persistence, and quiz generation stages', async () => {
+    const source: DocumentSourceReader = {
+      read: async () => ({ storageRef: 'owner/private-document.txt', type: 'TEXT' }),
+    };
+    const objects: StorageObjectReader = { read: async () => Buffer.from('private source text') };
+    const chunks: ChunkStore = {
+      findForDocument: async () => [],
+      replaceForDocument: async () => true,
+    };
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
+    const processor = new ExtractionJobProcessor(source, objects, new ExtractionService(), new ChunkService(), chunks, createGenerator());
+    const job = createJob();
+
+    await processor.process(job);
+
+    const events = logger.mock.calls
+      .map(([event]) => event)
+      .filter((event): event is Record<string, unknown> => typeof event === 'object' && event !== null && 'event' in event);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'ai.extraction.extract.completed' }),
+      expect.objectContaining({ event: 'ai.extraction.chunk.completed' }),
+      expect.objectContaining({ event: 'ai.extraction.chunk_persist.completed' }),
+      expect.objectContaining({ event: 'ai.extraction.generate.completed' }),
+    ]));
+    for (const event of events) {
+      expect(event).toEqual(expect.objectContaining({
+        attempt: job.attempts,
+        correlationId: job.correlationId,
+        durationMs: expect.any(Number),
+        jobId: job.id,
+      }));
+      expect(Object.keys(event)).not.toEqual(expect.arrayContaining([
+        'source',
+        'storageRef',
+        'text',
+        'prompt',
+        'output',
+        'citation',
+      ]));
+    }
+    logger.mockRestore();
   });
 });
 

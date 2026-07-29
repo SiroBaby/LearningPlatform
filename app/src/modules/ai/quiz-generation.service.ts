@@ -1,5 +1,6 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 
+import { createApplicationLogger } from '../../common/logging/application-logger.factory';
 import {
   QUIZ_GENERATION_HANDOFF,
   type QuestionCandidate,
@@ -29,6 +30,7 @@ import {
   type PromptVersionStore,
 } from './contracts/prompt-version.contracts';
 import type { GenerateQuizCommand, QuizGenerator } from './contracts/quiz-generator.port';
+import { mapWithBoundedConcurrency } from './bounded-concurrency';
 import { QuizGenerationError, QuizGenerationErrorCode } from './quiz-generation-error';
 import { decodeGeneratedQuestionOutput } from './quiz-generation-output.decoder';
 import { validateGeneratedQuestionOutputAgainstSource } from './quiz-generation-output.source-validation';
@@ -40,9 +42,18 @@ import {
 } from './quiz-generation.prompt';
 
 const MINIMUM_VALID_QUESTIONS = 1;
+const DEFAULT_QUIZ_GENERATION_CONCURRENCY = 8;
+
+type ChunkGenerationResult = {
+  readonly credits: number;
+  readonly output: GeneratedQuestionOutput;
+  readonly usageAvailable: boolean;
+};
 
 @Injectable()
 export class QuizGenerationService implements QuizGenerator {
+  private readonly logger = createApplicationLogger({ context: QuizGenerationService.name });
+
   constructor(
     @Optional() @Inject(LLM_PROVIDER) private readonly provider: LlmProvider | undefined,
     @Inject(GENERATION_CACHE) private readonly cache: GenerationCache,
@@ -57,6 +68,7 @@ export class QuizGenerationService implements QuizGenerator {
   ) {}
 
   async generate(command: GenerateQuizCommand): Promise<void> {
+    const generationStartedAt = performance.now();
     const resolvedCommand = await this.resolveDefaultPlatformModel(command);
     const provider = await this.resolveProvider(resolvedCommand);
     if (!provider) {
@@ -65,7 +77,13 @@ export class QuizGenerationService implements QuizGenerator {
     const platform = resolvedCommand.job.selection?.kind !== 'CUSTOM';
     const estimatedCredits = this.estimateCredits(resolvedCommand.chunks.length, platform);
     const budget = this.resolveBudget(resolvedCommand, estimatedCredits, platform);
-    if (budget && platform) await this.budgetReservations?.reserve(budget);
+    if (budget && platform) {
+      const reserveStartedAt = performance.now();
+      await this.budgetReservations?.reserve(budget);
+      this.logStage(resolvedCommand.job, 'budget_reserve', reserveStartedAt, {
+        chunkCount: resolvedCommand.chunks.length,
+      });
+    }
     try {
       const promptVersion = createPromptFingerprint({
         params: QUIZ_GENERATION_PARAMETERS,
@@ -82,10 +100,23 @@ export class QuizGenerationService implements QuizGenerator {
       const orderedChunks = [...resolvedCommand.chunks].sort(
         (left, right) => left.chunkIndex - right.chunkIndex,
       );
-      for (const chunk of orderedChunks) {
-        const generated = await this.generateForChunk(chunk, promptVersion, provider, resolvedCommand.job, platform);
+      const generatedChunks = await mapWithBoundedConcurrency({
+        concurrency: this.config?.worker.quizGenerationConcurrency ?? DEFAULT_QUIZ_GENERATION_CONCURRENCY,
+        items: orderedChunks,
+        map: (chunk) => this.generateForChunk(
+          chunk,
+          promptVersion,
+          provider,
+          resolvedCommand.job,
+          platform,
+        ),
+      });
+      for (const [index, chunk] of orderedChunks.entries()) {
+        const generated = generatedChunks[index];
+        if (!generated) throw new Error('Quiz generation worker completed without a chunk result');
         this.appendQuestions(questions, chunk, generated.output);
       }
+      const handoffStartedAt = performance.now();
       await this.handoff.persist({
         documentId: resolvedCommand.job.documentId,
         minimumQuestionCount: MINIMUM_VALID_QUESTIONS,
@@ -93,9 +124,16 @@ export class QuizGenerationService implements QuizGenerator {
         promptVersion,
         questions,
       });
-      await this.settleBudget(budget);
+      this.logStage(resolvedCommand.job, 'handoff_persist', handoffStartedAt, {
+        questionCount: questions.length,
+      });
+      await this.settleBudget(budget, resolvedCommand.job);
+      this.logStage(resolvedCommand.job, 'total', generationStartedAt, {
+        chunkCount: orderedChunks.length,
+        questionCount: questions.length,
+      });
     } catch (error) {
-      await this.settleBudget(budget);
+      await this.settleBudget(budget, resolvedCommand.job);
       if (
         error instanceof AssessmentError &&
         error.code === AssessmentErrorCode.INSUFFICIENT_VALID_QUESTIONS
@@ -145,31 +183,40 @@ export class QuizGenerationService implements QuizGenerator {
     provider: LlmProvider,
     job: GenerateQuizCommand['job'],
     platform: boolean,
-  ): Promise<{ readonly credits: number; readonly output: GeneratedQuestionOutput; readonly usageAvailable: boolean }> {
+  ): Promise<ChunkGenerationResult> {
     const cacheKey = createGenerationCacheKey({
       params: QUIZ_GENERATION_PARAMETERS,
       providerIdentity: provider.providerIdentity,
       sourceText: chunk.text,
       template: QUIZ_GENERATION_PROMPT_TEMPLATE,
     });
+    const cacheLookupStartedAt = performance.now();
     const cached = await this.cache.findDecodedOutput(cacheKey);
+    this.logStage(job, 'cache_lookup', cacheLookupStartedAt, { cacheHit: cached !== null });
     if (cached) {
+      const sourceValidationStartedAt = performance.now();
       validateGeneratedQuestionOutputAgainstSource(chunk.text, cached);
+      this.logStage(job, 'source_validation', sourceValidationStartedAt, { cacheHit: true });
       const usageRecord = this.resolveUsageRecord(job, cacheKey, provider.providerIdentity, true, unavailableUsage(), 0);
       if (usageRecord) await this.usage?.recordUsage(usageRecord);
       return { credits: 0, output: cached, usageAvailable: true };
     }
     const dispatched = this.resolveUsageRecord(job, cacheKey, provider.providerIdentity, false, unavailableUsage(), null);
     if (dispatched) await this.usage?.recordUsage(dispatched);
+    const providerGenerationStartedAt = performance.now();
     const generated = await provider.generate({
       parameters: QUIZ_GENERATION_PARAMETERS,
       promptTemplate: QUIZ_GENERATION_PROMPT_TEMPLATE,
       sourceText: chunk.text,
     });
+    this.logStage(job, 'provider_generation', providerGenerationStartedAt, { cacheHit: false });
     const usageRecord = this.resolveUsageRecord(job, cacheKey, provider.providerIdentity, false, generated.usage, platform ? this.creditsForUsage(job, generated.usage) : 0);
     if (usageRecord) await this.usage?.recordUsage(usageRecord);
     const output = decodeGeneratedQuestionOutput(generated.output);
+    const sourceValidationStartedAt = performance.now();
     validateGeneratedQuestionOutputAgainstSource(chunk.text, output);
+    this.logStage(job, 'source_validation', sourceValidationStartedAt, { cacheHit: false });
+    const cachePersistStartedAt = performance.now();
     await this.cache.saveDecodedOutput({
       cacheKey,
       model: provider.model,
@@ -177,6 +224,7 @@ export class QuizGenerationService implements QuizGenerator {
       parameters: QUIZ_GENERATION_PARAMETERS,
       promptFingerprint,
     });
+    this.logStage(job, 'cache_persist', cachePersistStartedAt, { cacheHit: false });
     return {
       credits: platform ? this.creditsForUsage(job, generated.usage) : 0,
       output,
@@ -224,8 +272,10 @@ export class QuizGenerationService implements QuizGenerator {
 
   private async settleBudget(
     budget: { readonly attempt: number; readonly estimatedCredits: number; readonly jobId: string; readonly ownerId: string; readonly platform: boolean } | null,
+    job: GenerateQuizCommand['job'],
   ): Promise<void> {
     if (!budget || !budget.platform || !this.usage || !this.budgetReservations) return;
+    const settleStartedAt = performance.now();
     const summary = await this.usage.summarizeUsage({
       attempt: budget.attempt,
       jobId: budget.jobId,
@@ -244,6 +294,25 @@ export class QuizGenerationService implements QuizGenerator {
       estimatedCredits: budget.estimatedCredits,
       jobId: budget.jobId,
       settledCredits: summary.knownActualCredits,
+    });
+    this.logStage(job, 'budget_settle', settleStartedAt, {
+      hasUncertainDispatch: summary.hasUncertainDispatch,
+    });
+  }
+
+  private logStage(
+    job: GenerateQuizCommand['job'],
+    stage: string,
+    startedAt: number,
+    counts: Record<string, number | boolean>,
+  ): void {
+    this.logger.log({
+      attempt: job.attempt,
+      correlationId: job.correlationId,
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      event: `ai.quiz_generation.${stage}.completed`,
+      jobId: job.id,
+      ...counts,
     });
   }
 

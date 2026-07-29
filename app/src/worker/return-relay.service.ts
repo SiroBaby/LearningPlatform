@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
+import { createApplicationLogger } from '../common/logging/application-logger.factory';
 import {
   DocumentProcessingFailureCode,
   DocumentProcessingResult,
@@ -18,6 +19,8 @@ import { DocumentStatus } from '../modules/content/enums/document-status.enum';
  */
 @Injectable()
 export class ReturnRelay {
+  private readonly logger = createApplicationLogger({ context: ReturnRelay.name });
+
   constructor(
     private readonly outbox: AiOutboxRepository,
     @Inject(DOCUMENT_STATUS_PROJECTION)
@@ -28,7 +31,10 @@ export class ReturnRelay {
     const pending = await this.outbox.findUnpublishedProcessingResults(limit);
 
     for (const row of pending) {
+      const startedAt = performance.now();
+      const queueWaitMs = Math.max(0, Date.now() - row.createdAt.getTime());
       const payload = this.parseResult(row.payload);
+      const projectionStartedAt = performance.now();
       await this.projection.project({
         documentId: payload.documentId,
         estimatedCredits: payload.estimatedCredits,
@@ -43,7 +49,19 @@ export class ReturnRelay {
             ? DocumentStatus.READY
             : DocumentStatus.FAILED,
       });
+      const projectionDurationMs = elapsedMilliseconds(projectionStartedAt);
+      const publishStartedAt = performance.now();
       await this.outbox.markPublished(row.id);
+      this.logger.log({
+        documentId: payload.documentId,
+        durationMs: elapsedMilliseconds(startedAt),
+        event: 'ai.job.return.projected',
+        jobId: row.aggregateId,
+        publishDurationMs: elapsedMilliseconds(publishStartedAt),
+        queueWaitMs,
+        projectionDurationMs,
+        runtime: 'worker',
+      });
     }
   }
 
@@ -98,4 +116,8 @@ export class ReturnRelay {
     }
     return undefined;
   }
+}
+
+function elapsedMilliseconds(startedAt: number): number {
+  return Math.max(0, Math.round(performance.now() - startedAt));
 }

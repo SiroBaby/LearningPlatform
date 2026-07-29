@@ -7,6 +7,7 @@ export interface GenerateQuizCommand {
   readonly chunks: readonly ChunkRecord[];
   readonly job: {
     readonly attempt?: number;
+    readonly correlationId: string;
     readonly documentId: string;
     readonly id?: string;
     readonly ownerId: string;
