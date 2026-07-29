@@ -8,8 +8,8 @@ import {
 } from './quiz-generation.prompt';
 
 describe('quiz generation prompt fingerprints', () => {
-  it('allows 4000 output tokens for complete quiz generation', () => {
-    expect(QUIZ_GENERATION_PARAMETERS.maxOutputTokens).toBe(4000);
+  it('allows 8000 output tokens for complete quiz generation', () => {
+    expect(QUIZ_GENERATION_PARAMETERS.maxOutputTokens).toBe(8000);
   });
 
   it('instructs the provider to return one JSON-only question per chunk', () => {
@@ -51,7 +51,7 @@ describe('quiz generation prompt fingerprints', () => {
 
   it('normalizes Unicode and line endings for cache identity', () => {
     const input = {
-      params: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 4000 as const, questionsPerChunk: 1 as const },
+      params: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 8000 as const, questionsPerChunk: 1 as const },
       providerIdentity: 'provider-v1',
       sourceText: 'Cafe\u0301\r\nSecond line\rThird line',
       template: 'Generate grounded questions for {{SOURCE_TEXT}}.',
@@ -65,7 +65,7 @@ describe('quiz generation prompt fingerprints', () => {
 
   it('changes prompt fingerprint and cache key when the template changes', () => {
     const base = {
-      params: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 4000 as const, questionsPerChunk: 1 as const },
+      params: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 8000 as const, questionsPerChunk: 1 as const },
       providerIdentity: 'provider-v1',
       sourceText: 'source',
       template: 'Template one {{SOURCE_TEXT}}.',
@@ -78,7 +78,7 @@ describe('quiz generation prompt fingerprints', () => {
 
   it('isolates prompt and cache fingerprints by provider identity', () => {
     const base = {
-      params: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 4000 as const, questionsPerChunk: 1 as const },
+      params: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 8000 as const, questionsPerChunk: 1 as const },
       providerIdentity: 'provider-one',
       sourceText: 'source',
       template: 'template',
