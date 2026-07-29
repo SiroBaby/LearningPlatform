@@ -21,6 +21,15 @@ describe('quiz generation prompt fingerprints', () => {
     expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('no markdown fences or prose');
   });
 
+  it('requires Vietnamese-first learner-facing content while preserving reused English source terms exactly', () => {
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
+      'Write the stem, every option content, and the explanation in natural Vietnamese even when the source text is fully English or mixed-language.',
+    );
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
+      'When reusing English technical terms, abbreviations, proper names, product names, API names, code identifiers, or quoted source phrases, preserve them exactly as they appear in the source.',
+    );
+  });
+
   it('normalizes Unicode and line endings for cache identity', () => {
     const input = {
       params: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 4000 as const, questionsPerChunk: 1 as const },
