@@ -319,6 +319,31 @@ describe('QuizGenerationService', () => {
     expect(costs.settlements).toEqual([]);
   });
 
+  it('reserves platform budget using the shared output-token cap for every chunk', async () => {
+    const costs = new RecordingCostGuard({ hasUncertainDispatch: false, knownActualCredits: 0 });
+    const provider = new RecordingProvider();
+    const service = new QuizGenerationService(
+      provider,
+      new InMemoryGenerationCache(),
+      new RecordingPromptVersions(),
+      new RecordingHandoff(),
+      costs,
+      costs,
+    );
+    const chunks = [chunk(0, 'first source'), chunk(1, 'second source'), chunk(2, 'third source')];
+
+    await service.generate({ chunks, job: job() });
+
+    expect(QUIZ_GENERATION_PARAMETERS.maxOutputTokens).toBe(8000);
+    expect(costs.reservations).toEqual([
+      expect.objectContaining({
+        estimatedCredits: chunks.length * QUIZ_GENERATION_PARAMETERS.maxOutputTokens,
+      }),
+    ]);
+    expect(provider.requests).toHaveLength(chunks.length);
+    expect(costs.settlements).toHaveLength(1);
+  });
+
   it('persists the configured default platform model before a legacy job calls a provider', async () => {
     const selections: ProcessingJobModelSelection = { ensureDefaultPlatformModel: jest.fn(async () => true) };
     const config = new ApplicationConfigService(new ConfigService({
