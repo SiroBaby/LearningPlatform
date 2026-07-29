@@ -5,17 +5,19 @@ import { normalizeGenerationInput } from './quiz-generation.prompt';
 const MINIMUM_MATCH_TOKENS = 6;
 const MINIMUM_MATCH_CHARACTERS = 30;
 const MAXIMUM_TOKENS_TO_REACH_MINIMUM_CHARACTERS = 30;
-const ENGLISH_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9_-]*/gu;
+const WORD_TOKEN_PATTERN = /\p{L}[\p{L}\p{N}_-]*/gu;
+const ENGLISH_LIKE_TOKEN_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/u;
 
 interface IndexedToken {
   readonly value: string;
+  readonly isEnglishLike: boolean;
 }
 
 export function validateGeneratedQuestionOutputAgainstSource(
   sourceText: string,
   output: GeneratedQuestionOutput,
 ): void {
-  const sourceTokens = tokenizeEnglishLikeWords(sourceText);
+  const sourceTokens = tokenizeWords(sourceText);
   if (sourceTokens.length < MINIMUM_MATCH_TOKENS) return;
 
   const sourceWindows = createShortestQualifyingWindowSet(sourceTokens);
@@ -32,7 +34,7 @@ function rejectIfCopiedEnglishSequence(
   generatedText: string,
   sourceWindows: ReadonlySet<string>,
 ): void {
-  const generatedTokens = tokenizeEnglishLikeWords(generatedText);
+  const generatedTokens = tokenizeWords(generatedText);
   if (generatedTokens.length < MINIMUM_MATCH_TOKENS) return;
 
   for (
@@ -54,13 +56,16 @@ function rejectIfCopiedEnglishSequence(
   }
 }
 
-function tokenizeEnglishLikeWords(text: string): readonly IndexedToken[] {
+function tokenizeWords(text: string): readonly IndexedToken[] {
   const normalized = normalizeGenerationInput(text);
   const tokens: IndexedToken[] = [];
-  for (const match of normalized.matchAll(ENGLISH_TOKEN_PATTERN)) {
+  for (const match of normalized.matchAll(WORD_TOKEN_PATTERN)) {
     const value = match[0];
     if (value === undefined) continue;
-    tokens.push({ value });
+    tokens.push({
+      value,
+      isEnglishLike: ENGLISH_LIKE_TOKEN_PATTERN.test(value),
+    });
   }
   return tokens;
 }
@@ -88,6 +93,7 @@ function findShortestQualifyingLength(
   for (let offset = 0; offset < maximumLength; offset += 1) {
     const token = tokens[start + offset];
     if (!token) return null;
+    if (!token.isEnglishLike) return null;
     characterCount += token.value.length;
 
     const windowLength = offset + 1;
