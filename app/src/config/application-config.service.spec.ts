@@ -6,6 +6,7 @@ import { ApplicationConfigService } from './application-config.service';
 const workerConfig = (overrides?: Partial<{
   readonly healthHost: string;
   readonly healthPort: number;
+  readonly quizGenerationConcurrency: number;
 }>): Record<string, unknown> => ({
   worker: {
     chunkInsertBatchSize: 500,
@@ -21,6 +22,7 @@ const workerConfig = (overrides?: Partial<{
     maxExtractableObjectBytes: 20_971_520,
     outboxBatchSize: 100,
     pollIntervalMs: 1_000,
+    quizGenerationConcurrency: overrides?.quizGenerationConcurrency ?? 8,
     stuckJobBatchSize: 100,
     stuckJobTimeoutMs: 300_000,
   },
@@ -330,11 +332,18 @@ describe('ApplicationConfigService', () => {
 
     expect(config.worker.healthHost).toBe('127.0.0.1');
     expect(config.worker.healthPort).toBe(3403);
+    expect(config.worker.quizGenerationConcurrency).toBe(8);
   });
 
   it('rejects an invalid worker health port', () => {
     const config = new ApplicationConfigService(new ConfigService(workerConfig({ healthPort: 0 })));
 
     expect(() => config.worker).toThrow('Configuration worker.healthPort must be a valid TCP port');
+  });
+
+  it('rejects a non-positive quiz generation concurrency cap', () => {
+    const config = new ApplicationConfigService(new ConfigService(workerConfig({ quizGenerationConcurrency: 0 })));
+
+    expect(() => config.worker).toThrow('Configuration worker.quizGenerationConcurrency must be a positive integer');
   });
 });

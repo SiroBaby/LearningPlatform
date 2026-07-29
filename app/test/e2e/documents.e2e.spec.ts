@@ -282,6 +282,7 @@ describe('Document HTTP flow', () => {
     await workerModule.get(QuizGenerationService).generate({
       chunks,
       job: {
+        correlationId: randomUUID(),
         documentId: upload.documentId,
         ownerId,
         selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'platform-default' },
