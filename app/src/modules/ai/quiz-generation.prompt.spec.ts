@@ -34,6 +34,21 @@ describe('quiz generation prompt fingerprints', () => {
     expect(QUIZ_GENERATION_PROMPT_TEMPLATE).not.toContain('quoted source phrases');
   });
 
+  it('forbids unsupported claims and preserves source term spelling and capitalization', () => {
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
+      'Every claim, relationship, example, and technical detail in the stem, correct option, and explanation must be explicitly supported by the supplied source text.',
+    );
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
+      'Do not add background knowledge, inferred implications, or illustrative examples absent from the source; for example, never add CPU or memory when the source says only observed metrics.',
+    );
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
+      'This requires identical spelling, capitalization, punctuation, and word boundaries',
+    );
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain(
+      'readinessProbe and livenessProbe must never become ReadinessProbe or LivenessProbe',
+    );
+  });
+
   it('normalizes Unicode and line endings for cache identity', () => {
     const input = {
       params: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 4000 as const, questionsPerChunk: 1 as const },
