@@ -28,6 +28,11 @@ import type { BudgetReservationPort } from '../content/contracts/budget-reservat
 import { ApplicationConfigService } from '../../config/application-config.service';
 import type { ProcessingJobModelSelection } from './contracts/processing-job-model-selection.port';
 import type { CustomModelProvider } from './contracts/custom-model-provider.port';
+import {
+  createGenerationCacheKey,
+  QUIZ_GENERATION_PARAMETERS,
+  QUIZ_GENERATION_PROMPT_TEMPLATE,
+} from './quiz-generation.prompt';
 
 describe('QuizGenerationService', () => {
   it('generates ordered chunks sequentially and hands off all grounded questions once', async () => {
@@ -88,6 +93,70 @@ describe('QuizGenerationService', () => {
     });
 
     expect(cache.entries).toEqual([]);
+    expect(handoff.handoffs).toEqual([]);
+  });
+
+  it('rejects fresh copied-English output before it is cached or handed off', async () => {
+    const cache = new InMemoryGenerationCache();
+    const handoff = new RecordingHandoff();
+    const sourceText = [
+      'The deployment controller uses this signal to avoid routing traffic too early.',
+      'The readiness endpoint should respond quickly even during partial startup delays.',
+    ].join(' ');
+    const provider = new RecordingProvider({
+      questions: [
+        {
+          explanation: 'Giải thích bằng tiếng Việt về readinessProbe và livenessProbe.',
+          options: [
+            { content: 'Cụm probe giúp kiểm tra trạng thái Pod.', isCorrect: true },
+            { content: 'Probe dùng để tăng số replica tự động.', isCorrect: false },
+          ],
+          stem: 'The deployment controller uses this signal to avoid routing traffic too early.',
+        },
+      ],
+    });
+    const service = new QuizGenerationService(provider, cache, new RecordingPromptVersions(), handoff);
+
+    await expect(service.generate({ chunks: [chunk(0, sourceText)], job: job() })).rejects.toMatchObject({
+      code: 'GENERATION_OUTPUT_INVALID',
+    });
+
+    expect(provider.requests).toHaveLength(1);
+    expect(cache.entries).toEqual([]);
+    expect(handoff.handoffs).toEqual([]);
+  });
+
+  it('rejects invalid cached output without calling the provider or handing off a quiz', async () => {
+    const provider = new RecordingProvider();
+    const cache = new InMemoryGenerationCache();
+    const handoff = new RecordingHandoff();
+    const service = new QuizGenerationService(provider, cache, new RecordingPromptVersions(), handoff);
+    const sourceText = [
+      'Operators use this mechanism to recover a stuck container automatically.',
+      'A liveness failure should trigger a restart after repeated unsuccessful health checks.',
+    ].join(' ');
+    const cachedChunk = chunk(0, sourceText);
+    await cache.seedDecodedOutput(provider.providerIdentity, cachedChunk.text, {
+      questions: [
+        {
+          explanation: 'Giải thích bằng tiếng Việt về cơ chế tự phục hồi của Pod.',
+          options: [
+            {
+              content: 'Operators use this mechanism to recover a stuck container automatically.',
+              isCorrect: true,
+            },
+            { content: 'Pod luôn bị xóa ngay khi probe chạy.', isCorrect: false },
+          ],
+          stem: 'Nội dung nào mô tả đúng tác dụng của liveness check?',
+        },
+      ],
+    });
+
+    await expect(service.generate({ chunks: [cachedChunk], job: job() })).rejects.toMatchObject({
+      code: 'GENERATION_OUTPUT_INVALID',
+    });
+
+    expect(provider.requests).toEqual([]);
     expect(handoff.handoffs).toEqual([]);
   });
 
@@ -262,6 +331,25 @@ class InMemoryGenerationCache implements GenerationCache {
   async saveDecodedOutput(entry: GenerationCacheEntry): Promise<void> {
     this.entries.push(entry);
   }
+
+  async seedDecodedOutput(
+    providerIdentity: string,
+    sourceText: string,
+    output: GeneratedQuestionOutput,
+  ): Promise<void> {
+    this.entries.push({
+      cacheKey: createGenerationCacheKey({
+        params: QUIZ_GENERATION_PARAMETERS,
+        providerIdentity,
+        sourceText,
+        template: QUIZ_GENERATION_PROMPT_TEMPLATE,
+      }),
+      model: 'seeded-model-v1',
+      output,
+      parameters: QUIZ_GENERATION_PARAMETERS,
+      promptFingerprint: 'seeded-prompt-fingerprint',
+    });
+  }
 }
 
 class RecordingPromptVersions implements PromptVersionStore {
@@ -286,12 +374,12 @@ class RecordingHandoff implements QuizGenerationHandoffPort {
 function validOutput(sourceText: string): JsonValue {
   return {
     questions: [{
-      explanation: `The source states: ${sourceText}`,
+      explanation: `Giải thích bằng tiếng Việt: đoạn tư liệu mô tả ý chính của chủ đề ${summarizeSource(sourceText)}.`,
       options: [
-        { content: sourceText, isCorrect: true },
-        { content: 'An unsupported statement.', isCorrect: false },
+        { content: `Nhận định đúng về chủ đề ${summarizeSource(sourceText)}.`, isCorrect: true },
+        { content: 'Một nhận định không được tư liệu hỗ trợ.', isCorrect: false },
       ],
-      stem: `What does this source state: ${sourceText}?`,
+      stem: `Phát biểu nào đúng về nội dung ${summarizeSource(sourceText)}?`,
     }],
   };
 }
@@ -304,6 +392,10 @@ function chunk(chunkIndex: number, text: string): ChunkRecord {
     locator: { kind: 'page', page: chunkIndex + 1 },
     text,
   };
+}
+
+function summarizeSource(sourceText: string): string {
+  return sourceText.split(/\s+/u).slice(0, 3).join(' ');
 }
 
 function job(): {
