@@ -7,6 +7,16 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Domain, ADR và PRD ở root `CONTEXT.md` và `docs/` là nguồn tham khảo chung, không phải coding rule cho mọi service.
 - Issue cục bộ nằm trong `.scratch/<feature>/issues/`.
 
+## Quản lý công việc trên GitHub Project
+
+- GitHub Project `LearningPlatform` là nguồn sự thật cho việc quản lý công việc đang hoạt động. `CONTEXT.md`, `docs/`, ADR, PRD và `.scratch/` vẫn là nguồn tham khảo về domain, kiến trúc, phạm vi và lịch sử, nhưng không thay thế trạng thái và bằng chứng trên GitHub Project.
+- Mọi thay đổi mới về roadmap, phạm vi, quyết định thực thi hoặc kết quả kiểm chứng phải được cập nhật vào ticket và Project tương ứng. Không chỉ cập nhật file tài liệu rồi để trạng thái Project bị cũ.
+- Sau khi hoàn tất một phase, dùng tài liệu hiện có làm đầu vào để tạo epic, ticket, dependency và tiêu chí kiểm chứng cho phase kế tiếp trên GitHub Project. Lặp lại quy trình này theo thứ tự roadmap cho đến khi xử lý hết các phase đã định nghĩa.
+- Trước khi bắt đầu task, bảo đảm ticket đã nằm trong Project, chuyển `Status` sang `In progress` và đăng comment `ĐANG THỰC HIỆN` nêu rõ phạm vi, cách kiểm tra và giới hạn môi trường.
+- Không đăng comment tiến độ thông thường trong khi task đang chạy để tránh làm loãng ticket. Chỉ đăng comment chốt khi task hoàn tất; nếu bị chặn và chưa thể hoàn tất, đăng một comment kết luận blocker nêu rõ điều đang thiếu, ảnh hưởng và hành động tiếp theo. Trạng thái Project phải luôn phản ánh đúng tình trạng thực tế.
+- Khi hoàn thành task, đăng comment `HOÀN THÀNH` kèm thay đổi, PR hoặc commit nếu có, lệnh kiểm tra và kết quả, bằng chứng manual/visual/operational liên quan cùng giới hạn còn lại. Chỉ chuyển `Status` sang `Done` khi hoạt động của ticket đã có kết luận và bằng chứng; ticket `HITL` vẫn cần human xác nhận trước khi đóng.
+- Nội dung ticket và comment phải dùng tiếng Việt cụ thể, nhất quán với ubiquitous language trong `CONTEXT.md`. Khi một English technical term xuất hiện lần đầu, giải thích ngắn bằng tiếng Việt ngay sau thuật ngữ; tránh từ mơ hồ, diễn đạt trừu tượng hoặc kết luận không có bằng chứng khiến human có thể hiểu sai.
+
 ## Cải tiến quy tắc sau khi sửa lỗi
 
 - Sau khi sửa một lỗi có nguyên nhân lặp lại được, AI phải cập nhật `AGENTS.md` của service liên quan với quy tắc ngắn gọn, có thể áp dụng lại để ngăn lỗi tái diễn.
