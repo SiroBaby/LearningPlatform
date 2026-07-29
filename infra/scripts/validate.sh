@@ -164,7 +164,7 @@ check_application_edge_contract() {
     '            - name: OPENAI_CAPABILITY_VERSION' \
     '              value: chat-completions-json-v1' \
     '            - name: OPENAI_STRUCTURED_OUTPUT_MODE' \
-    '              value: json-schema-strict' \
+    '              value: json-object' \
     '            - name: OPENAI_TRANSPORT' \
     '              value: chat-completions'; do
     if ! grep -Fqx "${required_worker_literal}" "${app_template}"; then

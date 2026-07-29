@@ -14,6 +14,9 @@ describe('quiz generation prompt fingerprints', () => {
 
   it('instructs the provider to return one JSON-only question per chunk', () => {
     expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('exactly one question');
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('exact top-level shape');
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('{"questions":[');
+    expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('Do not return a singular "question" key');
     expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('JSON only');
     expect(QUIZ_GENERATION_PROMPT_TEMPLATE).toContain('no markdown fences or prose');
   });
