@@ -1,3 +1,4 @@
+import { forwardRef } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
 
@@ -33,22 +34,23 @@ interface CommonProps {
 type ButtonProps = CommonProps &
   Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "children">;
 
-export function Button({
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = "primary",
   size = "md",
   className,
   children,
   ...props
-}: ButtonProps) {
+}: ButtonProps, ref) {
   return (
     <button
+      ref={ref}
       className={cn(base, variants[variant], sizes[size], className)}
       {...props}
     >
       {children}
     </button>
   );
-}
+});
 
 type LinkButtonProps = CommonProps &
   Omit<React.ComponentProps<typeof Link>, "className" | "children">;

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BookOpen, CircleAlert, FileText, Loader2, RefreshCcw } from "lucide-react";
 import { Button, Card, CardBody, CardHeader, CardTitle, LinkButton, StatusPill, TypeBadge } from "@/components/ui";
+import { formatVietnameseDateTime } from "@/lib/date-time";
 import { Phase0ClientError, getPhase0DocumentQuiz } from "@/lib/phase0/client";
 import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
@@ -13,10 +14,7 @@ interface DocumentDetailProps {
 }
 
 function formatDateTime(iso: string): string {
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(iso));
+  return formatVietnameseDateTime(iso);
 }
 
 function formatBytes(sizeBytes: number): string {

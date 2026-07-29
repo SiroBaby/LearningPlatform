@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { LearnerShell } from "@/components/layout";
 import { Badge, Card, CardBody, CardHeader, CardTitle, ProgressBar } from "@/components/ui";
+import { formatVietnameseDateTime } from "@/lib/date-time";
 import type { Phase0CitationLocator } from "@/lib/phase0/contracts";
 import { getPhase0AttemptResultServer, Phase0ServerError } from "@/lib/phase0/server-data";
 
@@ -61,7 +62,7 @@ export default async function QuizResultPage({ params }: QuizResultPageProps) {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={resultTone}>{scorePct}%</Badge>
                 <Badge>{correctCount}/{attempt.questionCount} câu đúng</Badge>
-                <Badge>{new Date(attempt.submittedAt).toLocaleString("vi-VN")}</Badge>
+                <Badge>{formatVietnameseDateTime(attempt.submittedAt)}</Badge>
               </div>
               <div>
                 <h2 className="text-3xl font-semibold tracking-tight text-ink-900">Kết quả của bạn: {scorePct}%</h2>
