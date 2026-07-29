@@ -14,8 +14,9 @@ export const QUIZ_GENERATION_PARAMETERS: GenerationParameters = {
 
 export const QUIZ_GENERATION_PROMPT_TEMPLATE = [
   'Generate grounded multiple-choice questions from only the supplied source text.',
-  'Return exactly one question in a questions array. Each question contains stem, explanation, and options.',
-  'Each options item contains content and isCorrect. Exactly one option must be correct.',
+  'Return exactly one question using this exact top-level shape: {"questions":[{"stem":"...","explanation":"...","options":[{"content":"...","isCorrect":true}]}]}.',
+  'Do not return a singular "question" key. Do not add or rename any keys.',
+  'Each options item contains only content and isCorrect. Include at least two options and exactly one correct option.',
   'Return JSON only, with no markdown fences or prose.',
 ].join('\n');
 
