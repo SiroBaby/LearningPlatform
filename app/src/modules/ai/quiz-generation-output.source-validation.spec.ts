@@ -51,6 +51,21 @@ describe('validateGeneratedQuestionOutputAgainstSource', () => {
     );
   });
 
+  it('rejects a copied English clause that includes a hyphenated token and identifier with digits', () => {
+    const sourceText = [
+      'Rotate session-token before oauth2-flow callback validation reaches api gateway enforcement.',
+      'This release note documents the exact security clause for the lesson.',
+    ].join(' ');
+    const output = outputWithOverrides({
+      explanation:
+        'Rotate session-token before oauth2-flow callback validation reaches api gateway enforcement.',
+    });
+
+    expect(() => validateGeneratedQuestionOutputAgainstSource(sourceText, output)).toThrow(
+      expect.objectContaining({ code: 'GENERATION_OUTPUT_INVALID' }),
+    );
+  });
+
   it('rejects repeated one-character-token sequences without candidate-start amplification', () => {
     const repeatedTokens = Array.from({ length: 64 }, () => 'a').join(' ');
     const output = outputWithOverrides({
@@ -99,6 +114,34 @@ describe('validateGeneratedQuestionOutputAgainstSource', () => {
         { content: 'CPU usage luôn là lỗi hệ thống.', isCorrect: false },
       ],
       stem: 'Cụm technical term nào trong source diễn tả phản hồi thành công?',
+    });
+
+    expect(() => validateGeneratedQuestionOutputAgainstSource(sourceText, output)).not.toThrow();
+  });
+
+  it('allows grounded Vietnamese explanation copied from a Vietnamese source sentence with English technical terms', () => {
+    const sourceText = [
+      'Bài học nhấn mạnh cách bảo vệ thông tin xác thực trong ứng dụng web.',
+      'Access token phải được gửi qua Authorization header và không nên xuất hiện trong query string vì URL có thể bị lưu trong lịch sử trình duyệt hoặc log trung gian.',
+    ].join(' ');
+    const output = outputWithOverrides({
+      explanation:
+        'Access token phải được gửi qua Authorization header và không nên xuất hiện trong query string vì URL có thể bị lưu trong lịch sử trình duyệt hoặc log trung gian.',
+      stem: 'Vì sao Access token không nên xuất hiện trong query string?',
+    });
+
+    expect(() => validateGeneratedQuestionOutputAgainstSource(sourceText, output)).not.toThrow();
+  });
+
+  it('allows Vietnamese prose with decomposed combining marks because normalization preserves the non-English barrier', () => {
+    const sourceText = [
+      'Tài liệu này mô tả cách Access token được gửi qua Authorization header để tránh rò rỉ qua query string.',
+      'Người học cần hiểu vì sao URL có thể bị lưu trong lịch sử trình duyệt hoặc log trung gian.',
+    ].join(' ');
+    const output = outputWithOverrides({
+      explanation:
+        'Giải thích cho người học: Access token nên được gửi qua Authorization header thay vì query string vì URL dễ bị lưu trong lịch sử trình duyệt hoặc log trung gian.',
+      stem: 'Vì sao Access token không nên xuất hiện trong query string?',
     });
 
     expect(() => validateGeneratedQuestionOutputAgainstSource(sourceText, output)).not.toThrow();
