@@ -7,7 +7,7 @@ describe('FakeLlmProvider', () => {
   it('returns one deterministic valid MCQ for a nonblank chunk', async () => {
     const provider = new FakeLlmProvider();
     const request = {
-      parameters: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 4000 as const, questionsPerChunk: 1 as const },
+      parameters: { format: 'mcq-single-select-v1' as const, maxOutputTokens: 8000 as const, questionsPerChunk: 1 as const },
       promptTemplate: 'template',
       sourceText: 'Grounded source text.',
     };
@@ -25,7 +25,7 @@ describe('FakeLlmProvider', () => {
     const provider = new FakeLlmProvider();
 
     const output = await provider.generate({
-      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 8000, questionsPerChunk: 1 },
       promptTemplate: 'template',
       sourceText: ' \n ',
     });

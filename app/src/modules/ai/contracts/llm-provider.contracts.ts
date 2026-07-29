@@ -25,7 +25,7 @@ export interface GeneratedQuestionOutput {
 
 export interface GenerationParameters extends JsonObject {
   readonly format: 'mcq-single-select-v1';
-  readonly maxOutputTokens: 4000;
+  readonly maxOutputTokens: 8000;
   readonly questionsPerChunk: 1;
 }
 
