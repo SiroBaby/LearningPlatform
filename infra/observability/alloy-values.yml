@@ -1,0 +1,163 @@
+---
+crds:
+  create: false
+
+global:
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+alloy:
+  clustering:
+    enabled: false
+  configMap:
+    content: |-
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_label_app_kubernetes_io_instance"]
+          action        = "drop"
+          regex         = "observability;learning-platform-alloy"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action        = "replace"
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          action        = "replace"
+          target_label  = "app"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          action        = "replace"
+          target_label  = "container"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.process.pods.receiver]
+      }
+
+      loki.process "pods" {
+        forward_to = [loki.write.default.receiver]
+
+        stage.cri {}
+
+        stage.static_labels {
+          values = {
+            cluster = "learning-platform-dev",
+          }
+        }
+
+        stage.labels {
+          values = {
+            stream = "",
+          }
+        }
+
+        stage.label_keep {
+          values = ["cluster", "namespace", "app", "container", "stream"]
+        }
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://learning-platform-loki.observability.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+  mounts:
+    varlog: false
+    dockercontainers: false
+    extra: []
+  resources:
+    requests:
+      cpu: 75m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    privileged: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 473
+
+configReloader:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 50Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+    privileged: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+
+controller:
+  type: daemonset
+  hostNetwork: false
+  hostPID: false
+  volumes:
+    extra: []
+
+rbac:
+  create: true
+  rules:
+    - apiGroups:
+        - ""
+      resources:
+        - pods
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - pods/log
+      verbs:
+        - get
+  # Chart 1.11.0 concatenates rules and clusterRules without handling an empty list.
+  # These duplicate no permissions and keep the rendered ClusterRole valid.
+  clusterRules:
+    - apiGroups:
+        - ""
+      resources:
+        - pods
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - ""
+      resources:
+        - pods/log
+      verbs:
+        - get
+
+service:
+  enabled: true
+  type: ClusterIP
+
+ingress:
+  enabled: false

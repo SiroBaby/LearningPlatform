@@ -1,0 +1,124 @@
+deploymentMode: Monolithic
+
+minio:
+  enabled: false
+
+gateway:
+  enabled: false
+
+lokiCanary:
+  enabled: false
+
+test:
+  enabled: false
+
+chunksCache:
+  enabled: false
+
+resultsCache:
+  enabled: false
+
+loki:
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: 72h
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+
+singleBinary:
+  replicas: 1
+  sidecar: false
+  resources:
+    requests:
+      cpu: 150m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 2Gi
+    storageClass: local-path
+    enableStatefulSetAutoDeletePVC: true
+    whenDeleted: Retain
+    whenScaled: Retain
+
+write:
+  enabled: false
+  replicas: 0
+
+read:
+  enabled: false
+  replicas: 0
+
+backend:
+  enabled: false
+  replicas: 0
+
+ingester:
+  enabled: false
+  replicas: 0
+
+distributor:
+  enabled: false
+  replicas: 0
+
+querier:
+  enabled: false
+  replicas: 0
+
+queryFrontend:
+  enabled: false
+  replicas: 0
+
+queryScheduler:
+  enabled: false
+  replicas: 0
+
+indexGateway:
+  enabled: false
+  replicas: 0
+
+compactor:
+  enabled: false
+  replicas: 0
+
+bloomGateway:
+  enabled: false
+  replicas: 0
+
+bloomPlanner:
+  enabled: false
+  replicas: 0
+
+bloomBuilder:
+  enabled: false
+  replicas: 0
+
+patternIngester:
+  enabled: false
+  replicas: 0
+
+ruler:
+  enabled: false
+  replicas: 0
