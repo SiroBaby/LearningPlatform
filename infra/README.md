@@ -1,39 +1,55 @@
 # Learning Platform infrastructure baseline
 
-This directory is an Ansible-managed, single-node K3s baseline for the `learning-platform-dev` namespace. It creates only stateless `web`, `api`, and `worker` deployments, installs External Secrets Operator (ESO) for exact AWS SSM Parameter Store keys, enables K3s packaged Traefik and ServiceLB, and integrates kube-state-metrics with an **existing** host Prometheus.
+Thư mục này là baseline (mốc cấu hình tối thiểu) hạ tầng K3s một node cho môi trường `learning-platform-dev`. Baseline này tạo workload ứng dụng stateless (không lưu trạng thái) `web`, `api`, `worker`, dựng External Secrets Operator, và tách quyền sở hữu observability (quan sát hệ thống) sang namespace `observability` với Helm chart pin version rõ ràng cho Prometheus, Grafana, Loki và Alloy.
 
 Setup guide: `../docs/deployment/GUIDE-dev-k3s.md`.
 
 Operations runbook: `../docs/deployment/RUNBOOK-dev-k3s.md`.
 
-It does not replace or install Prometheus or Grafana, and it does not create PostgreSQL, PersistentVolumes, PersistentVolumeClaims, StatefulSets, Terraform, or public worker ingress. Before a selected backend rollout, it runs the repository's existing SQL migrations through a bounded one-shot K3s Job and blocks workload application unless that Job completes successfully. The existing Compose fallback in `deploy/` remains unchanged.
+`web`, `api` và `worker` vẫn giữ contract stateless: không tạo PostgreSQL, không tạo PersistentVolume, PersistentVolumeClaim (PVC), StatefulSet, Terraform, và không mở public ingress cho worker. Ngoại lệ duy nhất là scope `infra/observability/`, nơi chart values hoặc manifest render được phép tạo storage cục bộ cho Prometheus, Grafana và Loki theo contract retention (giữ dữ liệu) có kiểm soát. Trước khi rollout backend đã chọn, baseline vẫn chạy SQL migration hiện có bằng bounded one-shot K3s Job và chặn apply workload nếu Job đó không hoàn tất thành công. `deploy/` Compose còn giữ làm fallback tài liệu tham chiếu, nhưng không còn là nhánh rollback vận hành cho observability đã bị xoá theo nhánh `deleted` trong cutover contract hiện tại.
 
 ## Layout
 
-- `ansible/`: K3s bootstrap, ESO, application apply, and host monitoring roles.
-- `k8s/apps.yaml.j2`: digest-pinned, stateless web/API/worker workload templates.
-- `scripts/validate.sh`: local static checks; it never connects to a host.
+- `ansible/`: bootstrap K3s, ESO, baseline monitoring cũ trên host, và apply workload ứng dụng.
+- `k8s/apps.yaml.j2`: template workload `web`/`api`/`worker` pin digest.
+- `observability/`: values pin chart cho `kube-prometheus-stack`, `loki`, `alloy`. Đây là source scope duy nhất được phép sở hữu tài nguyên observability stateful.
+- `scripts/validate.sh`: static validation (kiểm tra tĩnh) cục bộ, không kết nối host.
+
+## Ownership observability hiện tại
+
+Observability hiện tại không còn được mô tả là “tái dùng Prometheus/Grafana host hiện có” như roadmap cũ. Source of truth (nguồn sự thật) hiện tại nằm trong `infra/ansible/vars/dev.yml` và `infra/observability/*.yml`:
+
+- namespace observability: `observability`
+- bootstrap AWS Secret cho observability namespace: `observability-aws-credentials`
+- Grafana admin Secret trong cluster: `grafana-admin`
+- Helm version pin: `v3.21.3`
+- chart pin:
+  - `prometheus-community/kube-prometheus-stack` `87.21.0`
+  - `grafana-community/loki` `18.7.0`, app `3.7.4`
+  - `grafana/alloy` `1.11.0`, app `v1.18.0`
+
+Phần monitoring role Ansible dưới `infra/ansible/roles/monitoring/` vẫn tồn tại để phục vụ baseline host Prometheus cũ. Tuy nhiên Todo 10 này ghi lại contract cắt sang ownership mới: Todo 12 chỉ được tiếp tục sau khi runbook đã có section cutover phá huỷ có điều kiện, manifest allowlist đã được Todo 11 xác minh, và operator đã chạy gate dung lượng fail-closed trước và sau nhánh xoá có điều kiện.
 
 ## First bootstrap
 
-Do not run `kubectl`, K3s installer, or Ansible directly on the VPS. Run Ansible from an approved operator workstation after the host inventory is reviewed.
+Không chạy `kubectl`, K3s installer hoặc Ansible trực tiếp trên VPS. Chạy từ máy operator đã được phê duyệt, sau khi inventory được review.
 
-1. Install the pinned collection locally:
+1. Cài collection pin version cục bộ:
 
    ```bash
    ansible-galaxy collection install -r infra/ansible/requirements.yml
    ```
 
-2. Copy the examples locally and fill every `REPLACE_WITH_*` value. Keep the generated inventory and group vars outside version control if they contain host addressing or operator-only metadata.
+2. Tạo file inventory local và thay mọi `REPLACE_WITH_*`:
 
    ```bash
    cp infra/ansible/inventory/hosts.example.yml infra/ansible/inventory/hosts.yml
    cp infra/ansible/inventory/group_vars/k3s_nodes.yml.example infra/ansible/inventory/group_vars/k3s_nodes.yml
    ```
 
-   Set `web_public_host` and `api_public_host`, manually create the namespaced `ghcr_pull_secret_name` as `kubernetes.io/dockerconfigjson`, and leave `ingress_tls_secret_name` empty until an existing `kubernetes.io/tls` Secret is available. The inventory must include exact SSM paths for `swagger_username` and `swagger_password`; the IAM principal must be allowed to read those two exact parameter ARNs. Set `monitoring_enabled: false` until the real Prometheus process type, config path, scrape-snippet path, file-SD target path, and reload mechanism have been verified. These values are deliberately not guessed.
+3. Điền biến source vào đúng chỗ. `group_vars/k3s_nodes.yml` chỉ chứa non-secret runtime contract, path SSM, pin version, digest và tên Secret. Nó không chứa secret value thật.
 
-3. On a first host only, bootstrap K3s first. This also creates the empty application namespace idempotently, but creates no application secret:
+4. Chạy tag `k3s` trước trên host mới:
 
    ```bash
    ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
@@ -41,16 +57,16 @@ Do not run `kubectl`, K3s installer, or Ansible directly on the VPS. Run Ansible
      infra/ansible/playbooks/site.yml --tags k3s
    ```
 
-4. Manually provision the bootstrap AWS credential Secret in `learning-platform-dev` through the approved secret-delivery process before applying ESO. It is referenced as `aws_credentials_secret_name`, is never generated by Ansible, and is never committed. It must have exactly these key names:
+5. Sau khi namespace có sẵn, tạo hai bootstrap Secret namespaced bắt buộc cho application baseline:
 
-   - `access-key-id`
-   - `secret-access-key`
+   - `learning-platform-dev-aws-credentials` trong namespace `learning-platform-dev`, key đúng là `access-key-id`, `secret-access-key`
+   - `learning-platform-dev-ghcr` trong namespace `learning-platform-dev`, type đúng là `kubernetes.io/dockerconfigjson`
 
-   The IAM principal should be restricted to `ssm:GetParameter` on only the explicit parameter ARNs configured in `ssm_parameter_keys`.
+6. Với observability ownership mới, không tạo tay `observability-aws-credentials`. Workflow dispatch `target=observability` dùng GitHub Environment `dev` làm bootstrap trust anchor và idempotently tạo namespace/Secret trước Ansible. `grafana-admin` vẫn do ESO tạo từ SSM:
 
-5. Replace each image placeholder with an immutable digest, for example `ghcr.io/sirobaby/learningplatform-api@sha256:<64-hex-digest>`. A tag-only image is rejected. For the first application deployment, keep `deployment_targets: [web, api, worker]`. Later runs may select one or more of these exact values; selecting web or API also reapplies their shared Ingress without deleting unselected workloads.
+   - `grafana-admin` trong namespace `observability`, key đúng theo chart values là `admin-user`, `admin-password`
 
-6. Validate locally, then apply the complete baseline from the operator workstation:
+7. Validate local rồi apply baseline ứng dụng:
 
    ```bash
    bash infra/scripts/validate.sh
@@ -59,52 +75,131 @@ Do not run `kubectl`, K3s installer, or Ansible directly on the VPS. Run Ansible
      infra/ansible/playbooks/site.yml
    ```
 
-The K3s role explicitly supports Debian and Ubuntu only. It renders `/etc/rancher/k3s/config.yaml` before installation and on every rerun; the installer is invoked with only `server`, while `k3s_write_kubeconfig_mode` is declarative config. Existing host Nginx retains public ports `80/443` and TLS termination. Packaged Traefik is changed from `LoadBalancer` to a fixed HTTP `NodePort`, and kube-proxy accepts NodePort traffic only from `127.0.0.0/8`; Nginx proxies the two Learning Platform hostnames to that loopback upstream. Before bootstrap, `k3s_port_preflight_enabled` checks the configured NodePort and fails if another host listener owns it. The role never stops or replaces existing Nginx sites. Existing Prometheus/Grafana are unchanged. After bootstrap, K3s restarts only when its rendered config changes. The installer URL and SHA-256 are pinned to the requested K3s release. ESO and kube-state-metrics artifacts also require explicit pinned URLs and SHA-256 values. The installer performs a network install only when K3s is absent or its installed version differs from the requested version; normal matching-version reruns do not invoke it.
+## Secrets, SSM và GitHub Environment
 
-## Reruns and check mode
+### Source variable và nơi lưu
 
-The roles use desired-state modules and are intended to be rerun-safe. Package installation is always `state: present`, never `latest`; node exporter installation is enabled by default. Existing node exporter is detected through package and service facts and left untouched. Only a newly installed distro exporter is configured, enabled, and started by this baseline, with an explicit loopback bind; configure `node_exporter_target_address` for an existing exporter without changing that service.
+Runtime secret source chính là AWS SSM Parameter Store. `group_vars/k3s_nodes.yml` chỉ lưu exact path, ví dụ:
 
-Run a safe preview from the operator workstation:
+- `/learning-platform/dev/db-host`
+- `/learning-platform/dev/db-port`
+- `/learning-platform/dev/db-user`
+- `/learning-platform/dev/db-password`
+- `/learning-platform/dev/db-name`
+- `/learning-platform/dev/db-ssl-mode`
+- `/learning-platform/dev/db-ssl-ca`
+- `/learning-platform/dev/object-storage-endpoint`
+- `/learning-platform/dev/object-storage-port`
+- `/learning-platform/dev/object-storage-region`
+- `/learning-platform/dev/object-storage-use-ssl`
+- `/learning-platform/dev/object-storage-access-key`
+- `/learning-platform/dev/object-storage-secret-key`
+- `/learning-platform/dev/object-storage-bucket`
+- `/learning-platform/dev/ai-credential-encryption-key`
+- `/learning-platform/dev/openai-base-url`
+- `/learning-platform/dev/openai-api-key`
+- `/learning-platform/dev/openai-model`
+- `/learning-platform/dev/swagger-username`
+- `/learning-platform/dev/swagger-password`
+- `/learning-platform/dev/grafana-admin-user`
+- `/learning-platform/dev/grafana-admin-password`
+
+GitHub Secrets và GitHub Variables chỉ dùng để chuyển deployment contract vào workflow. Riêng job `deploy-observability` nhận đúng hai static credential (credential tĩnh) bootstrap ESO; chúng không được chuyển cho application job, artifact, cache hoặc Ansible:
+
+- Variables: `DEV_VPS_HOST`, `DEV_VPS_USER`
+- Secrets: `DEV_VPS_SSH_KEY`, `DEV_VPS_KNOWN_HOSTS`
+- Chỉ `deploy-observability`: `OBSERVABILITY_AWS_ACCESS_KEY_ID`, `OBSERVABILITY_AWS_SECRET_ACCESS_KEY`
+
+Non-secret deployment contract được đọc trực tiếp từ source `infra/ansible/vars/dev.yml` qua `vars_files` trong playbook. Inventory tạm thời của workflow chỉ chứa host/user; application deployment chỉ thêm selected immutable image overrides.
+
+### Least privilege IAM
+
+Bootstrap IAM cho ESO phải giới hạn quyền `ssm:GetParameter` và `ssm:GetParameters` đúng trên exact parameter ARN đã cấu hình. Nếu `SecureString` dùng customer-managed KMS key, chỉ thêm `kms:Decrypt` cho đúng key ARN đó. Không cấp prefix rộng, không cấp wildcard path, không cấp quyền ghi SSM.
+
+Credential observability phải chỉ đọc `/learning-platform/dev/grafana-admin-user` và `/learning-platform/dev/grafana-admin-password` (cùng exact KMS key ARN nếu cần). Khi rotate/revoke hoặc đổi VPS, cập nhật Environment `dev` rồi rerun workflow `target=observability`; không SSH thủ công để tạo lại Secret. Static credential hiện tại là tradeoff bootstrap; hướng mạnh hơn là GitHub OIDC/workload identity hoặc secret manager short-lived credential.
+
+## Observability chart contract
+
+### Storage và retention
+
+Observability values hiện tại giả định đúng các mức sau:
+
+- Prometheus: `3Gi`, retention `7d`, retention size `2500MB`
+- Loki: `2Gi`, retention `72h`
+- Grafana: `1Gi`
+
+Tổng storage cục bộ cần dành riêng cho observability là 6Gi. Vì storage class là `local-path`, cần chừa thêm headroom (dung lượng đệm) cho metadata, file system và rollback chart. Runbook dùng ngưỡng block sau cutover là còn tối thiểu 11Gi disk và 2Gi RAM available sau khi dừng legacy stack và sau nhánh xoá có điều kiện. `local-path` không hỗ trợ mở rộng volume tại chỗ một cách an toàn trong contract này. Nếu sizing thiếu, phải dừng rollout và tăng dung lượng host trước, không sửa tay PVC đã tạo.
+
+### Resource assumptions
+
+`infra/ansible/vars/dev.yml` khai báo tổng tài nguyên observability như sau:
+
+- requests tổng: `cpu 785m`, `memory 1266Mi`
+- limits tổng: `cpu 2950m`, `memory 2496Mi`
+
+Chart values pin resource chi tiết cho Prometheus, Grafana, Loki, Alloy, Prometheus Operator, config reloaders, kube-state-metrics và node-exporter. Nếu host không còn chỗ cho request tối thiểu này, không được tiếp tục cutover.
+
+### Loki Retain/Retain decision
+
+Trong `infra/observability/loki-values.yml`, cờ `enableStatefulSetAutoDeletePVC: true` là chart flag gây hiểu nhầm nếu đọc tách rời. Quyết định owner hiện tại là chỉ tin vào manifest render cuối cùng. Manifest render phải vẫn thể hiện `whenDeleted: Retain` và `whenScaled: Retain`. Nếu render thực tế mất một trong hai trường này, coi như chart output không đạt contract và không được apply.
+
+## Helm release contract cho observability
+
+Tài liệu này không phát hành script Helm tự chạy. Nhưng contract vận hành phải giữ các điểm sau:
+
+- lần cài observability persistent đầu tiên dùng release riêng cho `monitoring`, `loki`, `alloy`
+- lần cài đầu tiên không dùng `--atomic`, không dùng cleanup-on-fail, để tránh Helm tự dọn chart và để lại trạng thái nửa vời khó điều tra
+- nếu release đầu tiên fail giữa chừng hoặc để orphan resource, coi là HITL, operator phải dừng, ghi nhận trạng thái từng resource, và dọn theo allowlist hẹp có review
+- với healthy upgrade đã có release ổn định, mới được dùng guard rollback tương ứng của Helm
+- không dùng `helm uninstall` cho các release observability trong contract này
+- không xoá PVC hoặc PV observability bằng wildcard hoặc by-hand cleanup khi chưa qua branch `deleted` của runbook
+
+## Runtime verification nhanh
+
+Sau khi observability ownership mới được cài và cutover xong, operator phải kiểm tra tối thiểu:
 
 ```bash
-ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
-  -i infra/ansible/inventory/hosts.yml \
-  infra/ansible/playbooks/site.yml --check --diff
+sudo k3s kubectl -n observability get pods
+sudo k3s kubectl -n observability get pvc
+sudo k3s kubectl -n observability get ingress
+sudo k3s kubectl -n observability get svc
+sudo k3s kubectl -n observability get events --sort-by=.lastTimestamp
+sudo k3s kubectl -n observability get prometheus
+sudo k3s kubectl -n observability top pods
+df -h /
+free -h
+curl -fsS http://127.0.0.1:32080/ >/dev/null
 ```
 
-When K3s is absent or at another version, `--check` emits a clear bootstrap prediction and skips installer download/execution plus post-bootstrap service assertion. It cannot prove downloaded artifacts, Kubernetes API reconciliation, ESO readiness, or an installer-driven first bootstrap. Use it to review rendered configuration; perform the actual first bootstrap only in an approved maintenance window.
+Grafana datasource trong values đang trỏ tới:
 
-## Secrets and external services
+- Prometheus: `http://prometheus-operated.observability.svc.cluster.local:9090`
+- Loki: `http://learning-platform-loki.observability.svc.cluster.local:3100`
 
-ESO uses a namespace-scoped `SecretStore` in `learning-platform-dev`. Every `ExternalSecret` enumerates `spec.data[].remoteRef.key` exactly; it deliberately does not use `find`, a path selector, or a prefix-wide import.
+Các URL này là contract nội bộ để đối chiếu render và runtime query. Chúng không thay thế kiểm tra readiness thật.
 
-The `learning-platform-api-runtime` Secret includes database, Aiven TLS (`DB_SSL_MODE`, `DB_SSL_CA`), object-storage, and encryption-key values. `learning-platform-worker-runtime` holds the OpenAI API key, base URL, and model; provider, capability, structured-output mode, and transport are explicit non-secret manifest literals. The dedicated `learning-platform-swagger-runtime` Secret maps exactly the two Swagger Basic Auth parameters and is referenced only by API. API does not receive the worker provider API key, and worker or migration does not receive Swagger credentials. Aiven PostgreSQL remains external and is configured solely through exact `DB_*` SSM values from ESO; this repository contains no database workload manifests.
+## Legacy monitoring cutover
 
-### Aiven TLS application contract
+Cutover khỏi legacy monitoring không còn hứa hẹn chạy song song kéo dài một tuần. Contract hiện tại là maintenance downtime có chủ đích. Legacy state machine đã được duyệt là Docker-based, không phải systemd-based. Operator phải lên lịch downtime ngắn để:
 
-ESO maps the exact `db_ssl_mode` and `db_ssl_ca` SSM keys to `DB_SSL_MODE` and `DB_SSL_CA` for both API and worker. Application TLS support for this contract is now implemented and has been validated locally. Remote Aiven connectivity and remote rollout still depend on operator-provided CA material, SSM values, VPS allowlisting, and an actual remote execution window. This infra baseline does not weaken TLS verification or create a database workload.
+1. đọc manifest Todo 11 đã sanitize và xác minh đủ exact Docker container ID/name/image/status/mounts/ports cho `prometheus`, `grafana`, `node-exporter`, `cadvisor`
+2. stop đúng 4 container legacy theo ID đã capture
+3. vô hiệu route `cadvisor` cũ bằng exact Nginx config path và checksum đã capture
+4. chạy gate dung lượng máy để tự chọn nhánh `retained` hoặc `deleted`
+5. chỉ xoá typed resource đúng allowlist đã được Todo 11 xác minh: exact container ID, exact image ID không còn consumer ngoài legacy, exact Grafana Docker volume, exact Prometheus bind path
 
-## Application edge and image pulls
-
-The shared `networking.k8s.io/v1` Ingress uses `ingressClassName: traefik`, routes `https?://<api_public_host>/` to the API Service, and routes `https?://<web_public_host>/` to the web Service. Worker remains `ClusterIP` only and has no Ingress path. HTTP is available internally by default. TLS is emitted only when `ingress_tls_secret_name` is non-empty and the named `kubernetes.io/tls` Secret already exists in the namespace; this baseline does not provision ACME, cert-manager, certificates, or storage. The packaged Traefik NodePort is loopback-only and existing host Nginx terminates public TLS. Swagger Basic Auth at `/api/v1/docs` must be used only through that verified HTTPS edge; never send its credentials over public HTTP.
-
-All application Pods reference the manually provisioned `ghcr_pull_secret_name`. The applications role verifies that it exists and is type `kubernetes.io/dockerconfigjson` with `.dockerconfigjson` data before any selected workload is applied. It never writes registry credentials.
-
-## Existing Prometheus and Grafana
-
-The monitoring role never installs, upgrades, replaces, or manages Prometheus or Grafana. It first verifies the explicitly configured existing Prometheus service and main config. It applies the checksum-verified pinned kube-state-metrics release to K3s and starts a systemd `k3s kubectl port-forward` bound strictly to `127.0.0.1`. Host Prometheus reads loopback-only node exporter and kube-state-metrics endpoints through one rendered file-SD target JSON and two narrow scrape jobs.
-
-Your existing Prometheus main config must include the configured scrape-snippet path or its include directory according to the host's established configuration convention. The role reads the main config and fails before writing monitoring files when that reference is absent; it never rewrites the main Prometheus config. By default, missing parent directories for generated scrape/file-SD files fail clearly; set `prometheus_manage_target_directories: true` only after validating the configured owner/group/path are safe for this baseline to create. If `prometheus_validate_with_promtool: true`, the handler runs the configured `prometheus_promtool_path check config <prometheus_config_path>` before reloading the explicitly configured existing service. Prometheus reload happens only when the generated target or scrape file changes.
-
-## Missing host facts and common failures
-
-- Unsupported OS facts fail immediately; only Debian/Ubuntu are supported.
-- Placeholder image digests, AWS region, SSM keys including `db_ssl_mode`/`db_ssl_ca`, GHCR pull Secret name, public host, credential Secret name, or Prometheus settings fail before workload changes.
-- A missing manual AWS credential Secret fails before ESO resource reconciliation.
-- A missing or incorrectly named existing Prometheus service/path is an inventory error, not something the playbook guesses or repairs.
-- No task makes a remote connection during `bash infra/scripts/validate.sh`.
+Section lệnh chi tiết, guard từ chối resource lạ, marker bất biến và SHA-256 manifest nằm trong `docs/deployment/RUNBOOK-dev-k3s.md`, mục `Legacy monitoring shutdown and conditional deletion`.
 
 ## Static validation
 
-`infra/scripts/validate.sh` checks for forbidden StatefulSet/PVC/Prometheus/Grafana workloads, likely plaintext secret assignments, lower-case immutable GHCR image references, packaged K3s Traefik/ServiceLB configuration, exact Aiven TLS SSM wiring, GHCR pull-secret usage, the web/API-only Traefik Ingress, selective target controls, and both required monitoring jobs/targets. It runs `yamllint` when present, otherwise Python YAML parsing when `PyYAML` is installed, and runs Ansible syntax checking when `ansible-playbook` is available. Missing optional local tooling is reported as `SKIP`; the policy checks always run.
+`infra/scripts/validate.sh` hiện kiểm tra:
+
+- workload ứng dụng không được chứa `StatefulSet`, `PersistentVolumeClaim`, `Prometheus`, `Grafana`
+- observability scope chỉ được phép chứa explicit Kubernetes manifest stateful trong `infra/observability/`
+- với explicit Kubernetes manifest có `kind:` ở top level, validator mới kiểm tra `local-path`, `whenDeleted: Retain`, `whenScaled: Retain`, `resources`, retention của Prometheus
+- image phải pin immutable digest
+- non-secret runtime contract phải là literal manifest, không đi qua SSM
+
+`infra/scripts/validate.sh` là static validator và không render Helm chart. Semantic validation hiện có là luồng riêng: `infra/scripts/render-observability.sh` yêu cầu Helm local đúng `v3.21.3`, render ba chart pin rồi gọi `infra/scripts/validate-rendered-observability.rb`. Ruby validator là offline pre-render validator cho YAML đã render: nó không tải chart hoặc cài dependency. Có thể chạy wrapper với `--chart-dir` chứa đúng ba chart archive local để tránh truy cập Helm repository.
+
+Workflow `infra-quality` hiện chạy `infra/scripts/validate.sh`, suite fixture `infra/scripts/tests/test-rendered-observability-policy.rb`, và workflow policy; nó không gọi wrapper hoặc render chart qua mạng. Job `deploy-observability` cũng không dùng wrapper này; Ansible thực hiện deployment trên VPS theo chart pin. Vì fixture suite không thay thế một render bằng chart archive thật, operator vẫn phải chạy render/validator với chart pin đã xác minh trước cutover hoặc thay đổi Helm values.

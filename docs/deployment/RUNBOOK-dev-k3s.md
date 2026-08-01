@@ -1,73 +1,51 @@
 # RUNBOOK vận hành dev K3s trên VPS
 
-Tài liệu này bắt đầu từ lúc các điều kiện trong `docs/deployment/GUIDE-dev-k3s.md` đã sẵn sàng và người vận hành chuẩn bị chạy bootstrap hoặc deployment thật.
+Tài liệu này dùng sau khi input trong `docs/deployment/GUIDE-dev-k3s.md` đã sẵn sàng. Mục tiêu hiện tại là vận hành baseline `learning-platform-dev` và cutover observability ownership mới mà không để tài liệu tự biến thành script phá huỷ bỏ guard.
 
 ## 1. Phạm vi sử dụng
 
-RUNBOOK này dùng cho các việc sau:
+RUNBOOK này dùng cho:
 
-1. chạy bootstrap Ansible theo tag
-2. chạy full baseline lần đầu
-3. kiểm tra sức khỏe K3s, ESO, ứng dụng và monitoring
-4. smoke test sau deploy
-5. rollback theo deployment hoặc digest
-6. rotation secret bootstrap và runtime secret
-7. chẩn đoán lỗi thường gặp
-8. thay VPS mới
-
-GUIDE dừng trước điểm này. Mọi bước bên dưới là thao tác vận hành thật.
+1. bootstrap K3s và baseline ứng dụng
+2. kiểm tra runtime health
+3. chuẩn bị và xác nhận observability ownership mới
+4. maintenance downtime cho cutover legacy monitoring
+5. conditional deletion (xoá có điều kiện) sau Todo 11
+6. rollback theo nhánh `retained` hoặc `deleted` đúng contract
+7. rerun workflow `target=observability` để bootstrap credential observability, không SSH thủ công
 
 ## 2. Công cụ local bắt buộc
 
-Máy người vận hành cần có:
+Máy operator cần có:
 
-1. Homebrew
-2. `ansible`
-3. `ansible-core 2.21.2`
-4. `ansible-lint`
-5. `yamllint`
-6. collection `kubernetes.core 5.3.0`
+1. `ansible`
+2. `ansible-core 2.21.2`
+3. `ansible-lint`
+4. `yamllint`
+5. collection `kubernetes.core 5.3.0`
+6. `python3`
+7. `jq`
+8. `sha256sum` hoặc `shasum -a 256`
 
-Ví dụ cài trên macOS:
+## 3. Bootstrap sequence cho application baseline
 
-```bash
-brew install ansible ansible-lint yamllint
-ansible-galaxy collection install -r infra/ansible/requirements.yml
-```
-
-Kiểm tra nhanh:
-
-```bash
-ansible --version
-ansible-lint --version
-yamllint --version
-ansible-galaxy collection list | grep kubernetes.core
-```
-
-## 3. Quy tắc bootstrap và thứ tự tag
-
-### 3.1. Trình tự chuẩn
-
-Thứ tự chuẩn cho host mới:
+### 3.1. Thứ tự chuẩn
 
 1. `k3s`
-2. tạo Secret AWS bootstrap thủ công
-3. tạo Secret GHCR pull thủ công
+2. tạo Secret `learning-platform-dev-aws-credentials`
+3. tạo Secret `learning-platform-dev-ghcr`
 4. `external_secrets`
-5. `monitoring`
-6. `applications`
+5. `applications`
 
-Lý do của bước đầu tiên là tag `k3s` tạo namespace `learning-platform-dev`. Hai K8s Secret bắt buộc chỉ được tạo sau khi namespace này tồn tại.
+Lưu ý, monitoring role Ansible cũ không còn là mô tả ownership đích cho observability. Nếu vẫn cần dùng nó để đọc dữ liệu host cũ trong giai đoạn chuẩn bị, coi đó là legacy path, không phải target architecture.
 
-### 3.2. Chạy từng tag
+### 3.2. Lệnh baseline ứng dụng
 
 ```bash
 ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
   -i infra/ansible/inventory/hosts.yml \
   infra/ansible/playbooks/site.yml --tags k3s
 ```
-
-Sau khi tag `k3s` xong, tạo hai Secret bootstrap theo GUIDE.
 
 ```bash
 ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
@@ -78,50 +56,10 @@ ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
 ```bash
 ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
   -i infra/ansible/inventory/hosts.yml \
-  infra/ansible/playbooks/site.yml --tags monitoring
-```
-
-```bash
-ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
-  -i infra/ansible/inventory/hosts.yml \
   infra/ansible/playbooks/site.yml --tags applications
 ```
 
-### 3.3. Full baseline lần đầu
-
-Sau khi inventory, group vars và hai Secret đã sẵn sàng, chạy validate local rồi apply đầy đủ:
-
-```bash
-bash infra/scripts/validate.sh
-ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
-  -i infra/ansible/inventory/hosts.yml \
-  infra/ansible/playbooks/site.yml
-```
-
-## 4. Check mode và giới hạn của nó
-
-Preview an toàn:
-
-```bash
-ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
-  -i infra/ansible/inventory/hosts.yml \
-  infra/ansible/playbooks/site.yml --check --diff
-```
-
-`--check` không chứng minh được các việc sau:
-
-1. tải và chạy installer K3s lần đầu
-2. reconcile Kubernetes API thật
-3. ESO readiness thật
-4. readiness thật của `web`, `api`, `worker`
-5. network path thật từ VPS tới Aiven
-6. Prometheus scrape thành công thật
-
-Chỉ dùng `--check --diff` để xem render và drift. Không xem nó là bằng chứng bootstrap thành công.
-
-## 5. Runtime verification
-
-### 5.1. Kiểm tra K3s object và rollout
+## 4. Runtime health cho application baseline
 
 ```bash
 sudo k3s kubectl -n learning-platform-dev get pods
@@ -131,308 +69,589 @@ sudo k3s kubectl -n learning-platform-dev rollout status deployment/api --timeou
 sudo k3s kubectl -n learning-platform-dev rollout status deployment/worker --timeout=180s
 ```
 
-### 5.2. Kiểm tra ExternalSecret
-
 ```bash
 sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-api-runtime -o yaml
 sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-worker-runtime -o yaml
 sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-swagger-runtime -o yaml
 ```
 
-Ba resource này phải có `Ready=True`. `learning-platform-swagger-runtime` chỉ chứa hai key `SWAGGER_USERNAME` và `SWAGGER_PASSWORD`, và chỉ API được tham chiếu Secret này.
+## 5. Observability ownership mới
 
-### 5.3. Kiểm tra host monitoring
+### 5.1. Release pin phải đúng
 
-Node exporter:
+| Release | Namespace | Chart | Version |
+| --- | --- | --- | --- |
+| `learning-platform-monitoring` | `observability` | `prometheus-community/kube-prometheus-stack` | `87.21.0` |
+| `learning-platform-loki` | `observability` | `grafana-community/loki` | `18.7.0` |
+| `learning-platform-alloy` | `observability` | `grafana/alloy` | `1.11.0` |
 
-```bash
-systemctl status prometheus-node-exporter.service
-curl -fsS http://127.0.0.1:9100/metrics | head
-```
+### 5.2. Release contract
 
-Nếu host dùng service khác, thay bằng giá trị thật đã khai báo trong `node_exporter_service_name`.
+1. Initial install có persistent volume không dùng `--atomic`.
+2. Initial install không dùng cleanup-on-fail.
+3. Nếu release đầu tiên bị partial hoặc orphan resource, dừng và xử lý HITL, không ép gỡ toàn bộ release bằng lệnh uninstall của Helm.
+4. Healthy upgrade về sau mới được dùng guard rollback tương ứng của Helm.
+5. Không xoá PVC hoặc PV observability trong runbook này.
+6. Loki chỉ được xem là đạt contract nếu manifest render cuối cùng vẫn có `whenDeleted: Retain` và `whenScaled: Retain`, dù chart values có `enableStatefulSetAutoDeletePVC: true`.
 
-Kube-state-metrics port-forward:
+### 5.3. Capacity và query commands
 
-```bash
-systemctl status kube-state-metrics-port-forward.service
-curl -fsS http://127.0.0.1:18080/metrics | head
-```
-
-Port thật phải khớp `kube_state_metrics_port_forward_port`.
-
-Prometheus target:
-
-1. job `node-exporter` phải `up`
-2. job `kube-state-metrics` phải `up`
-3. target `127.0.0.1:<node_exporter_listen_port>` phải `up`
-4. target `127.0.0.1:<kube_state_metrics_port_forward_port>` phải `up`
-
-### 5.4. Kiểm tra private worker
-
-Worker không có public ingress. Kiểm tra service và endpoint:
+Trước khi đụng tới legacy stack, đo lại host:
 
 ```bash
-sudo k3s kubectl -n learning-platform-dev get svc worker
-sudo k3s kubectl -n learning-platform-dev get endpoints worker
+df -h /
+free -h
+nproc
+sudo k3s kubectl -n observability get pods
+sudo k3s kubectl -n observability get pvc
+sudo k3s kubectl -n observability get ingress
+sudo k3s kubectl -n observability top pods
+sudo k3s kubectl -n observability get prometheus
+sudo k3s kubectl -n observability get svc
 ```
 
-Port-forward để kiểm tra health:
+Ngưỡng tối thiểu để được phép tiếp tục sau khi legacy stack đã dừng:
+
+- disk trống `>= 11Gi`
+- RAM available `>= 2Gi`
+
+Nếu đạt cả hai ngưỡng sau khi dừng legacy stack, chọn nhánh `retained` và có thể unblock bước cài observability mới. Nếu thiếu một trong hai ngưỡng, chọn nhánh `deleted`. Sau nhánh `deleted`, gate phải chạy lại; nếu vẫn thiếu ngưỡng thì block Todo 12.
+
+### 5.4. Bootstrap AWS credential cho observability
+
+`deploy-observability` là đường duy nhất để tạo/upsert namespace `observability` và Secret `observability-aws-credentials`. Job chỉ chạy từ workflow dispatch với `target=observability`; GitHub Environment `dev` là bootstrap trust anchor cho VPS ngoài.
+
+Khi credential cần rotate, revoke hoặc VPS thay đổi: cập nhật GitHub Environment theo GUIDE rồi rerun workflow. Không tạo/chỉnh Secret bằng SSH thủ công. Workflow xác minh metadata `Opaque` và đúng hai key `access-key-id`, `secret-access-key`, không in secret data.
+
+## 6. Maintenance window và downtime
+
+Cutover này yêu cầu maintenance downtime có chủ đích. Không còn giả định vận hành song song kéo dài một tuần. Operator phải:
+
+1. thông báo downtime cho người dùng nội bộ
+2. chặn thao tác thay đổi hạ tầng ngoài scope trong cửa sổ này
+3. thu đủ evidence trước, giữa và sau cutover
+4. có manifest Todo 11 đã sanitize sẵn trong máy local
+
+## 7. Legacy monitoring shutdown and conditional deletion
+
+Mục này là contract thực thi để Todo 12 có thể tiếp tục. Tài liệu chỉ cung cấp command template (mẫu lệnh) có guard. Nó không cung cấp một script phá huỷ runnable có thể bỏ qua manifest và ngưỡng.
+
+### 7.1. Input bắt buộc
+
+Operator phải chuẩn bị một manifest Todo 11 đã sanitize, ví dụ `./tmp/todo11-legacy-monitoring-manifest.json`. Manifest này là nguồn sự thật duy nhất cho legacy Docker state machine và phải mang đủ exact metadata đã capture. Shape tối thiểu:
+
+```json
+{
+  "manifest_version": 1,
+  "baseline_docker_inventory_sha256": "<64-hex>",
+  "services": ["prometheus", "grafana", "node-exporter", "cadvisor"],
+  "legacy_containers": {
+    "prometheus": {
+      "container_id": "<immutable-id>",
+      "container_name": "prometheus",
+      "image_id": "sha256:<image-id>",
+      "image_ref": "<image-ref>",
+      "status": "running",
+      "ports": ["127.0.0.1:9090->9090/tcp"],
+      "mounts": []
+    },
+    "grafana": {
+      "container_id": "<immutable-id>",
+      "container_name": "grafana",
+      "image_id": "sha256:<image-id>",
+      "image_ref": "<image-ref>",
+      "status": "running",
+      "ports": ["0.0.0.0:3000->3000/tcp"],
+      "mounts": [
+        {
+          "resource_type": "docker_volume",
+          "volume_name": "<exact-volume-name>",
+          "mountpoint": "/var/lib/docker/volumes/<exact-volume-name>/_data",
+          "destination": "/var/lib/grafana"
+        }
+      ]
+    },
+    "node-exporter": {
+      "container_id": "<immutable-id>",
+      "container_name": "node-exporter",
+      "image_id": "sha256:<image-id>",
+      "image_ref": "<image-ref>",
+      "status": "running",
+      "ports": ["127.0.0.1:9100->9100/tcp"],
+      "mounts": []
+    },
+    "cadvisor": {
+      "container_id": "<immutable-id>",
+      "container_name": "cadvisor",
+      "image_id": "sha256:<image-id>",
+      "image_ref": "<image-ref>",
+      "status": "running",
+      "ports": ["0.0.0.0:8084->8080/tcp"],
+      "mounts": []
+    }
+  },
+  "approved_prometheus_bind_paths": [
+    {
+      "path": "/opt/project/prometheus/prometheus.yml",
+      "path_type": "file",
+      "device": 0,
+      "inode": 0,
+      "sha256": "<64-hex>"
+    },
+    {
+      "path": "/opt/project/prometheus/data",
+      "path_type": "directory",
+      "device": 0,
+      "inode": 0
+    }
+  ],
+  "grafana_volume": {
+    "volume_name": "<exact-volume-name>",
+    "mountpoint": "/var/lib/docker/volumes/<exact-volume-name>/_data"
+  },
+  "cadvisor_route_disable": {
+    "path": "/etc/nginx/sites-enabled/<exact-file>",
+    "sha256": "<64-hex>"
+  },
+  "approved_legacy_roots": [
+    "/opt/project/prometheus",
+    "/var/lib/docker/volumes/<exact-volume-name>"
+  ],
+  "image_consumer_counts": {
+    "sha256:<image-id>": 1
+  },
+  "shared_image_consumers": {
+    "sha256:<image-id>": [
+      "<exact-non-legacy-consumer-or-empty-list>"
+    ]
+  },
+  "delete_plan": {
+    "docker_containers": [
+      "<exact-captured-container-id>"
+    ],
+    "docker_images": [
+      "sha256:<exact-image-id>"
+    ],
+    "docker_volume": "<exact-volume-name>",
+    "prometheus_bind_paths": [
+      "/opt/project/prometheus/prometheus.yml",
+      "/opt/project/prometheus/data"
+    ]
+  }
+}
+```
+
+Manifest này chỉ là ví dụ shape. Todo 11 phải điền exact ID/path thật. Nếu thiếu bất kỳ trường nào, sai type, sai hash, sai ID, sai mount, sai root hoặc có resource ngoài allowlist, runbook phải dừng trước khi in ra bất kỳ delete command nào.
+
+### 7.2. Guard validate manifest
 
 ```bash
-sudo k3s kubectl -n learning-platform-dev port-forward svc/worker 3403:3403
+MANIFEST='./tmp/todo11-legacy-monitoring-manifest.json'
+python3 - <<'PY' "$MANIFEST"
+import json, pathlib, re, sys
+
+manifest = pathlib.Path(sys.argv[1])
+data = json.loads(manifest.read_text())
+allowed = ["prometheus", "grafana", "node-exporter", "cadvisor"]
+hex64 = re.compile(r"^[a-f0-9]{64}$")
+sha_image = re.compile(r"^sha256:[a-f0-9]{64}$")
+services = data.get("services")
+if services != allowed:
+    raise SystemExit("services must be the exact ordered allowlist")
+if data.get("manifest_version") != 1:
+    raise SystemExit("manifest_version must be 1")
+if not hex64.fullmatch(data.get("baseline_docker_inventory_sha256", "")):
+    raise SystemExit("baseline_docker_inventory_sha256 must be 64 hex")
+for key in (
+    "legacy_containers",
+    "approved_prometheus_bind_paths",
+    "grafana_volume",
+    "cadvisor_route_disable",
+    "approved_legacy_roots",
+    "image_consumer_counts",
+    "shared_image_consumers",
+    "delete_plan",
+):
+    if key not in data:
+        raise SystemExit(f"missing required key: {key}")
+legacy = data["legacy_containers"]
+if sorted(legacy.keys()) != sorted(allowed):
+    raise SystemExit("legacy_containers keys must match allowlist")
+for name in allowed:
+    item = legacy[name]
+    if item.get("container_name") != name:
+        raise SystemExit(f"container_name drift for {name}")
+    if not re.fullmatch(r"^[a-f0-9]{12,64}$", item.get("container_id", "")):
+        raise SystemExit(f"invalid container_id for {name}")
+    if not sha_image.fullmatch(item.get("image_id", "")):
+        raise SystemExit(f"invalid image_id for {name}")
+    if item.get("status") not in {"running", "exited"}:
+        raise SystemExit(f"invalid status for {name}")
+approved_roots = data["approved_legacy_roots"]
+if not isinstance(approved_roots, list) or not approved_roots:
+    raise SystemExit("approved_legacy_roots must be a non-empty list")
+for root in approved_roots:
+    if root in {"/", "/var", "/etc"}:
+        raise SystemExit("approved_legacy_roots cannot contain broad system roots")
+    pure = pathlib.PurePosixPath(root)
+    if str(pure) != root or root.endswith("/"):
+        raise SystemExit(f"unnormalized approved root: {root}")
+for path_entry in data["approved_prometheus_bind_paths"]:
+    path_value = path_entry.get("path", "")
+    if any(token in path_value for token in ("*", "..", "//")):
+        raise SystemExit(f"unsafe prometheus path: {path_value}")
+    if path_value in {"/", "/var", "/etc", "/opt", "/opt/project", "/opt/project/prometheus"}:
+        raise SystemExit(f"prometheus path is too broad: {path_value}")
+    if path_entry.get("path_type") not in {"file", "directory"}:
+        raise SystemExit(f"invalid path_type for {path_value}")
+    if not isinstance(path_entry.get("device"), int) or not isinstance(path_entry.get("inode"), int):
+        raise SystemExit(f"device/inode required for {path_value}")
+    if path_entry["path_type"] == "file" and not hex64.fullmatch(path_entry.get("sha256", "")):
+        raise SystemExit(f"file path requires sha256: {path_value}")
+grafana_volume = data["grafana_volume"]
+volume_name = grafana_volume.get("volume_name", "")
+if not re.fullmatch(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$", volume_name):
+    raise SystemExit("grafana_volume.volume_name invalid")
+if grafana_volume.get("mountpoint") != f"/var/lib/docker/volumes/{volume_name}/_data":
+    raise SystemExit("grafana_volume.mountpoint must match exact Docker volume path")
+cadvisor = data["cadvisor_route_disable"]
+if not hex64.fullmatch(cadvisor.get("sha256", "")):
+    raise SystemExit("cadvisor_route_disable.sha256 must be 64 hex")
+cadvisor_path = cadvisor.get("path", "")
+if not cadvisor_path.startswith("/etc/nginx/") or any(token in cadvisor_path for token in ("*", "..", "//")):
+    raise SystemExit("cadvisor_route_disable.path must be an exact nginx path")
+delete_plan = data["delete_plan"]
+for container_id in delete_plan.get("docker_containers", []):
+    if container_id not in {legacy[name]["container_id"] for name in allowed}:
+        raise SystemExit(f"delete_plan docker_containers contains unknown id: {container_id}")
+for image_id in delete_plan.get("docker_images", []):
+    if image_id not in {legacy[name]["image_id"] for name in allowed}:
+        raise SystemExit(f"delete_plan docker_images contains unknown image id: {image_id}")
+for path_value in delete_plan.get("prometheus_bind_paths", []):
+    if path_value not in {entry['path'] for entry in data['approved_prometheus_bind_paths']}:
+        raise SystemExit(f"delete_plan contains unknown bind path: {path_value}")
+if delete_plan.get("docker_volume") != volume_name:
+    raise SystemExit("delete_plan docker_volume must equal captured grafana volume name")
+print("manifest guard passed")
+PY
 ```
 
-Từ terminal khác:
+Nếu command guard này fail, dừng ngay. Không sửa manifest bằng lệnh xoá nhanh trong cửa sổ cutover.
+
+### 7.3. Ghi checksum và marker mở phiên cutover
 
 ```bash
-curl -fsS http://127.0.0.1:3403/health
+MANIFEST_SHA256="$(shasum -a 256 "$MANIFEST" | awk '{print $1}')"
+UTC_NOW="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+printf 'legacy-monitoring-cutover started_at=%s manifest_sha256=%s\n' "$UTC_NOW" "$MANIFEST_SHA256"
 ```
 
-### 5.5. Kiểm tra DB env contract mà không in secret
+Sau khi hoàn tất nhánh `retained` hoặc `deleted`, operator phải ghi lại cùng checksum đó vào evidence bất biến của task. Không đổi manifest giữa chừng rồi tiếp tục bằng checksum mới.
+
+### 7.4. Hàm re-hash và acknowledgement bất biến
+
+Mọi stage mutation phải re-hash manifest ngay trước khi tiếp tục. Acknowledgement không dùng plain `DELETE` nữa mà phải bind vào exact branch text và `manifest_sha256` hiện tại.
 
 ```bash
-sudo k3s kubectl -n learning-platform-dev exec deploy/api -- /bin/sh -lc 'test "$DB_SSL_MODE" = "verify-ca" && test -n "$DB_SSL_CA"'
-sudo k3s kubectl -n learning-platform-dev exec deploy/worker -- /bin/sh -lc 'test "$DB_SSL_MODE" = "verify-ca" && test -n "$DB_SSL_CA"'
+CURRENT_MANIFEST_SHA256() {
+  shasum -a 256 "$MANIFEST" | awk '{print $1}'
+}
+
+ASSERT_MANIFEST_SHA256() {
+  test "$(CURRENT_MANIFEST_SHA256)" = "$MANIFEST_SHA256"
+}
+
+ACK_TEXT_FOR_BRANCH() {
+  BRANCH="$1"
+  printf 'I-ACKNOWLEDGE legacy-monitoring-cutover branch=%s manifest_sha256=%s' "$BRANCH" "$MANIFEST_SHA256"
+}
 ```
 
-## 6. Smoke tests sau deploy
-
-### 6.1. Qua Traefik
-
-HTTP mode chỉ dùng cho health check không chứa credential:
+### 7.5. Chụp trạng thái trước khi dừng
 
 ```bash
-curl -I http://<dev-public-host>/
-curl -fsS http://<dev-public-host>/api/v1/health
+python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+for name in ("prometheus", "grafana", "node-exporter", "cadvisor"):
+    item = data["legacy_containers"][name]
+    print(name, item["container_id"], item["container_name"], item["image_id"], item["status"])
+PY
+df -h /
+free -h
+sudo ss -ltnp '( sport = :3000 or sport = :8084 or sport = :9090 or sport = :9100 )' || true
 ```
 
-Nếu đã có TLS secret:
+### 7.6. Stop đúng bốn container legacy trước
+
+Legacy objects là Docker containers, không phải systemd services. Không dùng wildcard name. Không dừng container ngoài allowlist. Mỗi lệnh stop phải lấy exact captured ID từ manifest và assert name/image trước khi chạy.
 
 ```bash
-curl -I https://<dev-public-host>/
-curl -fsS https://<dev-public-host>/api/v1/health
+ASSERT_MANIFEST_SHA256
+python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+for name in ("prometheus", "grafana", "node-exporter", "cadvisor"):
+    item = data["legacy_containers"][name]
+    cid = item["container_id"]
+    print(f'docker inspect --type container {cid} --format {{"{{.Name}} {{.Image}} {{.State.Status}}"}}')
+    print(f'docker stop --time 30 {cid}')
+PY
 ```
 
-Swagger Basic Auth chỉ được kiểm tra qua public HTTPS edge đã xác minh certificate. Không truyền credential qua HTTP và không đưa credential trực tiếp vào command line. Dùng file netrc tạm quyền `0600`:
+Operator phải chạy từng `docker inspect` trước, đối chiếu `container_name`, `image_id`, `status`, rồi mới chạy đúng `docker stop` cho ID tương ứng. Nếu inspect trả object khác, dừng toàn bộ flow.
+
+### 7.7. Disable cAdvisor route cũ
+
+Đường dẫn cấu hình phải lấy từ manifest Todo 11 đã xác minh và phải khớp checksum đã capture. Chỉ render ví dụ thao tác, không cung cấp script sửa tự động:
 
 ```bash
-NETRC_FILE="$(mktemp)"
-chmod 600 "$NETRC_FILE"
-read -r SWAGGER_USERNAME
-read -r -s SWAGGER_PASSWORD
-printf 'machine %s login %s password %s\n' '<dev-api-public-host>' "$SWAGGER_USERNAME" "$SWAGGER_PASSWORD" > "$NETRC_FILE"
-unset SWAGGER_USERNAME SWAGGER_PASSWORD
-curl -fsS -o /dev/null -w '%{http_code}\n' --netrc-file "$NETRC_FILE" "https://<dev-api-public-host>/api/v1/docs"
-rm -f -- "$NETRC_FILE"
+ASSERT_MANIFEST_SHA256
+CADVISOR_ROUTE_PATH="$(python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(data['cadvisor_route_disable']['path'])
+PY
+)"
+CADVISOR_ROUTE_SHA256="$(python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(data['cadvisor_route_disable']['sha256'])
+PY
+)"
+test "$(shasum -a 256 "$CADVISOR_ROUTE_PATH" | awk '{print $1}')" = "$CADVISOR_ROUTE_SHA256"
+printf 'Disable cAdvisor route in verified file: %s\n' "$CADVISOR_ROUTE_PATH"
+sudo editor "$CADVISOR_ROUTE_PATH"
+sudo nginx -t
+sudo systemctl reload nginx
 ```
 
-Kết quả phải là `200`. Một request HTTPS không có Basic Auth phải trả `401`. Không dùng `-k` và không log response header chứa thông tin nhạy cảm.
+Operator phải sửa đúng đoạn route cAdvisor đã được Todo 11 xác minh. Không search-replace mù, không reload nếu `nginx -t` fail, và không tiếp tục nếu checksum trước sửa không khớp manifest.
 
-### 6.2. Điều kiện pass tối thiểu
+### 7.8. Gate dung lượng fail-closed sau khi dừng
 
-1. `web`, `api`, `worker` rollout thành công
-2. `learning-platform-api-runtime`, `learning-platform-worker-runtime` và `learning-platform-swagger-runtime` đều `Ready=True`
-3. endpoint `/api/v1/health` trả kết quả thành công
-4. worker `/health` trả kết quả thành công qua port-forward
-5. target monitoring lên `up`
-6. `/api/v1/docs` qua HTTPS trả `401` khi không có credential và `200` với credential đúng
-
-## 7. Rollback
-
-### 7.1. Rollback nhanh theo deployment revision
+Gate này phải đọc số máy từ `df -Pk /` và `/proc/meminfo`, validate integer parsing, rồi tự chọn branch. Không dựa vào việc người vận hành nhìn `df -h` và `free -h`.
 
 ```bash
-sudo k3s kubectl -n learning-platform-dev rollout undo deployment/web
-sudo k3s kubectl -n learning-platform-dev rollout undo deployment/api
-sudo k3s kubectl -n learning-platform-dev rollout undo deployment/worker
+CHECK_CAPACITY_AND_SELECT_BRANCH() {
+  DISK_KB="$(df -Pk / | awk 'NR==2 {print $4}')"
+  MEM_KB="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+  case "$DISK_KB" in ''|*[!0-9]*) return 90 ;; esac
+  case "$MEM_KB" in ''|*[!0-9]*) return 91 ;; esac
+  test "$DISK_KB" -ge 0 || return 92
+  test "$MEM_KB" -ge 0 || return 93
+  DISK_OK=false
+  MEM_OK=false
+  test "$DISK_KB" -ge 11534336 && DISK_OK=true
+  test "$MEM_KB" -ge 2097152 && MEM_OK=true
+  printf 'disk_kb=%s memavailable_kb=%s disk_ok=%s mem_ok=%s\n' "$DISK_KB" "$MEM_KB" "$DISK_OK" "$MEM_OK"
+  if test "$DISK_OK" = true && test "$MEM_OK" = true; then
+    printf 'selected_branch=retained\n'
+    return 10
+  fi
+  printf 'selected_branch=deleted\n'
+  return 20
+}
+
+CHECK_CAPACITY_AND_SELECT_BRANCH
+CAPACITY_RC="$?"
+test "$CAPACITY_RC" = 10 || test "$CAPACITY_RC" = 20
 ```
 
-Sau rollback nhanh, vẫn phải đưa desired state về digest tốt đã biết. Trước khi digest đó ra khỏi 10 version mới nhất và không còn được ReplicaSet tham chiếu, gắn thêm tag `rollback-<tên-ngắn>` cho cùng package version để retention selector bỏ qua version đó.
+Ý nghĩa kết quả:
 
-### 7.2. Rollback chuẩn theo digest cũ
+- return `10` => đủ `11Gi` disk và `2Gi` RAM available, chọn nhánh `retained`
+- return `20` => thiếu ít nhất một ngưỡng, chọn nhánh `deleted`
+- return `90-93` => parse hoặc range fail, dừng toàn bộ flow
 
-Tạo file override dùng digest cũ:
+### 7.9. Check shared image consumers trước khi xoá
 
-```yaml
-deployment_targets: [web, api, worker]
-web_image: ghcr.io/sirobaby/learningplatform-web@sha256:<known-good-web-digest>
-api_image: ghcr.io/sirobaby/learningplatform-api@sha256:<known-good-backend-digest>
-worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:<known-good-backend-digest>
-```
-
-Apply lại phần ứng dụng:
+Manifest Todo 11 phải liệt kê exact shared image consumer đã xác minh. Chỉ image có recomputed non-legacy consumer count bằng `0` mới được in delete command.
 
 ```bash
-ANSIBLE_CONFIG=infra/ansible/ansible.cfg ansible-playbook \
-  -i infra/ansible/inventory/hosts.yml \
-  infra/ansible/playbooks/site.yml --tags applications -e @./overrides-known-good.yml
+ASSERT_MANIFEST_SHA256
+python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+legacy_image_ids = {v['image_id'] for v in data['legacy_containers'].values()}
+for image_id in sorted(legacy_image_ids):
+    consumers = data['shared_image_consumers'].get(image_id, [])
+    declared_count = data['image_consumer_counts'].get(image_id)
+    if declared_count is None:
+        raise SystemExit(f'missing image_consumer_counts for {image_id}')
+    non_legacy_consumers = [item for item in consumers if item]
+    print(image_id, 'declared_count=', declared_count, 'non_legacy_consumers=', non_legacy_consumers)
+PY
 ```
 
-### 7.3. Rollback khi lỗi nằm ở secret hoặc Aiven connectivity
+Nếu còn consumer ngoài legacy, dừng bước xoá image đó. Không suy đoán, không xoá image shared.
 
-1. khôi phục version parameter cũ trong SSM
-2. chờ ESO refresh hoặc restart deployment liên quan
-3. chạy lại smoke test
-4. nếu cần cửa sổ debug dài, giữ `deploy/` Compose làm fallback tạm thời
+### 7.10. Nhánh retained
 
-## 8. Secret rotation
+Nhánh này dùng khi gate sau stop trả `selected_branch=retained`. Không Docker prune, không `docker rm`, không `docker image rm`, không `docker volume rm`, không `rm -rf` diện rộng.
 
-### 8.1. Rotate AWS bootstrap key cho ESO
+1. Giữ nguyên Docker container đã stop và mọi typed resource capture trong manifest.
+2. Ghi marker rằng legacy service đã dừng nhưng chưa xoá.
+3. Nếu rollback nhánh retained là cần thiết, chỉ được exact-start lại container `grafana` hoặc `cadvisor` theo đúng captured container ID, rồi stop lại và re-disable sau khi hoàn tất điều tra.
 
-1. tạo access key mới cho IAM user bootstrap
-2. cập nhật Secret `aws_credentials_secret_name`
-3. xác minh `ExternalSecret` vẫn `Ready=True`
-4. xóa access key cũ sau khi xác minh xong
-5. ghi nhận ngày rotation
+Ví dụ ghi marker:
 
-Khi thay Secret, tiếp tục dùng file tạm quyền `0600` và `--from-file`. Không chuyển sang `--from-literal`.
+```bash
+ASSERT_MANIFEST_SHA256
+ACK_TEXT="$(ACK_TEXT_FOR_BRANCH retained)"
+printf 'Type exact acknowledgement for retained branch: %s\n' "$ACK_TEXT"
+read -r ACK_VALUE
+test "$ACK_VALUE" = "$ACK_TEXT"
+```
 
-### 8.2. Rotate GHCR pull credential
+### 7.11. Nhánh deleted
 
-1. tạo token mới
-2. replace Secret `ghcr_pull_secret_name`
-3. xác minh type vẫn là `kubernetes.io/dockerconfigjson`
-4. restart workload nếu cần để kiểm tra image pull
-5. revoke token cũ
+Nhánh này chỉ được đi tiếp khi gate sau stop trả `selected_branch=deleted`, manifest hash vẫn khớp, shared image consumer đã được xem lại, và operator chấp nhận tính không thể đảo ngược bằng Docker start cho Grafana hoặc cAdvisor cũ. Sau nhánh `deleted`:
 
-Tiếp tục dùng password qua stdin và Docker config tạm như trong GUIDE.
+- không Docker start lại stack cũ để lấy Grafana ở port `3000`
+- không restore lại cAdvisor qua port `8084`
+- rollback chỉ còn nhờ K3s revision, K3s Nginx config hoặc endpoint unavailable trong thời gian khôi phục
 
-### 8.3. Rotate DB password hoặc CA
+Trước khi xoá, bắt buộc hiển thị acknowledgement gắn với exact branch text và `manifest_sha256`:
 
-1. update SSM parameter tương ứng
-2. nếu là CA, dùng lại `file://` với file mới
-3. xác minh `ExternalSecret` đã sync
-4. restart `api` và `worker` để ép reconnect nếu cần
-5. chạy lại health check qua Traefik và worker health
+```bash
+ASSERT_MANIFEST_SHA256
+ACK_TEXT="$(ACK_TEXT_FOR_BRANCH deleted)"
+printf 'IRREVERSIBLE: type exact acknowledgement to continue: %s\n' "$ACK_TEXT"
+read -r ACK_VALUE
+test "$ACK_VALUE" = "$ACK_TEXT"
+```
 
-### 8.4. Rotate Swagger Basic Auth
+Sau đó operator chỉ dùng typed delete commands. Không wildcard, không loop broad, không chạy lệnh prune diện rộng của Docker, không gỡ toàn bộ release bằng Helm, và không xoá PVC/PV.
 
-1. cập nhật `/learning-platform/dev/swagger-username` và `/learning-platform/dev/swagger-password` trong SSM bằng mẫu `SecureString` của GUIDE
-2. xác minh `learning-platform-swagger-runtime` đã sync và vẫn `Ready=True`
-3. restart `api` để process nhận credential mới
-4. xác minh HTTPS Swagger trả `401` với credential cũ và `200` với credential mới
-5. xóa file netrc tạm và không ghi credential vào log hoặc shell history
+#### 7.11.1. Remove exact Docker containers
 
-## 9. GHCR retention cleanup
+```bash
+ASSERT_MANIFEST_SHA256
+python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+for cid in data['delete_plan']['docker_containers']:
+    print(f'docker inspect --type container {cid} --format {{"{{.Name}} {{.Image}} {{.State.Status}}"}}')
+    print(f'docker rm {cid}')
+PY
+```
 
-Workflow `.github/workflows/cleanup-ghcr.yml` hoàn toàn tách biệt với deploy. Nó chạy mỗi tuần lúc 03:00 UTC và có thể chạy thủ công qua **Actions → Clean GHCR development images → Run workflow**.
+Mỗi `docker rm` chỉ được chạy sau khi `docker inspect` xác nhận đúng exact captured ID đang ở trạng thái `stopped` hoặc `exited`.
 
-### 9.1. Điều kiện và policy
+#### 7.11.2. Remove exact Docker images
 
-1. `GITHUB_TOKEN` của workflow phải có `contents: read` và `packages: write`; không cấu hình PAT hoặc secret token riêng.
-2. Token chỉ có quyền xoá/restore package khi người khởi chạy có quyền **admin** trên repository/package GHCR. Nếu package chưa kế thừa quyền từ repository hoặc admin không được cấp, GitHub API sẽ fail và workflow dừng.
-3. Hai package được xử lý độc lập: `learningplatform-api` (dùng chung cho `api` và `worker`) và `learningplatform-web`.
-4. Với từng package, selector giữ 10 version mới nhất có đúng một tag `sha-<40 hex>`, chỉ xét xoá version cũ ít nhất 30 ngày. Version không tag, tag không phải SHA, nhiều tag/mixed tag, hoặc metadata malformed đều bị bỏ qua; không có wildcard delete. Operator phải pin một digest known-good cần giữ lâu hơn bằng tag bổ sung `rollback-<tên-ngắn>`; version đó trở thành multi-tag và không đủ điều kiện xoá.
-5. Trước khi chọn xoá, workflow đọc-only qua SSH strict host checking với `ssh -n` từ cả Deployment và ReplicaSet trong namespace `learning-platform-dev`. Mọi digest còn được tham chiếu đều được bảo vệ để rollout undo và rollback theo digest còn an toàn.
-6. Lỗi SSH, REST list/pagination, parse JSON, selector hoặc protected-digest discovery đều fail closed: không có thao tác xoá tiếp theo.
+```bash
+ASSERT_MANIFEST_SHA256
+python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+for image_id in data['delete_plan']['docker_images']:
+    declared_count = data['image_consumer_counts'][image_id]
+    consumers = [item for item in data['shared_image_consumers'].get(image_id, []) if item]
+    if declared_count != 0 or consumers:
+        raise SystemExit(f'image still has non-legacy consumers: {image_id} -> {consumers}')
+    print(f'docker image inspect {image_id} --format {{"{{.Id}}"}}')
+    print(f'docker image rm {image_id}')
+PY
+```
 
-### 9.2. Dry-run và xoá có xác nhận
+#### 7.11.3. Remove exact Grafana Docker volume
 
-Manual run mặc định là dry-run. Để xem exact version ID được chọn, chạy workflow và để trống `confirmation`; log chỉ in ID, không gọi DELETE. Muốn xoá bằng manual run, nhập đúng `DELETE` vào `confirmation`. Lịch chạy hàng tuần được phép thực hiện xoá theo policy.
+```bash
+ASSERT_MANIFEST_SHA256
+python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+volume_name = data['delete_plan']['docker_volume']
+print(f'docker volume inspect {volume_name}')
+print(f'docker volume rm {volume_name}')
+PY
+```
 
-Mỗi DELETE gọi endpoint REST user-owned chính thức theo exact ID:
+`docker volume rm` chỉ được chạy nếu volume name đúng exact captured name, mountpoint đúng exact captured mountpoint, và không còn consumer container nào.
+
+#### 7.11.4. Remove exact Prometheus bind paths
+
+```bash
+ASSERT_MANIFEST_SHA256
+python3 - <<'PY' "$MANIFEST"
+import json, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[1]).read_text())
+approved = {entry['path']: entry for entry in data['approved_prometheus_bind_paths']}
+for path_value in data['delete_plan']['prometheus_bind_paths']:
+    entry = approved[path_value]
+    print(f'# verify path={path_value} path_type={entry["path_type"]} device={entry["device"]} inode={entry["inode"]}')
+    print(f'# only after verification, remove exact path: {path_value}')
+PY
+```
+
+Filesystem removal chỉ được làm cho exact captured path sau khi operator xác nhận bằng local `stat` rằng path vẫn cùng `device`, `inode`, `path_type`, không phải symlink, không phải parent root rộng, và vẫn nằm dưới exact approved root từ manifest. Không chấp nhận generic `rm -rf` template cho path tùy ý.
+
+### 7.12. Gate dung lượng sau nhánh cuối cùng
+
+```bash
+CHECK_CAPACITY_AND_SELECT_BRANCH
+FINAL_CAPACITY_RC="$?"
+test "$FINAL_CAPACITY_RC" = 10
+sudo ss -ltnp '( sport = :3000 or sport = :8084 or sport = :9090 or sport = :9100 )' || true
+```
+
+Nếu gate cuối không trả `10`, block Todo 12 và ghi rõ blocker. Không bịa rằng xoá đã đủ.
+
+### 7.13. Marker bất biến sau cutover
+
+Operator phải ghi ít nhất một marker chứa:
+
+- thời điểm UTC
+- branch đã chọn: `retained` hoặc `deleted`
+- `manifest_sha256`
+- kết quả gate cuối
+
+Ví dụ dòng evidence:
 
 ```text
-DELETE /user/packages/container/<package>/versions/<version_id>
+legacy-monitoring-cutover finished_at=<UTC> branch=<retained|deleted> manifest_sha256=<sha256> disk_ok=<true|false> mem_ok=<true|false> gate_rc=<10|20|90|91|92|93>
 ```
 
-Không chạy `docker system prune`, không prune image node/containerd trên VPS và không thao tác các untagged version.
+## 8. Rollback truth table
 
-### 9.3. Khôi phục sau cleanup
+| Tình huống | Được phép | Không được phép |
+| --- | --- | --- |
+| Retained branch | exact-start lại container Grafana hoặc cAdvisor đã capture, rồi stop lại và re-disable sau điều tra | broad restore cả stack hoặc broad re-enable route |
+| Deleted branch | rollback qua K3s revision, K3s Nginx config, hoặc chấp nhận endpoint unavailable tạm thời | `docker start` hoặc khôi phục port `3000`/`8084` từ stack đã xoá |
 
-GitHub Packages có thể cho restore version vừa xoá trong thời hạn do GitHub quy định, nhưng `GITHUB_TOKEN` preview restore cũng cần repository/package admin; không xem restore là thay thế cho rollback-safe retention. Cleanup chỉ bảo đảm giữ digest còn được Deployment/ReplicaSet tham chiếu, 10 SHA-tagged version mới nhất và version được operator pin bằng tag `rollback-*`; không bảo đảm giữ mọi digest lịch sử chỉ vì từng được xem là known-good. Khi một digest cũ đã bị xoá vĩnh viễn, cần build/push lại từ commit đã biết rồi deploy immutable digest mới; node/containerd cache không phải cơ chế restore và workflow không dọn cache đó.
-
-## 10. Common failure diagnosis
-
-### 10.1. Tag `k3s` fail trước khi cài
-
-Kiểm tra:
-
-1. OS có đúng Debian hoặc Ubuntu không
-2. port `80` hoặc `443` có bị service khác chiếm không
-3. user SSH có sudo không
-4. `k3s_installer_sha256` có đúng không
-
-Lệnh thường dùng:
+## 9. Các kiểm tra sau cutover
 
 ```bash
-cat /etc/os-release
-sudo ss -ltnp '( sport = :80 or sport = :443 )'
-sudo -l -U <ssh-user>
+sudo k3s kubectl -n observability get pods
+sudo k3s kubectl -n observability get pvc
+sudo k3s kubectl -n observability get ingress
+sudo k3s kubectl -n observability get svc
+sudo k3s kubectl -n observability top pods
+curl -I https://157.66.101.219/
 ```
 
-### 10.2. `external_secrets` fail hoặc `Ready=False`
+Nếu Grafana ingress host thật vẫn qua `grafana.observability.internal`, dùng đúng host hoặc route nội bộ đã xác minh trong môi trường hiện tại. Không ép URL public khác nếu chưa được operator cấu hình DNS hoặc TLS tương ứng.
 
-Kiểm tra:
+## 10. Các claim đã bị loại bỏ
 
-1. Secret AWS bootstrap có đúng tên `aws_credentials_secret_name` không
-2. hai key có đúng là `access-key-id` và `secret-access-key` không
-3. `aws_region` có đúng không
-4. IAM policy có thiếu ARN hoặc thiếu `kms:Decrypt` khi dùng CMK không
-5. `ssm_parameter_keys.*` có trỏ đúng exact path không
+Các claim sau không còn được dùng trong runbook:
 
-### 10.3. Ứng dụng không lên dù ESO đã `Ready=True`
+1. GitHub payload mã hoá một dòng mang runtime secret thật
+2. collector log cũ trên host là bắt buộc
+3. observability mới là stateless
+4. vận hành song song kéo dài một tuần là mặc định
+5. sau branch `deleted` vẫn có thể khởi động Docker stack cũ để rollback ngay
 
-Kiểm tra:
+## 11. Bằng chứng cần lưu cho DoneClaim
 
-1. image có dùng digest immutable không
-2. Secret GHCR có đúng type `kubernetes.io/dockerconfigjson` không
-3. `ghcr_pull_secret_name` có đúng với Secret thật không
-4. `DB_SSL_MODE` có là `verify-ca` và `DB_SSL_CA` có mặt không
+Operator hoặc agent chuẩn bị DoneClaim phải có tối thiểu:
 
-### 10.4. Monitoring không lên target
-
-Kiểm tra:
-
-1. `prometheus_service_name` có đúng service thật trên host không
-2. `prometheus_config_path` có đúng file config đang dùng không
-3. `prometheus_scrape_config_path` và `prometheus_file_sd_target_path` có nằm trong layout thật của host không
-4. `promtool` có tồn tại ở `prometheus_promtool_path` không
-5. service `kube-state-metrics-port-forward.service` có chạy không
-
-### 10.5. Workflow GitHub fail trước bước Ansible
-
-Kiểm tra environment `dev`:
-
-1. `DEV_VPS_HOST`
-2. `DEV_VPS_USER`
-3. `DEV_VPS_SSH_KEY`
-4. `DEV_VPS_KNOWN_HOSTS`
-5. `DEV_K3S_ANSIBLE_VARS_B64`
-
-Kiểm tra thêm:
-
-1. payload base64 có decode được không
-2. payload không chứa ký tự xuống dòng lỗi hoặc file sai nội dung
-3. user và host chỉ chứa ký tự mà workflow chấp nhận
-
-## 11. VPS replacement sequence
-
-Khi cần thay VPS mới, làm theo đúng thứ tự này:
-
-1. tạo VPS mới với Debian hoặc Ubuntu
-2. harden SSH và firewall
-3. lấy `known_hosts` của host mới
-4. cập nhật inventory local hoặc GitHub Environment sang host mới
-5. add public IP mới vào Aiven allowlist
-6. giữ host cũ hoạt động cho tới khi host mới pass smoke test
-7. chạy tag `k3s` trên host mới
-8. tạo Secret AWS bootstrap và Secret GHCR trên host mới
-9. chạy `external_secrets`, `monitoring`, `applications` hoặc full baseline theo nhu cầu
-10. xác minh Traefik, API health, worker health, Prometheus targets
-11. chuyển DNS hoặc endpoint công khai sang host mới nếu cần
-12. sau khi host mới ổn định mới gỡ allowlist IP cũ và decommission host cũ
-
-## 12. Mốc kết thúc
-
-Khi một đợt bootstrap hoặc deploy hoàn tất, nên lưu ít nhất các bằng chứng sau:
-
-1. output rollout status của `web`, `api`, `worker`
-2. trạng thái `Ready=True` của ba `ExternalSecret`, gồm `learning-platform-swagger-runtime`
-3. kết quả health của `http(s)://<dev-public-host>/api/v1/health`
-4. kết quả worker `/health` qua port-forward
-5. trạng thái target Prometheus `node-exporter` và `kube-state-metrics`
-6. kết quả Swagger HTTPS `401` không credential và `200` với credential đúng
-
-Nếu chưa có các bằng chứng này, chưa nên xem rollout là đã xác minh xong.
+1. kết quả `bash infra/scripts/validate.sh`
+2. kết quả doc static checks và link checks cục bộ
+3. kết quả guard validate manifest Todo 11
+4. `manifest_sha256`
+5. evidence trước và sau gate capacity fail-closed
+6. branch cutover đã chọn: `retained` hoặc `deleted`
+7. xác nhận cleanup fixture âm tính đã xoá, không để lại file tạm trong repo
