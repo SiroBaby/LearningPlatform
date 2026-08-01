@@ -364,41 +364,42 @@ jobs:
                   credential_file.write(encoded)
               destination.chmod(0o600)
           PY
-          tar -C "$CREDENTIAL_DIR" -cf - access-key-id secret-access-key | \
-            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" 'bash -ceu '"'"'
-              umask 077
-              REMOTE_CREDENTIAL_DIR="$(mktemp -d)"
-              cleanup_remote_credentials() {
-                rm -rf -- "$REMOTE_CREDENTIAL_DIR"
-              }
-              trap cleanup_remote_credentials EXIT
-              tar -C "$REMOTE_CREDENTIAL_DIR" -xf -
-              python3 - "$REMOTE_CREDENTIAL_DIR/access-key-id" "$REMOTE_CREDENTIAL_DIR/secret-access-key" <<'"'"'PY'"'"'
-              import os
-              import stat
-              import sys
+          read -r -d '' REMOTE_SCRIPT <<'REMOTE_BASH' || true
+          umask 077
+          REMOTE_CREDENTIAL_DIR="$(mktemp -d)"
+          cleanup_remote_credentials() {
+            rm -rf -- "$REMOTE_CREDENTIAL_DIR"
+          }
+          trap cleanup_remote_credentials EXIT
+          tar -C "$REMOTE_CREDENTIAL_DIR" -xf -
+          python3 - "$REMOTE_CREDENTIAL_DIR/access-key-id" "$REMOTE_CREDENTIAL_DIR/secret-access-key" <<'PY'
+          import os
+          import stat
+          import sys
 
-              for credential_path in sys.argv[1:]:
-                  metadata = os.lstat(credential_path)
-                  if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-                      sys.exit('"'"'credential transport file must be regular'"'"')
-                  content = open(credential_path, '"'"'rb'"'"').read()
-                  if not content or len(content) > 4096 or b'"'"'\0'"'"' in content:
-                      sys.exit('"'"'credential transport file has an unsupported size or byte'"'"')
-              PY
-              sudo k3s kubectl create namespace observability --dry-run=client -o yaml | sudo k3s kubectl apply -f -
-              sudo k3s kubectl create secret generic observability-aws-credentials --namespace observability \
-                --from-file=access-key-id="$REMOTE_CREDENTIAL_DIR/access-key-id" \
-                --from-file=secret-access-key="$REMOTE_CREDENTIAL_DIR/secret-access-key" \
-                --dry-run=client -o yaml | sudo k3s kubectl apply -f -
-              SECRET_TYPE="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o jsonpath='"'"'{.type}'"'"')"
-              SECRET_KEYS="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o jsonpath='"'"'{range $key := .data}{$key}{"\\n"}{end}'"'"' | LC_ALL=C sort)"
-              if [[ "$SECRET_TYPE" != Opaque || "$SECRET_KEYS" != $'"'"'access-key-id\nsecret-access-key'"'"' ]]; then
-                printf '"'"'%s\n'"'"' '"'"'observability credential Secret metadata contract failed'"'"' >&2
-                exit 1
-              fi
-              printf '"'"'%s\n'"'"' '"'"'observability credential Secret metadata verified: type=Opaque key_count=2 keys=access-key-id,secret-access-key'"'"'
-            '"'"''
+          for credential_path in sys.argv[1:]:
+              metadata = os.lstat(credential_path)
+              if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                  sys.exit("credential transport file must be regular")
+              content = open(credential_path, "rb").read()
+              if not content or len(content) > 4096 or b"\0" in content:
+                  sys.exit("credential transport file has an unsupported size or byte")
+          PY
+          sudo k3s kubectl create namespace observability --dry-run=client -o yaml | sudo k3s kubectl apply -f -
+          sudo k3s kubectl create secret generic observability-aws-credentials --namespace observability \
+            --from-file=access-key-id="$REMOTE_CREDENTIAL_DIR/access-key-id" \
+            --from-file=secret-access-key="$REMOTE_CREDENTIAL_DIR/secret-access-key" \
+            --dry-run=client -o yaml | sudo k3s kubectl apply -f -
+          SECRET_TYPE="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o jsonpath='{.type}')"
+          SECRET_KEYS="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o jsonpath='{range $key := .data}{$key}{"\n"}{end}' | LC_ALL=C sort)"
+          if [[ "$SECRET_TYPE" != Opaque || "$SECRET_KEYS" != $'access-key-id\nsecret-access-key' ]]; then
+            printf '%s\n' 'observability credential Secret metadata contract failed' >&2
+            exit 1
+          fi
+          printf '%s\n' 'observability credential Secret metadata verified: type=Opaque key_count=2 keys=access-key-id,secret-access-key'
+          REMOTE_BASH
+          tar -C "$CREDENTIAL_DIR" -cf - access-key-id secret-access-key | \
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "env -u BASH_ENV bash --noprofile --norc -ceu $(printf '%q' "$REMOTE_SCRIPT")"
       - name: Apply External Secrets and observability through Ansible
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/infra/ansible/ansible.cfg

@@ -121,16 +121,64 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   end
 
   mock_bin = File.join(directory, 'bin')
+  remote_tmp = File.join(directory, 'remote-tmp')
+  brittle_bash_env = File.join(directory, 'brittle-bash-env')
   Dir.mkdir(mock_bin)
-  File.write(File.join(mock_bin, 'ssh'), "#!/usr/bin/env bash\ncat >/dev/null\n")
-  File.chmod(0o700, File.join(mock_bin, 'ssh'))
+  Dir.mkdir(remote_tmp)
+  File.write(brittle_bash_env, "PS1=\"${PS1}:fixture\"\n")
+  File.write(File.join(mock_bin, 'ssh'), <<~'BASH')
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+    remote_command="${!#}"
+    payload="$(mktemp)"
+    trap 'rm -f -- "$payload"' EXIT
+    cat > "$payload"
+    env BASH_ENV="$MOCK_BASH_ENV" bash -c "$remote_command" < "$payload"
+  BASH
+  File.write(File.join(mock_bin, 'sudo'), <<~'BASH')
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+    exec "$@"
+  BASH
+  File.write(File.join(mock_bin, 'k3s'), <<~'BASH')
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+    [ "$1" = kubectl ]
+    shift
+    case "$1" in
+      create)
+        printf '%s\n' 'apiVersion: v1'
+        ;;
+      apply)
+        [ "$2" = -f ] && [ "$3" = - ]
+        cat >/dev/null
+        ;;
+      get)
+        case "$*" in
+          *'{.type}'*) printf '%s' 'Opaque' ;;
+          *'.data'*) printf '%s\n' 'access-key-id' 'secret-access-key' ;;
+          *) exit 1 ;;
+        esac
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+  BASH
+  %w[ssh sudo k3s].each { |name| File.chmod(0o700, File.join(mock_bin, name)) }
   bootstrap_environment = environment.merge(
     'PATH' => "#{mock_bin}:#{ENV.fetch('PATH')}",
+    'MOCK_BASH_ENV' => brittle_bash_env,
+    'TMPDIR' => remote_tmp,
     'OBSERVABILITY_AWS_ACCESS_KEY_ID' => 'fixture-access-key',
     'OBSERVABILITY_AWS_SECRET_ACCESS_KEY' => 'fixture-secret-key'
   )
-  _stdout, stderr, status = run_step(bootstrap, bootstrap_environment)
+  stdout, stderr, status = run_step(bootstrap, bootstrap_environment)
+  output = "#{stdout}#{stderr}"
   assert(status.success?, "bootstrap SSH fixture failed: #{stderr}")
+  assert(!output.include?('fixture-access-key') && !output.include?('fixture-secret-key'), 'bootstrap fixture must not expose credentials')
+  assert(Dir.children(remote_tmp).empty?, 'remote credential directory must be cleaned up')
+  assert(Dir.children(runner_temp).none? { |name| name.start_with?('observability-aws-credentials.') }, 'local credential directory must be cleaned up')
 
   broken = app_inventory.sub("\nhost, user", "\n host, user")
   broken_runner_temp = File.join(directory, 'broken-runner-temp')
