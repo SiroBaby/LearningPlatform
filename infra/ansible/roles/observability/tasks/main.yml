@@ -80,6 +80,34 @@
       Todo 7's Grafana ExternalSecret template and exact non-secret variable
       contract must exist before any observability Helm action.
 
+- name: Render Grafana ESO documents on the controller before Kubernetes mutation
+  ansible.builtin.set_fact:
+    observability_grafana_eso_definitions: >-
+      {{ lookup('template', observability_grafana_external_secret_template)
+         | from_yaml_all | list }}
+  no_log: true
+
+- name: Validate rendered Grafana ESO documents before Kubernetes mutation
+  ansible.builtin.assert:
+    that:
+      - observability_grafana_eso_definitions | length == 2
+      - observability_grafana_eso_definitions | map(attribute='kind') | list == ['SecretStore', 'ExternalSecret']
+      - observability_grafana_eso_definitions[0].apiVersion == 'external-secrets.io/v1beta1'
+      - observability_grafana_eso_definitions[0].metadata.name == 'aws-parameter-store'
+      - observability_grafana_eso_definitions[0].metadata.namespace == observability_namespace
+      - observability_grafana_eso_definitions[1].apiVersion == 'external-secrets.io/v1beta1'
+      - observability_grafana_eso_definitions[1].metadata.name == grafana_admin_secret_name
+      - observability_grafana_eso_definitions[1].metadata.namespace == observability_namespace
+      - observability_grafana_eso_definitions[1].spec.data | length == 2
+      - >-
+        observability_grafana_eso_definitions[1].spec.data
+        | map(attribute='remoteRef.key') | list
+        == [ssm_parameter_keys.grafana_admin_user, ssm_parameter_keys.grafana_admin_password]
+    fail_msg: >-
+      Grafana ESO template must render exactly the expected SecretStore and
+      ExternalSecret documents before Kubernetes mutation.
+  no_log: true
+
 - name: Render observability check-mode decisions without mutation
   ansible.builtin.debug:
     msg: >-
@@ -124,11 +152,11 @@
       secret-access-key in {{ observability_namespace }} before Ansible runs.
   no_log: true
 
-- name: Apply Grafana ExternalSecret contract prepared by Todo 7
+- name: Apply Grafana ESO contract prepared by Todo 7
   kubernetes.core.k8s:
     kubeconfig: '{{ observability_kubeconfig }}'
     state: present
-    definition: "{{ lookup('template', observability_grafana_external_secret_template) | from_yaml }}"
+    definition: '{{ observability_grafana_eso_definitions }}'
   no_log: true
 
 - name: Wait for Grafana ExternalSecret readiness

@@ -1,0 +1,17 @@
+---
+- name: Run malformed Grafana ESO template fixture
+  block:
+    - name: Include observability role for malformed Grafana ESO template
+      ansible.builtin.include_role:
+        name: observability
+      vars:
+        observability_grafana_external_secret_template: '{{ observability_malformed_template_case.template }}'
+  rescue:
+    - name: Require malformed Grafana ESO template failure before mutation
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name == observability_malformed_template_case.expected_failed_task
+          - observability_kubernetes_mutation_count == 0
+        fail_msg: >-
+          {{ observability_malformed_template_case.name }} must fail at its
+          template contract gate before Kubernetes mutation.
