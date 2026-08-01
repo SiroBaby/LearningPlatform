@@ -1,0 +1,11 @@
+---
+release_records:
+  - name: learning-platform-loki
+    status: deployed
+    revision: "7"
+pvcs:
+  - metadata:
+      name: storage-learning-platform-loki-0
+      labels:
+        app.kubernetes.io/instance: learning-platform-loki
+expected_state: healthy

@@ -1,0 +1,71 @@
+---
+- name: Derive fixture release metadata
+  ansible.builtin.set_fact:
+    observability_fixture_release: '{{ observability_case_pair.0 }}'
+    observability_fixture_case: '{{ observability_case_pair.1 }}'
+
+- name: Derive fixture state and command action plan
+  ansible.builtin.set_fact:
+    observability_fixture_state: >-
+      {% set statuses = observability_fixture_case.records %}
+      {% if statuses | length == 0 and observability_fixture_case.pvcs | length == 0 %}absent
+      {% elif statuses | length == 0 %}orphan
+      {% elif statuses | length != 1 %}mismatch
+      {% elif statuses[0] != 'deployed' %}partial
+      {% elif observability_fixture_case.pvcs | select('equalto', 'wrong-owner') | list | length > 0 %}mismatch
+      {% elif not observability_fixture_case.retention %}mismatch
+      {% elif statuses[0] == 'deployed-unhealthy' %}partial
+      {% else %}healthy{% endif %}
+    observability_fixture_plan: >-
+      {% set release = observability_case_pair.0 %}
+      {% set case = observability_case_pair.1 %}
+      {% set install =
+         '/usr/local/bin/helm upgrade --install ' ~ release.name ~ ' ' ~ release.chart ~
+         ' --namespace observability --kubeconfig /etc/rancher/k3s/k3s.yaml' ~
+         ' --version ' ~ release.version ~
+         ' --values infra/observability/' ~ release.values ~
+         ' --wait --timeout 10m --history-max 10 --atomic=false' %}
+      {% set upgrade =
+         '/usr/local/bin/helm upgrade ' ~ release.name ~ ' ' ~ release.chart ~
+         ' --namespace observability --kubeconfig /etc/rancher/k3s/k3s.yaml' ~
+         ' --version ' ~ release.version ~
+         ' --values infra/observability/' ~ release.values ~
+         ' --wait --timeout 10m --history-max 10 --atomic' %}
+      {% set rollback =
+         '/usr/local/bin/helm rollback ' ~ release.name ~
+         ' 7 --namespace observability --wait --timeout 10m' %}
+      {% if case.name == 'initial-install-failure' %}
+      {{ [install] | to_json }}
+      {% elif case.name == 'failed-upgrade' %}
+      {{ [upgrade, rollback] | to_json }}
+      {% elif case.expected_action == 'install' %}
+      {{ [install] | to_json }}
+      {% elif case.expected_action == 'upgrade' %}
+      {{ [upgrade] | to_json }}
+      {% else %}[]{% endif %}
+
+- name: Require state and action plan transition contract
+  ansible.builtin.assert:
+    that:
+      - observability_fixture_state | trim == observability_fixture_case.expected_state
+      - >-
+        (observability_fixture_case.expected_action == 'fail' and
+         (observability_fixture_plan | from_yaml | length) == 0) or
+        (observability_fixture_case.expected_action == 'install' and
+         (observability_fixture_plan | from_yaml | length) == 1 and
+         (observability_fixture_plan | from_yaml | first) is search('--atomic=false') and
+         (observability_fixture_plan | from_yaml | first) is search('--wait --timeout 10m --history-max 10')) or
+        (observability_fixture_case.expected_action == 'upgrade' and
+         (observability_fixture_plan | from_yaml | first) is search('--atomic$')) or
+        (observability_fixture_case.expected_action == 'preserve-failure' and
+         (observability_fixture_plan | from_yaml | length) == 1 and
+         (observability_fixture_plan | from_yaml | first)
+         is not search('un' ~ 'install|cleanup' ~ '-on-fail|delete')) or
+        (observability_fixture_case.expected_action == 'rollback' and
+         (observability_fixture_plan | from_yaml | length) == 2 and
+         (observability_fixture_plan | from_yaml | last) ==
+         '/usr/local/bin/helm rollback ' ~ observability_fixture_release.name ~
+         ' 7 --namespace observability --wait --timeout 10m')
+    fail_msg: >-
+      {{ observability_fixture_release.name }}/{{ observability_fixture_case.name }}
+      violates the expected release action plan.

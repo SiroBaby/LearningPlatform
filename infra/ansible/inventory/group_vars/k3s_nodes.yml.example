@@ -53,6 +53,12 @@ ssm_parameter_keys:
   openai_model: /REPLACE/WITH/EXACT/openai-model
   swagger_username: /REPLACE/WITH/EXACT/swagger-username
   swagger_password: /REPLACE/WITH/EXACT/swagger-password
+  grafana_admin_user: /REPLACE/WITH/EXACT/grafana-admin-user
+  grafana_admin_password: /REPLACE/WITH/EXACT/grafana-admin-password
+
+observability_namespace: observability
+observability_aws_credentials_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_OBSERVABILITY_AWS_CREDENTIAL_SECRET
+grafana_admin_secret_name: grafana-admin
 
 # Immutable image digests are required. Replace every placeholder with an
 # image reference ending in @sha256:<64 hexadecimal characters>.

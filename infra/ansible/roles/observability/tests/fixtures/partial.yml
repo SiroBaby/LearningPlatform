@@ -1,0 +1,9 @@
+---
+release_records:
+  - name: learning-platform-loki
+    status: pending-install
+    revision: "1"
+pvcs:
+  - metadata:
+      name: storage-learning-platform-loki-0
+expected_state: partial
