@@ -66,6 +66,93 @@
             - /learning-platform/dev/grafana-admin-user
             - /learning-platform/dev/grafana-admin-password
 
+    - name: Verify Traefik NodePort dataplane contract does not require an ss listener
+      ansible.builtin.assert:
+        that:
+          - >-
+            (not item.ss_listener_present and
+             item.kube_proxy_loopback_configured and
+             item.traefik_ready_endpoint_present and
+             item.netfilter_nodeport_rule_present and
+             item.loopback_ping_succeeds and
+             item.node_address_ping_fails) == item.accepted
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search("nodeport-addresses=127.0.0.0/8")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('kind: Endpoints')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('iptables-save -t nat')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('url: http://127.0.0.1:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('/ping')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('observability_traefik_node_address_request.status | int == -1')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is not search('Require shared Traefik NodePort listener outside check mode')
+        fail_msg: >-
+          An absent ss listener is acceptable only when the exact loopback
+          kube-proxy, Traefik readiness, netfilter, loopback reachability, and
+          non-loopback rejection dataplane checks all pass.
+      loop:
+        - name: ss-absent-all-real-checks-pass
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_ping_succeeds: true
+          node_address_ping_fails: true
+          accepted: true
+        - name: missing-kube-proxy-loopback-config
+          ss_listener_present: false
+          kube_proxy_loopback_configured: false
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_ping_succeeds: true
+          node_address_ping_fails: true
+          accepted: false
+        - name: missing-ready-endpoint
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: false
+          netfilter_nodeport_rule_present: true
+          loopback_ping_succeeds: true
+          node_address_ping_fails: true
+          accepted: false
+        - name: missing-netfilter-rule
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: false
+          loopback_ping_succeeds: true
+          node_address_ping_fails: true
+          accepted: false
+        - name: failed-loopback-ping
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_ping_succeeds: false
+          node_address_ping_fails: true
+          accepted: false
+        - name: reachable-node-address
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_ping_succeeds: true
+          node_address_ping_fails: false
+          accepted: false
+      loop_control:
+        label: '{{ item.name }}'
+
     - name: Scan action-plan source for forbidden destructive operations
       ansible.builtin.assert:
         that:

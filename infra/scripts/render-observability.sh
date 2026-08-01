@@ -61,7 +61,11 @@ render() {
   local release="$1" chart="$2" version="$3" values="$4" output="$5"
   local version_args=(--version "${version}")
   [ -n "${chart_dir}" ] && version_args=()
-  helm template "${release}" "${chart}" --namespace "${NAMESPACE}" "${version_args[@]}" --values "${values}" >"${output}"
+  if [ "${#version_args[@]}" -eq 0 ]; then
+    helm template "${release}" "${chart}" --namespace "${NAMESPACE}" --values "${values}" >"${output}"
+  else
+    helm template "${release}" "${chart}" --namespace "${NAMESPACE}" "${version_args[@]}" --values "${values}" >"${output}"
+  fi
 }
 
 render learning-platform-monitoring "${monitoring_chart}" 87.21.0 "${INFRA_DIR}/observability/kube-prometheus-stack-values.yml" "${OUTPUT_DIR}/monitoring.yml"

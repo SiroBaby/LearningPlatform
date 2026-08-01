@@ -20,6 +20,13 @@ root = File.expand_path('../../..', __dir__)
 workflow = safe_yaml_load(File.read(File.join(root, '.github', 'workflows', 'deploy-dev.yml')))
 jobs = workflow.fetch('jobs')
 
+def application_flow_runs?(infra_quality_result)
+  %w[success skipped].include?(infra_quality_result)
+end
+
+assert(!application_flow_runs?('failure'), 'failed infra-quality must block the application build/deploy path')
+assert(application_flow_runs?('skipped'), 'skipped infra-quality must allow the app-only build/deploy path')
+
 def run_step(script, environment)
   Open3.capture3(environment, 'bash', '-ceu', script)
 end

@@ -73,7 +73,17 @@ assert(failures, jobs.fetch('deploy').fetch('if').include?("needs.changes.output
 assert(failures, step_names(jobs.fetch('deploy')).include?('Apply selected applications through Ansible'),
        'target=api deploy must apply applications')
 assert(failures, step_by_name(jobs.fetch('deploy'), 'Apply selected applications through Ansible').fetch('run').include?('--tags applications'),
-       'target=api deploy must retain applications-only Ansible tags')
+        'target=api deploy must retain applications-only Ansible tags')
+build_images = jobs.fetch('build-images')
+deploy = jobs.fetch('deploy')
+assert(failures, build_images.fetch('needs') == %w[changes backend-quality frontend-quality infra-quality],
+       'application image build must wait for infra-quality')
+assert(failures, build_images.fetch('if').include?("needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped'"),
+       'application image build must block failed infra-quality but allow skipped infra-quality')
+assert(failures, deploy.fetch('needs') == %w[changes infra-quality build-images],
+       'application deploy must wait for infra-quality and image build')
+assert(failures, deploy.fetch('if').include?("needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped'"),
+       'application deploy must block failed infra-quality but allow skipped infra-quality')
 
 observability = jobs.fetch('deploy-observability')
 observability_if = observability.fetch('if')

@@ -165,7 +165,73 @@
       free disk and {{ observability_minimum_free_memory_mib }}Mi free memory
       before persistent Helm releases are changed.
 
-- name: Check shared Traefik NodePort listener without creating an edge
+- name: Require exact kube-proxy loopback NodePort configuration
+  ansible.builtin.command:
+    cmd: >-
+      grep -Fx '  - nodeport-addresses=127.0.0.0/8'
+      /etc/rancher/k3s/config.yaml
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Verify packaged Traefik has ready endpoints
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: v1
+    kind: Endpoints
+    namespace: kube-system
+    name: traefik
+  register: observability_traefik_endpoints
+
+- name: Require packaged Traefik ready endpoints
+  ansible.builtin.assert:
+    that:
+      - >-
+        observability_traefik_endpoints.resources | length == 1 and
+        (observability_traefik_endpoints.resources[0].subsets | default([])
+        | selectattr('addresses', 'defined') | map(attribute='addresses')
+        | flatten | list | length) > 0
+    fail_msg: Packaged Traefik has no ready endpoint addresses.
+
+- name: Require exact kube-proxy NodePort netfilter rule
+  ansible.builtin.command:
+    cmd: >-
+      bash -o pipefail -c
+      "iptables-save -t nat | grep -Ex -- '-A KUBE-NODEPORTS .* -p tcp .* --dport {{ k3s_traefik_http_node_port }} .*'"
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Require loopback Traefik ready endpoint reachability
+  ansible.builtin.uri:
+    url: http://127.0.0.1:{{ k3s_traefik_http_node_port }}/ping
+    method: GET
+    status_code: 200
+    timeout: 5
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Check that Traefik NodePort is unreachable through the node address
+  ansible.builtin.uri:
+    url: http://{{ ansible_default_ipv4.address }}:{{ k3s_traefik_http_node_port }}/ping
+    method: GET
+    status_code: 200
+    timeout: 5
+  register: observability_traefik_node_address_request
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Require loopback-only Traefik NodePort dataplane
+  ansible.builtin.assert:
+    that:
+      - observability_traefik_node_address_request.status | int == -1
+    fail_msg: >-
+      Shared Traefik NodePort {{ k3s_traefik_http_node_port }} must reject
+      non-loopback node-address traffic.
+  when: not ansible_check_mode
+
+- name: Record shared Traefik NodePort listener diagnostic
   ansible.builtin.command:
     cmd: "ss -ltnH '( sport = :{{ k3s_traefik_http_node_port }} )'"
   register: observability_traefik_nodeport_listener
@@ -174,13 +240,13 @@
   check_mode: false
   when: not ansible_check_mode
 
-- name: Require shared Traefik NodePort listener outside check mode
-  ansible.builtin.assert:
-    that:
-      - observability_traefik_nodeport_listener.stdout | trim | length > 0
-    fail_msg: >-
-      Shared Traefik NodePort {{ k3s_traefik_http_node_port }} is not listening;
-      observability does not create or replace an edge listener.
+- name: Record shared Traefik NodePort dataplane evidence
+  ansible.builtin.debug:
+    msg:
+      ss_listener_present: '{{ observability_traefik_nodeport_listener.stdout | trim | length > 0 }}'
+      netfilter_rule: KUBE-NODEPORTS TCP {{ k3s_traefik_http_node_port }}
+      loopback_ready_endpoint: http://127.0.0.1:{{ k3s_traefik_http_node_port }}/ping
+      node_address_rejected: '{{ ansible_default_ipv4.address }}:{{ k3s_traefik_http_node_port }}'
   when: not ansible_check_mode
 
 - name: Inspect named legacy kube-state-metrics objects before migration

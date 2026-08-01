@@ -117,8 +117,8 @@ jobs:
 
   build-images:
     name: Build and push images
-    needs: [changes, backend-quality, frontend-quality]
-    if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped')
+    needs: [changes, backend-quality, frontend-quality, infra-quality]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped') && (needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -154,8 +154,8 @@ jobs:
 
   deploy:
     name: Deploy immutable digests to K3s
-    needs: [changes, build-images]
-    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.build-images.result == 'success'
+    needs: [changes, infra-quality, build-images]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.build-images.result == 'success' && (needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped')
     runs-on: ubuntu-24.04
     environment: dev
     permissions:
