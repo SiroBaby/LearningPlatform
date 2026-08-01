@@ -3,10 +3,16 @@
 
 require 'yaml'
 
+def safe_yaml_load(text)
+  YAML.safe_load(text, permitted_classes: [], permitted_symbols: [], aliases: true)
+rescue ArgumentError
+  YAML.safe_load(text, [], [], true)
+end
+
 root = File.expand_path('../../..', __dir__)
 workflow_path = File.join(root, '.github', 'workflows', 'deploy-dev.yml')
-workflow = YAML.safe_load(File.read(workflow_path), [], [], true)
-playbook = YAML.safe_load(File.read(File.join(root, 'infra', 'ansible', 'playbooks', 'site.yml')), [], [], true).first
+workflow = safe_yaml_load(File.read(workflow_path))
+playbook = safe_yaml_load(File.read(File.join(root, 'infra', 'ansible', 'playbooks', 'site.yml'))).first
 jobs = workflow.fetch('jobs')
 failures = []
 
