@@ -32,9 +32,12 @@ def job_secret_references(job)
   job.to_s.scan(/secrets\.([A-Z0-9_]+)/).flatten
 end
 
-def eligible_jobs(target, observability_changed)
+def eligible_jobs(target:, observability_changed:, ref:, infra_quality_result: 'success')
   return %w[changes backend-quality build-images deploy] if target == 'api'
-  return %w[changes infra-quality deploy-observability] if target == 'observability' && observability_changed
+
+  if target == 'observability' && observability_changed && ref == 'refs/heads/develop' && infra_quality_result == 'success'
+    return %w[changes infra-quality deploy-observability]
+  end
 
   ['changes']
 end
@@ -47,12 +50,16 @@ assert(failures, triggers.dig('push', 'branches') == ['develop'],
        'push must remain restricted to develop')
 assert(failures, playbook.fetch('vars_files') == ['../vars/dev.yml'],
        'playbook must load canonical non-secret vars/dev.yml relative to its location')
-assert(failures, eligible_jobs('api', true) == %w[changes backend-quality build-images deploy],
-       'api fixture must select only the application quality/build/deploy path')
-assert(failures, eligible_jobs('observability', true) == %w[changes infra-quality deploy-observability],
-       'observability fixture must select only infrastructure quality and explicit observability deployment')
-assert(failures, eligible_jobs('observability', false) == ['changes'],
-       'unchanged observability fixture must not select a remote deployment')
+assert(failures, eligible_jobs(target: 'api', observability_changed: true, ref: 'refs/heads/feature/test') == %w[changes backend-quality build-images deploy],
+        'api fixture must select only the application quality/build/deploy path')
+assert(failures, eligible_jobs(target: 'observability', observability_changed: true, ref: 'refs/heads/develop') == %w[changes infra-quality deploy-observability],
+       'observability fixture on develop must select only infrastructure quality and explicit observability deployment')
+assert(failures, eligible_jobs(target: 'observability', observability_changed: true, ref: 'refs/heads/feature/test') == ['changes'],
+       'observability fixture on feature refs must not select a remote deployment')
+assert(failures, eligible_jobs(target: 'observability', observability_changed: true, ref: 'refs/heads/develop', infra_quality_result: 'skipped') == ['changes'],
+       'observability fixture must not select a remote deployment when infra quality is not successful')
+assert(failures, eligible_jobs(target: 'observability', observability_changed: false, ref: 'refs/heads/develop') == ['changes'],
+        'unchanged observability fixture must not select a remote deployment')
 
 changes = jobs.fetch('changes')
 assert(failures, changes.dig('outputs', 'observability') == '${{ steps.classify.outputs.observability }}',
@@ -71,9 +78,13 @@ assert(failures, step_by_name(jobs.fetch('deploy'), 'Apply selected applications
 observability = jobs.fetch('deploy-observability')
 observability_if = observability.fetch('if')
 assert(failures, observability_if.include?("github.event_name == 'workflow_dispatch'") && observability_if.include?("inputs.target == 'observability'"),
-       'target=observability must only be remotely deployable by explicit dispatch')
+        'target=observability must only be remotely deployable by explicit dispatch')
+assert(failures, observability_if.include?("github.ref == 'refs/heads/develop'"),
+       'target=observability must only be remotely deployable from refs/heads/develop')
 assert(failures, observability_if.include?("needs.changes.outputs.observability == 'true'"),
-       'target=observability must require observability classification')
+        'target=observability must require observability classification')
+assert(failures, observability_if.include?("needs.infra-quality.result == 'success'"),
+       'target=observability must require infra-quality success')
 assert(failures, observability.fetch('needs') == %w[changes infra-quality],
        'target=observability must depend only on change classification and infra quality')
 assert(failures, step_names(observability).include?('Apply External Secrets and observability through Ansible'),
@@ -149,4 +160,4 @@ assert(failures, !source.match?(/learning-platform-dev-aws-credentials|aws_crede
        'observability bootstrap must not reuse the application AWS Secret contract')
 
 abort "FAIL\n#{failures.join("\n")}" unless failures.empty?
-puts 'PASS workflow policy: api selects application pipeline; observability selects explicit ESO/observability pipeline only'
+puts 'PASS workflow policy: api selects application pipeline; observability deploy stays manual, classified, infra-approved, and develop-only'

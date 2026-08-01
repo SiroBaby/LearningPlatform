@@ -12,7 +12,7 @@ RUNBOOK này dùng cho:
 4. maintenance downtime cho cutover legacy monitoring
 5. conditional deletion (xoá có điều kiện) sau Todo 11
 6. rollback theo nhánh `retained` hoặc `deleted` đúng contract
-7. rerun workflow `target=observability` để bootstrap credential observability, không SSH thủ công
+7. rerun workflow từ branch `develop` với `target=observability` để bootstrap credential observability, không SSH thủ công
 
 ## 2. Công cụ local bắt buộc
 
@@ -119,9 +119,9 @@ Nếu đạt cả hai ngưỡng sau khi dừng legacy stack, chọn nhánh `reta
 
 ### 5.4. Bootstrap AWS credential cho observability
 
-`deploy-observability` là đường duy nhất để tạo/upsert namespace `observability` và Secret `observability-aws-credentials`. Job chỉ chạy từ workflow dispatch với `target=observability`; GitHub Environment `dev` là bootstrap trust anchor cho VPS ngoài.
+`deploy-observability` là đường duy nhất để tạo/upsert namespace `observability` và Secret `observability-aws-credentials`. Job chỉ chạy từ workflow dispatch với `target=observability` khi workflow run ref là `refs/heads/develop`; dispatch từ feature branch chỉ được phép chạy classification và infra-quality, còn deploy job phải bị skip. GitHub Environment `dev` là bootstrap trust anchor cho VPS ngoài.
 
-Khi credential cần rotate, revoke hoặc VPS thay đổi: cập nhật GitHub Environment theo GUIDE rồi rerun workflow. Không tạo/chỉnh Secret bằng SSH thủ công. Workflow xác minh metadata `Opaque` và đúng hai key `access-key-id`, `secret-access-key`, không in secret data.
+Khi credential cần rotate, revoke hoặc VPS thay đổi: cập nhật GitHub Environment theo GUIDE rồi rerun workflow từ branch `develop`. Merge vào `develop` là bước human-only (chỉ con người được merge) trước deploy; tài liệu này không coi AI là tác nhân merge. Không tạo/chỉnh Secret bằng SSH thủ công. Workflow xác minh metadata `Opaque` và đúng hai key `access-key-id`, `secret-access-key`, không in secret data.
 
 ## 6. Maintenance window và downtime
 

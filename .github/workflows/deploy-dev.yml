@@ -281,7 +281,7 @@ jobs:
     name: Deploy ESO and observability only
     needs: [changes, infra-quality]
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.target == 'observability' &&
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop' && inputs.target == 'observability' &&
       needs.changes.outputs.observability == 'true' && needs.infra-quality.result == 'success'
     runs-on: ubuntu-24.04
     environment: dev

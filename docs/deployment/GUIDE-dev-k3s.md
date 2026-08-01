@@ -131,7 +131,7 @@ Tên Secret thực tế phải khớp `aws_credentials_secret_name` và `ghcr_pu
 
 ### 6.2. Namespace `observability`
 
-Không tạo tay AWS Secret này. Với **Actions → Deploy development VPS → Run workflow → `target=observability`**, job `deploy-observability` tạo/upsert idempotent namespace và Secret trước Ansible. Hai credential chỉ đi từ environment đã mask qua stdin SSH vào file tạm quyền chặt, sau đó `kubectl create secret --dry-run=client -o yaml | kubectl apply -f -`; workflow chỉ in metadata type/key, không in value.
+Không tạo tay AWS Secret này. Với **Actions → Deploy development VPS → Run workflow**, operator phải chọn branch `develop` rồi đặt `target=observability`; chỉ khi workflow run ref là `refs/heads/develop` thì job `deploy-observability` mới tạo/upsert idempotent namespace và Secret trước Ansible. Nếu dispatch từ feature branch thì workflow vẫn có thể chạy classification và infra-quality, nhưng job deploy sẽ bị skip theo policy. Hai credential chỉ đi từ environment đã mask qua stdin SSH vào file tạm quyền chặt, sau đó `kubectl create secret --dry-run=client -o yaml | kubectl apply -f -`; workflow chỉ in metadata type/key, không in value.
 
 | Secret | Namespace | Key bắt buộc | Mục đích |
 | --- | --- | --- | --- |
@@ -142,9 +142,9 @@ Không tạo tay AWS Secret này. Với **Actions → Deploy development VPS →
 
 ### 6.3. Rotation, revoke và VPS replacement
 
-1. Tạo IAM access key mới, cập nhật đúng hai GitHub Environment `dev` Secrets, rồi rerun workflow với `target=observability`.
+1. Tạo IAM access key mới, cập nhật đúng hai GitHub Environment `dev` Secrets, rồi rerun workflow từ branch `develop` với `target=observability`.
 2. Xác minh workflow báo `type=Opaque`, đúng hai key metadata, và ExternalSecret Grafana `Ready=True`; chỉ sau đó revoke access key cũ.
-3. Nếu thay VPS, cập nhật `DEV_VPS_HOST`, `DEV_VPS_USER`, `DEV_VPS_KNOWN_HOSTS` theo host mới và rerun workflow. Không SSH thủ công để tạo lại namespace/Secret.
+3. Nếu thay VPS, cập nhật `DEV_VPS_HOST`, `DEV_VPS_USER`, `DEV_VPS_KNOWN_HOSTS` theo host mới và rerun workflow từ branch `develop`. Feature ref không được phép deploy. Không SSH thủ công để tạo lại namespace/Secret.
 4. Đây là static credential (credential tĩnh) tối thiểu để GitHub là trust anchor ban đầu cho VPS ngoài. Hướng nâng cấp mạnh hơn là GitHub OIDC/workload identity hoặc secret manager có short-lived credential; chưa thay đổi contract hiện tại.
 
 ## 7. Helm chart pin và storage assumptions
