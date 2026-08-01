@@ -25,11 +25,13 @@ main() {
   require_match 'node \.\./deploy/dev/audit-high\.js'
   require_match 'ansible-galaxy.*collection install -r infra/ansible/requirements\.yml'
   require_match 'site\.yml --tags applications'
-  require_match 'DEV_K3S_ANSIBLE_VARS_B64'
+  reject_match 'DEV_K3S_ANSIBLE_VARS_B64|ANSIBLE_VARS_B64|base64 --decode'
   require_match 'k3s kubectl rollout status deployment/'
   require_match 'StrictHostKeyChecking=yes'
-  require_match 'chmod 600 .*group_vars/k3s_nodes\.yml'
+  require_match 'VPS_HOST and VPS_USER must be non-empty'
+  require_match 'site\.yml --tags external_secrets,observability'
   require_match 'if: always\(\)'
+  require_match "github\.event_name == 'workflow_dispatch' && github\.ref == 'refs/heads/develop' && inputs\.target == 'observability'"
   require_match 'while IFS= read -r target; do'
   require_match 'ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="\$HOME/\.ssh/known_hosts" "\$VPS_USER@\$VPS_HOST" "sudo k3s kubectl rollout status deployment/\$target --namespace learning-platform-dev --timeout=180s"'
   require_match 'done < "\$DEPLOYMENT_DIR/selected-targets"'
@@ -37,7 +39,9 @@ main() {
   reject_match 'docker compose'
   reject_match 'DEV_GHCR_(USERNAME|READ_TOKEN)'
   reject_match 'secrets\.DEV_.*(AWS|AIVEN|RUNTIME)'
-  reject_match '--tags (k3s|external_secrets|monitoring)'
+  reject_match 'site\.yml --tags (k3s|monitoring)'
+  ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-policy.rb"
+  ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-execution.rb"
   printf '%s\n' 'deploy workflow static tests passed'
 }
 

@@ -29,6 +29,7 @@ classify_changes() {
   local web=false
   local api=false
   local worker=false
+  local observability=false
   local changed_file
 
   case "${target}" in
@@ -62,6 +63,10 @@ classify_changes() {
               web=true
               api=true
               worker=true
+              observability=true
+              ;;
+            infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/external_secrets/*|infra/ansible/vars/dev.yml|infra/scripts/*)
+              observability=true
               ;;
           esac
         done < <(list_changed_files "${before_sha}" "${after_sha}")
@@ -81,8 +86,11 @@ classify_changes() {
       api=true
       worker=true
       ;;
+    observability)
+      observability=true
+      ;;
     *)
-      fail "target must be auto, web, api, worker, or all"
+      fail "target must be auto, web, api, worker, observability, or all"
       ;;
   esac
 
@@ -98,12 +106,13 @@ classify_changes() {
   printf 'web=%s\n' "${web}"
   printf 'api=%s\n' "${api}"
   printf 'worker=%s\n' "${worker}"
+  printf 'observability=%s\n' "${observability}"
   printf 'backend=%s\n' "${backend}"
   printf 'deploy_any=%s\n' "${deploy_any}"
 }
 
 main() {
-  [[ "$#" -eq 3 ]] || fail "usage: classify-changes.sh <auto|web|api|worker|all> <before-sha> <after-sha>"
+  [[ "$#" -eq 3 ]] || fail "usage: classify-changes.sh <auto|web|api|worker|observability|all> <before-sha> <after-sha>"
   classify_changes "$1" "$2" "$3"
 }
 

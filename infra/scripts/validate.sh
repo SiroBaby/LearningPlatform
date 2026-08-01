@@ -10,10 +10,166 @@ fail() {
   exit 1
 }
 
-check_forbidden_workloads() {
+check_application_workloads_are_stateless() {
   if grep -RInE '^kind:[[:space:]]*(StatefulSet|PersistentVolumeClaim|Prometheus|Grafana)[[:space:]]*$' \
     "${INFRA_DIR}/ansible" "${INFRA_DIR}/k8s"; then
-    fail 'Forbidden StatefulSet, PVC, Prometheus, or Grafana workload found.'
+    fail 'Application manifests must remain stateless; StatefulSet, PVC, Prometheus, and Grafana are observability-only resources.'
+  fi
+}
+
+require_observability_document_pattern() {
+  local resource_kind="$1"
+  local manifest_document="$2"
+  local pattern="$3"
+  local description="$4"
+
+  if ! grep -qE "${pattern}" <<<"${manifest_document}"; then
+    fail "Observability ${resource_kind} manifest must declare ${description}."
+  fi
+}
+
+read_explicit_manifest_documents() {
+  local manifest_file="$1"
+
+  awk '
+    function emit_document() {
+      if (kind != "") {
+        printf "%s%c", document, 0
+      }
+    }
+    /^---[[:space:]]*($|#)/ {
+      emit_document()
+      document = ""
+      kind = ""
+      next
+    }
+    {
+      document = document $0 ORS
+      if ($0 ~ /^kind:[[:space:]]*/) {
+        kind = $0
+        sub(/^kind:[[:space:]]*/, "", kind)
+        sub(/[[:space:]#].*$/, "", kind)
+      }
+    }
+    END {
+      emit_document()
+    }
+  ' "${manifest_file}"
+}
+
+check_observability_workloads() {
+  local observability_dir="${INFRA_DIR}/observability"
+  local manifest_file
+  local manifest_document
+  local resource_kind
+
+  [ -d "${observability_dir}" ] || return
+
+  while IFS= read -r -d '' manifest_file; do
+    while IFS= read -r -d '' manifest_document; do
+      resource_kind="$(awk '/^kind:[[:space:]]*/ { sub(/^kind:[[:space:]]*/, ""); sub(/[[:space:]#].*$/, ""); print; exit }' <<<"${manifest_document}")"
+
+      case "${resource_kind}" in
+        Service)
+          if grep -qE '^[[:space:]]*type:[[:space:]]*LoadBalancer([[:space:]#].*)?$' <<<"${manifest_document}"; then
+            fail 'Observability Service manifests must remain ClusterIP; public LoadBalancer is forbidden.'
+          fi
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*type:[[:space:]]*ClusterIP([[:space:]#].*)?$' 'type: ClusterIP'
+          ;;
+        PersistentVolumeClaim)
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*storageClassName:[[:space:]]*local-path([[:space:]#].*)?$' 'storageClassName: local-path'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*storage:[[:space:]]*[1-9][0-9]*(Ki|Mi|Gi|Ti)([[:space:]#].*)?$' 'an explicit storage size'
+          ;;
+        StatefulSet)
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*storageClassName:[[:space:]]*local-path([[:space:]#].*)?$' 'storageClassName: local-path'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*storage:[[:space:]]*[1-9][0-9]*(Ki|Mi|Gi|Ti)([[:space:]#].*)?$' 'an explicit storage size'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*whenDeleted:[[:space:]]*Retain([[:space:]#].*)?$' 'whenDeleted: Retain'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*whenScaled:[[:space:]]*Retain([[:space:]#].*)?$' 'whenScaled: Retain'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*resources:[[:space:]]*$' 'container resources'
+          ;;
+        Prometheus)
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*storageClassName:[[:space:]]*local-path([[:space:]#].*)?$' 'storageClassName: local-path'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*storage:[[:space:]]*[1-9][0-9]*(Ki|Mi|Gi|Ti)([[:space:]#].*)?$' 'an explicit storage size'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*retention:[[:space:]]*[1-9][0-9]*[smhdwy]([[:space:]#].*)?$' 'a retention duration'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*retentionSize:[[:space:]]*[1-9][0-9]*(MB|MiB|GB|GiB|TB|TiB)([[:space:]#].*)?$' 'a retention size'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*whenDeleted:[[:space:]]*Retain([[:space:]#].*)?$' 'whenDeleted: Retain'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*whenScaled:[[:space:]]*Retain([[:space:]#].*)?$' 'whenScaled: Retain'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*resources:[[:space:]]*$' 'container resources'
+          ;;
+        Grafana)
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*storageClassName:[[:space:]]*local-path([[:space:]#].*)?$' 'storageClassName: local-path'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*storage:[[:space:]]*[1-9][0-9]*(Ki|Mi|Gi|Ti)([[:space:]#].*)?$' 'an explicit storage size'
+          require_observability_document_pattern "${resource_kind}" "${manifest_document}" '^[[:space:]]*resources:[[:space:]]*$' 'container resources'
+          ;;
+      esac
+    done < <(read_explicit_manifest_documents "${manifest_file}")
+  done < <(find "${observability_dir}" -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.j2' \) -print0)
+}
+
+check_observability_release_policy_when_present() {
+  local observability_role_dir="${ANSIBLE_DIR}/roles/observability"
+  local observability_tasks="${observability_role_dir}/tasks/main.yml"
+  local observability_release_tasks="${observability_role_dir}/tasks/release.yml"
+
+  [ -f "${observability_tasks}" ] && [ -f "${observability_release_tasks}" ] || return
+
+  if grep -RInE --include='*.yml' --include='*.yaml' \
+    '(helm[[:space:]_-]*(uninstall|delete)|resource_definition:.*PersistentVolumeClaim)' \
+    "${observability_role_dir}" \
+    || ! awk '
+      /^- name:/ {
+        if (task ~ /kind:[[:space:]]*(PersistentVolume|PersistentVolumeClaim)/ && task ~ /state:[[:space:]]*absent/) {
+          forbidden = 1
+        }
+        task = $0 ORS
+        next
+      }
+      { task = task $0 ORS }
+      END {
+        if (task ~ /kind:[[:space:]]*(PersistentVolume|PersistentVolumeClaim)/ && task ~ /state:[[:space:]]*absent/) {
+          forbidden = 1
+        }
+        exit forbidden
+      }
+    ' "${observability_role_dir}"/tasks/*.yml; then
+    fail 'Observability Ansible role must not uninstall releases or delete PVC/PV resources.'
+  fi
+
+  if grep -q -- '--cleanup-on-fail' "${observability_release_tasks}" \
+    || ! grep -q -- '--atomic=false' "${observability_release_tasks}"; then
+    fail 'Initial persistent observability install must explicitly disable atomic and omit cleanup-on-fail.'
+  fi
+
+  if ! grep -qE "observability_release_state \| trim == 'healthy'" "${observability_release_tasks}" \
+    || ! grep -q -- '--atomic' "${observability_release_tasks}" \
+    || ! grep -q 'helm rollback' "${observability_release_tasks}"; then
+    fail 'Observability role must retain the healthy-upgrade guard and rollback interface.'
+  fi
+}
+
+check_observability_workflow_bootstrap_contract() {
+  local workflow="${INFRA_DIR}/../.github/workflows/deploy-dev.yml"
+  local observability_tasks="${ANSIBLE_DIR}/roles/observability/tasks/main.yml"
+
+  [ -f "${workflow}" ] && [ -f "${observability_tasks}" ] || return
+
+  for required_pattern in \
+    'name: Bootstrap observability AWS credential Secret' \
+    'OBSERVABILITY_AWS_ACCESS_KEY_ID: \$\{\{ secrets\.OBSERVABILITY_AWS_ACCESS_KEY_ID \}\}' \
+    'OBSERVABILITY_AWS_SECRET_ACCESS_KEY: \$\{\{ secrets\.OBSERVABILITY_AWS_SECRET_ACCESS_KEY \}\}' \
+    'create namespace observability --dry-run=client -o yaml \| sudo k3s kubectl apply -f -' \
+    'create secret generic observability-aws-credentials --namespace observability' \
+    '--from-file=access-key-id=' \
+    '--from-file=secret-access-key=' \
+    'trap cleanup_credentials EXIT' \
+    'trap cleanup_remote_credentials EXIT'; do
+    if ! grep -qE -- "${required_pattern}" "${workflow}"; then
+      fail "Observability workflow bootstrap is missing required contract: ${required_pattern}."
+    fi
+  done
+
+  if grep -qE 'Manually provision.*observability|Verify manually provisioned observability' "${observability_tasks}"; then
+    fail 'Observability role must describe workflow-provisioned, not manual, AWS credentials.'
   fi
 }
 
@@ -183,8 +339,10 @@ check_application_edge_contract() {
     'OPENAI_CAPABILITY_VERSION' \
     'OPENAI_STRUCTURED_OUTPUT_MODE' \
     'OPENAI_TRANSPORT'; do
+    local forbidden_secret_contract_lower
+    forbidden_secret_contract_lower="$(printf '%s' "${forbidden_secret_contract}" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
     if grep -Fq "'${forbidden_secret_contract}':" "${eso_template}" \
-      || grep -Fq "  ${forbidden_secret_contract,,}:" "${app_vars}"; then
+      || grep -Fq "  ${forbidden_secret_contract_lower}:" "${app_vars}"; then
       fail "Non-secret worker runtime config must not be sourced from ExternalSecret or SSM contract: ${forbidden_secret_contract}."
     fi
   done
@@ -334,7 +492,10 @@ check_ansible_when_installed() {
   printf 'SKIP: ansible-playbook is not installed.\n'
 }
 
-check_forbidden_workloads
+check_application_workloads_are_stateless
+check_observability_workloads
+check_observability_release_policy_when_present
+check_observability_workflow_bootstrap_contract
 check_plaintext_secrets
 check_image_policy
 check_artifact_integrity_contract

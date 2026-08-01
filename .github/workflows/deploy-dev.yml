@@ -15,6 +15,7 @@ on:
           - web
           - api
           - worker
+          - observability
           - all
 
 concurrency:
@@ -31,6 +32,7 @@ jobs:
       web: ${{ steps.classify.outputs.web }}
       api: ${{ steps.classify.outputs.api }}
       worker: ${{ steps.classify.outputs.worker }}
+      observability: ${{ steps.classify.outputs.observability }}
       backend: ${{ steps.classify.outputs.backend }}
       deploy_any: ${{ steps.classify.outputs.deploy_any }}
     steps:
@@ -95,10 +97,28 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  infra-quality:
+    name: Infrastructure and observability policy
+    needs: changes
+    if: needs.changes.outputs.observability == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Validate infrastructure source contract
+        run: bash infra/scripts/validate.sh
+      - name: Validate rendered observability policy fixtures
+        run: ruby infra/scripts/tests/test-rendered-observability-policy.rb
+      - name: Render and validate pinned observability chart archives
+        run: bash infra/scripts/test-real-render-observability.sh
+      - name: Validate deployment workflow target policy
+        run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
+
   build-images:
     name: Build and push images
-    needs: [changes, backend-quality, frontend-quality]
-    if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped')
+    needs: [changes, backend-quality, frontend-quality, infra-quality]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped') && (needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -134,8 +154,8 @@ jobs:
 
   deploy:
     name: Deploy immutable digests to K3s
-    needs: [changes, build-images]
-    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.build-images.result == 'success'
+    needs: [changes, infra-quality, build-images]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.build-images.result == 'success' && (needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped')
     runs-on: ubuntu-24.04
     environment: dev
     permissions:
@@ -143,16 +163,6 @@ jobs:
     steps:
       # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - name: Configure SSH trust
-        env:
-          SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
-        run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
       - name: Install pinned Ansible tooling
         run: |
           python3 -m venv "$RUNNER_TEMP/ansible-venv"
@@ -162,7 +172,6 @@ jobs:
         env:
           VPS_HOST: ${{ vars.DEV_VPS_HOST }}
           VPS_USER: ${{ vars.DEV_VPS_USER }}
-          ANSIBLE_VARS_B64: ${{ secrets.DEV_K3S_ANSIBLE_VARS_B64 }}
           SELECT_WEB: ${{ needs.changes.outputs.web }}
           SELECT_API: ${{ needs.changes.outputs.api }}
           SELECT_WORKER: ${{ needs.changes.outputs.worker }}
@@ -172,13 +181,6 @@ jobs:
           DEPLOYMENT_DIR="$(mktemp -d "$RUNNER_TEMP/dev-k3s-deploy.XXXXXX")"
           printf '%s\n' "$DEPLOYMENT_DIR" > "$RUNNER_TEMP/dev-k3s-deploy-path"
           chmod 700 "$DEPLOYMENT_DIR"
-          install -d -m 700 "$DEPLOYMENT_DIR/group_vars"
-          # This Environment secret contains only non-runtime host configuration,
-          # checksums, resource limits, domains, and Kubernetes Secret names;
-          # it never contains runtime secret values, AWS credentials, Aiven values,
-          # or GHCR pull credentials.
-          printf '%s' "$ANSIBLE_VARS_B64" | base64 --decode > "$DEPLOYMENT_DIR/group_vars/k3s_nodes.yml"
-          chmod 600 "$DEPLOYMENT_DIR/group_vars/k3s_nodes.yml"
           export DEPLOYMENT_DIR
           python3 - <<'PY'
           import os
@@ -187,6 +189,7 @@ jobs:
           import json
 
           host, user = os.environ['VPS_HOST'], os.environ['VPS_USER']
+          if not host or not user: sys.exit('VPS_HOST and VPS_USER must be non-empty')
           if not re.fullmatch(r'[A-Za-z0-9._-]+', user): sys.exit('VPS_USER contains unsupported characters')
           if not re.fullmatch(r'[A-Za-z0-9.-]+', host): sys.exit('VPS_HOST contains unsupported characters')
           selected = [name for name in ('web', 'api', 'worker') if os.environ[f'SELECT_{name.upper()}'] == 'true']
@@ -210,6 +213,16 @@ jobs:
               json.dump({'deployment_targets': selected, **image_overrides}, overrides)
           PY
           chmod 600 "$DEPLOYMENT_DIR/hosts.yml" "$DEPLOYMENT_DIR/overrides.yml"
+      - name: Configure SSH trust
+        env:
+          SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
       - name: Apply selected applications through Ansible
         id: apply-applications
         env:
@@ -264,4 +277,141 @@ jobs:
             DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
             rm -rf -- "$DEPLOYMENT_DIR"
             rm -f -- "$RUNNER_TEMP/dev-k3s-deploy-path"
+          fi
+
+  deploy-observability:
+    name: Deploy ESO and observability only
+    needs: [changes, infra-quality]
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop' && inputs.target == 'observability' &&
+      needs.changes.outputs.observability == 'true' && needs.infra-quality.result == 'success'
+    runs-on: ubuntu-24.04
+    environment: dev
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install pinned Ansible tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ansible-venv"
+          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir 'ansible-core==2.21.2'
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-galaxy" collection install -r infra/ansible/requirements.yml
+      - name: Create ephemeral Ansible inventory
+        env:
+          VPS_HOST: ${{ vars.DEV_VPS_HOST }}
+          VPS_USER: ${{ vars.DEV_VPS_USER }}
+        run: |
+          DEPLOYMENT_DIR="$(mktemp -d "$RUNNER_TEMP/dev-k3s-observability.XXXXXX")"
+          printf '%s\n' "$DEPLOYMENT_DIR" > "$RUNNER_TEMP/dev-k3s-observability-path"
+          chmod 700 "$DEPLOYMENT_DIR"
+          export DEPLOYMENT_DIR
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          host, user = os.environ['VPS_HOST'], os.environ['VPS_USER']
+          if not host or not user: sys.exit('VPS_HOST and VPS_USER must be non-empty')
+          if not re.fullmatch(r'[A-Za-z0-9._-]+', user): sys.exit('VPS_USER contains unsupported characters')
+          if not re.fullmatch(r'[A-Za-z0-9.-]+', host): sys.exit('VPS_HOST contains unsupported characters')
+          with open(f"{os.environ['DEPLOYMENT_DIR']}/hosts.yml", 'w', encoding='utf-8') as inventory:
+              json.dump({'k3s_nodes': {'hosts': {'dev': {'ansible_host': host, 'ansible_user': user}}}}, inventory)
+          PY
+          chmod 600 "$DEPLOYMENT_DIR/hosts.yml"
+      - name: Configure SSH trust
+        env:
+          SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+           chmod 600 ~/.ssh/known_hosts
+      - name: Bootstrap observability AWS credential Secret
+        env:
+          VPS_HOST: ${{ vars.DEV_VPS_HOST }}
+          VPS_USER: ${{ vars.DEV_VPS_USER }}
+          OBSERVABILITY_AWS_ACCESS_KEY_ID: ${{ secrets.OBSERVABILITY_AWS_ACCESS_KEY_ID }}
+          OBSERVABILITY_AWS_SECRET_ACCESS_KEY: ${{ secrets.OBSERVABILITY_AWS_SECRET_ACCESS_KEY }}
+        run: |
+          CREDENTIAL_DIR="$(mktemp -d "$RUNNER_TEMP/observability-aws-credentials.XXXXXX")"
+          chmod 700 "$CREDENTIAL_DIR"
+          cleanup_credentials() {
+            rm -rf -- "$CREDENTIAL_DIR"
+          }
+          trap cleanup_credentials EXIT
+          export CREDENTIAL_DIR
+          python3 - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          credential_dir = Path(os.environ['CREDENTIAL_DIR'])
+          credentials = {
+              'access-key-id': os.environ['OBSERVABILITY_AWS_ACCESS_KEY_ID'],
+              'secret-access-key': os.environ['OBSERVABILITY_AWS_SECRET_ACCESS_KEY'],
+          }
+          for filename, value in credentials.items():
+              encoded = value.encode('utf-8')
+              if not encoded:
+                  sys.exit(f'{filename} GitHub Environment Secret must be non-empty')
+              if b'\0' in encoded or len(encoded) > 4096:
+                  sys.exit(f'{filename} GitHub Environment Secret has an unsupported size or byte')
+              destination = credential_dir / filename
+              with destination.open('wb') as credential_file:
+                  credential_file.write(encoded)
+              destination.chmod(0o600)
+          PY
+          tar -C "$CREDENTIAL_DIR" -cf - access-key-id secret-access-key | \
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" 'bash -ceu '"'"'
+              umask 077
+              REMOTE_CREDENTIAL_DIR="$(mktemp -d)"
+              cleanup_remote_credentials() {
+                rm -rf -- "$REMOTE_CREDENTIAL_DIR"
+              }
+              trap cleanup_remote_credentials EXIT
+              tar -C "$REMOTE_CREDENTIAL_DIR" -xf -
+              python3 - "$REMOTE_CREDENTIAL_DIR/access-key-id" "$REMOTE_CREDENTIAL_DIR/secret-access-key" <<'"'"'PY'"'"'
+              import os
+              import stat
+              import sys
+
+              for credential_path in sys.argv[1:]:
+                  metadata = os.lstat(credential_path)
+                  if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                      sys.exit('"'"'credential transport file must be regular'"'"')
+                  content = open(credential_path, '"'"'rb'"'"').read()
+                  if not content or len(content) > 4096 or b'"'"'\0'"'"' in content:
+                      sys.exit('"'"'credential transport file has an unsupported size or byte'"'"')
+              PY
+              sudo k3s kubectl create namespace observability --dry-run=client -o yaml | sudo k3s kubectl apply -f -
+              sudo k3s kubectl create secret generic observability-aws-credentials --namespace observability \
+                --from-file=access-key-id="$REMOTE_CREDENTIAL_DIR/access-key-id" \
+                --from-file=secret-access-key="$REMOTE_CREDENTIAL_DIR/secret-access-key" \
+                --dry-run=client -o yaml | sudo k3s kubectl apply -f -
+              SECRET_TYPE="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o jsonpath='"'"'{.type}'"'"')"
+              SECRET_KEYS="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o jsonpath='"'"'{range $key := .data}{$key}{"\\n"}{end}'"'"' | LC_ALL=C sort)"
+              if [[ "$SECRET_TYPE" != Opaque || "$SECRET_KEYS" != $'"'"'access-key-id\nsecret-access-key'"'"' ]]; then
+                printf '"'"'%s\n'"'"' '"'"'observability credential Secret metadata contract failed'"'"' >&2
+                exit 1
+              fi
+              printf '"'"'%s\n'"'"' '"'"'observability credential Secret metadata verified: type=Opaque key_count=2 keys=access-key-id,secret-access-key'"'"'
+            '"'"''
+      - name: Apply External Secrets and observability through Ansible
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/infra/ansible/ansible.cfg
+          ANSIBLE_HOST_KEY_CHECKING: "True"
+          ANSIBLE_STDOUT_CALLBACK: default
+        run: |
+          DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-observability-path")"
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags external_secrets,observability
+      - name: Remove ephemeral observability deployment files
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/dev-k3s-observability-path" ]]; then
+            DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-observability-path")"
+            rm -rf -- "$DEPLOYMENT_DIR"
+            rm -f -- "$RUNNER_TEMP/dev-k3s-observability-path"
           fi

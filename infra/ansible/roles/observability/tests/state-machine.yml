@@ -1,0 +1,165 @@
+---
+- name: Verify observability release action plans without a cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    releases:
+      - key: monitoring
+        name: learning-platform-monitoring
+        chart: prometheus-community/kube-prometheus-stack
+        version: 87.21.0
+        values: kube-prometheus-stack-values.yml
+      - key: loki
+        name: learning-platform-loki
+        chart: grafana-community/loki
+        version: 18.7.0
+        values: loki-values.yml
+      - key: alloy
+        name: learning-platform-alloy
+        chart: grafana/alloy
+        version: 1.11.0
+        values: alloy-values.yml
+    cases:
+      - {name: absent, records: [], pvcs: [], retention: true, expected_state: absent, expected_action: install}
+      - {name: orphan-pvc, records: [], pvcs: [owned], retention: true, expected_state: orphan, expected_action: fail}
+      - {name: wrong-owner, records: [deployed], pvcs: [wrong-owner], retention: true, expected_state: mismatch, expected_action: fail}
+      - {name: missing-retain, records: [deployed], pvcs: [owned], retention: false, expected_state: mismatch, expected_action: fail}
+      - {name: pending-install, records: [pending-install], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
+      - {name: pending-upgrade, records: [pending-upgrade], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
+      - {name: failed, records: [failed], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
+      - {name: deployed-unhealthy, records: [deployed-unhealthy], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
+      - {name: healthy, records: [deployed], pvcs: [owned], retention: true, expected_state: healthy, expected_action: upgrade}
+      - {name: initial-install-failure, records: [], pvcs: [], retention: true, expected_state: absent, expected_action: preserve-failure}
+      - {name: failed-upgrade, records: [deployed], pvcs: [owned], retention: true, expected_state: healthy, expected_action: rollback}
+  tasks:
+    - name: Build action plans for every release and transition
+      ansible.builtin.include_tasks: state-machine-case.yml
+      loop: '{{ releases | product(cases) | list }}'
+      loop_control:
+        loop_var: observability_case_pair
+
+    - name: Verify low capacity and aggregate overflow produce no Helm action
+      ansible.builtin.assert:
+        that:
+          - item.action_plan | length == 0
+          - item.blocked
+      loop:
+        - {name: low-capacity, blocked: true, action_plan: []}
+        - {name: aggregate-overflow, blocked: true, action_plan: []}
+        - {name: ksm-deletion-failure, blocked: true, action_plan: []}
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Verify Grafana ESO missing-template fixture fails before apply planning
+      ansible.builtin.assert:
+        that:
+          - not observability_eso_fixture.template_exists
+          - observability_eso_fixture.apply_actions | length == 0
+          - observability_eso_fixture.iam_paths | select('search', '\*') | list | length == 0
+        fail_msg: Missing Grafana SSM/template contract must block apply before Helm.
+      vars:
+        observability_eso_fixture:
+          template_exists: false
+          apply_actions: []
+          iam_paths:
+            - /learning-platform/dev/grafana-admin-user
+            - /learning-platform/dev/grafana-admin-password
+
+    - name: Verify Traefik NodePort dataplane contract does not require an ss listener
+      ansible.builtin.assert:
+        that:
+          - >-
+            (not item.ss_listener_present and
+             item.kube_proxy_loopback_configured and
+             item.traefik_ready_endpoint_present and
+             item.netfilter_nodeport_rule_present and
+             item.loopback_web_returns_404 and
+             item.node_address_request_fails) == item.accepted
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search("nodeport-addresses=127.0.0.0/8")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('kind: Endpoints')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('iptables-save -t nat')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('url: http://127.0.0.1:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('url:\\s+http://127\\.0\\.0\\.1:.*\\/')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('status_code: 404')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('observability_traefik_node_address_request.status | int == -1')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is not search('Require shared Traefik NodePort listener outside check mode')
+        fail_msg: >-
+          An absent ss listener is acceptable only when the exact loopback
+          kube-proxy, Traefik readiness, netfilter, loopback reachability, and
+          non-loopback rejection dataplane checks all pass.
+      loop:
+        - name: ss-absent-all-real-checks-pass
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: true
+          node_address_request_fails: true
+          accepted: true
+        - name: missing-kube-proxy-loopback-config
+          ss_listener_present: false
+          kube_proxy_loopback_configured: false
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: true
+          node_address_request_fails: true
+          accepted: false
+        - name: missing-ready-endpoint
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: false
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: true
+          node_address_request_fails: true
+          accepted: false
+        - name: missing-netfilter-rule
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: false
+          loopback_web_returns_404: true
+          node_address_request_fails: true
+          accepted: false
+        - name: unexpected-loopback-web-status
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: false
+          node_address_request_fails: true
+          accepted: false
+        - name: reachable-node-address
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: true
+          node_address_request_fails: false
+          accepted: false
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Scan action-plan source for forbidden destructive operations
+      ansible.builtin.assert:
+        that:
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search('hel' ~ 'm un' ~ 'install|cleanup' ~ '-on-fail')
+        fail_msg: Release action plan must not uninstall Helm releases or delete PVC/PV resources.

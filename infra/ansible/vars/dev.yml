@@ -1,0 +1,127 @@
+---
+k3s_version: v1.31.8+k3s1
+k3s_installer_url: https://raw.githubusercontent.com/k3s-io/k3s/v1.31.8%2Bk3s1/install.sh
+k3s_installer_sha256: f60c3d8940dfc896f7d83aaf57726c91cf21afc4bca40036472df108d9700b4b
+k3s_write_kubeconfig_mode: '0640'
+k3s_port_preflight_enabled: true
+k3s_ingress_ports: [32080]
+k3s_traefik_http_node_port: 32080
+nginx_service_name: nginx.service
+nginx_learning_platform_config_path: /etc/nginx/sites-enabled/learning-platform-dev
+nginx_tls_certificate_path: /etc/ssl/cloudflare/sirobabycloud.pem
+nginx_tls_certificate_key_path: /etc/ssl/cloudflare/sirobabycloud.key
+
+learning_platform_namespace: learning-platform-dev
+external_secrets_version: v0.15.1
+external_secrets_manifest_url: https://github.com/external-secrets/external-secrets/releases/download/v0.15.1/external-secrets.yaml
+external_secrets_manifest_sha256: 3e88bee2008ca2700c0511fe02573033d4cc7c1e05a994e7f1affca779785106
+external_secrets_operator_namespace: default
+
+aws_credentials_secret_name: learning-platform-dev-aws-credentials
+aws_region: ap-southeast-1
+ssm_parameter_keys:
+  db_host: /learning-platform/dev/db-host
+  db_port: /learning-platform/dev/db-port
+  db_user: /learning-platform/dev/db-user
+  db_password: /learning-platform/dev/db-password
+  db_name: /learning-platform/dev/db-name
+  db_ssl_mode: /learning-platform/dev/db-ssl-mode
+  db_ssl_ca: /learning-platform/dev/db-ssl-ca
+  object_storage_endpoint: /learning-platform/dev/object-storage-endpoint
+  object_storage_port: /learning-platform/dev/object-storage-port
+  object_storage_region: /learning-platform/dev/object-storage-region
+  object_storage_use_ssl: /learning-platform/dev/object-storage-use-ssl
+  object_storage_access_key: /learning-platform/dev/object-storage-access-key
+  object_storage_secret_key: /learning-platform/dev/object-storage-secret-key
+  object_storage_bucket: /learning-platform/dev/object-storage-bucket
+  ai_credential_encryption_key: /learning-platform/dev/ai-credential-encryption-key
+  openai_base_url: /learning-platform/dev/openai-base-url
+  openai_api_key: /learning-platform/dev/openai-api-key
+  openai_model: /learning-platform/dev/openai-model
+  swagger_username: /learning-platform/dev/swagger-username
+  swagger_password: /learning-platform/dev/swagger-password
+  grafana_admin_user: /learning-platform/dev/grafana-admin-user
+  grafana_admin_password: /learning-platform/dev/grafana-admin-password
+
+ghcr_pull_secret_name: learning-platform-dev-ghcr
+web_public_host: learningplatform-dev.sirobabycloud.io.vn
+api_public_host: learningplatform-dev-api.sirobabycloud.io.vn
+phase0_api_base_url: http://api:3000/api/v1
+phase0_dev_owner_id: a22d87f0-7071-4063-890c-15b5017636cb
+ingress_tls_secret_name: ''
+deployment_targets: [web, api, worker]
+
+web_resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 256Mi}
+api_resources:
+  requests: {cpu: 200m, memory: 256Mi}
+  limits: {cpu: "1", memory: 512Mi}
+worker_resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {cpu: "1", memory: 1Gi}
+
+monitoring_enabled: false
+
+observability_namespace: observability
+observability_aws_credentials_secret_name: observability-aws-credentials
+grafana_admin_secret_name: grafana-admin
+grafana_public_host: 157.66.101.219
+grafana_ingress_host: grafana.observability.internal
+
+helm_version: v3.21.3
+helm_repositories:
+  prometheus_community: https://prometheus-community.github.io/helm-charts
+  grafana_community: https://grafana-community.github.io/helm-charts
+  grafana: https://grafana.github.io/helm-charts
+observability_releases:
+  monitoring:
+    name: learning-platform-monitoring
+    chart: prometheus-community/kube-prometheus-stack
+    chart_version: 87.21.0
+  loki:
+    name: learning-platform-loki
+    chart: grafana-community/loki
+    chart_version: 18.7.0
+    app_version: 3.7.4
+  alloy:
+    name: learning-platform-alloy
+    chart: grafana/alloy
+    chart_version: 1.11.0
+    app_version: v1.18.0
+
+observability_storage:
+  prometheus: {size: 3Gi, retention: 7d, retention_size: 2500MB}
+  loki: {size: 2Gi, retention: 72h}
+  grafana: {size: 1Gi}
+observability_resources:
+  prometheus:
+    requests: {cpu: 300m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  prometheus_config_reloader:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 64Mi}
+  prometheus_operator:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+  grafana:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  kube_state_metrics:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+  node_exporter:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 64Mi}
+  loki:
+    requests: {cpu: 150m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  alloy:
+    requests: {cpu: 75m, memory: 128Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+  alloy_config_reloader:
+    requests: {cpu: 10m, memory: 50Mi}
+    limits: {cpu: 100m, memory: 64Mi}
+observability_aggregate_resources:
+  requests: {cpu: 785m, memory: 1266Mi}
+  limits: {cpu: 2950m, memory: 2496Mi}

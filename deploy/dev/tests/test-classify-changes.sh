@@ -16,8 +16,19 @@ assert_output() {
   local after_sha="$3"
   local expected="$4"
   local actual
-  actual="$("${CLASSIFIER}" "${target}" "${before_sha}" "${after_sha}")"
+  actual="$("${CLASSIFIER}" "${target}" "${before_sha}" "${after_sha}" | grep -v '^observability=')"
   [[ "${actual}" == "${expected}" ]] || fail "unexpected ${target} output: ${actual}"
+}
+
+assert_observability_output() {
+  local target="$1"
+  local before_sha="$2"
+  local after_sha="$3"
+  local expected="$4"
+  local actual
+
+  actual="$("${CLASSIFIER}" "${target}" "${before_sha}" "${after_sha}")"
+  grep -Fxq "observability=${expected}" <<<"${actual}" || fail "unexpected observability output for ${target}: ${actual}"
 }
 
 commit_file() {
@@ -86,6 +97,7 @@ main() {
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/external_secrets/tasks/main.yml)"
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/monitoring/tasks/main.yml)"
@@ -111,7 +123,12 @@ main() {
   (cd "${repository}" && assert_output worker "${before_sha}" "${after_sha}" "${expected}")
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output all "${before_sha}" "${after_sha}" "${expected}")
+  expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
+  (cd "${repository}" && assert_output observability "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output observability "${before_sha}" "${after_sha}" true)
+  expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "0000000000000000000000000000000000000000" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "0000000000000000000000000000000000000000" "${after_sha}" false)
   printf '%s\n' 'change classification tests passed'
 }
 

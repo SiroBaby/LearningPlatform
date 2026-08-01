@@ -1,0 +1,397 @@
+---
+- name: Validate observability release and capacity contract
+  ansible.builtin.assert:
+    that:
+      - helm_version == 'v3.21.3'
+      - observability_namespace is string
+      - observability_namespace | length > 0
+      - observability_releases is mapping
+      - observability_releases.monitoring.name == 'learning-platform-monitoring'
+      - observability_releases.monitoring.chart == 'prometheus-community/kube-prometheus-stack'
+      - observability_releases.monitoring.chart_version == '87.21.0'
+      - observability_releases.loki.name == 'learning-platform-loki'
+      - observability_releases.loki.chart == 'grafana-community/loki'
+      - observability_releases.loki.chart_version == '18.7.0'
+      - observability_releases.alloy.name == 'learning-platform-alloy'
+      - observability_releases.alloy.chart == 'grafana/alloy'
+      - observability_releases.alloy.chart_version == '1.11.0'
+      - observability_resources is mapping
+      - observability_aggregate_resources.requests.cpu == '785m'
+      - observability_aggregate_resources.requests.memory == '1266Mi'
+      - observability_aggregate_resources.limits.cpu == '2950m'
+      - observability_aggregate_resources.limits.memory == '2496Mi'
+      - k3s_traefik_http_node_port | int == 32080
+      - 32080 in k3s_ingress_ports
+      - observability_grafana_external_secret_template is string
+    fail_msg: >-
+      Observability requires the canonical three-release, resource, Grafana
+      ExternalSecret, and shared Traefik NodePort contract.
+
+- name: Require a supported architecture for the pinned Helm archive
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture in observability_helm_archives
+    fail_msg: >-
+      Helm {{ helm_version }} is pinned only for x86_64 and aarch64 hosts;
+      {{ ansible_architecture }} has no verified archive checksum.
+
+- name: Record selected Helm archive metadata
+  ansible.builtin.set_fact:
+    observability_helm_archive: '{{ observability_helm_archives[ansible_architecture] }}'
+
+- name: Check Grafana ExternalSecret contract template is available before Helm
+  ansible.builtin.stat:
+    path: '{{ observability_grafana_external_secret_template }}'
+  register: observability_grafana_external_secret_template_file
+
+- name: Fail before Helm when the Grafana ExternalSecret contract is absent
+  ansible.builtin.assert:
+    that:
+      - observability_grafana_external_secret_template_file.stat.exists
+      - observability_grafana_external_secret_template_file.stat.isreg
+      - grafana_admin_secret_name is string
+      - grafana_admin_secret_name | length > 0
+      - observability_aws_credentials_secret_name is string
+      - observability_aws_credentials_secret_name | length > 0
+      - ssm_parameter_keys.grafana_admin_user is match('^/')
+      - ssm_parameter_keys.grafana_admin_password is match('^/')
+    fail_msg: >-
+      Todo 7's Grafana ExternalSecret template and exact non-secret variable
+      contract must exist before any observability Helm action.
+
+- name: Render observability check-mode decisions without mutation
+  ansible.builtin.debug:
+    msg: >-
+      Check mode validated Helm {{ helm_version }}, the ExternalSecret template,
+      aggregate limits, and the shared Traefik NodePort contract. Release
+      inspection and all Kubernetes, systemd, and Helm changes are skipped.
+  when: ansible_check_mode
+
+- name: End observability role after check-mode rendering
+  ansible.builtin.meta: end_role
+  when: ansible_check_mode
+
+- name: Create observability namespace
+  kubernetes.core.k8s:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: '{{ observability_namespace }}'
+
+- name: Verify workflow-provisioned observability AWS credential Secret
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: v1
+    kind: Secret
+    namespace: '{{ observability_namespace }}'
+    name: '{{ observability_aws_credentials_secret_name }}'
+  register: observability_aws_credentials_secret
+  no_log: true
+
+- name: Require observability AWS credential Secret data keys
+  ansible.builtin.assert:
+    that:
+      - observability_aws_credentials_secret.resources | length == 1
+      - "'access-key-id' in (observability_aws_credentials_secret.resources[0].data | default({}))"
+      - "'secret-access-key' in (observability_aws_credentials_secret.resources[0].data | default({}))"
+    fail_msg: >-
+      The deploy-observability workflow must provision
+      {{ observability_aws_credentials_secret_name }} with access-key-id and
+      secret-access-key in {{ observability_namespace }} before Ansible runs.
+  no_log: true
+
+- name: Apply Grafana ExternalSecret contract prepared by Todo 7
+  kubernetes.core.k8s:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    state: present
+    definition: "{{ lookup('template', observability_grafana_external_secret_template) | from_yaml }}"
+  no_log: true
+
+- name: Wait for Grafana ExternalSecret readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    namespace: '{{ observability_namespace }}'
+    name: grafana-admin
+  register: observability_grafana_external_secret
+  retries: 30
+  delay: 2
+  until: >-
+    observability_grafana_external_secret.resources | length == 1 and
+    (observability_grafana_external_secret.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  no_log: true
+
+- name: Verify ready Grafana admin Secret contract
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: v1
+    kind: Secret
+    namespace: '{{ observability_namespace }}'
+    name: '{{ grafana_admin_secret_name }}'
+  register: observability_grafana_admin_secret
+  no_log: true
+
+- name: Require ready Grafana admin Secret keys
+  ansible.builtin.assert:
+    that:
+      - observability_grafana_admin_secret.resources | length == 1
+      - "'admin-user' in (observability_grafana_admin_secret.resources[0].data | default({}))"
+      - "'admin-password' in (observability_grafana_admin_secret.resources[0].data | default({}))"
+    fail_msg: Grafana admin Secret is not ready with the expected data keys.
+  no_log: true
+
+- name: Collect capacity facts before observability Helm actions
+  ansible.builtin.setup:
+    gather_subset:
+      - hardware
+
+- name: Require disk and memory capacity before observability Helm actions
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ansible_mounts | selectattr('mount', 'equalto', '/')
+         | map(attribute='size_available') | first | int) >=
+        (observability_minimum_free_disk_gib | int * 1024 * 1024 * 1024)
+      - ansible_memfree_mb | int >= observability_minimum_free_memory_mib | int
+    fail_msg: >-
+      Observability needs at least {{ observability_minimum_free_disk_gib }}Gi
+      free disk and {{ observability_minimum_free_memory_mib }}Mi free memory
+      before persistent Helm releases are changed.
+
+- name: Require exact kube-proxy loopback NodePort configuration
+  ansible.builtin.command:
+    cmd: >-
+      grep -Fx '  - nodeport-addresses=127.0.0.0/8'
+      /etc/rancher/k3s/config.yaml
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Verify packaged Traefik has ready endpoints
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: v1
+    kind: Endpoints
+    namespace: kube-system
+    name: traefik
+  register: observability_traefik_endpoints
+
+- name: Require packaged Traefik ready endpoints
+  ansible.builtin.assert:
+    that:
+      - >-
+        observability_traefik_endpoints.resources | length == 1 and
+        (observability_traefik_endpoints.resources[0].subsets | default([])
+        | selectattr('addresses', 'defined') | map(attribute='addresses')
+        | flatten | list | length) > 0
+    fail_msg: Packaged Traefik has no ready endpoint addresses.
+
+- name: Require exact kube-proxy NodePort netfilter rule
+  ansible.builtin.command:
+    cmd: >-
+      bash -o pipefail -c
+      "iptables-save -t nat | grep -Ex -- '-A KUBE-NODEPORTS .* -p tcp .* --dport {{ k3s_traefik_http_node_port }} .*'"
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Require loopback Traefik web NodePort reachability
+  ansible.builtin.uri:
+    url: http://127.0.0.1:{{ k3s_traefik_http_node_port }}/
+    method: GET
+    status_code: 404
+    timeout: 5
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Check that Traefik NodePort is unreachable through the node address
+  ansible.builtin.uri:
+    url: http://{{ ansible_default_ipv4.address }}:{{ k3s_traefik_http_node_port }}/
+    method: GET
+    status_code: 200
+    timeout: 5
+  register: observability_traefik_node_address_request
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Require loopback-only Traefik NodePort dataplane
+  ansible.builtin.assert:
+    that:
+      - observability_traefik_node_address_request.status | int == -1
+    fail_msg: >-
+      Shared Traefik NodePort {{ k3s_traefik_http_node_port }} must reject
+      non-loopback node-address traffic.
+  when: not ansible_check_mode
+
+- name: Record shared Traefik NodePort listener diagnostic
+  ansible.builtin.command:
+    cmd: "ss -ltnH '( sport = :{{ k3s_traefik_http_node_port }} )'"
+  register: observability_traefik_nodeport_listener
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Record shared Traefik NodePort dataplane evidence
+  ansible.builtin.debug:
+    msg:
+      ss_listener_present: '{{ observability_traefik_nodeport_listener.stdout | trim | length > 0 }}'
+      netfilter_rule: KUBE-NODEPORTS TCP {{ k3s_traefik_http_node_port }}
+      loopback_web_endpoint: http://127.0.0.1:{{ k3s_traefik_http_node_port }}/
+      loopback_web_status: 404
+      node_address_rejected: '{{ ansible_default_ipv4.address }}:{{ k3s_traefik_http_node_port }}'
+  when: not ansible_check_mode
+
+- name: Inspect named legacy kube-state-metrics objects before migration
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: '{{ item.api_version }}'
+    kind: '{{ item.kind }}'
+    namespace: '{{ item.namespace | default(omit) }}'
+    name: '{{ item.name }}'
+  loop: '{{ observability_legacy_ksm_objects }}'
+  register: observability_legacy_ksm_inspection
+
+- name: Inspect legacy kube-state-metrics port-forward unit
+  ansible.builtin.systemd:
+    name: '{{ observability_legacy_ksm_port_forward_unit }}'
+  register: observability_legacy_ksm_port_forward
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Record sanitized legacy kube-state-metrics migration evidence
+  ansible.builtin.debug:
+    msg:
+      objects_found: >-
+        {{ observability_legacy_ksm_inspection.results
+           | selectattr('resources', 'defined') | selectattr('resources', 'ne', [])
+           | map(attribute='item.name') | list }}
+      port_forward_unit_present: >-
+        {{ observability_legacy_ksm_port_forward.status.LoadState | default('absent') }}
+  no_log: false
+
+- name: Remove only named legacy kube-state-metrics Kubernetes objects
+  kubernetes.core.k8s:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: '{{ item.item.api_version }}'
+    kind: '{{ item.item.kind }}'
+    namespace: '{{ item.item.namespace | default(omit) }}'
+    name: '{{ item.item.name }}'
+    state: absent
+  loop: '{{ observability_legacy_ksm_inspection.results }}'
+  when: item.resources | length == 1
+
+- name: Remove only the named legacy kube-state-metrics port-forward unit
+  ansible.builtin.systemd:
+    name: '{{ observability_legacy_ksm_port_forward_unit }}'
+    enabled: false
+    state: stopped
+  when:
+    - not ansible_check_mode
+    - observability_legacy_ksm_port_forward.status.LoadState | default('not-found') != 'not-found'
+
+- name: Remove the exact legacy kube-state-metrics port-forward unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/{{ observability_legacy_ksm_port_forward_unit }}
+    state: absent
+  when:
+    - not ansible_check_mode
+    - observability_legacy_ksm_port_forward.status.LoadState | default('not-found') != 'not-found'
+
+- name: Reload systemd after removing the exact legacy port-forward unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when:
+    - not ansible_check_mode
+    - observability_legacy_ksm_port_forward.status.LoadState | default('not-found') != 'not-found'
+
+- name: Require legacy kube-state-metrics migration completion before Helm
+  ansible.builtin.assert:
+    that:
+      - observability_legacy_ksm_inspection is succeeded
+      - ansible_check_mode or observability_legacy_ksm_port_forward is succeeded
+    fail_msg: >-
+      Named legacy kube-state-metrics migration did not complete; no Helm
+      release was changed. Docker-based legacy monitoring is intentionally out
+      of scope.
+
+- name: Ensure source directory for pinned Helm exists
+  ansible.builtin.file:
+    path: /usr/local/src
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: not ansible_check_mode
+
+- name: Download the official pinned Helm archive
+  ansible.builtin.get_url:
+    url: '{{ observability_helm_archive.url }}'
+    dest: /usr/local/src/helm-{{ helm_version }}-linux-{{ observability_helm_archive.architecture }}.tar.gz
+    mode: '0644'
+    checksum: sha256:{{ observability_helm_archive.sha256 }}
+  when: not ansible_check_mode
+
+- name: Install pinned Helm binary only when the requested version differs
+  ansible.builtin.unarchive:
+    src: /usr/local/src/helm-{{ helm_version }}-linux-{{ observability_helm_archive.architecture }}.tar.gz
+    dest: /usr/local/src
+    remote_src: true
+    creates: /usr/local/src/linux-{{ observability_helm_archive.architecture }}/helm
+  when: not ansible_check_mode
+
+- name: Place pinned Helm binary
+  ansible.builtin.copy:
+    src: /usr/local/src/linux-{{ observability_helm_archive.architecture }}/helm
+    dest: /usr/local/bin/helm
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+  when: not ansible_check_mode
+
+- name: Verify installed Helm version
+  ansible.builtin.command:
+    cmd: /usr/local/bin/helm version --template '{{ "{{ .Version }}" }}'
+  register: observability_installed_helm_version
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Require installed Helm version pin
+  ansible.builtin.assert:
+    that:
+      - observability_installed_helm_version.stdout | trim == helm_version
+    fail_msg: Installed Helm version differs from {{ helm_version }}.
+  when: not ansible_check_mode
+
+- name: Add pinned observability chart repositories
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/helm repo add {{ item.key }} {{ item.value }} --force-update
+  loop: '{{ helm_repositories | dict2items }}'
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Update observability chart repository metadata
+  ansible.builtin.command:
+    cmd: /usr/local/bin/helm repo update
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Process each observability Helm release through its state machine
+  ansible.builtin.include_tasks: release.yml
+  loop: '{{ observability_releases_ordered }}'
+  loop_control:
+    loop_var: observability_release_definition
+  when: not ansible_check_mode

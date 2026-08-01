@@ -1,0 +1,8 @@
+---
+aggregate_requests:
+  cpu: 786m
+  memory: 1266Mi
+aggregate_limits:
+  cpu: 2950m
+  memory: 2496Mi
+expected_capacity: fail
