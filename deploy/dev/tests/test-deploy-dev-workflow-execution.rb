@@ -154,10 +154,20 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
         cat >/dev/null
         ;;
       get)
-        case "$*" in
-          *'{.type}'*) printf '%s' 'Opaque' ;;
-          *'.data'*) printf '%s\n' 'access-key-id' 'secret-access-key' ;;
-          *) exit 1 ;;
+        [ "$2" = secret ]
+        [ "$3" = observability-aws-credentials ]
+        [ "$4" = --namespace ]
+        [ "$5" = observability ]
+        [ "$6" = -o ]
+        case "$7" in
+          "jsonpath={.type}") printf '%s' 'Opaque' ;;
+          'go-template={{range $key, $_ := .data}}{{$key}}{{"\n"}}{{end}}')
+            printf '%s\n' 'access-key-id' 'secret-access-key'
+            ;;
+          *)
+            printf '%s\n' "unsupported kubectl Secret metadata output: $7" >&2
+            exit 1
+            ;;
         esac
         ;;
       *)
@@ -173,6 +183,14 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
     'OBSERVABILITY_AWS_ACCESS_KEY_ID' => 'fixture-access-key',
     'OBSERVABILITY_AWS_SECRET_ACCESS_KEY' => 'fixture-secret-key'
   )
+  old_jsonpath_bootstrap = bootstrap.sub(
+    "-o go-template='{{range $key, $_ := .data}}{{$key}}{{\"\\n\"}}{{end}}'",
+    "-o jsonpath='{range $key := .data}{$key}{\"\\n\"}{end}'"
+  )
+  _stdout, stderr, status = run_step(old_jsonpath_bootstrap, bootstrap_environment)
+  assert(!status.success? && stderr.include?('unsupported kubectl Secret metadata output'),
+         'legacy JSONPath key enumeration must fail against the K3s kubectl fixture')
+
   stdout, stderr, status = run_step(bootstrap, bootstrap_environment)
   output = "#{stdout}#{stderr}"
   assert(status.success?, "bootstrap SSH fixture failed: #{stderr}")

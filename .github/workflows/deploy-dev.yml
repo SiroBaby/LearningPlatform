@@ -391,7 +391,7 @@ jobs:
             --from-file=secret-access-key="$REMOTE_CREDENTIAL_DIR/secret-access-key" \
             --dry-run=client -o yaml | sudo k3s kubectl apply -f -
           SECRET_TYPE="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o jsonpath='{.type}')"
-          SECRET_KEYS="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o jsonpath='{range $key := .data}{$key}{"\n"}{end}' | LC_ALL=C sort)"
+          SECRET_KEYS="$(sudo k3s kubectl get secret observability-aws-credentials --namespace observability -o go-template='{{range $key, $_ := .data}}{{$key}}{{"\n"}}{{end}}' | LC_ALL=C sort)"
           if [[ "$SECRET_TYPE" != Opaque || "$SECRET_KEYS" != $'access-key-id\nsecret-access-key' ]]; then
             printf '%s\n' 'observability credential Secret metadata contract failed' >&2
             exit 1

@@ -143,6 +143,9 @@ if bootstrap
          'bootstrap must upsert only the exact opaque observability Secret from files')
   assert(failures, bootstrap_run.include?('type=Opaque key_count=2 keys=access-key-id,secret-access-key') && bootstrap_run.include?('LC_ALL=C sort'),
          'bootstrap must verify only opaque Secret metadata and the exact sorted keys')
+  assert(failures, bootstrap_run.include?("-o go-template='{{range $key, $_ := .data}}{{$key}}{{\"\\n\"}}{{end}}'") &&
+                   !bootstrap_run.include?("jsonpath='{range $key := .data}"),
+         'bootstrap must enumerate only Secret key names with the K3s-supported Go template, not the unsupported JSONPath range')
   assert(failures, !bootstrap_run.match?(/set -x|--from-literal|base64 --decode/),
          'bootstrap must not trace, use literals, or decode a desired-state blob')
 end
