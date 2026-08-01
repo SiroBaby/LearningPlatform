@@ -110,8 +110,10 @@ jobs:
         run: bash infra/scripts/validate.sh
       - name: Validate rendered observability policy fixtures
         run: ruby infra/scripts/tests/test-rendered-observability-policy.rb
+      - name: Render and validate pinned observability chart archives
+        run: bash infra/scripts/test-real-render-observability.sh
       - name: Validate deployment workflow target policy
-        run: ruby deploy/dev/tests/test-deploy-dev-workflow-policy.rb
+        run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
 
   build-images:
     name: Build and push images
@@ -186,8 +188,8 @@ jobs:
           import sys
           import json
 
-           host, user = os.environ['VPS_HOST'], os.environ['VPS_USER']
-           if not host or not user: sys.exit('VPS_HOST and VPS_USER must be non-empty')
+          host, user = os.environ['VPS_HOST'], os.environ['VPS_USER']
+          if not host or not user: sys.exit('VPS_HOST and VPS_USER must be non-empty')
           if not re.fullmatch(r'[A-Za-z0-9._-]+', user): sys.exit('VPS_USER contains unsupported characters')
           if not re.fullmatch(r'[A-Za-z0-9.-]+', host): sys.exit('VPS_HOST contains unsupported characters')
           selected = [name for name in ('web', 'api', 'worker') if os.environ[f'SELECT_{name.upper()}'] == 'true']
@@ -210,7 +212,7 @@ jobs:
           with open(f'{deployment_dir}/overrides.yml', 'w', encoding='utf-8') as overrides:
               json.dump({'deployment_targets': selected, **image_overrides}, overrides)
           PY
-           chmod 600 "$DEPLOYMENT_DIR/hosts.yml" "$DEPLOYMENT_DIR/overrides.yml"
+          chmod 600 "$DEPLOYMENT_DIR/hosts.yml" "$DEPLOYMENT_DIR/overrides.yml"
       - name: Configure SSH trust
         env:
           SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
@@ -245,12 +247,12 @@ jobs:
               targets = json.load(overrides)['deployment_targets']
           sys.exit(not any(target in ('api', 'worker') for target in targets))
           PY
-           then
-             exit 0
-           fi
-           if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" 'if ! sudo k3s kubectl get job/database-migrate --namespace learning-platform-dev >/dev/null 2>&1; then exit 0; fi; sudo k3s kubectl describe job/database-migrate --namespace learning-platform-dev || true; sudo k3s kubectl logs job/database-migrate --all-containers=true --namespace learning-platform-dev 2>/dev/null || true'; then
-             true
-           fi
+          then
+            exit 0
+          fi
+          if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" 'if ! sudo k3s kubectl get job/database-migrate --namespace learning-platform-dev >/dev/null 2>&1; then exit 0; fi; sudo k3s kubectl describe job/database-migrate --namespace learning-platform-dev || true; sudo k3s kubectl logs job/database-migrate --all-containers=true --namespace learning-platform-dev 2>/dev/null || true'; then
+            true
+          fi
       - name: Wait for selected K3s rollouts
         env:
           VPS_HOST: ${{ vars.DEV_VPS_HOST }}

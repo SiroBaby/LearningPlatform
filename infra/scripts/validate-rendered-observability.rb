@@ -16,11 +16,6 @@ require 'optparse'
 EXPECTED_NAMESPACE = 'observability'
 EXPECTED_REQUESTS = { 'cpu' => 785, 'memory' => 1266 }.freeze
 EXPECTED_LIMITS = { 'cpu' => 2950, 'memory' => 2496 }.freeze
-EXPECTED_CHARTS = {
-  'kube-prometheus-stack' => %w[87.21.0],
-  'loki' => %w[18.7.0],
-  'alloy' => %w[1.11.0]
-}.freeze
 LONG_RUNNING_KINDS = %w[DaemonSet Deployment StatefulSet].freeze
 CLUSTER_SCOPED_KINDS = %w[ClusterRole ClusterRoleBinding CustomResourceDefinition].freeze
 EXPECTED_WORKLOAD_CONTAINERS = {

@@ -5,23 +5,42 @@ INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly INFRA_DIR
 readonly HELM_VERSION='v3.21.3'
 readonly NAMESPACE='observability'
-readonly OUTPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/learning-platform-observability.XXXXXX")"
-trap 'rm -rf "${OUTPUT_DIR}"' EXIT
+output_dir=''
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 require_helm() {
   command -v helm >/dev/null 2>&1 || fail "Helm ${HELM_VERSION} is required locally; install it or provide a local Helm binary."
-  [ "$(helm version --template '{{.Version}}' 2>/dev/null)" = "${HELM_VERSION}" ] || fail "Helm must be exactly ${HELM_VERSION}."
+  [[ "$(helm version --template '{{.Version}}' 2>/dev/null)" =~ ^${HELM_VERSION}(\+[0-9A-Za-z.-]+)?$ ]] || fail "Helm must be ${HELM_VERSION}, optionally followed by SemVer build metadata."
 }
 
 chart_dir=''
-if [ "${1:-}" = '--chart-dir' ]; then
-  chart_dir="${2:-}"
-  [ -d "${chart_dir}" ] || fail '--chart-dir must name a directory containing the three exact official chart archives.'
-  shift 2
+check_helm_version=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --check-helm-version)
+      check_helm_version=true
+      shift
+      ;;
+    --chart-dir)
+      chart_dir="${2:-}"
+      [ -d "${chart_dir}" ] || fail '--chart-dir must name a directory containing the three exact official chart archives.'
+      shift 2
+      ;;
+    --output-dir)
+      output_dir="${2:-}"
+      [ -d "${output_dir}" ] || fail '--output-dir must name an existing directory.'
+      shift 2
+      ;;
+    *) fail 'Usage: render-observability.sh [--check-helm-version] [--chart-dir DIRECTORY] [--output-dir DIRECTORY]' ;;
+  esac
+done
+if [ -z "${output_dir}" ]; then
+  output_dir="$(mktemp -d "${TMPDIR:-/tmp}/learning-platform-observability.XXXXXX")"
+  trap 'rm -rf "${output_dir}"' EXIT
 fi
-[ "$#" -eq 0 ] || fail 'Usage: render-observability.sh [--chart-dir DIRECTORY]'
+readonly OUTPUT_DIR="${output_dir}"
 require_helm
+[ "${check_helm_version}" = false ] || exit 0
 
 if [ -z "${chart_dir}" ]; then
   helm repo add --force-update prometheus-community https://prometheus-community.github.io/helm-charts

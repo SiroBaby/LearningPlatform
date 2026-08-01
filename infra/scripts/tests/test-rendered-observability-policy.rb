@@ -46,6 +46,21 @@ Dir.mktmpdir('rendered-observability-policy') do |directory|
     _output, failed = Open3.capture2e('ruby', validator, '--input', path, '--junit', "#{path}.xml")
     failures << "negative fixture unexpectedly passed: #{label}" if failed.success?
   end
+  ruby_tag_path = File.join(directory, 'ruby-tag.yml')
+  File.write(ruby_tag_path, "--- !ruby/object:OpenStruct\nvalue: fixture\n")
+  ruby_tag_output, ruby_tag_status = Open3.capture2e('ruby', validator, '--input', ruby_tag_path)
+  failures << 'Ruby object tag must be rejected before YAML loading' if ruby_tag_status.success? || !ruby_tag_output.include?('must not use Ruby object tags')
+
+  alias_path = File.join(directory, 'alias.yml')
+  File.write(alias_path, <<~YAML)
+    ---
+    apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: alias-a, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
+    data: {source: &source fixture, copy: *source}
+  YAML
+  alias_output, alias_status = Open3.capture2e('ruby', validator, '--input', alias_path)
+  failures << "YAML aliases must parse as trusted pre-render input: #{alias_output}" if alias_status.success? || alias_output.include?('cannot parse rendered YAML')
 end
 
 abort "FAIL\n#{failures.join("\n")}" unless failures.empty?

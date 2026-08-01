@@ -41,6 +41,7 @@ main() {
   reject_match 'secrets\.DEV_.*(AWS|AIVEN|RUNTIME)'
   reject_match 'site\.yml --tags (k3s|monitoring)'
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-policy.rb"
+  ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-execution.rb"
   printf '%s\n' 'deploy workflow static tests passed'
 }
 

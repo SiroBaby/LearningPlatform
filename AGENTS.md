@@ -33,3 +33,4 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Tách registry/SSH credential của CI khỏi application runtime credential. Không bake secret vào image; production orchestration ưu tiên workload identity hoặc secret manager thay vì sao chép static key theo node.
 - Fail-fast non-secret runtime config phải được khai báo bằng manifest literal rõ ràng và có static check; không đẩy các constant contract như AI provider/capability/transport sang ExternalSecret hoặc SSM.
 - SSH chạy bên trong loop đang đọc từ redirected stdin phải dùng `-n`, trừ khi cố ý truyền stdin cho remote command.
+- Với YAML `run: |` chứa Python/heredoc, mọi dòng top-level sau block-strip phải cùng indentation; thêm test trích xuất và thực thi bằng fixture trước khi merge.
