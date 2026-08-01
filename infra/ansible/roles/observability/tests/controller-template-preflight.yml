@@ -52,6 +52,7 @@
     ansible_architecture: x86_64
     observability_grafana_external_secret_template: /tmp/learning-platform-missing-grafana-external-secret.yaml.j2
     observability_helm_action_count: 0
+    observability_expected_template_preflight_failed: false
   tasks:
     - name: Run the observability role with a missing controller template
       block:
@@ -65,3 +66,13 @@
               - ansible_failed_task.name == 'Fail before Helm when the Grafana ExternalSecret contract is absent'
               - observability_helm_action_count == 0
             fail_msg: Missing controller template must fail before any Helm action.
+
+        - name: Record the expected controller template preflight failure
+          ansible.builtin.set_fact:
+            observability_expected_template_preflight_failed: true
+
+    - name: Require the missing controller template to fail before Helm
+      ansible.builtin.assert:
+        that:
+          - observability_expected_template_preflight_failed
+        fail_msg: Missing controller template unexpectedly allowed the observability role to continue.
