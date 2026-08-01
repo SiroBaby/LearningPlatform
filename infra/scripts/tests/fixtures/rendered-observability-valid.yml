@@ -1,0 +1,135 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: learning-platform-monitoring-meta, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: learning-platform-monitoring-grafana, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring, app.kubernetes.io/name: grafana}}
+data:
+  grafana.ini: |
+    [server]
+    root_url = https://157.66.101.219/
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: learning-platform-loki-meta, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-loki, app.kubernetes.io/version: 3.7.4}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: learning-platform-alloy-config, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-alloy, app.kubernetes.io/version: v1.18.0}}
+data:
+  config.alloy: |
+    stage.label_keep { values = ["cluster", "namespace", "app", "container", "stream"] }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata: {name: learning-platform-monitoring-prometheus, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
+spec:
+  retention: 7d
+  retentionSize: 2500MB
+  resources: {requests: {cpu: 300m, memory: 512Mi}, limits: {cpu: "1", memory: 1Gi}}
+  containers:
+    - name: config-reloader
+      resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
+  storage:
+    volumeClaimTemplate:
+      spec: {storageClassName: local-path, resources: {requests: {storage: 3Gi}}}
+  persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: learning-platform-monitoring-operator, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring, app.kubernetes.io/name: kube-prometheus-stack-prometheus-operator}}
+spec:
+  template:
+    spec:
+      containers:
+        - name: kube-prometheus-stack
+          args: [--config-reloader-cpu-request=25m, --config-reloader-memory-request=32Mi, --config-reloader-cpu-limit=100m, --config-reloader-memory-limit=64Mi]
+          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 200m, memory: 128Mi}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: learning-platform-monitoring-grafana, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring, app.kubernetes.io/name: grafana}}
+spec:
+  persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  volumeClaimTemplates:
+    - spec: {storageClassName: local-path, resources: {requests: {storage: 1Gi}}}
+  template:
+    spec:
+      containers:
+        - name: grafana
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 500m, memory: 256Mi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: learning-platform-monitoring-kube-state-metrics, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring, app.kubernetes.io/name: kube-state-metrics}}
+spec:
+  template:
+    spec:
+      containers:
+        - name: kube-state-metrics
+          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 200m, memory: 128Mi}}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: learning-platform-monitoring-node-exporter, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring, app.kubernetes.io/name: prometheus-node-exporter}}
+spec:
+  template:
+    spec:
+      containers:
+        - name: node-exporter
+          resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: learning-platform-loki, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-loki, app.kubernetes.io/name: loki}}
+spec:
+  persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  volumeClaimTemplates:
+    - spec: {storageClassName: local-path, resources: {requests: {storage: 2Gi}}}
+  template:
+    spec:
+      containers:
+        - name: loki
+          resources: {requests: {cpu: 150m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: learning-platform-alloy, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-alloy, app.kubernetes.io/name: alloy}}
+spec:
+  template:
+    spec:
+      hostNetwork: false
+      hostPID: false
+      containers:
+        - name: alloy
+          securityContext: {privileged: false, allowPrivilegeEscalation: false}
+          resources: {requests: {cpu: 75m, memory: 128Mi}, limits: {cpu: 250m, memory: 256Mi}}
+        - name: config-reloader
+          securityContext: {privileged: false, allowPrivilegeEscalation: false}
+          resources: {requests: {cpu: 10m, memory: 50Mi}, limits: {cpu: 100m, memory: 64Mi}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: learning-platform-alloy, labels: {app.kubernetes.io/instance: learning-platform-alloy, app.kubernetes.io/name: alloy}}
+rules:
+  - resources: [pods, pods/log]
+    verbs: [get, list, watch]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: learning-platform-monitoring-grafana, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring, app.kubernetes.io/name: grafana}}
+spec: {type: ClusterIP}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: learning-platform-monitoring-grafana, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring, app.kubernetes.io/name: grafana}}
+spec:
+  rules:
+    - host: grafana.observability.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: learning-platform-monitoring-grafana, port: {number: 80}}}
