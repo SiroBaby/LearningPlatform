@@ -5,6 +5,7 @@ require 'json'
 require 'open3'
 require 'tmpdir'
 require 'yaml'
+require_relative 'workflow-expression-evaluator'
 
 def safe_yaml_load(text)
   YAML.safe_load(text, permitted_classes: [], permitted_symbols: [], aliases: true)
@@ -20,12 +21,58 @@ root = File.expand_path('../../..', __dir__)
 workflow = safe_yaml_load(File.read(File.join(root, '.github', 'workflows', 'deploy-dev.yml')))
 jobs = workflow.fetch('jobs')
 
-def application_flow_runs?(infra_quality_result)
-  %w[success skipped].include?(infra_quality_result)
+def workflow_context(outputs:, results:, event_name: 'push', ref: 'refs/heads/develop', target: 'auto')
+  {
+    'github' => { 'event_name' => event_name, 'ref' => ref },
+    'inputs' => { 'target' => target },
+    'needs' => results.transform_values { |result| { 'result' => result } }.merge(
+      'changes' => { 'result' => 'success', 'outputs' => outputs }
+    )
+  }
 end
 
-assert(!application_flow_runs?('failure'), 'failed infra-quality must block the application build/deploy path')
-assert(application_flow_runs?('skipped'), 'skipped infra-quality must allow the app-only build/deploy path')
+matrix = {
+  'app-only infra skipped' => [
+    { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'false', 'observability' => 'false' },
+    { 'backend-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'skipped', 'build-images' => 'success' },
+    true, true
+  ],
+  'mixed app and infra success' => [
+    { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'true', 'observability' => 'true' },
+    { 'backend-quality' => 'success', 'frontend-quality' => 'success', 'infra-quality' => 'success', 'build-images' => 'success' },
+    true, true
+  ],
+  'infra failure blocks application flow' => [
+    { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'false', 'observability' => 'true' },
+    { 'backend-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'failure', 'build-images' => 'skipped' },
+    false, false
+  ],
+  'infra cancelled blocks application flow' => [
+    { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'false', 'observability' => 'true' },
+    { 'backend-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'cancelled', 'build-images' => 'skipped' },
+    false, false
+  ],
+  'backend skipped frontend succeeds' => [
+    { 'deploy_any' => 'true', 'backend' => 'false', 'web' => 'true', 'observability' => 'false' },
+    { 'backend-quality' => 'skipped', 'frontend-quality' => 'success', 'infra-quality' => 'skipped', 'build-images' => 'success' },
+    true, true
+  ],
+  'frontend skipped backend succeeds' => [
+    { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'false', 'observability' => 'false' },
+    { 'backend-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'skipped', 'build-images' => 'success' },
+    true, true
+  ]
+}
+
+%w[build-images deploy].each do |job_name|
+  assert(jobs.fetch(job_name).fetch('if').include?('always()'), "#{job_name} must retain always() so skipped quality needs are evaluated")
+end
+
+matrix.each do |name, (outputs, results, build_expected, deploy_expected)|
+  context = workflow_context(outputs: outputs, results: results)
+  assert(workflow_job_runs?(jobs, 'build-images', context) == build_expected, "#{name}: build-images must evaluate its YAML if expression")
+  assert(workflow_job_runs?(jobs, 'deploy', context) == deploy_expected, "#{name}: deploy must evaluate its YAML if expression")
+end
 
 def run_step(script, environment)
   Open3.capture3(environment, 'bash', '-ceu', script)

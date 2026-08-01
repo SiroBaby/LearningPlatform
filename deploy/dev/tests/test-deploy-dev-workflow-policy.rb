@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require 'yaml'
+require_relative 'workflow-expression-evaluator'
 
 def safe_yaml_load(text)
   YAML.safe_load(text, permitted_classes: [], permitted_symbols: [], aliases: true)
@@ -32,14 +33,14 @@ def job_secret_references(job)
   job.to_s.scan(/secrets\.([A-Z0-9_]+)/).flatten
 end
 
-def eligible_jobs(target:, observability_changed:, ref:, infra_quality_result: 'success')
-  return %w[changes backend-quality build-images deploy] if target == 'api'
-
-  if target == 'observability' && observability_changed && ref == 'refs/heads/develop' && infra_quality_result == 'success'
-    return %w[changes infra-quality deploy-observability]
-  end
-
-  ['changes']
+def workflow_context(outputs:, results:, event_name:, ref:, target:)
+  {
+    'github' => { 'event_name' => event_name, 'ref' => ref },
+    'inputs' => { 'target' => target },
+    'needs' => results.transform_values { |result| { 'result' => result } }.merge(
+      'changes' => { 'result' => 'success', 'outputs' => outputs }
+    )
+  }
 end
 
 triggers = workflow['on'] || workflow[true]
@@ -50,16 +51,16 @@ assert(failures, triggers.dig('push', 'branches') == ['develop'],
        'push must remain restricted to develop')
 assert(failures, playbook.fetch('vars_files') == ['../vars/dev.yml'],
        'playbook must load canonical non-secret vars/dev.yml relative to its location')
-assert(failures, eligible_jobs(target: 'api', observability_changed: true, ref: 'refs/heads/feature/test') == %w[changes backend-quality build-images deploy],
-        'api fixture must select only the application quality/build/deploy path')
-assert(failures, eligible_jobs(target: 'observability', observability_changed: true, ref: 'refs/heads/develop') == %w[changes infra-quality deploy-observability],
-       'observability fixture on develop must select only infrastructure quality and explicit observability deployment')
-assert(failures, eligible_jobs(target: 'observability', observability_changed: true, ref: 'refs/heads/feature/test') == ['changes'],
-       'observability fixture on feature refs must not select a remote deployment')
-assert(failures, eligible_jobs(target: 'observability', observability_changed: true, ref: 'refs/heads/develop', infra_quality_result: 'skipped') == ['changes'],
-       'observability fixture must not select a remote deployment when infra quality is not successful')
-assert(failures, eligible_jobs(target: 'observability', observability_changed: false, ref: 'refs/heads/develop') == ['changes'],
-        'unchanged observability fixture must not select a remote deployment')
+observability_outputs = { 'deploy_any' => 'false', 'backend' => 'false', 'web' => 'false', 'observability' => 'true' }
+observability_results = { 'infra-quality' => 'success' }
+assert(failures, workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability')),
+       'observability dispatch on develop must evaluate the YAML deployment expression to true')
+assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/feature/test', target: 'observability')),
+       'observability dispatch on feature refs must evaluate the YAML deployment expression to false')
+assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: { 'infra-quality' => 'skipped' }, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability')),
+       'observability dispatch with skipped infra quality must evaluate the YAML deployment expression to false')
+assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs.merge('observability' => 'false'), results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability')),
+       'unchanged observability dispatch must evaluate the YAML deployment expression to false')
 
 changes = jobs.fetch('changes')
 assert(failures, changes.dig('outputs', 'observability') == '${{ steps.classify.outputs.observability }}',

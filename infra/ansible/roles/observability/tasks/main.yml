@@ -202,18 +202,18 @@
   check_mode: false
   when: not ansible_check_mode
 
-- name: Require loopback Traefik ready endpoint reachability
+- name: Require loopback Traefik web NodePort reachability
   ansible.builtin.uri:
-    url: http://127.0.0.1:{{ k3s_traefik_http_node_port }}/ping
+    url: http://127.0.0.1:{{ k3s_traefik_http_node_port }}/
     method: GET
-    status_code: 200
+    status_code: 404
     timeout: 5
   check_mode: false
   when: not ansible_check_mode
 
 - name: Check that Traefik NodePort is unreachable through the node address
   ansible.builtin.uri:
-    url: http://{{ ansible_default_ipv4.address }}:{{ k3s_traefik_http_node_port }}/ping
+    url: http://{{ ansible_default_ipv4.address }}:{{ k3s_traefik_http_node_port }}/
     method: GET
     status_code: 200
     timeout: 5
@@ -245,7 +245,8 @@
     msg:
       ss_listener_present: '{{ observability_traefik_nodeport_listener.stdout | trim | length > 0 }}'
       netfilter_rule: KUBE-NODEPORTS TCP {{ k3s_traefik_http_node_port }}
-      loopback_ready_endpoint: http://127.0.0.1:{{ k3s_traefik_http_node_port }}/ping
+      loopback_web_endpoint: http://127.0.0.1:{{ k3s_traefik_http_node_port }}/
+      loopback_web_status: 404
       node_address_rejected: '{{ ansible_default_ipv4.address }}:{{ k3s_traefik_http_node_port }}'
   when: not ansible_check_mode
 
