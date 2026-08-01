@@ -35,4 +35,5 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - SSH chạy bên trong loop đang đọc từ redirected stdin phải dùng `-n`, trừ khi cố ý truyền stdin cho remote command.
 - Với YAML `run: |` chứa Python/heredoc, mọi dòng top-level sau block-strip phải cùng indentation; thêm test trích xuất và thực thi bằng fixture trước khi merge.
 - Với SSH bootstrap có `set -u`, chạy remote Bash qua `env -u BASH_ENV bash --noprofile --norc` và fixture phải thực thi payload thật để chặn startup shell/quoted heredoc lỗi trước deploy.
+- Khi bootstrap kiểm tra Secret, chỉ đọc type và tên key qua output contract được fixture K3s xác nhận; không đọc, parse hoặc in Secret data values. Với key enumeration dùng exact Go template `{{range $key, $_ := .data}}{{$key}}{{"\n"}}{{end}}`, không dùng JSONPath `range` có khai báo biến.
 - Với kube-proxy iptables/nft, NodePort không nhất thiết xuất hiện trong `ss`; preflight phải kiểm exact loopback config, Traefik ready endpoint, rule `KUBE-NODEPORTS`, loopback HTTP thành công và node-address HTTP thất bại. `ss` chỉ là diagnostic.
