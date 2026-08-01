@@ -43,12 +43,33 @@
   ansible.builtin.stat:
     path: '{{ observability_grafana_external_secret_template }}'
   register: observability_grafana_external_secret_template_file
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Read Grafana ExternalSecret contract template from the controller
+  ansible.builtin.slurp:
+    src: '{{ observability_grafana_external_secret_template }}'
+  register: observability_grafana_external_secret_template_content
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when:
+    - observability_grafana_external_secret_template_file.stat.exists
+    - observability_grafana_external_secret_template_file.stat.isreg
+    - observability_grafana_external_secret_template_file.stat.readable
 
 - name: Fail before Helm when the Grafana ExternalSecret contract is absent
   ansible.builtin.assert:
     that:
       - observability_grafana_external_secret_template_file.stat.exists
       - observability_grafana_external_secret_template_file.stat.isreg
+      - observability_grafana_external_secret_template_file.stat.readable
+      - observability_grafana_external_secret_template_content.content | b64decode | trim | length > 0
+      - observability_grafana_external_secret_template_content.content | b64decode is search('kind:\s+ExternalSecret')
+      - >-
+        observability_grafana_external_secret_template_content.content | b64decode
+        is search('name:\s+\{\{\s*grafana_admin_secret_name\s*\}\}')
       - grafana_admin_secret_name is string
       - grafana_admin_secret_name | length > 0
       - observability_aws_credentials_secret_name is string

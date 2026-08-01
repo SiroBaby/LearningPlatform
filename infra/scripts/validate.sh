@@ -486,6 +486,10 @@ check_ansible_when_installed() {
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       -i "${ANSIBLE_DIR}/inventory/hosts.example.yml" \
       "${ANSIBLE_DIR}/playbooks/site.yml" --syntax-check
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/observability/tests/state-machine.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/observability/tests/controller-template-preflight.yml" --check
     return
   fi
 

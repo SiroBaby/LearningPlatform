@@ -1,0 +1,67 @@
+---
+- name: Verify Grafana ExternalSecret template preflight runs on the controller
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    ansible_architecture: x86_64
+    observability_remote_repo_source_path: /tmp/learning-platform-remote-source-is-absent
+  pre_tasks:
+    - name: Confirm the simulated remote VPS has no repository source tree
+      ansible.builtin.stat:
+        path: '{{ observability_remote_repo_source_path }}'
+      register: observability_remote_repo_source
+
+    - name: Require the simulated remote VPS source tree to be absent
+      ansible.builtin.assert:
+        that:
+          - not observability_remote_repo_source.stat.exists
+
+  tasks:
+    - name: Run the observability role when the controller template exists
+      ansible.builtin.include_role:
+        name: observability
+
+    - name: Require the controller preflight to precede every Helm action
+      ansible.builtin.assert:
+        that:
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is search('delegate_to: localhost')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is search('ansible.builtin.slurp')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
+              'Fail before Helm when the Grafana ExternalSecret contract is absent'
+            ) < lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
+              'Process each observability Helm release through its state machine'
+            )
+
+- name: Verify a missing controller template blocks before Helm
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    ansible_architecture: x86_64
+    observability_grafana_external_secret_template: /tmp/learning-platform-missing-grafana-external-secret.yaml.j2
+    observability_helm_action_count: 0
+  tasks:
+    - name: Run the observability role with a missing controller template
+      block:
+        - name: Include observability role with a missing controller template
+          ansible.builtin.include_role:
+            name: observability
+      rescue:
+        - name: Require the preflight failure before Helm mutation
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Fail before Helm when the Grafana ExternalSecret contract is absent'
+              - observability_helm_action_count == 0
+            fail_msg: Missing controller template must fail before any Helm action.
