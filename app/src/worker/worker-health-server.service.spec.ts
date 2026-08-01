@@ -21,6 +21,7 @@ const workerConfig = (port: number): ApplicationConfigService =>
       maxExtractableObjectBytes: 20_971_520,
       outboxBatchSize: 100,
       pollIntervalMs: 1_000,
+      quizGenerationConcurrency: 8,
       stuckJobBatchSize: 100,
       stuckJobTimeoutMs: 300_000,
     },

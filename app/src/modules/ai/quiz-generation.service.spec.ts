@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 
 import { describe, expect, it, jest } from '@jest/globals';
+import { ConsoleLogger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type {
@@ -35,35 +36,79 @@ import {
 } from './quiz-generation.prompt';
 
 describe('QuizGenerationService', () => {
-  it('generates ordered chunks sequentially and hands off all grounded questions once', async () => {
-    const provider = new RecordingProvider();
+  it('bounds concurrent generation and hands off sorted grounded questions once despite out-of-order completion', async () => {
+    const provider = new OutOfOrderProvider();
     const cache = new InMemoryGenerationCache();
     const handoff = new RecordingHandoff();
-    const service = new QuizGenerationService(provider, cache, new RecordingPromptVersions(), handoff);
+    const service = new QuizGenerationService(
+      provider,
+      cache,
+      new RecordingPromptVersions(),
+      handoff,
+      undefined,
+      undefined,
+      undefined,
+      workerConfig(2),
+    );
     const firstChunk = chunk(0, 'first source');
     const secondChunk = chunk(1, 'second source');
+    const thirdChunk = chunk(2, 'third source');
+    const processingJob = job();
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
 
-    await service.generate({
-      chunks: [firstChunk, secondChunk],
-      job: job(),
+    const generation = service.generate({
+      chunks: [thirdChunk, firstChunk, secondChunk],
+      job: processingJob,
     });
+    await provider.waitForStarted(2);
+    provider.complete('second source');
+    provider.complete('first source');
+    await provider.waitForStarted(3);
+    provider.complete('third source');
+    await generation;
 
-    expect(provider.requests.map((request) => request.sourceText)).toEqual([
-      firstChunk.text,
-      secondChunk.text,
-    ]);
-    expect(provider.wasCalledConcurrently).toBe(false);
+    expect(provider.maximumConcurrentCalls).toBe(2);
     expect(handoff.handoffs[0]?.questions.map((question) => question.citation.chunkId)).toEqual([
       firstChunk.id,
       secondChunk.id,
+      thirdChunk.id,
     ]);
     expect(handoff.handoffs[0]?.questions.map((question) => question.citation.snippet)).toEqual([
       firstChunk.text,
       secondChunk.text,
+      thirdChunk.text,
     ]);
-    expect(handoff.handoffs[0]?.questions.map((question) => question.ordinal)).toEqual([0, 1]);
+    expect(handoff.handoffs[0]?.questions.map((question) => question.ordinal)).toEqual([0, 1, 2]);
     expect(handoff.handoffs).toHaveLength(1);
-    expect(handoff.handoffs[0]?.questions).toHaveLength(2);
+    expect(handoff.handoffs[0]?.questions).toHaveLength(3);
+    const events = logger.mock.calls
+      .map(([event]) => event)
+      .filter((event): event is Record<string, unknown> => typeof event === 'object' && event !== null && 'event' in event);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'ai.quiz_generation.cache_lookup.completed' }),
+      expect.objectContaining({ event: 'ai.quiz_generation.provider_generation.completed' }),
+      expect.objectContaining({ event: 'ai.quiz_generation.source_validation.completed' }),
+      expect.objectContaining({ event: 'ai.quiz_generation.cache_persist.completed' }),
+      expect.objectContaining({ event: 'ai.quiz_generation.handoff_persist.completed' }),
+      expect.objectContaining({ event: 'ai.quiz_generation.total.completed' }),
+    ]));
+    for (const event of events) {
+      expect(event).toEqual(expect.objectContaining({
+        attempt: processingJob.attempt,
+        correlationId: processingJob.correlationId,
+        durationMs: expect.any(Number),
+        jobId: processingJob.id,
+      }));
+      expect(Object.keys(event)).not.toEqual(expect.arrayContaining([
+        'cacheKey',
+        'citation',
+        'output',
+        'prompt',
+        'source',
+        'text',
+      ]));
+    }
+    logger.mockRestore();
   });
 
   it('calls the provider only for cache misses and caches decoded output', async () => {
@@ -195,6 +240,38 @@ describe('QuizGenerationService', () => {
     expect(costs.settlements).toEqual([expect.objectContaining({ hasUncertainDispatch: false, knownActualCredits: 15 })]);
   });
 
+  it('stops assigning chunks after a failure and settles only after started provider work finishes', async () => {
+    const costs = new RecordingCostGuard({ hasUncertainDispatch: true, knownActualCredits: 0 });
+    const provider = new GatedFailureProvider();
+    const service = new QuizGenerationService(
+      provider,
+      new InMemoryGenerationCache(),
+      new RecordingPromptVersions(),
+      new RecordingHandoff(),
+      costs,
+      costs,
+      undefined,
+      workerConfig(2),
+    );
+
+    const generation = service.generate({
+      chunks: [chunk(0, 'first'), chunk(1, 'second'), chunk(2, 'third')],
+      job: job(),
+    });
+    await provider.waitForStarted(2);
+    provider.failFirst();
+    await Promise.resolve();
+
+    expect(provider.requests).toHaveLength(2);
+    expect(costs.settlements).toEqual([]);
+
+    provider.completeSecond();
+
+    await expect(generation).rejects.toThrow('provider failed');
+    expect(provider.requests).toHaveLength(2);
+    expect(costs.settlements).toEqual([expect.objectContaining({ hasUncertainDispatch: true })]);
+  });
+
   it('keeps an uncertain dispatched request held after the provider throws without usage', async () => {
     const costs = new RecordingCostGuard({ hasUncertainDispatch: true, knownActualCredits: 0 });
     const provider = new ThrowingProvider();
@@ -242,11 +319,37 @@ describe('QuizGenerationService', () => {
     expect(costs.settlements).toEqual([]);
   });
 
+  it('reserves platform budget using the shared output-token cap for every chunk', async () => {
+    const costs = new RecordingCostGuard({ hasUncertainDispatch: false, knownActualCredits: 0 });
+    const provider = new RecordingProvider();
+    const service = new QuizGenerationService(
+      provider,
+      new InMemoryGenerationCache(),
+      new RecordingPromptVersions(),
+      new RecordingHandoff(),
+      costs,
+      costs,
+    );
+    const chunks = [chunk(0, 'first source'), chunk(1, 'second source'), chunk(2, 'third source')];
+
+    await service.generate({ chunks, job: job() });
+
+    expect(QUIZ_GENERATION_PARAMETERS.maxOutputTokens).toBe(8000);
+    expect(costs.reservations).toEqual([
+      expect.objectContaining({
+        estimatedCredits: chunks.length * QUIZ_GENERATION_PARAMETERS.maxOutputTokens,
+      }),
+    ]);
+    expect(provider.requests).toHaveLength(chunks.length);
+    expect(costs.settlements).toHaveLength(1);
+  });
+
   it('persists the configured default platform model before a legacy job calls a provider', async () => {
     const selections: ProcessingJobModelSelection = { ensureDefaultPlatformModel: jest.fn(async () => true) };
     const config = new ApplicationConfigService(new ConfigService({
       ai: { openai: { requestTimeoutMs: 60_000 }, platformModels: [{ creditPerInputToken: 1, creditPerOutputToken: 2, id: 'configured-default', model: 'test', planIds: ['free'] }], provider: 'fake' },
       app: { env: 'development' },
+      worker: workerSettings(8),
     }));
     const provider = new RecordingProvider();
     const service = new QuizGenerationService(provider, new InMemoryGenerationCache(), new RecordingPromptVersions(), new RecordingHandoff(), undefined, undefined, undefined, config, selections);
@@ -294,6 +397,80 @@ class FailingSecondProvider extends RecordingProvider {
 class ThrowingProvider extends RecordingProvider {
   override async generate(_request: LlmGenerationRequest): Promise<LlmGenerationResult> {
     throw new Error('provider failed');
+  }
+}
+
+class OutOfOrderProvider implements LlmProvider {
+  readonly model = 'out-of-order-model-v1';
+  readonly providerIdentity = 'fake:out-of-order-model-v1';
+  readonly requests: LlmGenerationRequest[] = [];
+  maximumConcurrentCalls = 0;
+  private activeCalls = 0;
+  private readonly completions = new Map<string, () => void>();
+
+  async generate(request: LlmGenerationRequest): Promise<LlmGenerationResult> {
+    this.requests.push(request);
+    this.activeCalls += 1;
+    this.maximumConcurrentCalls = Math.max(this.maximumConcurrentCalls, this.activeCalls);
+    await new Promise<void>((resolve) => this.completions.set(request.sourceText, resolve));
+    this.activeCalls -= 1;
+    return {
+      output: validOutput(request.sourceText),
+      usage: { inputTokens: null, outputTokens: null, status: 'UNAVAILABLE' },
+    };
+  }
+
+  complete(sourceText: string): void {
+    const completion = this.completions.get(sourceText);
+    if (!completion) throw new Error('Provider request was not started');
+    completion();
+  }
+
+  async waitForStarted(count: number): Promise<void> {
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      if (this.requests.length >= count) return;
+      await Promise.resolve();
+    }
+    throw new Error(`Expected ${count} provider requests to start`);
+  }
+}
+
+class GatedFailureProvider implements LlmProvider {
+  readonly model = 'gated-failure-model-v1';
+  readonly providerIdentity = 'fake:gated-failure-model-v1';
+  readonly requests: LlmGenerationRequest[] = [];
+  private rejectFirstRequest: ((reason?: unknown) => void) | undefined;
+  private resolveSecondRequest: (() => void) | undefined;
+
+  async generate(request: LlmGenerationRequest): Promise<LlmGenerationResult> {
+    this.requests.push(request);
+    if (this.requests.length === 1) {
+      await new Promise<void>((_resolve, reject) => { this.rejectFirstRequest = reject; });
+      throw new Error('Provider failure must reject');
+    }
+    await new Promise<void>((resolve) => { this.resolveSecondRequest = resolve; });
+    return {
+      output: validOutput(request.sourceText),
+      usage: { inputTokens: null, outputTokens: null, status: 'UNAVAILABLE' },
+    };
+  }
+
+  failFirst(): void {
+    if (!this.rejectFirstRequest) throw new Error('First provider request was not started');
+    this.rejectFirstRequest(new Error('provider failed'));
+  }
+
+  completeSecond(): void {
+    if (!this.resolveSecondRequest) throw new Error('Second provider request was not started');
+    this.resolveSecondRequest();
+  }
+
+  async waitForStarted(count: number): Promise<void> {
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      if (this.requests.length >= count) return;
+      await Promise.resolve();
+    }
+    throw new Error(`Expected ${count} provider requests to start`);
   }
 }
 
@@ -400,6 +577,7 @@ function summarizeSource(sourceText: string): string {
 
 function job(): {
   readonly attempt: number;
+  readonly correlationId: string;
   readonly documentId: string;
   readonly id: string;
   readonly ownerId: string;
@@ -407,9 +585,37 @@ function job(): {
 } {
   return {
     attempt: 1,
+    correlationId: randomUUID(),
     documentId: randomUUID(),
     id: randomUUID(),
     ownerId: randomUUID(),
     selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'platform-default' },
+  };
+}
+
+function workerConfig(quizGenerationConcurrency: number): ApplicationConfigService {
+  return new ApplicationConfigService(new ConfigService({
+    worker: workerSettings(quizGenerationConcurrency),
+  }));
+}
+
+function workerSettings(quizGenerationConcurrency: number): Record<string, number | string> {
+  return {
+    chunkInsertBatchSize: 500,
+    chunkMaxChars: 1_500,
+    chunkOverlapChars: 150,
+    chunkTargetChars: 1_200,
+    errorBackoffMs: 5_000,
+    healthHost: '0.0.0.0',
+    healthPort: 3_403,
+    jobBatchSize: 10,
+    maxChunksPerDocument: 20_000,
+    maxChunkTotalChars: 24_000_000,
+    maxExtractableObjectBytes: 20_971_520,
+    outboxBatchSize: 100,
+    pollIntervalMs: 1_000,
+    quizGenerationConcurrency,
+    stuckJobBatchSize: 100,
+    stuckJobTimeoutMs: 300_000,
   };
 }

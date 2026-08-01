@@ -1,5 +1,6 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 
+import { createApplicationLogger } from '../../common/logging/application-logger.factory';
 import { ApplicationConfigService } from '../../config/application-config.service';
 
 import { STORAGE_OBJECT_READER, StorageObjectReader } from '../../storage/contracts/storage-object-reader.port';
@@ -18,6 +19,8 @@ import { QUIZ_GENERATOR, type QuizGenerator } from './contracts/quiz-generator.p
 
 @Injectable()
 export class ExtractionJobProcessor implements JobProcessor {
+  private readonly logger = createApplicationLogger({ context: ExtractionJobProcessor.name });
+
   constructor(
     @Inject(DOCUMENT_SOURCE_READER) private readonly sources: DocumentSourceReader,
     @Inject(STORAGE_OBJECT_READER) private readonly objects: StorageObjectReader,
@@ -29,8 +32,11 @@ export class ExtractionJobProcessor implements JobProcessor {
   ) {}
 
   async process(job: ProcessingJob): Promise<void> {
+    const sourceStartedAt = performance.now();
     const source = await this.sources.read(job);
+    this.logStage(job, 'source_read', sourceStartedAt);
     let bytes: Buffer;
+    const objectStartedAt = performance.now();
     try {
       bytes = await this.objects.read(
         source.storageRef,
@@ -42,8 +48,14 @@ export class ExtractionJobProcessor implements JobProcessor {
       }
       throw new ExtractionError(DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND);
     }
+    this.logStage(job, 'object_read', objectStartedAt);
+    const extractionStartedAt = performance.now();
     const extracted = await this.extraction.extract(source, bytes);
+    this.logStage(job, 'extract', extractionStartedAt, { extractedSegmentCount: extracted.length });
+    const chunkStartedAt = performance.now();
     const chunks = this.chunker.chunk(job.documentId, job.ownerId, extracted);
+    this.logStage(job, 'chunk', chunkStartedAt, { chunkCount: chunks.length });
+    const chunkPersistStartedAt = performance.now();
     const persisted = await this.chunks.replaceForDocument({
       attempt: job.attempts,
       chunks,
@@ -54,11 +66,16 @@ export class ExtractionJobProcessor implements JobProcessor {
     if (!persisted) {
       throw new ExtractionError(DocumentProcessingFailureCode.PROCESSING_FAILED);
     }
+    this.logStage(job, 'chunk_persist', chunkPersistStartedAt, { chunkCount: chunks.length });
+    const chunkReadStartedAt = performance.now();
     const persistedChunks = await this.chunks.findForDocument(job.documentId, job.ownerId);
+    this.logStage(job, 'chunk_read', chunkReadStartedAt, { chunkCount: persistedChunks.length });
+    const generationStartedAt = performance.now();
     await this.quizGeneration.generate({
       chunks: persistedChunks,
       job: {
         attempt: job.attempts,
+        correlationId: job.correlationId,
         documentId: job.documentId,
         id: job.id,
         ownerId: job.ownerId,
@@ -70,6 +87,23 @@ export class ExtractionJobProcessor implements JobProcessor {
               platformModelId: job.platformModelId,
             },
       },
+    });
+    this.logStage(job, 'generate', generationStartedAt, { chunkCount: persistedChunks.length });
+  }
+
+  private logStage(
+    job: ProcessingJob,
+    stage: string,
+    startedAt: number,
+    counts: Record<string, number | boolean> = {},
+  ): void {
+    this.logger.log({
+      attempt: job.attempts,
+      correlationId: job.correlationId,
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      event: `ai.extraction.${stage}.completed`,
+      jobId: job.id,
+      ...counts,
     });
   }
 }

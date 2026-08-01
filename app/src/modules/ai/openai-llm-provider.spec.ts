@@ -18,6 +18,7 @@ import type {
 import { FakeLlmProvider } from './fake-llm-provider';
 import { DocumentProcessingFailureCode } from './contracts/document-processing-result';
 import { decodeGeneratedQuestionOutput } from './quiz-generation-output.decoder';
+import { QUIZ_GENERATION_PARAMETERS } from './quiz-generation.prompt';
 import {
   createOpenAiProviderIdentity,
   createLlmProvider,
@@ -55,7 +56,7 @@ describe('OpenAiLlmProvider', () => {
       const output = await provider.generate({
         parameters: {
           format: 'mcq-single-select-v1',
-        maxOutputTokens: 4000,
+          maxOutputTokens: 8000,
           questionsPerChunk: 1,
         },
         promptTemplate: 'Use only the supplied source.',
@@ -67,7 +68,7 @@ describe('OpenAiLlmProvider', () => {
         expect(client.responseRequests[0]).toMatchObject({
           input: 'One grounded chunk.',
           instructions: 'Use only the supplied source.',
-          max_output_tokens: 4000,
+          max_output_tokens: QUIZ_GENERATION_PARAMETERS.maxOutputTokens,
           model: 'gpt-test',
           store: false,
           text: {
@@ -80,7 +81,7 @@ describe('OpenAiLlmProvider', () => {
         return;
       }
       expect(client.chatRequests[0]).toMatchObject({
-        max_tokens: 4000,
+        max_tokens: QUIZ_GENERATION_PARAMETERS.maxOutputTokens,
         messages: [
           { content: 'Use only the supplied source.', role: 'system' },
           { content: 'One grounded chunk.', role: 'user' },
@@ -94,6 +95,22 @@ describe('OpenAiLlmProvider', () => {
     },
   );
 
+  it('uses the shared quiz generation output-token cap when building provider requests', async () => {
+    const client = new RecordingOpenAiClient(VALID_OUTPUT);
+    const provider = new OpenAiLlmProvider(client, providerSettings('chat-completions'));
+
+    await provider.generate({
+      parameters: QUIZ_GENERATION_PARAMETERS,
+      promptTemplate: 'Use only the supplied source.',
+      sourceText: 'One grounded chunk.',
+    });
+
+    expect(QUIZ_GENERATION_PARAMETERS.maxOutputTokens).toBe(8000);
+    expect(client.chatRequests[0]).toMatchObject({
+      max_tokens: QUIZ_GENERATION_PARAMETERS.maxOutputTokens,
+    });
+  });
+
   it.each(['responses', 'chat-completions'] satisfies readonly LlmTransport[])(
     'enforces exactly one question in the strict schema for %s',
     async (transport) => {
@@ -104,7 +121,7 @@ describe('OpenAiLlmProvider', () => {
       });
 
       await provider.generate({
-        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 8000, questionsPerChunk: 1 },
         promptTemplate: 'template',
         sourceText: 'source',
       });
@@ -125,7 +142,7 @@ describe('OpenAiLlmProvider', () => {
     const request = {
       parameters: {
         format: 'mcq-single-select-v1' as const,
-        maxOutputTokens: 4000 as const,
+        maxOutputTokens: 8000 as const,
         questionsPerChunk: 1 as const,
       },
       promptTemplate: 'template',
@@ -162,7 +179,7 @@ describe('OpenAiLlmProvider', () => {
     );
 
     const result = await provider.generate({
-      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 8000, questionsPerChunk: 1 },
       promptTemplate: 'template',
       sourceText: 'source',
     });
@@ -183,7 +200,7 @@ describe('OpenAiLlmProvider', () => {
     );
 
     await expect(provider.generate({
-      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 8000, questionsPerChunk: 1 },
       promptTemplate: 'template',
       sourceText: 'source',
     })).rejects.toMatchObject({ code: 'GENERATION_OUTPUT_INVALID' });
@@ -198,7 +215,7 @@ describe('OpenAiLlmProvider', () => {
       );
 
       await expect(provider.generate({
-        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 8000, questionsPerChunk: 1 },
         promptTemplate: 'template',
         sourceText: 'source',
       })).rejects.toMatchObject({ code: 'GENERATION_OUTPUT_TRUNCATED' });
@@ -219,7 +236,7 @@ describe('OpenAiLlmProvider', () => {
       );
 
       const failure = await provider.generate({
-        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+        parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 8000, questionsPerChunk: 1 },
         promptTemplate: 'template',
         sourceText: 'source',
       }).catch((caught: unknown) => caught);
@@ -251,7 +268,7 @@ describe('OpenAiLlmProvider', () => {
       const failure = await provider.generate({
         parameters: {
           format: 'mcq-single-select-v1',
-          maxOutputTokens: 4000,
+          maxOutputTokens: 8000,
           questionsPerChunk: 1,
         },
         promptTemplate: 'template',
@@ -281,7 +298,7 @@ describe('OpenAiLlmProvider', () => {
     await expect(provider.generate({
       parameters: {
         format: 'mcq-single-select-v1',
-          maxOutputTokens: 4000,
+        maxOutputTokens: 8000,
         questionsPerChunk: 1,
       },
       promptTemplate: 'template',
@@ -298,7 +315,7 @@ describe('OpenAiLlmProvider', () => {
     );
 
     await expect(provider.generate({
-      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 4000, questionsPerChunk: 1 },
+      parameters: { format: 'mcq-single-select-v1', maxOutputTokens: 8000, questionsPerChunk: 1 },
       promptTemplate: 'template',
       sourceText: 'source',
     })).rejects.toThrow('invalid provider request');

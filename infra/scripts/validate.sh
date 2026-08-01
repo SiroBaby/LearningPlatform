@@ -314,6 +314,12 @@ check_application_edge_contract() {
     fail 'Each workload env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
   fi
 
+  if ! grep -A 50 'name: worker' "${app_template}" \
+    | grep -A 1 'name: WORKER_QUIZ_GENERATION_CONCURRENCY' \
+    | grep -Fq "value: '8'"; then
+    fail 'Worker quiz generation concurrency must be an explicit bounded manifest literal.'
+  fi
+
   for required_worker_literal in \
     '            - name: AI_LLM_PROVIDER' \
     '              value: openai' \
