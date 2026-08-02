@@ -122,13 +122,59 @@
       changed_when: observability_initial_install.rc == 0
       failed_when: false
 
+    - name: Reinspect failed initial Helm release without mutating it
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/helm list --namespace {{ observability_namespace }}
+          --kubeconfig {{ observability_kubeconfig }}
+          --filter '^{{ observability_release.name }}$' --output json
+      register: observability_failed_install_release_list
+      changed_when: false
+      failed_when: false
+      when: observability_initial_install.rc != 0
+
+    - name: Reinspect namespace PVCs after failed initial install
+      kubernetes.core.k8s_info:
+        kubeconfig: '{{ observability_kubeconfig }}'
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: '{{ observability_namespace }}'
+      register: observability_failed_install_namespace_pvcs
+      failed_when: false
+      when: observability_initial_install.rc != 0
+
+    - name: Record sanitized failed initial install evidence
+      ansible.builtin.debug:
+        msg:
+          release: '{{ observability_release.name }}'
+          chart: '{{ observability_release.chart }}'
+          rc: '{{ observability_initial_install.rc }}'
+          error_category: >-
+            {{ 'repository-alias-not-found'
+               if observability_initial_install.stderr is search('repo.*not found|no repository definition')
+               else 'helm-command-failed' }}
+          error_fingerprint: '{{ observability_initial_install.stderr | hash("sha256") }}'
+          stderr_bytes: '{{ observability_initial_install.stderr | length }}'
+          release_reinspection_rc: '{{ observability_failed_install_release_list.rc | default(-1) }}'
+          helm_status: >-
+            {{ observability_failed_install_release_list.stdout
+               | default('')
+               | regex_findall('"status"\s*:\s*"(deployed|failed|pending-install|pending-upgrade|pending-rollback|uninstalling|superseded)"') }}
+          pvc_reinspection_failed: '{{ observability_failed_install_namespace_pvcs is failed }}'
+          pvc_names: >-
+            {{ (observability_failed_install_namespace_pvcs.resources | default([]))
+               | selectattr('metadata.name', 'search', observability_release.name)
+               | map(attribute='metadata.name') | list }}
+      when: observability_initial_install.rc != 0
+
     - name: Preserve failed initial release and require HITL
       ansible.builtin.assert:
         that:
           - observability_initial_install.rc == 0
         fail_msg: >-
           Initial install of {{ observability_release.name }} failed. Its release
-          and PVC state were intentionally preserved for human investigation.
+          and PVC state were intentionally preserved. Review the sanitized
+          release/PVC evidence and obtain human approval before any rerun.
 
 - name: Upgrade a healthy release with guarded rollback
   when: observability_release_state | trim == 'healthy'

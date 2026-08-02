@@ -44,6 +44,26 @@
       - {name: initial-install-failure, records: [], pvcs: [], retention: true, expected_state: absent, expected_action: preserve-failure}
       - {name: failed-upgrade, records: [deployed], pvcs: [owned], stateless_pvcs: [], retention: true, expected_state: healthy, expected_action: rollback}
   tasks:
+    - name: Load canonical development observability contract
+      ansible.builtin.include_vars:
+        file: '{{ playbook_dir }}/../../../vars/dev.yml'
+        name: observability_dev_contract
+
+    - name: Require exact Helm repository aliases for every release chart prefix
+      ansible.builtin.assert:
+        that:
+          - observability_chart_prefixes | difference(observability_repository_aliases) | length == 0
+          - observability_repository_aliases | sort == ['grafana', 'grafana-community', 'prometheus-community']
+        fail_msg: >-
+          Every observability chart prefix must exactly match a configured Helm
+          repository alias before a release command can run.
+      vars:
+        observability_chart_prefixes: >-
+          {{ observability_dev_contract.observability_releases.values()
+             | map(attribute='chart') | map('split', '/') | map('first') | list }}
+        observability_repository_aliases: >-
+          {{ observability_dev_contract.helm_repositories.keys() | list }}
+
     - name: Build action plans for every release and transition
       ansible.builtin.include_tasks: state-machine-case.yml
       loop: '{{ releases | product(cases) | list }}'
@@ -202,6 +222,24 @@
           - >-
             lookup('file', playbook_dir ~ '/../tasks/release.yml')
             is not search('hel' ~ 'm un' ~ 'install|cleanup' ~ '-on-fail')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('error_fingerprint:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('failed_when: false[\s\S]+release_reinspection_rc:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('observability_failed_install_namespace_pvcs\.resources \| default\(\[\]\)')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search('observability_failed_install_release_list\.stdout \| from_json')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search('(?m)^\s+(stderr|stdout):\s+.*observability_initial_install')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search("msg:\s*['\"]?\{\{ observability_initial_install\.(stderr|stdout)")
         fail_msg: >-
           First-install discovery, stateless Alloy classification, explicit
           kubeconfig, or non-destructive release safeguards are incomplete.
