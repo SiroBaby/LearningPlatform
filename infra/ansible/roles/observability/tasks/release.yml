@@ -3,21 +3,7 @@
   ansible.builtin.set_fact:
     observability_release: '{{ observability_releases[observability_release_definition.key] }}'
     observability_release_values_file: >-
-      {{ role_path }}/../../../observability/{{ observability_release_definition.values_file }}
-
-- name: Require the canonical release values file
-  ansible.builtin.stat:
-    path: '{{ observability_release_values_file }}'
-  register: observability_release_values
-
-- name: Fail before Helm when the canonical values file is missing
-  ansible.builtin.assert:
-    that:
-      - observability_release_values.stat.exists
-      - observability_release_values.stat.isreg
-    fail_msg: >-
-      {{ observability_release_values_file }} is the only permitted chart
-      configuration source and must exist before Helm is invoked.
+      {{ observability_staged_values_files[observability_release_definition.values_file] }}
 
 - name: Inspect Helm release state without mutating it
   ansible.builtin.command:

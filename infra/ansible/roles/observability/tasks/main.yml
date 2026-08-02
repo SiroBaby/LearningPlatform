@@ -449,6 +449,10 @@
   changed_when: false
   when: not ansible_check_mode
 
+- name: Validate and stage canonical observability values before release state inspection
+  ansible.builtin.include_tasks: stage-values.yml
+  when: not ansible_check_mode
+
 - name: Process each observability Helm release through its state machine
   ansible.builtin.include_tasks: release.yml
   loop: '{{ observability_releases_ordered }}'

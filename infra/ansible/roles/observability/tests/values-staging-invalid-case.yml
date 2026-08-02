@@ -1,0 +1,43 @@
+---
+- name: Initialize invalid values case counters
+  ansible.builtin.set_fact:
+    observability_release_inspection_count: 0
+    observability_helm_mutation_count: 0
+    observability_invalid_values_case_failed: false
+
+- name: Run invalid values staging case
+  block:
+    - name: Stage invalid canonical values plan
+      ansible.builtin.include_tasks: ../tasks/stage-values.yml
+      vars:
+        observability_releases_ordered: '{{ observability_invalid_values_case.releases }}'
+        observability_values_source_directory: >-
+          {{ observability_invalid_values_case.source_directory
+             | default(observability_values_source_directory) }}
+  rescue:
+    - name: Require invalid values case to fail at the allowlist gate
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name == observability_invalid_values_case.expected_failed_task
+          - observability_release_inspection_count == 0
+          - observability_helm_mutation_count == 0
+        fail_msg: Invalid values cases must fail before release inspection or Helm mutation.
+
+    - name: Record expected invalid values staging failure
+      ansible.builtin.set_fact:
+        observability_invalid_values_case_failed: true
+
+- name: Require invalid values case failure
+  ansible.builtin.assert:
+    that:
+      - observability_invalid_values_case_failed
+    fail_msg: '{{ observability_invalid_values_case.name }} unexpectedly allowed staging to continue.'
+
+- name: Record invalid values case result
+  ansible.builtin.set_fact:
+    observability_invalid_values_failures: >-
+      {{ observability_invalid_values_failures | default([]) + [{
+           'name': observability_invalid_values_case.name,
+           'release_inspection_count': observability_release_inspection_count,
+           'helm_mutation_count': observability_helm_mutation_count
+         }] }}
