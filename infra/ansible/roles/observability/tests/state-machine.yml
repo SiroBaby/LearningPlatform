@@ -181,5 +181,10 @@
         that:
           - >-
             lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('helm list --namespace \{\{ observability_namespace \}\}\s+--kubeconfig \{\{ observability_kubeconfig \}\}')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
             is not search('hel' ~ 'm un' ~ 'install|cleanup' ~ '-on-fail')
-        fail_msg: Release action plan must not uninstall Helm releases or delete PVC/PV resources.
+        fail_msg: >-
+          Helm release inspection must use the configured kubeconfig, and the
+          action plan must not uninstall releases or delete PVC/PV resources.

@@ -9,6 +9,7 @@
   ansible.builtin.command:
     cmd: >-
       /usr/local/bin/helm list --namespace {{ observability_namespace }}
+      --kubeconfig {{ observability_kubeconfig }}
       --filter '^{{ observability_release.name }}$' --output json
   register: observability_release_list
   changed_when: false
