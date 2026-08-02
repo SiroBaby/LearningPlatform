@@ -1,0 +1,59 @@
+---
+- name: Verify the observability MemAvailable capacity gate without a host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    observability_minimum_free_disk_gib: 11
+    observability_minimum_free_memory_mib: 2048
+    observability_helm_action_count: 0
+    capacity_cases: >-
+      {{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/capacity-memavailable.yml')
+         | from_yaml }}
+  tasks:
+    - name: Verify MemAvailable fixtures use the approved available-memory contract
+      ansible.builtin.assert:
+        that:
+          - >-
+            ((item.memavailable_kib is match('^[0-9]+$')) and
+             ((item.memavailable_kib | int // 1024) >= observability_minimum_free_memory_mib) and
+             (item.disk_available_bytes | int >=
+              observability_minimum_free_disk_gib * 1024 * 1024 * 1024)) ==
+            (item.expected_capacity == 'pass')
+        fail_msg: >-
+          {{ item.name }} must be decided by sanitized MemAvailable KiB, not
+          MemFree, while retaining the 11Gi disk gate.
+      loop: '{{ capacity_cases }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Require invalid MemAvailable fixtures to block before Helm
+      ansible.builtin.assert:
+        that:
+          - item.expected_capacity == 'pass' or observability_helm_action_count == 0
+        fail_msg: Invalid or insufficient MemAvailable must block before Helm.
+      loop: '{{ capacity_cases }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Require the role to read and validate MemAvailable before Helm
+      ansible.builtin.assert:
+        that:
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is search("awk '/\\^MemAvailable:/ \\{print \\$2\\}' /proc/meminfo")
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is search("observability_memavailable_kib.stdout | trim is match\\('\\^\\[0-9\\]\\+\\$'\\)")
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
+              'Require disk and available memory capacity before observability Helm actions'
+            ) < lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
+              'Process each observability Helm release through its state machine'
+            )
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is not search('ansible_memfree_mb')
+        fail_msg: >-
+          The role must fail closed on sanitized MemAvailable before every Helm
+          action and must not use raw free-memory facts.

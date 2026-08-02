@@ -51,6 +51,26 @@
       loop_control:
         label: '{{ item.name }}'
 
+    - name: Verify MemAvailable capacity fixtures block Helm state transitions
+      ansible.builtin.assert:
+        that:
+          - >-
+            ((item.memavailable_kib is match('^[0-9]+$')) and
+             ((item.memavailable_kib | int // 1024) >= 2048) and
+             (item.disk_available_bytes | int >= 11 * 1024 * 1024 * 1024)) ==
+            (item.expected_capacity == 'pass')
+          - item.expected_capacity == 'pass' or observability_capacity_action_plan | length == 0
+        fail_msg: >-
+          MemAvailable capacity failures must block before an observability Helm
+          state transition is planned.
+      vars:
+        observability_capacity_action_plan: []
+      loop: >-
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/capacity-memavailable.yml')
+           | from_yaml }}
+      loop_control:
+        label: '{{ item.name }}'
+
     - name: Verify Grafana ESO missing-template fixture fails before apply planning
       ansible.builtin.assert:
         that:

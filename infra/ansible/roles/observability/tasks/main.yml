@@ -201,17 +201,28 @@
     gather_subset:
       - hardware
 
-- name: Require disk and memory capacity before observability Helm actions
+- name: Read available memory from the remote host before observability Helm actions
+  ansible.builtin.command:
+    cmd: "awk '/^MemAvailable:/ {print $2}' /proc/meminfo"
+  register: observability_memavailable_kib
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Require disk and available memory capacity before observability Helm actions
   ansible.builtin.assert:
     that:
       - >-
-        (ansible_mounts | selectattr('mount', 'equalto', '/')
+        (ansible_facts.mounts | selectattr('mount', 'equalto', '/')
          | map(attribute='size_available') | first | int) >=
         (observability_minimum_free_disk_gib | int * 1024 * 1024 * 1024)
-      - ansible_memfree_mb | int >= observability_minimum_free_memory_mib | int
+      - observability_memavailable_kib.stdout | trim is match('^[0-9]+$')
+      - >-
+        (observability_memavailable_kib.stdout | trim | int // 1024) >=
+        observability_minimum_free_memory_mib | int
     fail_msg: >-
       Observability needs at least {{ observability_minimum_free_disk_gib }}Gi
-      free disk and {{ observability_minimum_free_memory_mib }}Mi free memory
+      free disk and {{ observability_minimum_free_memory_mib }}Mi available memory
       before persistent Helm releases are changed.
 
 - name: Require exact kube-proxy loopback NodePort configuration
