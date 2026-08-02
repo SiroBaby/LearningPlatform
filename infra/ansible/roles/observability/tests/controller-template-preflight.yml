@@ -21,9 +21,42 @@
           - not observability_remote_repo_source.stat.exists
 
   tasks:
+    - name: Prove the legacy single-document parser rejects the actual Grafana template
+      block:
+        - name: Parse the actual Grafana template with the legacy filter
+          ansible.builtin.debug:
+            msg: >-
+              {{ lookup('template', playbook_dir ~ '/../templates/grafana-external-secret.yaml.j2')
+                 | from_yaml }}
+          no_log: true
+      rescue:
+        - name: Record the expected legacy multi-document parsing failure
+          ansible.builtin.set_fact:
+            observability_legacy_parser_failed: true
+
+    - name: Require the legacy parser regression to be reproducible
+      ansible.builtin.assert:
+        that:
+          - observability_legacy_parser_failed | default(false)
+        fail_msg: The actual two-document Grafana template must reject from_yaml.
+
     - name: Run the observability role when the controller template exists
       ansible.builtin.include_role:
         name: observability
+
+    - name: Require the actual template to parse into the exact ESO documents
+      ansible.builtin.assert:
+        that:
+          - observability_grafana_eso_definitions | length == 2
+          - observability_grafana_eso_definitions | map(attribute='kind') | list == ['SecretStore', 'ExternalSecret']
+          - observability_grafana_eso_definitions[0].metadata.name == 'aws-parameter-store'
+          - observability_grafana_eso_definitions[0].metadata.namespace == observability_namespace
+          - observability_grafana_eso_definitions[1].metadata.name == grafana_admin_secret_name
+          - observability_grafana_eso_definitions[1].metadata.namespace == observability_namespace
+          - >-
+            observability_grafana_eso_definitions[1].spec.data
+            | map(attribute='remoteRef.key') | list
+            == [ssm_parameter_keys.grafana_admin_user, ssm_parameter_keys.grafana_admin_password]
 
     - name: Require the controller preflight to precede every Helm action
       ansible.builtin.assert:
@@ -39,6 +72,12 @@
               'Fail before Helm when the Grafana ExternalSecret contract is absent'
             ) < lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
               'Process each observability Helm release through its state machine'
+            )
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
+              'Validate rendered Grafana ESO documents before Kubernetes mutation'
+            ) < lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
+              'Create observability namespace'
             )
 
 - name: Verify a missing controller template blocks before Helm
@@ -76,3 +115,38 @@
         that:
           - observability_expected_template_preflight_failed
         fail_msg: Missing controller template unexpectedly allowed the observability role to continue.
+
+- name: Verify malformed Grafana ESO template fixtures fail before Kubernetes mutation
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    ansible_architecture: x86_64
+    observability_kubernetes_mutation_count: 0
+  tasks:
+    - name: Run malformed Grafana ESO template cases
+      ansible.builtin.include_tasks: malformed-template-case.yml
+      loop:
+        - name: missing-document
+          template: '{{ playbook_dir }}/fixtures/grafana-external-secret-missing.yaml.j2'
+          expected_failed_task: Fail before Helm when the Grafana ExternalSecret contract is absent
+        - name: extra-document
+          template: '{{ playbook_dir }}/fixtures/grafana-external-secret-extra.yaml.j2'
+          expected_failed_task: Validate rendered Grafana ESO documents before Kubernetes mutation
+        - name: wrong-kind
+          template: '{{ playbook_dir }}/fixtures/grafana-external-secret-wrong-kind.yaml.j2'
+          expected_failed_task: Validate rendered Grafana ESO documents before Kubernetes mutation
+        - name: wrong-remote-ref-path
+          template: '{{ playbook_dir }}/fixtures/grafana-external-secret-wrong-path.yaml.j2'
+          expected_failed_task: Validate rendered Grafana ESO documents before Kubernetes mutation
+      loop_control:
+        loop_var: observability_malformed_template_case
+
+    - name: Require malformed template fixtures to avoid Kubernetes mutation
+      ansible.builtin.assert:
+        that:
+          - observability_kubernetes_mutation_count == 0
+        fail_msg: Malformed Grafana ESO templates must fail before Kubernetes mutation.
