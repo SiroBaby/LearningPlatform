@@ -4,6 +4,12 @@ observability_helm_history_max: 10
 observability_minimum_free_disk_gib: 11
 observability_minimum_free_memory_mib: 2048
 observability_kubeconfig: /etc/rancher/k3s/k3s.yaml
+observability_values_source_directory: '{{ role_path }}/../../../observability'
+observability_values_staging_directory: /opt/learning-platform/observability-values
+observability_values_staging_owner: root
+observability_values_staging_group: root
+observability_values_staging_directory_mode: '0750'
+observability_values_staging_file_mode: '0640'
 observability_grafana_external_secret_template: >-
   {{ role_path }}/templates/grafana-external-secret.yaml.j2
 observability_helm_archives:

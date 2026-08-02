@@ -491,7 +491,9 @@ check_ansible_when_installed() {
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/observability/tests/capacity-gate.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
-      "${ANSIBLE_DIR}/roles/observability/tests/controller-template-preflight.yml" --check
+"${ANSIBLE_DIR}/roles/observability/tests/controller-template-preflight.yml" --check
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/observability/tests/values-staging.yml"
     return
   fi
 
