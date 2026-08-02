@@ -7,16 +7,19 @@
     releases:
       - key: monitoring
         name: learning-platform-monitoring
+        stateful: true
         chart: prometheus-community/kube-prometheus-stack
         version: 87.21.0
         values: kube-prometheus-stack-values.yml
       - key: loki
         name: learning-platform-loki
+        stateful: true
         chart: grafana-community/loki
         version: 18.7.0
         values: loki-values.yml
       - key: alloy
         name: learning-platform-alloy
+        stateful: false
         chart: grafana/alloy
         version: 1.11.0
         values: alloy-values.yml
@@ -24,14 +27,22 @@
       - {name: absent, records: [], pvcs: [], retention: true, expected_state: absent, expected_action: install}
       - {name: orphan-pvc, records: [], pvcs: [owned], retention: true, expected_state: orphan, expected_action: fail}
       - {name: wrong-owner, records: [deployed], pvcs: [wrong-owner], retention: true, expected_state: mismatch, expected_action: fail}
-      - {name: missing-retain, records: [deployed], pvcs: [owned], retention: false, expected_state: mismatch, expected_action: fail}
+      - name: missing-retain
+        records: [deployed]
+        pvcs: [owned]
+        stateless_pvcs: []
+        retention: false
+        expected_state: mismatch
+        expected_action: fail
+        expected_stateless_state: healthy
+        expected_stateless_action: upgrade
       - {name: pending-install, records: [pending-install], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
       - {name: pending-upgrade, records: [pending-upgrade], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
       - {name: failed, records: [failed], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
       - {name: deployed-unhealthy, records: [deployed-unhealthy], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
-      - {name: healthy, records: [deployed], pvcs: [owned], retention: true, expected_state: healthy, expected_action: upgrade}
+      - {name: healthy, records: [deployed], pvcs: [owned], stateless_pvcs: [], retention: true, expected_state: healthy, expected_action: upgrade}
       - {name: initial-install-failure, records: [], pvcs: [], retention: true, expected_state: absent, expected_action: preserve-failure}
-      - {name: failed-upgrade, records: [deployed], pvcs: [owned], retention: true, expected_state: healthy, expected_action: rollback}
+      - {name: failed-upgrade, records: [deployed], pvcs: [owned], stateless_pvcs: [], retention: true, expected_state: healthy, expected_action: rollback}
   tasks:
     - name: Build action plans for every release and transition
       ansible.builtin.include_tasks: state-machine-case.yml
@@ -181,5 +192,16 @@
         that:
           - >-
             lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search("observability_release_definition.key == 'monitoring'\s+- observability_release_records \| length == 1")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/state-machine.yml')
+            is search("observability_release_definition.key == 'alloy' or")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('helm list --namespace \{\{ observability_namespace \}\}\s+--kubeconfig \{\{ observability_kubeconfig \}\}')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
             is not search('hel' ~ 'm un' ~ 'install|cleanup' ~ '-on-fail')
-        fail_msg: Release action plan must not uninstall Helm releases or delete PVC/PV resources.
+        fail_msg: >-
+          First-install discovery, stateless Alloy classification, explicit
+          kubeconfig, or non-destructive release safeguards are incomplete.

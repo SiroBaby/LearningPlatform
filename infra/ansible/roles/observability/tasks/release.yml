@@ -9,6 +9,7 @@
   ansible.builtin.command:
     cmd: >-
       /usr/local/bin/helm list --namespace {{ observability_namespace }}
+      --kubeconfig {{ observability_kubeconfig }}
       --filter '^{{ observability_release.name }}$' --output json
   register: observability_release_list
   changed_when: false
@@ -40,7 +41,9 @@
     kind: Prometheus
     namespace: '{{ observability_namespace }}'
   register: observability_namespace_prometheuses
-  when: observability_release_definition.key == 'monitoring'
+  when:
+    - observability_release_definition.key == 'monitoring'
+    - observability_release_records | length == 1
 
 - name: Select PVCs that belong or appear to belong to this release
   ansible.builtin.set_fact:
