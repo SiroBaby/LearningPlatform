@@ -94,6 +94,31 @@ sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-s
 5. Không xoá PVC hoặc PV observability trong runbook này.
 6. Loki chỉ được xem là đạt contract nếu manifest render cuối cùng vẫn có `whenDeleted: Retain` và `whenScaled: Retain`, dù chart values có `enableStatefulSetAutoDeletePVC: true`.
 
+### 5.2.1. Failed observability first install
+
+Run `30754995229` đã gọi first install cho `learning-platform-monitoring`
+và fail do repository alias không khớp chart prefix. Release/PVC state được giữ
+nguyên theo contract. Trước mọi rerun, operator phải thu thập và review evidence
+read-only sau, rồi xác nhận human approval trên issue:
+
+```bash
+sudo /usr/local/bin/helm list --namespace observability \
+  --kubeconfig /etc/rancher/k3s/k3s.yaml --output json
+sudo /usr/local/bin/helm status learning-platform-monitoring \
+  --namespace observability --kubeconfig /etc/rancher/k3s/k3s.yaml \
+  --show-resources
+sudo k3s kubectl -n observability get pvc \
+  -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,CLASS:.spec.storageClassName,CAPACITY:.status.capacity.storage'
+sudo k3s kubectl -n observability get statefulset \
+  -o custom-columns='NAME:.metadata.name,WHEN_DELETED:.spec.persistentVolumeClaimRetentionPolicy.whenDeleted,WHEN_SCALED:.spec.persistentVolumeClaimRetentionPolicy.whenScaled'
+```
+
+Không dùng `helm uninstall`, không xoá PVC/PV, không rollback first install,
+không sửa cluster trực tiếp và không giả định release absent. Workflow chỉ được
+rerun sau khi evidence xác nhận exact state và human chấp thuận. CI chỉ ghi rc,
+safe error category, SHA-256 fingerprint và tên release/PVC; không ghi raw Helm
+stdout/stderr hoặc Secret data.
+
 ### 5.3. Capacity và query commands
 
 Trước khi đụng tới legacy stack, đo lại host:
