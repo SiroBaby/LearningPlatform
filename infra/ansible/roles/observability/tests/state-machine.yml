@@ -117,6 +117,45 @@
             - /learning-platform/dev/grafana-admin-user
             - /learning-platform/dev/grafana-admin-password
 
+    - name: Verify reviewed pending-install recovery fixture is strictly opt-in
+      ansible.builtin.assert:
+        that:
+          - >-
+            (item.enabled | bool and
+             item.release_name == 'learning-platform-monitoring' and
+             item.namespace == 'observability' and
+             item.revision | int == 1 and
+             item.status == 'pending-install' and
+             item.pvc_name == 'storage-learning-platform-monitoring-grafana-0' and
+             item.pvc_phase == 'Bound' and
+             item.storage_class == 'local-path' and
+             item.storage == '1Gi' and
+             item.statefulset_retention == 'Retain/Retain' and
+             item.pv_name == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19' and
+             item.pv_phase == 'Bound' and
+             item.claim_ref == 'observability/storage-learning-platform-monitoring-grafana-0' and
+             item.reclaim_policy == 'Delete' and
+             not (item.unexpected_pvc | default(false) | bool) and
+             (item.residual_resource | default('') | length == 0) and
+             (item.residual_release_label | default('learning-platform-monitoring') == 'learning-platform-monitoring')) ==
+            (item.expected_action == 'uninstall-once')
+          - >-
+            observability_pending_install_recovery_command ==
+            '/usr/local/bin/helm uninstall learning-platform-monitoring --namespace observability' ~
+            ' --kubeconfig /etc/rancher/k3s/k3s.yaml --wait --timeout 10m --cascade foreground'
+        fail_msg: >-
+          Pending-install recovery must be default-disabled and permit exactly one
+          reviewed monitoring uninstall only when every storage invariant matches.
+      vars:
+        observability_pending_install_recovery_command: >-
+          /usr/local/bin/helm uninstall learning-platform-monitoring --namespace observability
+          --kubeconfig /etc/rancher/k3s/k3s.yaml --wait --timeout 10m --cascade foreground
+      loop: >-
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/pending-install-recovery.yml')
+           | from_yaml }}
+      loop_control:
+        label: '{{ item.name }}'
+
     - name: Verify Traefik NodePort dataplane contract does not require an ss listener
       ansible.builtin.assert:
         that:
@@ -222,6 +261,72 @@
           - >-
             lookup('file', playbook_dir ~ '/../tasks/release.yml')
             is not search('hel' ~ 'm un' ~ 'install|cleanup' ~ '-on-fail')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('helm list --all --namespace observability\s+--kubeconfig \{\{ observability_kubeconfig \}\}')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('helm uninstall learning-platform-monitoring --namespace observability\s+--kubeconfig \{\{ observability_kubeconfig \}\} --wait\s+--timeout \{\{ observability_helm_timeout \}\} --cascade foreground')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is not search('--keep-history|--replace|ignore-not-found|helm rollback|PersistentVolumeClaim[\s\S]*state: absent|PersistentVolume[\s\S]*state: absent')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('observability_pending_install_recovery_pvc_uid')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('observability_pending_install_recovery_pv_uid')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('spec.claimRef.uid ==\s+observability_pending_install_recovery_pvc_uid')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('label_selectors:\s+          - app.kubernetes.io/instance=learning-platform-monitoring')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('ConfigMap, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('Secret, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('PrometheusRule, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('ServiceMonitor, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('RoleBinding, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('ClusterRole, namespaced: false')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('ClusterRoleBinding, namespaced: false')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is not search('name: learning-platform-monitoring-operator|name: learning-platform-monitoring-prometheus|name: learning-platform-monitoring-node-exporter')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('observability_pending_install_recovery_post_release_records \| length == 0')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search("post_resources.results \| map\(attribute='resources'\) \| map\('length'\) \| sum == 0")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('rescue:\s+    - name: Reinspect exact Helm metadata after recovery failure')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('Record sanitized pending-install recovery failure evidence')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('error_fingerprint:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('residual_resource_names:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('observability_pending_install_recovery_absence_verified \| default\(false\) \| bool')
           - >-
             lookup('file', playbook_dir ~ '/../tasks/release.yml')
             is search('error_fingerprint:')

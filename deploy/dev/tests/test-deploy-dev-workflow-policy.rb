@@ -33,10 +33,10 @@ def job_secret_references(job)
   job.to_s.scan(/secrets\.([A-Z0-9_]+)/).flatten
 end
 
-def workflow_context(outputs:, results:, event_name:, ref:, target:)
+def workflow_context(outputs:, results:, event_name:, ref:, target:, confirmation: '')
   {
     'github' => { 'event_name' => event_name, 'ref' => ref },
-    'inputs' => { 'target' => target },
+    'inputs' => { 'target' => target, 'observability_recovery_confirmation' => confirmation },
     'needs' => results.transform_values { |result| { 'result' => result } }.merge(
       'changes' => { 'result' => 'success', 'outputs' => outputs }
     )
@@ -46,6 +46,10 @@ end
 triggers = workflow['on'] || workflow[true]
 assert(failures, triggers.dig('workflow_dispatch', 'inputs', 'target', 'options').include?('observability'),
        'workflow_dispatch must expose target=observability')
+assert(failures, triggers.dig('workflow_dispatch', 'inputs', 'target', 'options').include?('observability-recovery'),
+       'workflow_dispatch must expose target=observability-recovery')
+assert(failures, triggers.dig('workflow_dispatch', 'inputs', 'observability_recovery_confirmation', 'required') == true,
+       'workflow_dispatch must require an observability recovery confirmation')
 
 assert(failures, triggers.dig('push', 'branches') == ['develop'],
        'push must remain restricted to develop')
@@ -53,6 +57,7 @@ assert(failures, playbook.fetch('vars_files') == ['../vars/dev.yml'],
        'playbook must load canonical non-secret vars/dev.yml relative to its location')
 observability_outputs = { 'deploy_any' => 'false', 'backend' => 'false', 'web' => 'false', 'observability' => 'true' }
 observability_results = { 'infra-quality' => 'success' }
+recovery_confirmation = 'RECOVER_MONITORING_PENDING_INSTALL_REVISION_1'
 assert(failures, workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability')),
        'observability dispatch on develop must evaluate the YAML deployment expression to true')
 assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/feature/test', target: 'observability')),
@@ -61,6 +66,20 @@ assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_cont
        'observability dispatch with skipped infra quality must evaluate the YAML deployment expression to false')
 assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs.merge('observability' => 'false'), results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability')),
        'unchanged observability dispatch must evaluate the YAML deployment expression to false')
+assert(failures, workflow_job_runs?(jobs, 'recover-observability-pending-install', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability-recovery', confirmation: recovery_confirmation)),
+       'confirmed recovery dispatch on develop must evaluate the YAML deployment expression to true')
+assert(failures, !workflow_job_runs?(jobs, 'recover-observability-pending-install', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'push', ref: 'refs/heads/develop', target: 'observability-recovery', confirmation: recovery_confirmation)),
+       'push events must never run recovery')
+assert(failures, !workflow_job_runs?(jobs, 'recover-observability-pending-install', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/feature/test', target: 'observability-recovery', confirmation: recovery_confirmation)),
+       'feature refs must never run recovery')
+assert(failures, !workflow_job_runs?(jobs, 'recover-observability-pending-install', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability-recovery', confirmation: 'wrong')),
+       'wrong recovery confirmation must never run recovery')
+assert(failures, !workflow_job_runs?(jobs, 'recover-observability-pending-install', workflow_context(outputs: observability_outputs, results: { 'infra-quality' => 'failure' }, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability-recovery', confirmation: recovery_confirmation)),
+       'failed infra quality must never run recovery')
+assert(failures, !workflow_job_runs?(jobs, 'recover-observability-pending-install', workflow_context(outputs: observability_outputs, results: { 'infra-quality' => 'skipped' }, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability-recovery', confirmation: recovery_confirmation)),
+       'skipped infra quality must never run recovery')
+assert(failures, !workflow_job_runs?(jobs, 'recover-observability-pending-install', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability', confirmation: recovery_confirmation)),
+       'ordinary observability target must never run recovery')
 
 changes = jobs.fetch('changes')
 assert(failures, changes.dig('outputs', 'observability') == '${{ steps.classify.outputs.observability }}',
@@ -105,7 +124,33 @@ assert(failures, observability_apply.include?('--tags external_secrets,observabi
        'target=observability must apply only external_secrets and observability tags')
 forbidden_observability = %w[build-push-action applications rollout database-migrate]
 assert(failures, forbidden_observability.none? { |token| observability_apply.include?(token) || step_names(observability).join('\n').include?(token) },
-       'target=observability must not build, migrate, or restart application workloads')
+        'target=observability must not build, migrate, or restart application workloads')
+
+recovery = jobs.fetch('recover-observability-pending-install')
+recovery_if = recovery.fetch('if')
+assert(failures, recovery.fetch('needs') == %w[changes infra-quality] && recovery.fetch('environment') == 'dev',
+       'recovery must depend on classification and infra quality in the dev environment')
+%w[workflow_dispatch refs/heads/develop observability-recovery RECOVER_MONITORING_PENDING_INSTALL_REVISION_1 needs.changes.outputs.observability needs.infra-quality.result].each do |required_guard|
+  assert(failures, recovery_if.include?(required_guard), "recovery must require #{required_guard}")
+end
+recovery_apply = step_by_name(recovery, 'Recover observability pending-install revision through Ansible').fetch('run')
+assert(failures, recovery_apply.include?('--tags external_secrets,observability -e observability_recover_pending_install=true'),
+       'recovery must invoke only the fixed Ansible recovery opt-in beyond fixed paths')
+assert(failures, !recovery_apply.match?(/inputs\.|\$\{\{|release|namespace|pvc|pv|helm/i),
+       'recovery Ansible invocation must not interpolate user-controlled release, namespace, PVC, PV, Helm, or shell input')
+recovery_forbidden = %w[build-push-action applications rollout database-migrate kubectl helm]
+assert(failures, recovery_forbidden.none? { |token| recovery_apply.include?(token) || step_names(recovery).join('\n').include?(token) },
+       'recovery must not build images, deploy applications, run rollout commands, or invoke kubectl/Helm directly')
+recovery_bootstrap = step_by_name(recovery, 'Bootstrap observability AWS credential Secret')
+assert(failures, !recovery_bootstrap.nil?,
+       'recovery must reuse the guarded observability credential bootstrap')
+if recovery_bootstrap
+  recovery_bootstrap_run = recovery_bootstrap.fetch('run')
+  assert(failures, !recovery_bootstrap_run.match?(/\$\{\{\s*(?:inputs|secrets)\.|(?:echo|printf).*OBSERVABILITY_AWS_/),
+         'recovery credential bootstrap must not interpolate user inputs or print secrets')
+  assert(failures, recovery_bootstrap_run.include?('tar -C "$CREDENTIAL_DIR" -cf - access-key-id secret-access-key |') && recovery_bootstrap_run.include?('ssh -o BatchMode=yes'),
+         'recovery credential bootstrap must preserve stdin-only credential transport')
+end
 
 bootstrap = step_by_name(observability, 'Bootstrap observability AWS credential Secret')
 assert(failures, !bootstrap.nil?,
@@ -118,10 +163,11 @@ if bootstrap
   }
   assert(failures, expected_bootstrap_env.all? { |name, value| bootstrap_env[name] == value },
          'bootstrap must consume exactly both dedicated GitHub Environment Secrets through step env')
-  assert(failures, job_secret_references(observability).grep(/^OBSERVABILITY_AWS_/).sort == expected_bootstrap_env.keys.sort,
-         'only deploy-observability may reference the two observability AWS GitHub Environment Secrets')
-  assert(failures, (jobs.keys - ['deploy-observability']).none? { |name| job_secret_references(jobs.fetch(name)).any? { |secret| secret.start_with?('OBSERVABILITY_AWS_') } },
-         'application, quality, and push jobs must not consume observability AWS GitHub Environment Secrets')
+  observability_secret_jobs = %w[deploy-observability recover-observability-pending-install]
+  assert(failures, observability_secret_jobs.all? { |name| job_secret_references(jobs.fetch(name)).grep(/^OBSERVABILITY_AWS_/).sort == expected_bootstrap_env.keys.sort },
+          'only the observability deploy and recovery jobs may reference the two observability AWS GitHub Environment Secrets')
+  assert(failures, (jobs.keys - observability_secret_jobs).none? { |name| job_secret_references(jobs.fetch(name)).any? { |secret| secret.start_with?('OBSERVABILITY_AWS_') } },
+          'application, quality, and push jobs must not consume observability AWS GitHub Environment Secrets')
 
   bootstrap_run = bootstrap.fetch('run')
   assert(failures, !bootstrap_run.match?(/\$\{\{\s*secrets\./),
@@ -158,10 +204,11 @@ assert(failures, !bootstrap_position.nil? && bootstrap_position == ssh_position 
 
 inventory_steps = [
   step_by_name(jobs.fetch('deploy'), 'Create ephemeral Ansible inventory and deployment overrides'),
-  step_by_name(observability, 'Create ephemeral Ansible inventory')
+  step_by_name(observability, 'Create ephemeral Ansible inventory'),
+  step_by_name(recovery, 'Create ephemeral Ansible inventory')
 ]
 assert(failures, inventory_steps.all? { |step| step.fetch('run').include?('VPS_HOST and VPS_USER must be non-empty') },
-       'both remote paths must reject empty host/user before SSH')
+        'all remote paths must reject empty host/user before SSH')
 assert(failures, step_by_name(jobs.fetch('deploy'), 'Create ephemeral Ansible inventory and deployment overrides').fetch('run').include?('digest is not immutable'),
        'target=api must reject mutable selected image digests before SSH')
 
@@ -174,4 +221,4 @@ assert(failures, !source.match?(/learning-platform-dev-aws-credentials|aws_crede
        'observability bootstrap must not reuse the application AWS Secret contract')
 
 abort "FAIL\n#{failures.join("\n")}" unless failures.empty?
-puts 'PASS workflow policy: api selects application pipeline; observability deploy stays manual, classified, infra-approved, and develop-only'
+puts 'PASS workflow policy: observability recovery stays separately manual, confirmed, classified, infra-approved, and develop-only'

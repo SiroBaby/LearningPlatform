@@ -89,35 +89,136 @@ sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-s
 
 1. Initial install có persistent volume không dùng `--atomic`.
 2. Initial install không dùng cleanup-on-fail.
-3. Nếu release đầu tiên bị partial hoặc orphan resource, dừng và xử lý HITL, không ép gỡ toàn bộ release bằng lệnh uninstall của Helm.
+3. Nếu release đầu tiên bị partial hoặc orphan resource, dừng và xử lý HITL. Mặc định không được ép gỡ release bằng `helm uninstall`, trừ đúng đường recovery đã được source review cho `learning-platform-monitoring` revision `1` ở mục `5.2.1`.
 4. Healthy upgrade về sau mới được dùng guard rollback tương ứng của Helm.
 5. Không xoá PVC hoặc PV observability trong runbook này.
 6. Loki chỉ được xem là đạt contract nếu manifest render cuối cùng vẫn có `whenDeleted: Retain` và `whenScaled: Retain`, dù chart values có `enableStatefulSetAutoDeletePVC: true`.
 
-### 5.2.1. Failed observability first install
+### 5.2.1. Pending-install recovery cho issue #40
 
-Run `30754995229` đã gọi first install cho `learning-platform-monitoring`
-và fail do repository alias không khớp chart prefix. Release/PVC state được giữ
-nguyên theo contract. Trước mọi rerun, operator phải thu thập và review evidence
-read-only sau, rồi xác nhận human approval trên issue:
+Run `30754995229` đã gọi first install cho `learning-platform-monitoring` trong
+namespace `observability`, revision `1`, rồi để lại release ở trạng thái
+`pending-install`. Issue #40 bổ sung hai lớp contract trong source:
+
+1. **Prevention contract**: `infra/observability/kube-prometheus-stack-values.yml`
+   đặt `prometheusOperator.admissionWebhooks.enabled=false` và
+   `prometheusOperator.tls.enabled=false`. `infra/scripts/validate-rendered-observability.rb`
+   còn fail-closed nếu Prometheus Operator vẫn phụ thuộc Secret
+   `learning-platform-monitori-admission`, vẫn mount TLS certificate volume, hoặc
+   vẫn tham chiếu TLS path khi admission webhooks (webhook admission, cơ chế hook
+   xác thực của Kubernetes) đã bị disable.
+2. **Recovery contract**: `infra/ansible/roles/observability/tasks/recovery-pending-install.yml`
+   chỉ cho phép một đường khôi phục đã review cho đúng release này, đúng
+   namespace này, đúng revision `1`, đúng Grafana PVC/PV đã biết. Nếu bất kỳ
+   invariant nào lệch, role dừng ngay và không tự retry.
+
+Operator phải thu thập evidence read-only trước. Evidence này dùng để xác nhận
+đúng ca đã review, đồng thời xác nhận triệu chứng runtime thực tế, ví dụ pod
+`learning-platform-monitoring-operator` còn `ContainerCreating` và event/pod
+describe vẫn cho thấy chart đang chờ resource admission/TLS cũ. Các lệnh đọc
+trạng thái bắt buộc là:
 
 ```bash
-sudo /usr/local/bin/helm list --namespace observability \
+sudo /usr/local/bin/helm list --all --namespace observability \
   --kubeconfig /etc/rancher/k3s/k3s.yaml --output json
 sudo /usr/local/bin/helm status learning-platform-monitoring \
   --namespace observability --kubeconfig /etc/rancher/k3s/k3s.yaml \
   --show-resources
-sudo k3s kubectl -n observability get pvc \
-  -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,CLASS:.spec.storageClassName,CAPACITY:.status.capacity.storage'
-sudo k3s kubectl -n observability get statefulset \
+sudo k3s kubectl -n observability get pvc storage-learning-platform-monitoring-grafana-0 \
+  -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,CLASS:.spec.storageClassName,REQUEST:.spec.resources.requests.storage,VOLUME:.spec.volumeName,UID:.metadata.uid'
+sudo k3s kubectl get pv pvc-212e92f3-8ab7-43f5-b959-1575e3140f19 \
+  -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,CAPACITY:.spec.capacity.storage,RECLAIM:.spec.persistentVolumeReclaimPolicy,CLAIM_NS:.spec.claimRef.namespace,CLAIM_NAME:.spec.claimRef.name,CLAIM_UID:.spec.claimRef.uid,UID:.metadata.uid'
+sudo k3s kubectl -n observability get statefulset learning-platform-monitoring-grafana \
   -o custom-columns='NAME:.metadata.name,WHEN_DELETED:.spec.persistentVolumeClaimRetentionPolicy.whenDeleted,WHEN_SCALED:.spec.persistentVolumeClaimRetentionPolicy.whenScaled'
+sudo k3s kubectl -n observability get pods
+sudo k3s kubectl -n observability describe pod learning-platform-monitoring-operator
+sudo k3s kubectl -n observability get events --sort-by=.lastTimestamp
 ```
 
-Không dùng `helm uninstall`, không xoá PVC/PV, không rollback first install,
-không sửa cluster trực tiếp và không giả định release absent. Workflow chỉ được
-rerun sau khi evidence xác nhận exact state và human chấp thuận. CI chỉ ghi rc,
-safe error category, SHA-256 fingerprint và tên release/PVC; không ghi raw Helm
-stdout/stderr hoặc Secret data.
+Eligibility (điều kiện đủ) phải khớp chính xác với source trước khi recovery
+được phép:
+
+1. Release duy nhất là `learning-platform-monitoring` trong namespace
+   `observability`.
+2. Helm record duy nhất có `revision=1` và `status=pending-install`.
+3. Chỉ có một PVC prefix `storage-learning-platform-monitoring-`, tên đúng là
+   `storage-learning-platform-monitoring-grafana-0`, `Bound`, storage class
+   `local-path`, request `1Gi`, `spec.volumeName`
+   `pvc-212e92f3-8ab7-43f5-b959-1575e3140f19`.
+4. PV đúng là `pvc-212e92f3-8ab7-43f5-b959-1575e3140f19`, `Bound`, capacity
+   `1Gi`, reclaim policy (chính sách thu hồi) `Delete`, `claimRef.namespace`
+   `observability`, `claimRef.name`
+   `storage-learning-platform-monitoring-grafana-0`, và `claimRef.uid` phải
+   trùng UID của PVC.
+5. StatefulSet `learning-platform-monitoring-grafana` vẫn có retention policy
+   (chính sách giữ PVC) đúng `Retain/Retain`.
+
+Chỉ khi evidence read-only xác nhận exact eligibility ở trên, human mới được
+phép chạy đường recovery source-managed (đường khôi phục do source quản lý) sau
+khi code đã merge vào `develop`. Không chạy recovery từ feature branch và không
+chạy trước khi PR được merge. Entry point duy nhất là **manual
+`Deploy development VPS` workflow dispatch** với toàn bộ input sau:
+
+1. workflow run ref là `refs/heads/develop`
+2. `target=observability-recovery`
+3. `observability_recovery_confirmation=RECOVER_MONITORING_PENDING_INSTALL_REVISION_1`
+4. job chạy trong environment `dev`
+
+Workflow source hiện buộc `environment: dev`, nhưng cấu hình reviewer/approval
+của GitHub Environment vẫn phải được human tự xác nhận và enforce ngoài source.
+Tài liệu này không coi cấu hình reviewer đó là điều đã được repo chứng minh.
+
+Khi chạy đúng entry point này, role recovery sẽ làm đúng trình tự sau, không hơn:
+
+1. assert literal contract cho exact release, namespace, revision, PVC, PV,
+   retention policy và reclaim policy
+2. đọc `helm list --all`, PVC, PV, StatefulSet bằng đường read-only
+3. capture UID của PVC và PV trước mutation
+4. chạy đúng một lệnh `helm uninstall learning-platform-monitoring --namespace observability --kubeconfig /etc/rancher/k3s/k3s.yaml --wait --timeout 10m --cascade foreground`
+5. đọc lại đúng PVC/PV sau uninstall
+6. assert PVC/PV vẫn cùng tên, cùng UID, cùng binding, cùng `local-path`, cùng
+   `1Gi`, cùng `claimRef`
+7. chỉ khi assert này pass thì flow release mới coi release `monitoring` là
+   `absent` và chạy pinned reinstall ngay trong cùng execution path
+
+Nếu một assert hoặc command fail, flow dừng luôn. Không có `retries:`, không có
+`until:`, không có `ignore-not-found`, không có `--keep-history`, không có
+`--replace`, và không có automatic retry.
+
+Mọi hành động sau đây đều bị cấm, kể cả khi operator thấy cluster đang hỏng:
+
+1. `helm uninstall`, `helm rollback`, `helm upgrade --install`, `helm install`
+   hoặc `helm template` thủ công trên cluster cho ca recovery này
+2. mọi `kubectl` mutation thủ công với release observability, gồm apply, delete,
+   patch, annotate, label, edit, replace, rollout restart
+3. patch metadata hoặc patch ownership để ép Helm nhận resource đang dở dang
+4. dùng `--keep-history`, `--replace`, wildcard cleanup, broad cleanup, hoặc
+   giả định release absent rồi cài lại bằng tay
+5. delete, patch, resize, recreate namespace `observability`
+6. delete, patch, resize, recreate PVC `storage-learning-platform-monitoring-grafana-0`
+7. delete, patch, resize, recreate PV `pvc-212e92f3-8ab7-43f5-b959-1575e3140f19`
+8. chạy lại workflow nhiều lần để “thử vận may” nếu exact invariant chưa khớp
+
+Sau recovery source-managed và immediate reinstall hoàn tất, operator phải xác
+nhận tối thiểu các điểm sau trước khi coi monitoring đã hồi phục:
+
+```bash
+sudo /usr/local/bin/helm list --namespace observability \
+  --kubeconfig /etc/rancher/k3s/k3s.yaml --output json
+sudo k3s kubectl -n observability get pods
+sudo k3s kubectl -n observability rollout status deployment/learning-platform-monitoring-operator --timeout=180s
+sudo k3s kubectl -n observability get prometheus
+sudo k3s kubectl -n observability get pvc storage-learning-platform-monitoring-grafana-0 \
+  -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,CLASS:.spec.storageClassName,REQUEST:.spec.resources.requests.storage,VOLUME:.spec.volumeName,UID:.metadata.uid'
+sudo k3s kubectl get pv pvc-212e92f3-8ab7-43f5-b959-1575e3140f19 \
+  -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,CAPACITY:.spec.capacity.storage,RECLAIM:.spec.persistentVolumeReclaimPolicy,CLAIM_NS:.spec.claimRef.namespace,CLAIM_NAME:.spec.claimRef.name,CLAIM_UID:.spec.claimRef.uid,UID:.metadata.uid'
+sudo k3s kubectl -n observability get events --sort-by=.lastTimestamp
+```
+
+Release monitoring chỉ được xem là đã quay lại baseline khi các kiểm tra trên
+cho thấy Helm state bình thường, operator rollout xong, Prometheus resource có
+mặt, và PVC/PV vẫn giữ nguyên identity. Chỉ sau đó mới tiếp tục quan sát tiến
+trình bình thường của Loki và Alloy trong cùng namespace.
 
 ### 5.3. Capacity và query commands
 

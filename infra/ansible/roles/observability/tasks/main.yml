@@ -453,6 +453,12 @@
   ansible.builtin.include_tasks: stage-values.yml
   when: not ansible_check_mode
 
+- name: Recover the one reviewed monitoring pending-install state before release processing
+  ansible.builtin.include_tasks: recovery-pending-install.yml
+  when:
+    - not ansible_check_mode
+    - observability_recover_pending_install | bool
+
 - name: Process each observability Helm release through its state machine
   ansible.builtin.include_tasks: release.yml
   loop: '{{ observability_releases_ordered }}'

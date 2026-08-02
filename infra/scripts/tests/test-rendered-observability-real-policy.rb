@@ -19,6 +19,18 @@ inputs = %w[monitoring.yml loki.yml alloy.yml].map { |file| File.join(render_dir
 abort 'ERROR: rendered files are missing.' unless inputs.all? { |path| File.file?(path) }
 
 monitoring = File.read(inputs.first)
+
+def mutate_operator_document(monitoring)
+  pattern = /(---\n# Source: kube-prometheus-stack\/templates\/prometheus-operator\/deployment\.yaml\n.*?)(?=\n---\n# Source:|\z)/m
+  match = monitoring.match(pattern)
+  abort 'ERROR: Prometheus Operator Deployment document not found in rendered monitoring manifest.' unless match
+
+  mutated = yield(match[1])
+  abort 'ERROR: operator mutation did not change rendered monitoring manifest.' if mutated == match[1]
+
+  monitoring.sub(pattern, mutated)
+end
+
 ingress = <<~YAML
   ---
   apiVersion: networking.k8s.io/v1
@@ -37,9 +49,17 @@ mutations = {
   'second ingress' => monitoring + ingress,
   'wrong ingress port' => monitoring.sub('number: 80', 'number: 443'),
   'ingress TLS' => monitoring.sub("rules:\n", "tls: [{hosts: [grafana.observability.internal]}]\n  rules:\n"),
-  'reloader drift' => monitoring.sub('--config-reloader-cpu-request=25m', '--config-reloader-cpu-request=24m'),
+  'reloader drift' => mutate_operator_document(monitoring) { |operator| operator.sub('--config-reloader-cpu-request=25m', '--config-reloader-cpu-request=24m') },
   'duplicate PVC' => monitoring + pvc,
-  'unexpected container' => monitoring.sub('containers:', "containers:\n        - name: unexpected\n          resources: {requests: {cpu: 1m, memory: 1Mi}, limits: {cpu: 1m, memory: 1Mi}}")
+  'unexpected container' => mutate_operator_document(monitoring) do |operator|
+    operator.sub("      containers:\n", "      containers:\n        - name: unexpected\n          resources: {requests: {cpu: 1m, memory: 1Mi}, limits: {cpu: 1m, memory: 1Mi}}\n")
+  end,
+  'operator admission TLS secret volume' => mutate_operator_document(monitoring) do |operator|
+    operator.sub("      volumes:\n", "      volumes:\n        - name: tls-secret\n          secret:\n            secretName: learning-platform-monitori-admission\n")
+  end,
+  'operator TLS certificate mount' => mutate_operator_document(monitoring) do |operator|
+    operator.sub("          volumeMounts:\n", "          volumeMounts:\n            - name: tls-secret\n              mountPath: /cert\n              readOnly: true\n")
+  end
 }.freeze
 
 failures = []

@@ -32,6 +32,8 @@ cases = {
   'privileged Alloy' => ['privileged: false', 'privileged: true'],
   'hostPath Alloy' => ['hostPID: false', 'hostPID: false\n      volumes: [{name: host, hostPath: {path: /}}]'],
   'unexpected long-running container' => ['- name: grafana', "- name: unexpected\n          resources: {requests: {cpu: 0m, memory: 0Mi}, limits: {cpu: 0m, memory: 0Mi}}\n        - name: grafana"],
+  'operator admission TLS secret volume' => ['      volumes: []', "      volumes:\n        - name: tls-secret\n          secret: {secretName: learning-platform-monitori-admission}"],
+  'operator TLS certificate mount' => ['          volumeMounts: []', "          volumeMounts:\n            - name: tls-secret\n              mountPath: /cert\n              readOnly: true"],
   'plaintext rendered Secret' => ["---\napiVersion: monitoring.coreos.com/v1", "---\napiVersion: v1\nkind: Secret\nmetadata: {name: plaintext, namespace: observability}\nstringData: {password: plaintext}\n---\napiVersion: monitoring.coreos.com/v1"]
 }.freeze
 
