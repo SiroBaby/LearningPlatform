@@ -1,0 +1,40 @@
+---
+- name: Load realistic namespace resource inputs
+  ansible.builtin.set_fact:
+    observability_release_definition:
+      key: '{{ observability_production_case.release_key }}'
+    observability_release: >-
+      {{ observability_dev_contract.observability_releases[observability_production_case.release_key] }}
+    observability_release_records: '{{ observability_production_case.records }}'
+    observability_releases: '{{ observability_dev_contract.observability_releases }}'
+    observability_namespace_pvcs:
+      resources: '{{ observability_production_case.namespace_pvcs }}'
+    observability_namespace_statefulsets:
+      resources: '{{ observability_production_case.namespace_statefulsets }}'
+    observability_namespace_prometheuses:
+      resources: '{{ observability_production_case.namespace_prometheuses }}'
+
+- name: Execute production release resource classification
+  ansible.builtin.include_tasks: '{{ playbook_dir }}/../tasks/classify-release-resources.yml'
+
+- name: Require production resource classification outputs
+  ansible.builtin.assert:
+    that:
+      - observability_release_pvcs | map(attribute='metadata.name') | list == observability_production_case.expected_release_pvc_names
+      - observability_unknown_owner_pvcs | map(attribute='metadata.name') | list == observability_production_case.expected_unknown_owner_pvc_names
+      - observability_release_retention_policies == observability_production_case.expected_retention_policies
+    fail_msg: >-
+      {{ observability_production_case.name }} did not derive the expected
+      release PVCs, unknown owner PVCs, or retention policies from namespace resources.
+
+- name: Execute the production release state machine
+  ansible.builtin.include_tasks: '{{ playbook_dir }}/../tasks/state-machine.yml'
+
+- name: Require the production state machine to classify exact PVC owners
+  ansible.builtin.assert:
+    that:
+      - observability_release_state | trim == observability_production_case.expected_state
+    fail_msg: >-
+      {{ observability_production_case.name }} was classified as
+      {{ observability_release_state | trim }} instead of
+      {{ observability_production_case.expected_state }}.

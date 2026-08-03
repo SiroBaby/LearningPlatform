@@ -64,11 +64,35 @@
         observability_repository_aliases: >-
           {{ observability_dev_contract.helm_repositories.keys() | list }}
 
+    - name: Require canonical PVC owner allowlists
+      ansible.builtin.assert:
+        that:
+          - >-
+            observability_dev_contract.observability_releases.monitoring.pvc_owner_instances ==
+            ['learning-platform-monitoring', 'learning-platform-monitori-prometheus']
+          - >-
+            observability_dev_contract.observability_releases.loki.pvc_owner_instances ==
+            ['learning-platform-loki']
+          - observability_dev_contract.observability_releases.alloy.pvc_owner_instances == []
+        fail_msg: Observability PVC owner allowlists must remain exact and canonical.
+
+    - name: Execute production failed-install PVC evidence classification
+      ansible.builtin.include_tasks: production-failed-install-evidence-case.yml
+
     - name: Build action plans for every release and transition
       ansible.builtin.include_tasks: state-machine-case.yml
       loop: '{{ releases | product(cases) | list }}'
       loop_control:
         loop_var: observability_case_pair
+
+    - name: Execute production state machine against realistic PVC owner labels
+      ansible.builtin.include_tasks: production-state-machine-case.yml
+      loop: >-
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/pvc-owner-state-machine.yml')
+           | from_yaml }}
+      loop_control:
+        loop_var: observability_production_case
+        label: '{{ observability_production_case.name }}'
 
     - name: Verify low capacity and aggregate overflow produce no Helm action
       ansible.builtin.assert:
@@ -335,7 +359,22 @@
             is search('failed_when: false[\s\S]+release_reinspection_rc:')
           - >-
             lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('include_tasks: classify-failed-install-pvc-evidence\.yml')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/classify-failed-install-pvc-evidence.yml')
             is search('observability_failed_install_namespace_pvcs\.resources \| default\(\[\]\)')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/classify-failed-install-pvc-evidence.yml')
+            is search('observability_failed_install_unknown_owner_pvc_names')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search("metadata\.name', 'search', observability_release\.name")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('include_tasks: classify-release-resources\.yml')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/classify-release-resources.yml')
+            is search("get\('app\.kubernetes\.io/instance'\) in observability_release\.pvc_owner_instances")
           - >-
             lookup('file', playbook_dir ~ '/../tasks/release.yml')
             is not search('observability_failed_install_release_list\.stdout \| from_json')

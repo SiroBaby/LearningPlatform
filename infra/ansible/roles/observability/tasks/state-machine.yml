@@ -1,11 +1,6 @@
 ---
-- name: Derive release ownership and retention contract
+- name: Derive release retention contract
   ansible.builtin.set_fact:
-    observability_release_pvcs_owned: >-
-      {{ observability_release_pvcs | selectattr('metadata.labels', 'defined')
-         | selectattr('metadata.labels.app.kubernetes.io/instance', 'defined')
-         | selectattr('metadata.labels.app.kubernetes.io/instance', 'equalto', observability_release.name)
-         | list }}
     observability_release_retention_valid: >-
       {{ observability_release_definition.key == 'alloy' or
          (observability_release_retention_policies | default([]) | length > 0 and
@@ -20,7 +15,7 @@
       {% elif observability_release_records | length == 0 %}orphan
       {% elif observability_release_records | length != 1 %}mismatch
       {% elif observability_release_records[0].status | lower != 'deployed' %}partial
-      {% elif observability_release_pvcs | length != observability_release_pvcs_owned | length %}mismatch
+      {% elif observability_unknown_owner_pvcs | default([]) | length > 0 %}mismatch
       {% elif observability_release_definition.key == 'alloy' and observability_release_pvcs | length > 0 %}mismatch
       {% elif not observability_release_retention_valid %}mismatch
       {% elif observability_release_records[0].healthy | default(true) | bool %}healthy

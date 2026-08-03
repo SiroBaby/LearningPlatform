@@ -1,0 +1,32 @@
+---
+- name: Classify PVCs by exact canonical owner labels
+  ansible.builtin.set_fact:
+    observability_release_pvcs: >-
+      {%- set owner = namespace(pvcs=[]) -%}
+      {%- for pvc in observability_namespace_pvcs.resources | default([]) -%}
+      {%- if (pvc.metadata.labels | default({})).get('app.kubernetes.io/instance') in observability_release.pvc_owner_instances -%}
+      {%- set _ = owner.pvcs.append(pvc) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ owner.pvcs }}
+    observability_unknown_owner_pvcs: >-
+      {%- set known_owner_instances = observability_releases.values()
+         | map(attribute='pvc_owner_instances') | flatten | list -%}
+      {%- set owner = namespace(pvcs=[]) -%}
+      {%- for pvc in observability_namespace_pvcs.resources | default([]) -%}
+      {%- if (pvc.metadata.labels | default({})).get('app.kubernetes.io/instance') not in known_owner_instances -%}
+      {%- set _ = owner.pvcs.append(pvc) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ owner.pvcs }}
+
+- name: Select exact release retention policies
+  ansible.builtin.set_fact:
+    observability_release_retention_policies: >-
+      {%- set retention = namespace(policies=[]) -%}
+      {%- for resource in (observability_namespace_statefulsets.resources | default([])) + (observability_namespace_prometheuses.resources | default([])) -%}
+      {%- if (resource.metadata.labels | default({})).get('app.kubernetes.io/instance') in observability_release.pvc_owner_instances -%}
+      {%- set _ = retention.policies.append(resource.spec.persistentVolumeClaimRetentionPolicy) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ retention.policies }}

@@ -18,7 +18,7 @@
   ansible.builtin.set_fact:
     observability_release_records: '{{ observability_release_list.stdout | from_json }}'
 
-- name: Inspect namespace PVCs for the exact release prefix
+- name: Inspect namespace PVCs for exact release owner labels
   kubernetes.core.k8s_info:
     kubeconfig: '{{ observability_kubeconfig }}'
     api_version: v1
@@ -45,26 +45,8 @@
     - observability_release_definition.key == 'monitoring'
     - observability_release_records | length == 1
 
-- name: Select PVCs that belong or appear to belong to this release
-  ansible.builtin.set_fact:
-    observability_release_pvcs: >-
-      {{ observability_namespace_pvcs.resources
-         | selectattr('metadata.name', 'search', observability_release.name)
-         | list }}
-
-- name: Select exact release retention policies
-  ansible.builtin.set_fact:
-    observability_release_retention_policies: >-
-      {{ (observability_namespace_statefulsets.resources
-          | selectattr('metadata.labels', 'defined')
-          | selectattr('metadata.labels.app.kubernetes.io/instance', 'defined')
-          | selectattr('metadata.labels.app.kubernetes.io/instance', 'equalto', observability_release.name)
-          | map(attribute='spec.persistentVolumeClaimRetentionPolicy') | list) +
-         ((observability_namespace_prometheuses.resources | default([]))
-          | selectattr('metadata.labels', 'defined')
-          | selectattr('metadata.labels.app.kubernetes.io/instance', 'defined')
-          | selectattr('metadata.labels.app.kubernetes.io/instance', 'equalto', observability_release.name)
-          | map(attribute='spec.persistentVolumeClaimRetentionPolicy') | list) }}
+- name: Classify exact release PVC and retention resources
+  ansible.builtin.include_tasks: classify-release-resources.yml
 
 - name: Classify the exact four-state Helm release machine
   ansible.builtin.include_tasks: state-machine.yml
@@ -91,6 +73,7 @@
       state: '{{ observability_release_state | trim }}'
       helm_status: '{{ observability_release_records | map(attribute="status") | list }}'
       pvc_names: '{{ observability_release_pvcs | map(attribute="metadata.name") | list }}'
+      unknown_owner_pvc_names: '{{ observability_unknown_owner_pvcs | map(attribute="metadata.name") | list }}'
   when: observability_release_state | trim in ['orphan', 'mismatch', 'partial']
 
 - name: Fail closed for failed pending partial orphan or mismatched releases
@@ -105,13 +88,11 @@
 - name: Require exact owner labels on existing release PVCs
   ansible.builtin.assert:
     that:
-      - >-
-        item.metadata.labels | default({}) | dict2items
-        | selectattr('key', 'equalto', 'app.kubernetes.io/instance')
-        | map(attribute='value') | list == [observability_release.name]
+      - item.metadata.labels['app.kubernetes.io/instance'] in observability_release.pvc_owner_instances
     fail_msg: >-
       PVC {{ item.metadata.name }} is not exactly owned by
-      {{ observability_release.name }}; Helm will not change this release.
+      one of {{ observability_release.pvc_owner_instances | join(', ') }};
+      Helm will not change this release.
   loop: '{{ observability_release_pvcs }}'
   when: observability_release_state | trim == 'healthy'
 
@@ -158,6 +139,10 @@
       failed_when: false
       when: observability_initial_install.rc != 0
 
+    - name: Classify failed-install PVC evidence by exact owner labels
+      ansible.builtin.include_tasks: classify-failed-install-pvc-evidence.yml
+      when: observability_initial_install.rc != 0
+
     - name: Record sanitized failed initial install evidence
       ansible.builtin.debug:
         msg:
@@ -176,10 +161,8 @@
                | default('')
                | regex_findall('"status"\s*:\s*"(deployed|failed|pending-install|pending-upgrade|pending-rollback|uninstalling|superseded)"') }}
           pvc_reinspection_failed: '{{ observability_failed_install_namespace_pvcs is failed }}'
-          pvc_names: >-
-            {{ (observability_failed_install_namespace_pvcs.resources | default([]))
-               | selectattr('metadata.name', 'search', observability_release.name)
-               | map(attribute='metadata.name') | list }}
+          pvc_names: '{{ observability_failed_install_release_pvc_names }}'
+          unknown_owner_pvc_names: '{{ observability_failed_install_unknown_owner_pvc_names }}'
       when: observability_initial_install.rc != 0
 
     - name: Preserve failed initial release and require HITL

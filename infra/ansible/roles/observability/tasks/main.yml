@@ -7,12 +7,17 @@
       - observability_namespace | length > 0
       - observability_releases is mapping
       - observability_releases.monitoring.name == 'learning-platform-monitoring'
+      - >-
+        observability_releases.monitoring.pvc_owner_instances ==
+        ['learning-platform-monitoring', 'learning-platform-monitori-prometheus']
       - observability_releases.monitoring.chart == 'prometheus-community/kube-prometheus-stack'
       - observability_releases.monitoring.chart_version == '87.21.0'
       - observability_releases.loki.name == 'learning-platform-loki'
+      - observability_releases.loki.pvc_owner_instances == ['learning-platform-loki']
       - observability_releases.loki.chart == 'grafana-community/loki'
       - observability_releases.loki.chart_version == '18.7.0'
       - observability_releases.alloy.name == 'learning-platform-alloy'
+      - observability_releases.alloy.pvc_owner_instances == []
       - observability_releases.alloy.chart == 'grafana/alloy'
       - observability_releases.alloy.chart_version == '1.11.0'
       - observability_resources is mapping
