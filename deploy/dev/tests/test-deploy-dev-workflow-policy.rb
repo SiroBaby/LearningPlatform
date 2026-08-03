@@ -48,6 +48,8 @@ assert(failures, triggers.dig('workflow_dispatch', 'inputs', 'target', 'options'
        'workflow_dispatch must expose target=observability')
 assert(failures, triggers.dig('workflow_dispatch', 'inputs', 'target', 'options').include?('observability-recovery'),
        'workflow_dispatch must expose target=observability-recovery')
+assert(failures, triggers.dig('workflow_dispatch', 'inputs', 'target', 'options').include?('observability-health'),
+       'workflow_dispatch must expose target=observability-health')
 assert(failures, triggers.dig('workflow_dispatch', 'inputs', 'observability_recovery_confirmation', 'required') == true,
        'workflow_dispatch must require an observability recovery confirmation')
 
@@ -80,6 +82,13 @@ assert(failures, !workflow_job_runs?(jobs, 'recover-observability-pending-instal
        'skipped infra quality must never run recovery')
 assert(failures, !workflow_job_runs?(jobs, 'recover-observability-pending-install', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability', confirmation: recovery_confirmation)),
        'ordinary observability target must never run recovery')
+health_context = workflow_context(outputs: observability_outputs, results: {}, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability-health')
+assert(failures, workflow_job_runs?(jobs, 'observability-health', health_context),
+       'observability health dispatch on develop must evaluate the YAML expression to true')
+assert(failures, !workflow_job_runs?(jobs, 'observability-health', workflow_context(outputs: observability_outputs, results: {}, event_name: 'push', ref: 'refs/heads/develop', target: 'observability-health')),
+       'push events must never run observability health')
+assert(failures, !workflow_job_runs?(jobs, 'observability-health', workflow_context(outputs: observability_outputs, results: {}, event_name: 'workflow_dispatch', ref: 'refs/heads/feature/test', target: 'observability-health')),
+       'feature refs must never run observability health')
 
 changes = jobs.fetch('changes')
 assert(failures, changes.dig('outputs', 'observability') == '${{ steps.classify.outputs.observability }}',
@@ -133,6 +142,36 @@ assert(failures, recovery.fetch('needs') == %w[changes infra-quality] && recover
 %w[workflow_dispatch refs/heads/develop observability-recovery RECOVER_MONITORING_PENDING_INSTALL_REVISION_1 needs.changes.outputs.observability needs.infra-quality.result].each do |required_guard|
   assert(failures, recovery_if.include?(required_guard), "recovery must require #{required_guard}")
 end
+
+health = jobs.fetch('observability-health')
+health_if = health.fetch('if')
+assert(failures, health.fetch('environment') == 'dev' && health.fetch('permissions') == { 'contents' => 'read' },
+       'observability health must run in dev with read-only repository permission')
+%w[workflow_dispatch refs/heads/develop observability-health].each do |required_guard|
+  assert(failures, health_if.include?(required_guard), "observability health must require #{required_guard}")
+end
+assert(failures, health.fetch('needs', []).empty?,
+       'observability health must not depend on classification, deployment, or recovery jobs')
+health_steps = step_names(health)
+assert(failures, health_steps.include?('Capture read-only observability health evidence') && health_steps.include?('Upload sanitized observability health evidence') && health_steps.include?('Fail health target from sanitized evidence'),
+       'observability health must capture, upload, and terminally gate sanitized evidence')
+health_source = health.fetch('steps').map { |step| [step['name'], step['run'], step['uses']].compact.join("\n") }.join("\n")
+forbidden_health = %w[ansible helm docker nginx apply delete patch edit label annotate exec rollout recovery]
+assert(failures, forbidden_health.none? { |token| health_source.match?(/#{Regexp.escape(token)}/i) },
+       'observability health job must not invoke deployment, recovery, or mutation tools')
+sampler_source = File.read(File.join(root, 'deploy', 'dev', 'observability-health.sh'))
+assert(failures, step_by_name(health, 'Capture read-only observability health evidence').fetch('run').include?('observability-health.sh') &&
+                   sampler_source.include?('StrictHostKeyChecking=yes'),
+       'observability health must reuse source-managed sampler and strict SSH trust')
+upload = step_by_name(health, 'Upload sanitized observability health evidence')
+assert(failures, upload.fetch('if') == 'always()' && upload.fetch('uses') == 'actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce',
+       'health evidence upload must run on failure and use the verified immutable artifact action SHA')
+terminal_gate = step_by_name(health, 'Fail health target from sanitized evidence')
+assert(failures, terminal_gate.fetch('if') == 'always()' && terminal_gate.fetch('run').include?("evidence.get('status') != 'PASS'"),
+       'health terminal gate must fail non-PASS sanitized evidence after artifact upload')
+apps_source = File.read(File.join(root, 'infra', 'k8s', 'apps.yaml.j2'))
+assert(failures, apps_source.include?("name: api") && apps_source.include?("port: 3000") && sampler_source.include?('service/api 13001 3000'),
+       'health sampler must use the source-defined API Service name and port')
 recovery_apply = step_by_name(recovery, 'Recover observability pending-install revision through Ansible').fetch('run')
 assert(failures, recovery_apply.include?('--tags external_secrets,observability -e observability_recover_pending_install=true'),
        'recovery must invoke only the fixed Ansible recovery opt-in beyond fixed paths')
