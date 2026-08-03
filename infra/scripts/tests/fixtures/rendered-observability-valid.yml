@@ -104,12 +104,20 @@ spec:
     spec:
       hostNetwork: false
       hostPID: false
+      volumes:
+        - name: alloy-storage
+          emptyDir:
+            sizeLimit: 128Mi
       containers:
         - name: alloy
-          securityContext: {privileged: false, allowPrivilegeEscalation: false}
+          args: [run, /etc/alloy/config.alloy, --storage.path=/tmp/alloy]
+          securityContext: {privileged: false, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, runAsUser: 473}
+          volumeMounts:
+            - name: alloy-storage
+              mountPath: /tmp/alloy
           resources: {requests: {cpu: 75m, memory: 128Mi}, limits: {cpu: 250m, memory: 256Mi}}
         - name: config-reloader
-          securityContext: {privileged: false, allowPrivilegeEscalation: false}
+          securityContext: {privileged: false, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534}
           resources: {requests: {cpu: 10m, memory: 50Mi}, limits: {cpu: 100m, memory: 64Mi}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
