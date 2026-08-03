@@ -38,6 +38,23 @@ def mutate_document(raw, label, predicate)
   documents.join
 end
 
+def dump_document_like(original_raw, parsed)
+  dumped = YAML.dump(parsed)
+  return dumped if original_raw.start_with?('---')
+
+  dumped.sub(/\A---\s*\n/, '')
+end
+
+def mutate_structured_document(raw, label, predicate)
+  mutate_document(raw, label, predicate) do |document|
+    parsed = YAML.safe_load(document, permitted_classes: [], permitted_symbols: [], aliases: false)
+    mutated = yield(parsed)
+    abort "ERROR: #{label} mutation did not change parsed document." if mutated == parsed
+
+    dump_document_like(document, mutated)
+  end
+end
+
 def mutate_operator_document(monitoring)
   predicate = lambda do |document|
     document.is_a?(Hash) &&
@@ -78,6 +95,25 @@ def mutate_grafana_document(monitoring, kind)
   mutate_document(monitoring, "Grafana #{kind}", predicate) { |document| yield(document) }
 end
 
+def mutate_grafana_statefulset(monitoring)
+  predicate = lambda do |document|
+    document.is_a?(Hash) && document['kind'] == 'StatefulSet' &&
+      document.dig('metadata', 'name') == 'learning-platform-monitoring-grafana' &&
+      document.dig('metadata', 'labels', 'app.kubernetes.io/instance') == 'learning-platform-monitoring'
+  end
+  mutate_structured_document(monitoring, 'Grafana StatefulSet', predicate) { |document| yield(document) }
+end
+
+def grafana_container!(statefulset)
+  containers = statefulset.dig('spec', 'template', 'spec', 'containers')
+  abort 'ERROR: Grafana StatefulSet containers are missing.' unless containers.is_a?(Array)
+
+  container = containers.find { |entry| entry['name'] == 'grafana' }
+  abort 'ERROR: Grafana container not found in Grafana StatefulSet.' unless container.is_a?(Hash)
+
+  container
+end
+
 ingress = <<~YAML
   ---
   apiVersion: networking.k8s.io/v1
@@ -100,9 +136,39 @@ mutations = {
   'wrong Grafana datasource URL' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('http://prometheus-operated.observability.svc.cluster.local:9090', 'http://wrong-prometheus') },
   'missing Grafana datasource' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('name: Loki', 'name: Missing') },
   'wrong Grafana dashboard provider path' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('/var/lib/grafana/dashboards/nodes', '/var/lib/grafana/dashboards/wrong') },
-  'wrong Grafana dashboard ConfigMap' => mutate_grafana_document(monitoring, 'StatefulSet') { |grafana| grafana.sub('learning-platform-monitori-nodes', 'wrong-dashboard-config-map') },
-  'wrong Grafana dashboard volume name' => mutate_grafana_document(monitoring, 'StatefulSet') { |grafana| grafana.sub('name: dashboards-nodes', 'name: wrong-dashboard-volume') },
-  'wrong Grafana dashboard mount' => mutate_grafana_document(monitoring, 'StatefulSet') { |grafana| grafana.sub('mountPath: /var/lib/grafana/dashboards/nodes', 'mountPath: /var/lib/grafana/dashboards/wrong') },
+  'wrong Grafana dashboard ConfigMap' => mutate_grafana_statefulset(monitoring) do |grafana|
+    volumes = grafana.dig('spec', 'template', 'spec', 'volumes')
+    abort 'ERROR: Grafana StatefulSet volumes are missing.' unless volumes.is_a?(Array)
+
+    volume = volumes.find { |entry| entry['name'] == 'dashboards-nodes' }
+    abort 'ERROR: Grafana dashboard volume dashboards-nodes not found.' unless volume.is_a?(Hash)
+
+    mutated = Marshal.load(Marshal.dump(grafana))
+    target = mutated.dig('spec', 'template', 'spec', 'volumes').find { |entry| entry['name'] == 'dashboards-nodes' }
+    target['configMap'] ||= {}
+    target['configMap']['name'] = 'wrong-dashboard-config-map'
+    mutated
+  end,
+  'wrong Grafana dashboard volume name' => mutate_grafana_statefulset(monitoring) do |grafana|
+    volume = grafana.dig('spec', 'template', 'spec', 'volumes')
+    abort 'ERROR: Grafana StatefulSet volumes are missing.' unless volume.is_a?(Array)
+    abort 'ERROR: Grafana dashboard volume dashboards-nodes not found.' unless volume.any? { |entry| entry['name'] == 'dashboards-nodes' }
+
+    mutated = Marshal.load(Marshal.dump(grafana))
+    target = mutated.dig('spec', 'template', 'spec', 'volumes').find { |entry| entry['name'] == 'dashboards-nodes' }
+    target['name'] = 'wrong-dashboard-volume'
+    mutated
+  end,
+  'wrong Grafana dashboard mount' => mutate_grafana_statefulset(monitoring) do |grafana|
+    mounts = grafana_container!(grafana)['volumeMounts']
+    abort 'ERROR: Grafana container volumeMounts are missing.' unless mounts.is_a?(Array)
+    abort 'ERROR: Grafana dashboard mount dashboards-nodes not found.' unless mounts.any? { |entry| entry['name'] == 'dashboards-nodes' }
+
+    mutated = Marshal.load(Marshal.dump(grafana))
+    target = grafana_container!(mutated)['volumeMounts'].find { |entry| entry['name'] == 'dashboards-nodes' }
+    target['mountPath'] = '/var/lib/grafana/dashboards/wrong'
+    mutated
+  end,
   'reloader drift' => mutate_operator_document(monitoring) { |operator| operator.sub('--config-reloader-cpu-request=25m', '--config-reloader-cpu-request=24m') },
   'duplicate PVC' => monitoring + pvc,
   'unexpected container' => mutate_operator_document(monitoring) do |operator|
