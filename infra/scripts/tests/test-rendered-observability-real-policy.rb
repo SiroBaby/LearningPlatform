@@ -83,7 +83,7 @@ mutations = {
     operator.sub("          volumeMounts:\n", "          volumeMounts:\n            - name: tls-secret\n              mountPath: /cert\n              readOnly: true\n")
   end,
   'missing Alloy storage volume' => mutate_alloy_document(File.read(inputs[2])) do |alloy|
-    alloy.sub(/\n      - emptyDir:\n          sizeLimit: 128Mi\n        name: alloy-storage/, '')
+    alloy.sub(/\n        - emptyDir:\n            sizeLimit: 128Mi\n          name: alloy-storage/, '')
   end,
   'wrong Alloy storage mount' => mutate_alloy_document(File.read(inputs[2])) do |alloy|
     alloy.sub('mountPath: /tmp/alloy', 'mountPath: /tmp/wrong')
@@ -92,7 +92,7 @@ mutations = {
     alloy.sub('runAsUser: 65534', 'runAsUser: 1000')
   end,
   'missing config-reloader UID' => mutate_alloy_document(File.read(inputs[2])) do |alloy|
-    alloy.sub("\n        runAsUser: 65534", '')
+    alloy.sub("\n            runAsUser: 65534", '')
   end
 }.freeze
 
