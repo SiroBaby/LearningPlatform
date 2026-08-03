@@ -186,9 +186,11 @@ Eligibility duy nhất cho đường recovery source-managed là:
 merge `develop`, với `target=observability-recovery`,
 `observability_recovery_confirmation=RECOVER_MONITORING_PENDING_INSTALL_REVISION_1`,
 và job chạy trong environment `dev`. Repo source buộc đúng ref `develop`, đúng
-target, đúng confirmation string, và đúng `environment: dev`. Tuy vậy cấu hình
-reviewer/approval thực tế của GitHub Environment `dev` phải do human tự xác
-nhận và enforce, không được coi là đã được repo chứng minh.
+target, đúng confirmation string, và đúng `environment: dev`. Vì repository
+private trên gói GitHub hiện tại không hỗ trợ required reviewer (người duyệt bắt
+buộc) cho Environment, `dev` chỉ scope secret/variable; recovery authorization
+(ủy quyền) dựa trên human merge vào `develop`, manual dispatch, exact
+confirmation, `infra-quality` pass và exact preflight fail-closed của role.
 
 Role recovery chỉ được phép:
 
