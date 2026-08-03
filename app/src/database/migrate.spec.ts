@@ -1,15 +1,16 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { buildClientConfig } from './migrate';
+import { buildClientConfig, type MigrationLockClient, withLock } from './migrate';
 
 describe('buildClientConfig', () => {
-  it('uses local database defaults with TLS disabled and UTC sessions', () => {
+  it('uses local database defaults with TLS disabled and bounded UTC sessions', () => {
     const config = buildClientConfig({});
 
     expect(config).toEqual({
+      connectionTimeoutMillis: 10_000,
       database: 'learning',
       host: 'localhost',
-      options: '-c timezone=UTC',
+      options: '-c timezone=UTC -c lock_timeout=30s -c statement_timeout=480s',
       password: 'learning',
       port: 5432,
       user: 'learning',
@@ -22,12 +23,18 @@ describe('buildClientConfig', () => {
       DB_SSL_MODE: 'verify-ca',
     });
 
-    expect(config).toMatchObject({
-      options: '-c timezone=UTC',
+    expect(config).toEqual({
+      connectionTimeoutMillis: 10_000,
+      database: 'learning',
+      host: 'localhost',
+      options: '-c timezone=UTC -c lock_timeout=30s -c statement_timeout=480s',
+      password: 'learning',
+      port: 5432,
       ssl: {
         ca: '-----BEGIN CERTIFICATE-----\ncertificate\n-----END CERTIFICATE-----',
         rejectUnauthorized: true,
       },
+      user: 'learning',
     });
   });
 
@@ -56,5 +63,27 @@ describe('buildClientConfig', () => {
     expect(() => buildClientConfig({ DB_SSL_MODE: 'require' })).toThrow(
       'DB_SSL_MODE must be disabled or verify-ca',
     );
+  });
+});
+
+describe('withLock', () => {
+  it('releases the advisory lock when migration work fails', async () => {
+    const calls: [string, readonly unknown[]][] = [];
+    const client: MigrationLockClient = {
+      query: async (text, values = []) => {
+        calls.push([text, values]);
+      },
+    };
+
+    await expect(
+      withLock(client, async () => {
+        throw new Error('migration failed');
+      }),
+    ).rejects.toThrow('migration failed');
+
+    expect(calls).toEqual([
+      ['SELECT pg_advisory_lock($1)', [4815162342]],
+      ['SELECT pg_advisory_unlock($1)', [4815162342]],
+    ]);
   });
 });

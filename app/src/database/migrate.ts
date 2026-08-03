@@ -22,6 +22,10 @@ loadEnv();
 
 const MIGRATIONS_DIR = join(__dirname, 'migrations');
 const LOCK_KEY = 4815162342; // advisory lock id cố định cho migration
+const CONNECTION_TIMEOUT_MILLIS = 10_000;
+const LOCK_TIMEOUT = '30s';
+const STATEMENT_TIMEOUT = '480s';
+const STARTUP_OPTIONS = `-c timezone=UTC -c lock_timeout=${LOCK_TIMEOUT} -c statement_timeout=${STATEMENT_TIMEOUT}`;
 
 interface MigrationFile {
   readonly version: string; // timestamp prefix
@@ -38,6 +42,10 @@ interface MigrationEnvironment {
   readonly DB_SSL_CA?: string;
   readonly DB_SSL_MODE?: string;
   readonly DB_USER?: string;
+}
+
+export interface MigrationLockClient {
+  query(text: string, values?: unknown[]): Promise<unknown>;
 }
 
 function parsePort(value: string): number {
@@ -57,9 +65,10 @@ export function buildClientConfig(environment: MigrationEnvironment): ClientConf
     throw new Error('DB_SSL_MODE must be disabled or verify-ca');
   }
   const config: ClientConfig = {
+    connectionTimeoutMillis: CONNECTION_TIMEOUT_MILLIS,
     database: environment.DB_NAME ?? 'learning',
     host: environment.DB_HOST ?? 'localhost',
-    options: '-c timezone=UTC',
+    options: STARTUP_OPTIONS,
     password: environment.DB_PASSWORD ?? 'learning',
     port: parsePort(environment.DB_PORT ?? '5432'),
     user: environment.DB_USER ?? 'learning',
@@ -123,7 +132,7 @@ async function appliedVersions(client: Client): Promise<Set<string>> {
   return new Set(res.rows.map((r: { version: string }) => r.version));
 }
 
-async function withLock<T>(client: Client, fn: () => Promise<T>): Promise<T> {
+export async function withLock<T>(client: MigrationLockClient, fn: () => Promise<T>): Promise<T> {
   await client.query('SELECT pg_advisory_lock($1)', [LOCK_KEY]);
   try {
     return await fn();

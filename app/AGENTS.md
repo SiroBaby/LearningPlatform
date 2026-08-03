@@ -39,6 +39,7 @@
 - DTO datetime chỉ nhận ISO-8601 UTC có hậu tố `Z`; không nhận local time hoặc `+07:00` offset làm API contract.
 - Thời điểm application tạo dùng `DateTimeUtil.nowUtc()`. Database chỉ dùng `timestamptz`/`now()` default; không dùng `timestamp without time zone` cho thời điểm nghiệp vụ.
 - PostgreSQL connection session bắt buộc UTC (`-c timezone=UTC`). Backend không cộng/trừ `+07:00`.
+- Migration Job phải đặt database connection, advisory-lock và statement timeout hết hạn trước `activeDeadlineSeconds`; dùng `backoffLimit: 0` để không retry che khuất lỗi migration xác định.
 - Response datetime dùng `DateTimeUtil.toUtcIsoString()` và luôn trả ISO-8601 UTC có hậu tố `Z`. Frontend tự format theo timezone của người dùng, ví dụ `Asia/Ho_Chi_Minh` (`UTC+7`).
 - DTO request/response route-facing phải có Swagger decorators: `@ApiProperty` có description/example; controller có tag, operation và success/error response decorator.
 - Chỉ `ApplicationConfigService` được inject `ConfigService` và chứa config path string. `main.ts`, storage service, database config và module khác dùng typed getter từ `ApplicationConfigService`.
