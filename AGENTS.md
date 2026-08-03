@@ -29,6 +29,7 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Remote deploy phải dùng đúng deployment path đã cấu hình xuyên suốt bước upload và execute; không dựa vào default path khác với GitHub Environment.
 - Chỉ promote release state sau khi toàn bộ service health check pass. Rollback first deployment chỉ được dọn container của candidate, không teardown volume hoặc hạ tầng dùng chung.
 - Backend deployment phải chạy tracked SQL migrations từ release image bằng bounded one-shot Job và chờ hoàn tất thành công trước khi apply API hoặc worker; không dựa vào application startup để tự tạo schema.
+- Khi thay thế Kubernetes Job cùng tên, chỉ correlate Pod và terminal result với exact `metadata.uid` của Job vừa apply (controller UID); không dùng lại `job-name` vì Pod cũ có thể còn tồn tại.
 - Automatic environment deployment chỉ chạy từ branch môi trường đã chỉ định. Phân loại thay đổi theo runtime và không build, restart hoặc rollback service không bị ảnh hưởng; shared backend change phải chọn mọi runtime backend phụ thuộc.
 - Mọi `workflow_dispatch` target mới phải được thêm đồng bộ vào input options, classifier allowlist và production-path regression; action upload artifact phải pin immutable SHA thuộc major còn được GitHub hỗ trợ.
 - Tách registry/SSH credential của CI khỏi application runtime credential. Không bake secret vào image; production orchestration ưu tiên workload identity hoặc secret manager thay vì sao chép static key theo node.

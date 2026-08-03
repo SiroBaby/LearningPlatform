@@ -318,10 +318,11 @@ check_application_edge_contract() {
     || ! grep -q 'deployment_targets' "${app_tasks}" \
     || ! grep -q 'Require complete target selection for the first application deployment' "${app_tasks}" \
     || [ "$(grep -Fc '    label_selectors:' "${app_tasks}")" -ne 2 ] \
-    || [ "$(grep -Fc '      - job-name=database-migrate' "${app_tasks}")" -ne 2 ] \
+    || [ "$(grep -Fc '      - batch.kubernetes.io/controller-uid={{ applications_database_migration_job_uid }}' "${app_tasks}")" -ne 2 ] \
+    || grep -Fq '      - job-name=database-migrate' "${app_tasks}" \
     || ! grep -Fq "| intersect(['web', 'api', 'worker'])" "${app_tasks}" \
     || ! grep -Fq 'when: applications_existing_workload_names | length == 0' "${app_tasks}"; then
-    fail 'Applications role must validate GHCR auth and selective rollout targets.'
+    fail 'Applications role must validate GHCR auth, selective rollout targets, and exact migration Job UID Pod correlation.'
   fi
 
   for required_assertion in \
@@ -492,11 +493,13 @@ check_application_edge_contract() {
     'Delete a terminal database migration Job before rerunning it' \
     'Wait for terminal database migration Job deletion' \
     'Apply database migration Job for the selected backend image' \
+    'Read the newly applied database migration Job identity' \
+    'Require exactly one newly applied database migration Job UID' \
     'Wait for database migration Pod creation' \
     'Record database migration startup evidence without reading Secret values' \
     'Require database migration Pod creation before the deadline' \
     'Wait for database migration Job to reach a terminal state' \
-    'Record database migration missing Job failure evidence without reading Secret values' \
+    'Record database migration missing or replaced Job failure evidence without reading Secret values' \
     'Refresh database migration Pods after terminal Job failure' \
     'Record database migration failure evidence without reading Secret values' \
     'Record database migration missing Pod failure evidence without reading Secret values' \
@@ -533,8 +536,12 @@ check_application_edge_contract() {
     || ! grep -Fqx '  delay: 2' <<<"${terminal_wait_task}" \
     || ! grep -Fqx '  failed_when: false' <<<"${terminal_wait_task}" \
     || ! grep -Fq 'applications_database_migration_result.resources | length == 1' "${app_tasks}" \
-    || ! grep -Fq 'applications_database_migration_result.resources | length != 1' "${app_tasks}" \
-    || ! grep -Fq '[migration-diagnostics] job-not-found-after-terminal-poll' "${app_tasks}" \
+    || ! grep -Fq 'applications_database_migration_job_uid' "${app_tasks}" \
+    || ! grep -Fq 'job-missing-or-uid-mismatch-after-terminal-poll' "${app_tasks}" \
+    || ! grep -Fq 'not (applications_database_migration_startup_evidence.skipped | default(false) | bool)' "${app_tasks}" \
+    || ! grep -Fq 'not (applications_database_migration_pod_evidence.skipped | default(false) | bool)' "${app_tasks}" \
+    || ! grep -Fq 'not (applications_database_migration_missing_pod_evidence.skipped | default(false) | bool)' "${app_tasks}" \
+    || ! grep -Fq 'not (applications_database_migration_missing_job_evidence.skipped | default(false) | bool)' "${app_tasks}" \
     || ! grep -Fq 'sort(attribute='"'"'metadata.creationTimestamp'"'"') | last' "${app_tasks}" \
     || ! grep -Fq 'kubectl logs pod/{{ applications_database_migration_pod_name }} --all-containers=true --previous' "${app_tasks}"; then
     fail 'Migration startup and failed-Pod evidence must be captured before the fail-closed completion gate.'
@@ -564,6 +571,8 @@ check_ansible_when_installed() {
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       -i "${ANSIBLE_DIR}/inventory/hosts.example.yml" \
       "${ANSIBLE_DIR}/playbooks/site.yml" --syntax-check
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/migration-job-correlation.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/observability/tests/state-machine.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
