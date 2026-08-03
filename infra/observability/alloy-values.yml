@@ -80,7 +80,9 @@ alloy:
   mounts:
     varlog: false
     dockercontainers: false
-    extra: []
+    extra:
+      - name: alloy-storage
+        mountPath: /tmp/alloy
   resources:
     requests:
       cpu: 75m
@@ -112,13 +114,18 @@ configReloader:
     privileged: false
     readOnlyRootFilesystem: true
     runAsNonRoot: true
+    runAsGroup: 65534
+    runAsUser: 65534
 
 controller:
   type: daemonset
   hostNetwork: false
   hostPID: false
   volumes:
-    extra: []
+    extra:
+      - name: alloy-storage
+        emptyDir:
+          sizeLimit: 128Mi
 
 rbac:
   create: true

@@ -34,6 +34,11 @@ RELOADER_ARGS = {
 }.freeze
 FORBIDDEN_OPERATOR_ADMISSION_SECRET = 'learning-platform-monitori-admission'
 FORBIDDEN_OPERATOR_TLS_MOUNT_PATHS = %w[/cert /tls].freeze
+ALLOY_STORAGE_VOLUME = 'alloy-storage'
+ALLOY_STORAGE_PATH = '/tmp/alloy'
+ALLOY_STORAGE_SIZE_LIMIT = '128Mi'
+ALLOY_USER_ID = 473
+RELOADER_USER_ID = 65_534
 
 options = { inputs: [], junit: nil }
 OptionParser.new do |parser|
@@ -262,6 +267,7 @@ class Policy
       context = container['securityContext'] || {}
       fail_check("Alloy/#{name(document)} container/#{container['name']} must be non-privileged") if context['privileged'] || context['allowPrivilegeEscalation'] != false
     end
+    validate_alloy_runtime(document) if kind(document) == 'DaemonSet'
     if kind(document) == 'ClusterRole'
       (value(document, 'rules') || []).each do |rule|
         resources = rule['resources'] || []
@@ -278,6 +284,47 @@ class Policy
     end
     required_labels = '"cluster", "namespace", "app", "container", "stream"'
     fail_check("Alloy ConfigMap/#{name(document)} must keep only canonical labels") unless content.include?(required_labels)
+  end
+
+  def validate_alloy_runtime(document)
+    pod_spec = pod_spec_for(document)
+    containers = containers_for(document)
+    alloy = containers.find { |container| container['name'] == 'alloy' } || {}
+    reloader = containers.find { |container| container['name'] == 'config-reloader' } || {}
+    validate_alloy_storage(document, pod_spec, alloy, containers)
+    validate_alloy_security_context(document, alloy, reloader)
+  end
+
+  def validate_alloy_storage(document, pod_spec, alloy, containers)
+    storage_args = (alloy['args'] || []).select { |argument| argument == "--storage.path=#{ALLOY_STORAGE_PATH}" }
+    fail_check("Alloy/#{name(document)} must contain exactly --storage.path=#{ALLOY_STORAGE_PATH}") unless storage_args.length == 1
+
+    volumes = pod_spec['volumes'] || []
+    storage_volumes = volumes.select { |volume| volume['name'] == ALLOY_STORAGE_VOLUME }
+    expected_volume = { 'sizeLimit' => ALLOY_STORAGE_SIZE_LIMIT }
+    fail_check("Alloy/#{name(document)} must define one bounded emptyDir #{ALLOY_STORAGE_VOLUME}") unless storage_volumes.length == 1 && storage_volumes.first['emptyDir'] == expected_volume
+
+    containers.each do |container|
+      mounts = (container['volumeMounts'] || []).select { |mount| mount['name'] == ALLOY_STORAGE_VOLUME }
+      if container['name'] == 'alloy'
+        expected_mount = mounts.length == 1 && mounts.first['mountPath'] == ALLOY_STORAGE_PATH && mounts.first['readOnly'] != true
+        fail_check("Alloy/#{name(document)} must mount writable #{ALLOY_STORAGE_VOLUME} only at #{ALLOY_STORAGE_PATH}") unless expected_mount
+      elsif mounts.any?
+        fail_check("Alloy/#{name(document)} #{ALLOY_STORAGE_VOLUME} must only mount in the alloy container")
+      end
+    end
+  end
+
+  def validate_alloy_security_context(document, alloy, reloader)
+    alloy_context = alloy['securityContext'] || {}
+    unless alloy_context['readOnlyRootFilesystem'] == true && alloy_context['runAsNonRoot'] == true && alloy_context['runAsUser'] == ALLOY_USER_ID
+      fail_check("Alloy/#{name(document)} container/alloy must keep readOnlyRootFilesystem, runAsNonRoot, and runAsUser #{ALLOY_USER_ID}")
+    end
+
+    reloader_context = reloader['securityContext'] || {}
+    unless reloader_context['readOnlyRootFilesystem'] == true && reloader_context['runAsNonRoot'] == true && reloader_context['runAsUser'] == RELOADER_USER_ID && reloader_context['runAsGroup'] == RELOADER_USER_ID
+      fail_check("Alloy/#{name(document)} container/config-reloader must keep readOnlyRootFilesystem, runAsNonRoot, runAsUser, and runAsGroup #{RELOADER_USER_ID}")
+    end
   end
 
   def validate_required_resources

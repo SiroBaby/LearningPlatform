@@ -31,6 +31,17 @@ def mutate_operator_document(monitoring)
   monitoring.sub(pattern, mutated)
 end
 
+def mutate_alloy_document(alloy)
+  pattern = /(---\n# Source: alloy\/templates\/controller\.yaml\n.*?)(?=\n---\n# Source:|\z)/m
+  match = alloy.match(pattern)
+  abort 'ERROR: Alloy DaemonSet document not found in rendered Alloy manifest.' unless match
+
+  mutated = yield(match[1])
+  abort 'ERROR: Alloy mutation did not change rendered Alloy manifest.' if mutated == match[1]
+
+  alloy.sub(pattern, mutated)
+end
+
 ingress = <<~YAML
   ---
   apiVersion: networking.k8s.io/v1
@@ -59,15 +70,31 @@ mutations = {
   end,
   'operator TLS certificate mount' => mutate_operator_document(monitoring) do |operator|
     operator.sub("          volumeMounts:\n", "          volumeMounts:\n            - name: tls-secret\n              mountPath: /cert\n              readOnly: true\n")
+  end,
+  'missing Alloy storage volume' => mutate_alloy_document(File.read(inputs[2])) do |alloy|
+    alloy.sub(/\n      - emptyDir:\n          sizeLimit: 128Mi\n        name: alloy-storage/, '')
+  end,
+  'wrong Alloy storage mount' => mutate_alloy_document(File.read(inputs[2])) do |alloy|
+    alloy.sub('mountPath: /tmp/alloy', 'mountPath: /tmp/wrong')
+  end,
+  'wrong config-reloader UID' => mutate_alloy_document(File.read(inputs[2])) do |alloy|
+    alloy.sub('runAsUser: 65534', 'runAsUser: 1000')
+  end,
+  'missing config-reloader UID' => mutate_alloy_document(File.read(inputs[2])) do |alloy|
+    alloy.sub("\n        runAsUser: 65534", '')
   end
 }.freeze
 
 failures = []
 Dir.mktmpdir('rendered-observability-real-policy') do |directory|
-  mutations.each do |label, mutated_monitoring|
-    monitoring_path = File.join(directory, "#{label.gsub(/[^a-z]+/i, '-')}.yml")
+  mutations.each do |label, mutation|
+    monitoring_path = File.join(directory, "#{label.gsub(/[^a-z]+/i, '-')}-monitoring.yml")
+    alloy_path = File.join(directory, "#{label.gsub(/[^a-z]+/i, '-')}-alloy.yml")
+    mutated_monitoring = label.include?('Alloy') || label.include?('reloader UID') ? monitoring : mutation
+    mutated_alloy = label.include?('Alloy') || label.include?('reloader UID') ? mutation : File.read(inputs[2])
     File.write(monitoring_path, mutated_monitoring)
-    _output, status = Open3.capture2e('ruby', validator, '--input', monitoring_path, '--input', inputs[1], '--input', inputs[2])
+    File.write(alloy_path, mutated_alloy)
+    _output, status = Open3.capture2e('ruby', validator, '--input', monitoring_path, '--input', inputs[1], '--input', alloy_path)
     failures << "real render mutation unexpectedly passed: #{label}" if status.success?
   end
 end
