@@ -6,6 +6,41 @@ readonly OBSERVABILITY_HEALTH_SNAPSHOT_COUNT="${OBSERVABILITY_HEALTH_SNAPSHOT_CO
 
 fail() { printf 'observability health failed: %s\n' "$*" >&2; exit 1; }
 
+validate_artifact() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding='utf-8') as artifact_file:
+    artifact = json.load(artifact_file)
+
+if artifact.get('schemaVersion') != 1:
+    raise ValueError('unsupported health artifact schema')
+if artifact.get('status') in {'PASS', 'FAIL'}:
+    if artifact.get('transport') != 'remote-script-executed':
+        raise ValueError('remote health artifact transport is invalid')
+    if [snapshot.get('offsetSeconds') for snapshot in artifact.get('snapshots', [])] != list(range(0, 1801, 60)):
+        raise ValueError('remote health artifact cadence is invalid')
+elif artifact.get('status') == 'BLOCKED':
+    if artifact != {
+        'schemaVersion': 1,
+        'status': 'BLOCKED',
+        'transport': 'ssh-transport-failed',
+        'blockedCategory': 'SSH_TRANSPORT_FAILURE',
+        'snapshots': [],
+    }:
+        raise ValueError('blocked health artifact contract is invalid')
+else:
+    raise ValueError('unsupported health artifact status')
+PY
+}
+
+write_transport_failure_artifact() {
+  local temporary_output="$1"
+  printf '%s\n' '{"schemaVersion":1,"status":"BLOCKED","transport":"ssh-transport-failed","blockedCategory":"SSH_TRANSPORT_FAILURE","snapshots":[]}' > "$temporary_output"
+  validate_artifact "$temporary_output"
+}
+
 remote_probe() {
   cat <<'REMOTE_BASH'
 set -Eeuo pipefail
@@ -92,17 +127,29 @@ for index in $(seq 0 30); do
   next_tick=$((next_tick + INTERVAL_SECONDS)); delay=$((next_tick - $(monotonic_seconds))); (( index < 30 && delay > 0 )) && sleep "$delay"
 done
 [[ "$releases" == true && "$(python3 -c 'import json,sys; print(str(json.load(sys.stdin)["valid"]).lower())' <<<"$pvc_json")" == true && "$pods" == true && "$ksm" == true && "$prometheus" == true && "$marker_latency" -le 120 && "$grafana_health" == true && "$datasources" == true && "$dashboards" == 4 ]] || mark_failed
-python3 -c 'import json,sys; snapshots=json.loads(sys.argv[12]); print(json.dumps({"schemaVersion":1,"status":sys.argv[1],"marker":sys.argv[2],"lokiMarkerLatencySeconds":int(sys.argv[3]),"releaseContract":sys.argv[4]=="true","pvc":json.loads(sys.argv[5]),"observabilityPodsReady":sys.argv[6]=="true","monitoringOwnedKubeStateMetrics":sys.argv[7]=="true","prometheusUp":sys.argv[8]=="true","grafanaHealthy":sys.argv[9]=="true","grafanaDatasources":sys.argv[10]=="true","grafanaProvisionedDashboards":int(sys.argv[11]),"snapshots":snapshots},separators=(",",":")))' "$evidence_status" "$marker" "$marker_latency" "$releases" "$pvc_json" "$pods" "$ksm" "$prometheus" "$grafana_health" "$datasources" "$dashboards" "$snapshots"
+python3 -c 'import json,sys; snapshots=json.loads(sys.argv[12]); print(json.dumps({"schemaVersion":1,"status":sys.argv[1],"transport":"remote-script-executed","marker":sys.argv[2],"lokiMarkerLatencySeconds":int(sys.argv[3]),"releaseContract":sys.argv[4]=="true","pvc":json.loads(sys.argv[5]),"observabilityPodsReady":sys.argv[6]=="true","monitoringOwnedKubeStateMetrics":sys.argv[7]=="true","prometheusUp":sys.argv[8]=="true","grafanaHealthy":sys.argv[9]=="true","grafanaDatasources":sys.argv[10]=="true","grafanaProvisionedDashboards":int(sys.argv[11]),"snapshots":snapshots},separators=(",",":")))' "$evidence_status" "$marker" "$marker_latency" "$releases" "$pvc_json" "$pods" "$ksm" "$prometheus" "$grafana_health" "$datasources" "$dashboards" "$snapshots"
 REMOTE_BASH
 }
 
 main() {
-  local host='' user='' known_hosts='' output=''
+  local host='' user='' known_hosts='' output='' output_directory='' temporary_output=''
   while (($#)); do case "$1" in --host) host="$2"; shift 2 ;; --user) user="$2"; shift 2 ;; --known-hosts) known_hosts="$2"; shift 2 ;; --output) output="$2"; shift 2 ;; *) fail "unsupported argument: $1" ;; esac; done
   [[ "$host" =~ ^[A-Za-z0-9.-]+$ && "$user" =~ ^[A-Za-z0-9._-]+$ && -n "$output" ]] || fail 'host, user, and output are required'
   [[ "$OBSERVABILITY_HEALTH_INTERVAL_SECONDS" == 60 && "$OBSERVABILITY_HEALTH_SNAPSHOT_COUNT" == 31 ]] || fail 'health cadence must remain T+0 through T+30m at 60s'
+  output_directory="$(dirname "$output")"
+  [[ -d "$output_directory" ]] || fail 'output directory must exist'
+  temporary_output="$(mktemp "$output_directory/.observability-health.XXXXXX")"
+  trap 'rm -f -- "${temporary_output:-}"' EXIT
   remote_command="env OBSERVABILITY_HEALTH_TEST_REMOTE=$(printf '%q' "${OBSERVABILITY_HEALTH_TEST_REMOTE:-}") OBSERVABILITY_HEALTH_TEST_RESTART_INCREASE=$(printf '%q' "${OBSERVABILITY_HEALTH_TEST_RESTART_INCREASE:-}") OBSERVABILITY_HEALTH_TEST_NODE_PRESSURE=$(printf '%q' "${OBSERVABILITY_HEALTH_TEST_NODE_PRESSURE:-}") OBSERVABILITY_HEALTH_TEST_LATE_POD_NOT_READY=$(printf '%q' "${OBSERVABILITY_HEALTH_TEST_LATE_POD_NOT_READY:-}") OBSERVABILITY_HEALTH_TEST_DISK_GI=$(printf '%q' "${OBSERVABILITY_HEALTH_TEST_DISK_GI:-}") OBSERVABILITY_HEALTH_TEST_MEM_GI=$(printf '%q' "${OBSERVABILITY_HEALTH_TEST_MEM_GI:-}") env -u BASH_ENV bash --noprofile --norc -se"
-  remote_probe | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts" "$user@$host" "$remote_command" > "$output"
-  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["schemaVersion"]==1 and len(d["snapshots"])==31 and d["status"] in {"PASS","FAIL","BLOCKED"}' "$output"
+  if remote_probe | ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts" "$user@$host" "$remote_command" > "$temporary_output"; then
+    validate_artifact "$temporary_output"
+    mv -f -- "$temporary_output" "$output"
+    temporary_output=''
+    return
+  fi
+  write_transport_failure_artifact "$temporary_output"
+  mv -f -- "$temporary_output" "$output"
+  temporary_output=''
+  return 1
 }
 main "$@"

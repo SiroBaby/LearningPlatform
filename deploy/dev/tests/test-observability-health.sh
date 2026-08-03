@@ -23,10 +23,47 @@ MOCK
   PATH="$directory/bin:$PATH" OBSERVABILITY_HEALTH_TEST_REMOTE=true "$@" "$SAMPLER" --host dev.example.test --user deploy_user --known-hosts /dev/null --output "$directory/$name.json"
   printf '%s\n' "$directory/$name.json"
 }
+run_static_output_fixture() {
+  local name="$1" output="$2"
+  local directory; directory="$(mktemp -d)"; FIXTURE_DIRECTORIES+=("$directory")
+  mkdir "$directory/bin"
+  cat > "$directory/bin/ssh" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cat >/dev/null
+printf '%s' "${MOCK_SSH_STDOUT}"
+MOCK
+  chmod 700 "$directory/bin/ssh"
+  set +e
+  PATH="$directory/bin:$PATH" MOCK_SSH_STDOUT="$output" "$SAMPLER" --host dev.example.test --user deploy_user --known-hosts /dev/null --output "$directory/$name.json"
+  local status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "invalid fixture $name must fail validation"
+  [[ ! -e "$directory/$name.json" ]] || fail "invalid fixture $name must not publish an artifact"
+}
+run_transport_failure_fixture() {
+  local directory; directory="$(mktemp -d)"; FIXTURE_DIRECTORIES+=("$directory")
+  mkdir "$directory/bin"
+  cat > "$directory/bin/ssh" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cat >/dev/null
+printf '%s\n' "${MOCK_SSH_STDERR}" >&2
+exit 255
+MOCK
+  chmod 700 "$directory/bin/ssh"
+  local artifact="$directory/transport-failure.json"
+  set +e
+  PATH="$directory/bin:$PATH" MOCK_SSH_STDERR='client_loop: send disconnect: Broken pipe host=dev.example.test user=deploy_user secret=fixture-secret' "$SAMPLER" --host dev.example.test --user deploy_user --known-hosts /dev/null --output "$artifact" 2>"$directory/transport.stderr"
+  local status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail 'SSH transport failure must return non-zero'
+  printf '%s\n' "$artifact"
+}
 main() {
   trap cleanup EXIT
   [[ -x "$SAMPLER" ]] || fail 'sampler must be executable'
-  grep -Eq 'remote_probe \| ssh -o BatchMode=yes' "$SAMPLER" || fail 'remote script must be transported through SSH stdin without -n'
+  grep -Eq 'remote_probe \| ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3' "$SAMPLER" || fail 'remote script must use exact SSH keepalives through stdin without -n'
   grep -Eq 'env -u BASH_ENV bash --noprofile --norc -se' "$SAMPLER" || fail 'remote payload must clear hostile BASH_ENV before Bash starts'
   ! grep -Eq 'ssh -n .*<<' "$SAMPLER" || fail 'SSH stdin transport must not use -n'
   ! grep -Eiq 'kubectl[[:space:]].*(apply|create|delete|patch|edit|label|annotate|exec)|helm[[:space:]].*(install|upgrade|uninstall|rollback)|ansible|docker|nginx' "$SAMPLER" || fail 'sampler contains mutation command'
@@ -34,8 +71,9 @@ main() {
   grep -Eq 'get secret grafana-admin -o json \| python3' "$SAMPLER" && ! grep -Eq 'curl .* -u |GRAFANA_CURL_CONFIG|Authorization.*Basic.*\$' "$SAMPLER" || fail 'Grafana credentials must remain in the in-memory helper'
   grep -Eq 'start=\$emitted_at_ns.*end=\$now_ns' "$SAMPLER" || fail 'Loki query must use bounded nanosecond timestamps'
   grep -Eq 'observabilityPodsReady.*pvcUsage' "$SAMPLER" || fail 'each snapshot must record readiness and PVC usage'
+  grep -Fq '"transport":"remote-script-executed"' "$SAMPLER" || fail 'production remote evidence must identify completed transport'
   positive="$(run_fixture positive env)"
-  ruby -rjson -e 'd=JSON.parse(File.read(ARGV[0])); abort unless d["status"]=="PASS" && d["transport"]=="remote-script-executed" && d["snapshots"].map{|x|x["offsetSeconds"]}==(0..30).map{|x|x*60}' "$positive"
+  ruby -rjson -e 'd=JSON.parse(File.read(ARGV[0])); abort unless d["schemaVersion"]==1 && %w[PASS FAIL].include?(d["status"]) && d["transport"]=="remote-script-executed" && d["snapshots"].map{|x|x["offsetSeconds"]}==(0..30).map{|x|x*60}' "$positive"
   restart="$(run_fixture restart env OBSERVABILITY_HEALTH_TEST_RESTART_INCREASE=true)"
   pressure="$(run_fixture pressure env OBSERVABILITY_HEALTH_TEST_NODE_PRESSURE=true)"
   late_pod="$(run_fixture late-pod env OBSERVABILITY_HEALTH_TEST_LATE_POD_NOT_READY=true)"
@@ -47,9 +85,14 @@ main() {
   hostile_bash_env="$hostile_directory/brittle-bash-env"
   printf '%s\n' "touch '$hostile_marker'; exit 99" > "$hostile_bash_env"
   hostile="$(run_fixture hostile-bash-env env MOCK_HOSTILE_BASH_ENV="$hostile_bash_env")"
-  ruby -rjson -e 'ARGV.each { |p| abort unless JSON.parse(File.read(p))["status"]=="FAIL" }; abort unless JSON.parse(File.read(ARGV.fetch(2))).fetch("snapshots").last.fetch("observabilityPodsReady") == false' "$restart" "$pressure" "$late_pod"
+  ruby -rjson -e 'ARGV.each { |p| d=JSON.parse(File.read(p)); abort unless d["schemaVersion"]==1 && d["status"]=="FAIL" && d["transport"]=="remote-script-executed" && d["snapshots"].map{|x|x["offsetSeconds"]}==(0..30).map{|x|x*60} }; abort unless JSON.parse(File.read(ARGV.fetch(2))).fetch("snapshots").last.fetch("observabilityPodsReady") == false' "$restart" "$pressure" "$late_pod"
   ruby -rjson -e 'pass = JSON.parse(File.read(ARGV.fetch(0))); abort unless pass["status"] == "PASS" && pass["snapshots"].all? { |snapshot| snapshot["diskAvailableGi"] == 5 && snapshot["memAvailableGi"] == 1.5 }; ARGV.drop(1).each { |path| abort unless JSON.parse(File.read(path))["status"] == "FAIL" }' "$exact_threshold" "$low_disk" "$low_memory"
   ruby -rjson -e 'abort if File.exist?(ARGV.fetch(0)); abort unless JSON.parse(File.read(ARGV.fetch(1)))["status"] == "PASS"' "$hostile_marker" "$hostile"
+  run_static_output_fixture missing-transport '{"schemaVersion":1,"status":"PASS","snapshots":[]}'
+  run_static_output_fixture wrong-offsets '{"schemaVersion":1,"status":"FAIL","transport":"remote-script-executed","snapshots":[{"offsetSeconds":0}]}'
+  run_static_output_fixture blocked-with-snapshot '{"schemaVersion":1,"status":"BLOCKED","transport":"ssh-transport-failed","blockedCategory":"SSH_TRANSPORT_FAILURE","snapshots":[{}]}'
+  transport_failure="$(run_transport_failure_fixture)"
+  ruby -rjson -e 'raw=File.read(ARGV[0]); d=JSON.parse(raw); expected={"schemaVersion"=>1,"status"=>"BLOCKED","transport"=>"ssh-transport-failed","blockedCategory"=>"SSH_TRANSPORT_FAILURE","snapshots"=>[]}; abort unless d==expected; %w[dev.example.test deploy_user fixture-secret Broken pipe 255 client_loop].each { |value| abort if raw.include?(value) }' "$transport_failure"
   POSITIVE="$positive" python3 - <<'PY'
 import json
 
