@@ -21,36 +21,52 @@ abort 'ERROR: rendered files are missing.' unless inputs.all? { |path| File.file
 
 monitoring = File.read(inputs.first)
 
-def mutate_operator_document(monitoring)
-  pattern = /(---\n# Source: kube-prometheus-stack\/templates\/prometheus-operator\/deployment\.yaml\n.*?)(?=\n---\n# Source:|\z)/m
-  match = monitoring.match(pattern)
-  abort 'ERROR: Prometheus Operator Deployment document not found in rendered monitoring manifest.' unless match
-
-  mutated = yield(match[1])
-  abort 'ERROR: operator mutation did not change rendered monitoring manifest.' if mutated == match[1]
-
-  monitoring.sub(pattern, mutated)
-end
-
-def mutate_alloy_document(alloy)
-  documents = alloy.split(/(?=^---\s*$)/)
+def mutate_document(raw, label, predicate)
+  documents = raw.split(/(?=^---\s*$)/)
   index = documents.index do |document|
     parsed = YAML.safe_load(document, permitted_classes: [], permitted_symbols: [], aliases: false)
-    parsed.is_a?(Hash) &&
-      parsed['kind'] == 'DaemonSet' &&
-      parsed.dig('metadata', 'name') == 'learning-platform-alloy' &&
-      parsed.dig('metadata', 'labels', 'app.kubernetes.io/instance') == 'learning-platform-alloy' &&
-      parsed.dig('metadata', 'labels', 'app.kubernetes.io/name') == 'alloy'
+    predicate.call(parsed)
   rescue Psych::SyntaxError
     false
   end
-  abort 'ERROR: Alloy DaemonSet document not found in rendered Alloy manifest.' unless index
+  abort "ERROR: #{label} document not found in rendered manifest." unless index
 
   mutated = yield(documents[index])
-  abort 'ERROR: Alloy mutation did not change rendered Alloy manifest.' if mutated == documents[index]
+  abort "ERROR: #{label} mutation did not change raw document." if mutated == documents[index]
 
   documents[index] = mutated
   documents.join
+end
+
+def mutate_operator_document(monitoring)
+  predicate = lambda do |document|
+    document.is_a?(Hash) &&
+      document['kind'] == 'Deployment' &&
+      document.dig('metadata', 'labels', 'app.kubernetes.io/instance') == 'learning-platform-monitoring' &&
+      document.dig('metadata', 'labels', 'app.kubernetes.io/name') == 'kube-prometheus-stack-prometheus-operator'
+  end
+  mutate_document(monitoring, 'Prometheus Operator Deployment', predicate) { |document| yield(document) }
+end
+
+def mutate_alloy_document(alloy)
+  predicate = lambda do |document|
+    document.is_a?(Hash) &&
+      document['kind'] == 'DaemonSet' &&
+      document.dig('metadata', 'name') == 'learning-platform-alloy' &&
+      document.dig('metadata', 'labels', 'app.kubernetes.io/instance') == 'learning-platform-alloy' &&
+      document.dig('metadata', 'labels', 'app.kubernetes.io/name') == 'alloy'
+  end
+  mutate_document(alloy, 'Alloy DaemonSet', predicate) { |document| yield(document) }
+end
+
+def mutate_loki_config_map(loki)
+  predicate = lambda do |document|
+    document.is_a?(Hash) &&
+      document['kind'] == 'ConfigMap' &&
+      document.dig('metadata', 'name') == 'loki' &&
+      document.dig('metadata', 'labels', 'app.kubernetes.io/instance') == 'learning-platform-loki'
+  end
+  mutate_document(loki, 'Loki ConfigMap', predicate) { |document| yield(document) }
 end
 
 ingress = <<~YAML
@@ -93,6 +109,12 @@ mutations = {
   end,
   'missing config-reloader UID' => mutate_alloy_document(File.read(inputs[2])) do |alloy|
     alloy.sub("\n            runAsUser: 65534", '')
+  end,
+  'Loki auth enabled' => mutate_loki_config_map(File.read(inputs[1])) do |loki|
+    loki.sub('auth_enabled: false', 'auth_enabled: true')
+  end,
+  'Loki auth missing' => mutate_loki_config_map(File.read(inputs[1])) do |loki|
+    loki.sub("    auth_enabled: false\n", '')
   end
 }.freeze
 
@@ -100,12 +122,15 @@ failures = []
 Dir.mktmpdir('rendered-observability-real-policy') do |directory|
   mutations.each do |label, mutation|
     monitoring_path = File.join(directory, "#{label.gsub(/[^a-z]+/i, '-')}-monitoring.yml")
+    loki_path = File.join(directory, "#{label.gsub(/[^a-z]+/i, '-')}-loki.yml")
     alloy_path = File.join(directory, "#{label.gsub(/[^a-z]+/i, '-')}-alloy.yml")
-    mutated_monitoring = label.include?('Alloy') || label.include?('reloader UID') ? monitoring : mutation
+    mutated_monitoring = label.include?('Alloy') || label.include?('reloader UID') || label.start_with?('Loki') ? monitoring : mutation
+    mutated_loki = label.start_with?('Loki') ? mutation : File.read(inputs[1])
     mutated_alloy = label.include?('Alloy') || label.include?('reloader UID') ? mutation : File.read(inputs[2])
     File.write(monitoring_path, mutated_monitoring)
+    File.write(loki_path, mutated_loki)
     File.write(alloy_path, mutated_alloy)
-    _output, status = Open3.capture2e('ruby', validator, '--input', monitoring_path, '--input', inputs[1], '--input', alloy_path)
+    _output, status = Open3.capture2e('ruby', validator, '--input', monitoring_path, '--input', loki_path, '--input', alloy_path)
     failures << "real render mutation unexpectedly passed: #{label}" if status.success?
   end
 end

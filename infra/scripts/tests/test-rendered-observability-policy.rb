@@ -42,7 +42,11 @@ cases = {
   'unexpected long-running container' => ['- name: grafana', "- name: unexpected\n          resources: {requests: {cpu: 0m, memory: 0Mi}, limits: {cpu: 0m, memory: 0Mi}}\n        - name: grafana"],
   'operator admission TLS secret volume' => ['      volumes: []', "      volumes:\n        - name: tls-secret\n          secret: {secretName: learning-platform-monitori-admission}"],
   'operator TLS certificate mount' => ['          volumeMounts: []', "          volumeMounts:\n            - name: tls-secret\n              mountPath: /cert\n              readOnly: true"],
-  'plaintext rendered Secret' => ["---\napiVersion: monitoring.coreos.com/v1", "---\napiVersion: v1\nkind: Secret\nmetadata: {name: plaintext, namespace: observability}\nstringData: {password: plaintext}\n---\napiVersion: monitoring.coreos.com/v1"]
+  'plaintext rendered Secret' => ["---\napiVersion: monitoring.coreos.com/v1", "---\napiVersion: v1\nkind: Secret\nmetadata: {name: plaintext, namespace: observability}\nstringData: {password: plaintext}\n---\napiVersion: monitoring.coreos.com/v1"],
+  'Loki auth enabled' => ['auth_enabled: false', 'auth_enabled: true'],
+  'Loki auth missing' => ["    auth_enabled: false\n", ''],
+  'Loki auth non-boolean' => ['auth_enabled: false', "auth_enabled: 'false'"],
+  'Loki config malformed' => ['auth_enabled: false', 'auth_enabled: [']
 }.freeze
 
 failures = []
@@ -51,6 +55,7 @@ Dir.mktmpdir('rendered-observability-policy') do |directory|
   failures << "valid fixture: #{output}" unless status.success?
   cases.each do |label, (from, to)|
     content = File.read(fixture).sub(from, to)
+    abort "ERROR: fixture mutation did not change raw document: #{label}" if content == File.read(fixture)
     path = File.join(directory, "#{label.gsub(/[^a-z]+/i, '-')}.yml")
     File.write(path, content)
     _output, failed = Open3.capture2e('ruby', validator, '--input', path, '--junit', "#{path}.xml")
