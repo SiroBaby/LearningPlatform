@@ -34,6 +34,7 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Tách registry/SSH credential của CI khỏi application runtime credential. Không bake secret vào image; production orchestration ưu tiên workload identity hoặc secret manager thay vì sao chép static key theo node.
 - Fail-fast non-secret runtime config phải được khai báo bằng manifest literal rõ ràng và có static check; không đẩy các constant contract như AI provider/capability/transport sang ExternalSecret hoặc SSM.
 - SSH chạy bên trong loop đang đọc từ redirected stdin phải dùng `-n`, trừ khi cố ý truyền stdin cho remote command.
+- SSH read-only chạy lâu và không phát stdout phải cấu hình bounded keepalive; evidence chỉ được publish sau khi validate bằng atomic move, còn transport failure phải tạo sanitized status riêng thay vì artifact rỗng hoặc partial.
 - Với YAML `run: |` chứa Python/heredoc, mọi dòng top-level sau block-strip phải cùng indentation; thêm test trích xuất và thực thi bằng fixture trước khi merge.
 - Với SSH bootstrap có `set -u`, chạy remote Bash qua `env -u BASH_ENV bash --noprofile --norc` và fixture phải thực thi payload thật để chặn startup shell/quoted heredoc lỗi trước deploy.
 - Khi bootstrap kiểm tra Secret, chỉ đọc type và tên key qua output contract được fixture K3s xác nhận; không đọc, parse hoặc in Secret data values. Với key enumeration dùng exact Go template `{{range $key, $_ := .data}}{{$key}}{{"\n"}}{{end}}`, không dùng JSONPath `range` có khai báo biến.
