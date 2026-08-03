@@ -149,10 +149,63 @@ Tài liệu này không phát hành script Helm tự chạy. Nhưng contract v�
 
 - lần cài observability persistent đầu tiên dùng release riêng cho `monitoring`, `loki`, `alloy`
 - lần cài đầu tiên không dùng `--atomic`, không dùng cleanup-on-fail, để tránh Helm tự dọn chart và để lại trạng thái nửa vời khó điều tra
-- nếu release đầu tiên fail giữa chừng hoặc để orphan resource, coi là HITL, operator phải dừng, ghi nhận trạng thái từng resource, và dọn theo allowlist hẹp có review
+- nếu release đầu tiên fail giữa chừng hoặc để orphan resource, coi là HITL, operator phải dừng, ghi nhận trạng thái từng resource, và chỉ dùng đúng playbook recovery đã review nếu exact invariant của issue #40 khớp
 - với healthy upgrade đã có release ổn định, mới được dùng guard rollback tương ứng của Helm
-- không dùng `helm uninstall` cho các release observability trong contract này
+- mặc định không dùng `helm uninstall` cho các release observability. Ngoại lệ duy nhất hiện được source cho phép là đúng một lệnh uninstall trong `infra/ansible/roles/observability/tasks/recovery-pending-install.yml` cho `learning-platform-monitoring` revision `1` ở namespace `observability`, sau khi assert đủ exact release/PVC/PV invariant và trước immediate reinstall cùng flow
 - không xoá PVC hoặc PV observability bằng wildcard hoặc by-hand cleanup khi chưa qua branch `deleted` của runbook
+
+### Reviewed pending-install recovery cho monitoring
+
+Issue #40 đã mã hóa rõ hai phần liên quan trong source:
+
+1. `infra/observability/kube-prometheus-stack-values.yml` đặt
+   `prometheusOperator.admissionWebhooks.enabled=false` và
+   `prometheusOperator.tls.enabled=false`.
+2. `infra/scripts/validate-rendered-observability.rb` fail-closed nếu manifest
+   render còn khiến Prometheus Operator phụ thuộc Secret
+   `learning-platform-monitori-admission`, còn mount TLS certificate volume, hoặc
+   còn tham chiếu TLS path khi admission webhooks đã bị disable.
+
+Vì vậy root cause đã được source khóa lại theo hướng sau: với admission
+webhooks disabled, operator không được tiếp tục chờ Secret/TLS admission cũ.
+Human vẫn phải dùng evidence read-only trên cluster để xác nhận đúng ca đã
+review, gồm cả việc operator thực tế có còn `ContainerCreating` hay không.
+
+Eligibility duy nhất cho đường recovery source-managed là:
+
+- release `learning-platform-monitoring`
+- namespace `observability`
+- revision `1`
+- status `pending-install`
+- PVC `storage-learning-platform-monitoring-grafana-0`, `Bound`, `local-path`, `1Gi`
+- PV `pvc-212e92f3-8ab7-43f5-b959-1575e3140f19`, `Bound`, reclaim policy `Delete`
+- `claimRef` chính xác `observability/storage-learning-platform-monitoring-grafana-0`
+- StatefulSet Grafana vẫn giữ `Retain/Retain`
+
+Đường vào duy nhất là workflow dispatch `Deploy development VPS` từ branch đã
+merge `develop`, với `target=observability-recovery`,
+`observability_recovery_confirmation=RECOVER_MONITORING_PENDING_INSTALL_REVISION_1`,
+và job chạy trong environment `dev`. Repo source buộc đúng ref `develop`, đúng
+target, đúng confirmation string, và đúng `environment: dev`. Tuy vậy cấu hình
+reviewer/approval thực tế của GitHub Environment `dev` phải do human tự xác
+nhận và enforce, không được coi là đã được repo chứng minh.
+
+Role recovery chỉ được phép:
+
+- assert exact invariant đã review
+- đọc `helm list --all`, PVC, PV, StatefulSet bằng `--kubeconfig`
+- capture UID của PVC/PV
+- chạy đúng một `helm uninstall learning-platform-monitoring --namespace observability --kubeconfig /etc/rancher/k3s/k3s.yaml --wait --timeout 10m --cascade foreground`
+- xác nhận sau uninstall rằng PVC/PV vẫn giữ nguyên UID, binding, `local-path`, `1Gi`, `claimRef`
+- cho phép monitoring reinstall tiếp tục trong cùng flow nếu và chỉ nếu toàn bộ assert pass
+
+Các hành động sau vẫn bị cấm tuyệt đối ngoài đường source-managed ở trên:
+
+- manual `helm` hoặc `kubectl` mutation cho ca recovery này
+- rollback thủ công, metadata patch, ownership patch, `--keep-history`, `--replace`
+- delete, patch, resize, recreate namespace `observability`
+- delete, patch, resize, recreate PVC/PV observability
+- wildcard cleanup, broad cleanup, automatic retry
 
 ## Runtime verification nhanh
 
@@ -170,6 +223,18 @@ df -h /
 free -h
 curl -fsS http://127.0.0.1:32080/ >/dev/null
 ```
+
+Riêng sau pending-install recovery của monitoring, cần xác nhận thêm các điểm
+đã được role encode thành invariant hậu phục hồi:
+
+- Helm release `learning-platform-monitoring` đã rời trạng thái `pending-install`
+- Prometheus Operator rollout thành công
+- resource `Prometheus` trong namespace `observability` có mặt lại
+- PVC `storage-learning-platform-monitoring-grafana-0` vẫn `Bound`, vẫn `local-path`, vẫn `1Gi`, vẫn cùng UID
+- PV `pvc-212e92f3-8ab7-43f5-b959-1575e3140f19` vẫn `Bound`, vẫn reclaim policy `Delete`, vẫn cùng UID, và `claimRef.uid` vẫn trùng PVC UID
+
+Chỉ sau khi identity của cặp PVC/PV được xác nhận là không đổi thì mới tiếp tục
+theo dõi nhịp bình thường của Loki và Alloy.
 
 Grafana datasource trong values đang trỏ tới:
 

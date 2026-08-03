@@ -69,6 +69,21 @@
 - name: Classify the exact four-state Helm release machine
   ansible.builtin.include_tasks: state-machine.yml
 
+- name: Permit only the verified recovery PVC to precede the immediate monitoring reinstall
+  ansible.builtin.set_fact:
+    observability_release_state: absent
+  when:
+    - observability_pending_install_recovery_completed | default(false) | bool
+    - observability_pending_install_recovery_absence_verified | default(false) | bool
+    - observability_release_definition.key == 'monitoring'
+    - observability_release_records | length == 0
+    - observability_release_pvcs | length == 1
+    - observability_release_pvcs[0].metadata.name == 'storage-learning-platform-monitoring-grafana-0'
+    - observability_release_pvcs[0].status.phase == 'Bound'
+    - observability_release_pvcs[0].spec.storageClassName == 'local-path'
+    - observability_release_pvcs[0].spec.resources.requests.storage == '1Gi'
+    - observability_release_pvcs[0].spec.volumeName == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19'
+
 - name: Record sanitized release evidence before a non-mutating failure
   ansible.builtin.debug:
     msg:

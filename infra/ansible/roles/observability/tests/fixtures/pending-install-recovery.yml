@@ -1,0 +1,47 @@
+---
+- name: no-flag
+  enabled: false
+  release_name: learning-platform-monitoring
+  namespace: observability
+  revision: 1
+  status: pending-install
+  pvc_name: storage-learning-platform-monitoring-grafana-0
+  pvc_phase: Bound
+  storage_class: local-path
+  storage: 1Gi
+  statefulset_retention: Retain/Retain
+  pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19
+  pv_phase: Bound
+  claim_ref: observability/storage-learning-platform-monitoring-grafana-0
+  reclaim_policy: Delete
+  expected_action: fail-closed
+- name: exact-pending-install
+  enabled: true
+  release_name: learning-platform-monitoring
+  namespace: observability
+  revision: 1
+  status: pending-install
+  pvc_name: storage-learning-platform-monitoring-grafana-0
+  pvc_phase: Bound
+  storage_class: local-path
+  storage: 1Gi
+  statefulset_retention: Retain/Retain
+  pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19
+  pv_phase: Bound
+  claim_ref: observability/storage-learning-platform-monitoring-grafana-0
+  reclaim_policy: Delete
+  expected_action: uninstall-once
+- {name: wrong-release, enabled: true, release_name: other, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-namespace, enabled: true, release_name: learning-platform-monitoring, namespace: other, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-revision, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 2, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-status, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-upgrade, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-pvc-name, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-1, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-pvc-phase, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Pending, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-class, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: other, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-size, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 2Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-retention, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Delete/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-pv-claim-ref, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/other, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-pv-name, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: other, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: wrong-pv-phase, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Released, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, expected_action: fail-closed}
+- {name: unexpected-pvc, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, unexpected_pvc: true, expected_action: fail-closed}
+- {name: residual-truncated-runtime-resource, enabled: true, release_name: learning-platform-monitoring, namespace: observability, revision: 1, status: pending-install, pvc_name: storage-learning-platform-monitoring-grafana-0, pvc_phase: Bound, storage_class: local-path, storage: 1Gi, statefulset_retention: Retain/Retain, pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19, pv_phase: Bound, claim_ref: observability/storage-learning-platform-monitoring-grafana-0, reclaim_policy: Delete, residual_resource: Deployment/learning-platform-monitori-operator, residual_release_label: learning-platform-monitoring, expected_action: fail-closed}

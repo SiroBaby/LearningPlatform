@@ -28,6 +28,8 @@ kubeScheduler:
 prometheusOperator:
   admissionWebhooks:
     enabled: false
+  tls:
+    enabled: false
   resources:
     requests:
       cpu: 50m

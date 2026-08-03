@@ -1,0 +1,334 @@
+---
+- name: Require the literal pending-install recovery contract
+  ansible.builtin.assert:
+    that:
+      - observability_recover_pending_install | bool
+      - observability_pending_install_recovery_release_name == 'learning-platform-monitoring'
+      - observability_pending_install_recovery_namespace == 'observability'
+      - observability_namespace == 'observability'
+      - observability_pending_install_recovery_revision | int == 1
+      - observability_pending_install_recovery_status == 'pending-install'
+      - observability_pending_install_recovery_pvc_name == 'storage-learning-platform-monitoring-grafana-0'
+      - observability_pending_install_recovery_pvc_storage_class == 'local-path'
+      - observability_pending_install_recovery_pvc_storage == '1Gi'
+      - observability_pending_install_recovery_pv_name == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19'
+      - observability_pending_install_recovery_statefulset_name == 'learning-platform-monitoring-grafana'
+      - observability_pending_install_recovery_pv_reclaim_policy == 'Delete'
+    fail_msg: >-
+      Pending-install recovery is limited to the reviewed monitoring revision-one
+      Grafana PVC/PV contract and cannot target another release or namespace.
+
+- name: Inspect the exact pending monitoring release including pending status
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/helm list --all --namespace observability
+      --kubeconfig {{ observability_kubeconfig }}
+      --filter '^learning-platform-monitoring$' --output json
+  register: observability_pending_install_recovery_release_list
+  changed_when: false
+  no_log: true
+
+- name: Decode the exact pending monitoring release
+  ansible.builtin.set_fact:
+    observability_pending_install_recovery_records: >-
+      {{ observability_pending_install_recovery_release_list.stdout | from_json }}
+  no_log: true
+
+- name: Inspect all monitoring-prefixed PVCs before recovery
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: v1
+    kind: PersistentVolumeClaim
+    namespace: observability
+  register: observability_pending_install_recovery_namespace_pvcs
+
+- name: Select exact monitoring-prefixed PVCs before recovery
+  ansible.builtin.set_fact:
+    observability_pending_install_recovery_pvcs: >-
+      {{ observability_pending_install_recovery_namespace_pvcs.resources
+         | selectattr('metadata.name', 'search', '^storage-learning-platform-monitoring-')
+         | list }}
+
+- name: Inspect the exact Grafana StatefulSet before recovery
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: apps/v1
+    kind: StatefulSet
+    namespace: observability
+    name: learning-platform-monitoring-grafana
+  register: observability_pending_install_recovery_statefulset
+
+- name: Inspect the exact Grafana PV before recovery
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: v1
+    kind: PersistentVolume
+    name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19
+  register: observability_pending_install_recovery_pv
+
+- name: Require exact release storage and retention invariants before recovery
+  ansible.builtin.assert:
+    that:
+      - observability_pending_install_recovery_records | length == 1
+      - observability_pending_install_recovery_records[0].name == 'learning-platform-monitoring'
+      - observability_pending_install_recovery_records[0].namespace == 'observability'
+      - observability_pending_install_recovery_records[0].revision | int == 1
+      - observability_pending_install_recovery_records[0].status == 'pending-install'
+      - observability_pending_install_recovery_pvcs | length == 1
+      - observability_pending_install_recovery_pvcs[0].metadata.name == 'storage-learning-platform-monitoring-grafana-0'
+      - observability_pending_install_recovery_pvcs[0].status.phase == 'Bound'
+      - observability_pending_install_recovery_pvcs[0].spec.storageClassName == 'local-path'
+      - observability_pending_install_recovery_pvcs[0].spec.resources.requests.storage == '1Gi'
+      - observability_pending_install_recovery_pvcs[0].spec.volumeName == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19'
+      - observability_pending_install_recovery_statefulset.resources | length == 1
+      - observability_pending_install_recovery_statefulset.resources[0].metadata.name == 'learning-platform-monitoring-grafana'
+      - >-
+        observability_pending_install_recovery_statefulset.resources[0]
+        .spec.persistentVolumeClaimRetentionPolicy.whenDeleted == 'Retain'
+      - >-
+        observability_pending_install_recovery_statefulset.resources[0]
+        .spec.persistentVolumeClaimRetentionPolicy.whenScaled == 'Retain'
+      - observability_pending_install_recovery_pv.resources | length == 1
+      - observability_pending_install_recovery_pv.resources[0].metadata.name == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19'
+      - observability_pending_install_recovery_pv.resources[0].status.phase == 'Bound'
+      - observability_pending_install_recovery_pv.resources[0].spec.capacity.storage == '1Gi'
+      - observability_pending_install_recovery_pv.resources[0].spec.persistentVolumeReclaimPolicy == 'Delete'
+      - observability_pending_install_recovery_pv.resources[0].spec.claimRef.namespace == 'observability'
+      - observability_pending_install_recovery_pv.resources[0].spec.claimRef.name == 'storage-learning-platform-monitoring-grafana-0'
+      - >-
+        observability_pending_install_recovery_pv.resources[0].spec.claimRef.uid ==
+        observability_pending_install_recovery_pvcs[0].metadata.uid
+    fail_msg: >-
+      Pending-install recovery refused because the reviewed release, PVC, PV, or
+      StatefulSet retention invariants do not match exactly.
+  no_log: true
+
+- name: Capture immutable PVC and PV identity before recovery
+  ansible.builtin.set_fact:
+    observability_pending_install_recovery_pvc_uid: >-
+      {{ observability_pending_install_recovery_pvcs[0].metadata.uid }}
+    observability_pending_install_recovery_pv_uid: >-
+      {{ observability_pending_install_recovery_pv.resources[0].metadata.uid }}
+  no_log: true
+
+- name: Define the bounded source-owned monitoring resource kind allowlist
+  ansible.builtin.set_fact:
+    observability_pending_install_recovery_release_resources:
+      - {api_version: v1, kind: ConfigMap, namespaced: true}
+      - {api_version: v1, kind: Secret, namespaced: true}
+      - {api_version: v1, kind: ServiceAccount, namespaced: true}
+      - {api_version: v1, kind: Service, namespaced: true}
+      - {api_version: apps/v1, kind: Deployment, namespaced: true}
+      - {api_version: apps/v1, kind: StatefulSet, namespaced: true}
+      - {api_version: apps/v1, kind: DaemonSet, namespaced: true}
+      - {api_version: networking.k8s.io/v1, kind: Ingress, namespaced: true}
+      - {api_version: monitoring.coreos.com/v1, kind: Prometheus, namespaced: true}
+      - {api_version: monitoring.coreos.com/v1, kind: PrometheusRule, namespaced: true}
+      - {api_version: monitoring.coreos.com/v1, kind: ServiceMonitor, namespaced: true}
+      - {api_version: rbac.authorization.k8s.io/v1, kind: Role, namespaced: true}
+      - {api_version: rbac.authorization.k8s.io/v1, kind: RoleBinding, namespaced: true}
+      - {api_version: rbac.authorization.k8s.io/v1, kind: ClusterRole, namespaced: false}
+      - {api_version: rbac.authorization.k8s.io/v1, kind: ClusterRoleBinding, namespaced: false}
+
+- name: Uninstall and prove the reviewed monitoring release is fully absent
+  block:
+    - name: Uninstall only the reviewed pending monitoring release
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/helm uninstall learning-platform-monitoring --namespace observability
+          --kubeconfig {{ observability_kubeconfig }} --wait
+          --timeout {{ observability_helm_timeout }} --cascade foreground
+      register: observability_pending_install_recovery_uninstall
+      changed_when: observability_pending_install_recovery_uninstall.rc == 0
+      no_log: true
+
+    - name: Reinspect exact Helm metadata after recovery uninstall
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/helm list --all --namespace observability
+          --kubeconfig {{ observability_kubeconfig }}
+          --filter '^learning-platform-monitoring$' --output json
+      register: observability_pending_install_recovery_post_release_list
+      changed_when: false
+      no_log: true
+
+    - name: Decode exact Helm metadata after recovery uninstall
+      ansible.builtin.set_fact:
+        observability_pending_install_recovery_post_release_records: >-
+          {{ observability_pending_install_recovery_post_release_list.stdout | from_json }}
+      no_log: true
+
+    - name: Reinspect bounded source-owned monitoring resources by exact release label after recovery uninstall
+      kubernetes.core.k8s_info:
+        kubeconfig: '{{ observability_kubeconfig }}'
+        api_version: '{{ item.api_version }}'
+        kind: '{{ item.kind }}'
+        namespace: '{{ "observability" if item.namespaced else omit }}'
+        label_selectors:
+          - app.kubernetes.io/instance=learning-platform-monitoring
+      loop: '{{ observability_pending_install_recovery_release_resources }}'
+      register: observability_pending_install_recovery_post_resources
+      no_log: true
+
+    - name: Reinspect the exact retained Grafana PVC after recovery uninstall
+      kubernetes.core.k8s_info:
+        kubeconfig: '{{ observability_kubeconfig }}'
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: observability
+        name: storage-learning-platform-monitoring-grafana-0
+      register: observability_pending_install_recovery_post_pvc
+      no_log: true
+
+    - name: Reinspect the exact retained Grafana PV after recovery uninstall
+      kubernetes.core.k8s_info:
+        kubeconfig: '{{ observability_kubeconfig }}'
+        api_version: v1
+        kind: PersistentVolume
+        name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19
+      register: observability_pending_install_recovery_post_pv
+      no_log: true
+
+    - name: Require Helm metadata and every source-owned resource absent after recovery uninstall
+      ansible.builtin.assert:
+        that:
+          - observability_pending_install_recovery_post_release_records | length == 0
+          - observability_pending_install_recovery_post_resources.results | map(attribute='resources') | map('length') | sum == 0
+        fail_msg: >-
+          Pending-install recovery left Helm metadata or a source-owned monitoring
+          resource behind; stop before normal release processing.
+      no_log: true
+
+    - name: Require Grafana PVC and PV identity and binding unchanged after recovery
+      ansible.builtin.assert:
+        that:
+          - observability_pending_install_recovery_post_pvc.resources | length == 1
+          - observability_pending_install_recovery_post_pvc.resources[0].metadata.name == 'storage-learning-platform-monitoring-grafana-0'
+          - observability_pending_install_recovery_post_pvc.resources[0].metadata.uid == observability_pending_install_recovery_pvc_uid
+          - observability_pending_install_recovery_post_pvc.resources[0].status.phase == 'Bound'
+          - observability_pending_install_recovery_post_pvc.resources[0].spec.storageClassName == 'local-path'
+          - observability_pending_install_recovery_post_pvc.resources[0].spec.resources.requests.storage == '1Gi'
+          - observability_pending_install_recovery_post_pvc.resources[0].spec.volumeName == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19'
+          - observability_pending_install_recovery_post_pv.resources | length == 1
+          - observability_pending_install_recovery_post_pv.resources[0].metadata.name == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19'
+          - observability_pending_install_recovery_post_pv.resources[0].metadata.uid == observability_pending_install_recovery_pv_uid
+          - observability_pending_install_recovery_post_pv.resources[0].status.phase == 'Bound'
+          - observability_pending_install_recovery_post_pv.resources[0].spec.capacity.storage == '1Gi'
+          - observability_pending_install_recovery_post_pv.resources[0].spec.persistentVolumeReclaimPolicy == 'Delete'
+          - observability_pending_install_recovery_post_pv.resources[0].spec.claimRef.namespace == 'observability'
+          - observability_pending_install_recovery_post_pv.resources[0].spec.claimRef.name == 'storage-learning-platform-monitoring-grafana-0'
+          - >-
+            observability_pending_install_recovery_post_pv.resources[0].spec.claimRef.uid ==
+            observability_pending_install_recovery_pvc_uid
+        fail_msg: >-
+          Pending-install recovery changed or lost the reviewed Grafana PVC/PV
+          identity or binding; stop before normal release processing.
+      no_log: true
+
+    - name: Mark every recovery absence and retention check complete
+      ansible.builtin.set_fact:
+        observability_pending_install_recovery_absence_verified: true
+        observability_pending_install_recovery_completed: true
+  rescue:
+    - name: Reinspect exact Helm metadata after recovery failure
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/helm list --all --namespace observability
+          --kubeconfig {{ observability_kubeconfig }}
+          --filter '^learning-platform-monitoring$' --output json
+      register: observability_pending_install_recovery_rescue_release_list
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Reinspect bounded source-owned monitoring resources by exact release label after recovery failure
+      kubernetes.core.k8s_info:
+        kubeconfig: '{{ observability_kubeconfig }}'
+        api_version: '{{ item.api_version }}'
+        kind: '{{ item.kind }}'
+        namespace: '{{ "observability" if item.namespaced else omit }}'
+        label_selectors:
+          - app.kubernetes.io/instance=learning-platform-monitoring
+      loop: '{{ observability_pending_install_recovery_release_resources }}'
+      register: observability_pending_install_recovery_rescue_resources
+      failed_when: false
+      no_log: true
+
+    - name: Reinspect retained Grafana PVC after recovery failure
+      kubernetes.core.k8s_info:
+        kubeconfig: '{{ observability_kubeconfig }}'
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: observability
+        name: storage-learning-platform-monitoring-grafana-0
+      register: observability_pending_install_recovery_rescue_pvc
+      failed_when: false
+      no_log: true
+
+    - name: Reinspect retained Grafana PV after recovery failure
+      kubernetes.core.k8s_info:
+        kubeconfig: '{{ observability_kubeconfig }}'
+        api_version: v1
+        kind: PersistentVolume
+        name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19
+      register: observability_pending_install_recovery_rescue_pv
+      failed_when: false
+      no_log: true
+
+    - name: Record sanitized pending-install recovery failure evidence
+      ansible.builtin.debug:
+        msg:
+          uninstall_rc: '{{ observability_pending_install_recovery_uninstall.rc | default(-1) }}'
+          error_category: >-
+            {{ 'helm-uninstall-failed'
+               if (observability_pending_install_recovery_uninstall.rc | default(-1) | int) != 0
+               else 'post-uninstall-verification-failed' }}
+          error_fingerprint: >-
+            {{ observability_pending_install_recovery_uninstall.stderr | default('') | hash('sha256') }}
+          stderr_bytes: '{{ observability_pending_install_recovery_uninstall.stderr | default('') | length }}'
+          helm_status: >-
+            {{ observability_pending_install_recovery_rescue_release_list.stdout | default('')
+               | regex_findall('"status"\s*:\s*"(deployed|failed|pending-install|pending-upgrade|pending-rollback|uninstalling|superseded)"') }}
+          retained_pvc: >-
+            {{ observability_pending_install_recovery_rescue_pvc.resources | default([])
+               | map(attribute='metadata.name') | list }}
+          retained_pvc_phase: >-
+            {{ observability_pending_install_recovery_rescue_pvc.resources | default([])
+               | map(attribute='status.phase') | list }}
+          retained_pvc_uid_matches: >-
+            {{ (observability_pending_install_recovery_rescue_pvc.resources | default([]) | length == 1) and
+               (observability_pending_install_recovery_rescue_pvc.resources[0].metadata.uid | default('') ==
+                observability_pending_install_recovery_pvc_uid | default('')) }}
+          retained_pv: >-
+            {{ observability_pending_install_recovery_rescue_pv.resources | default([])
+               | map(attribute='metadata.name') | list }}
+          retained_pv_phase: >-
+            {{ observability_pending_install_recovery_rescue_pv.resources | default([])
+               | map(attribute='status.phase') | list }}
+          retained_pv_uid_matches: >-
+            {{ (observability_pending_install_recovery_rescue_pv.resources | default([]) | length == 1) and
+               (observability_pending_install_recovery_rescue_pv.resources[0].metadata.uid | default('') ==
+                observability_pending_install_recovery_pv_uid | default('')) }}
+          residual_resources: >-
+            {% set residuals = [] %}
+            {% for result in observability_pending_install_recovery_rescue_resources.results | default([]) %}
+            {% for resource in result.resources | default([]) %}
+            {% set _ = residuals.append(result.item.kind ~ '/' ~ resource.metadata.name) %}
+            {% endfor %}
+            {% endfor %}
+            {{ residuals }}
+          residual_resource_names: >-
+            {% set names = [] %}
+            {% for result in observability_pending_install_recovery_rescue_resources.results | default([]) %}
+            {% for resource in result.resources | default([]) %}
+            {% set _ = names.append(resource.metadata.name) %}
+            {% endfor %}
+            {% endfor %}
+            {{ names }}
+
+    - name: Require fresh human review after pending-install recovery failure
+      ansible.builtin.fail:
+        msg: >-
+          Pending-install recovery did not complete its exact uninstall and
+          post-uninstall invariants. Sanitized evidence was recorded; obtain fresh
+          human review before any further mutation.

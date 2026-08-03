@@ -1,6 +1,17 @@
 ---
 observability_helm_timeout: 10m
 observability_helm_history_max: 10
+observability_recover_pending_install: false
+observability_pending_install_recovery_release_name: learning-platform-monitoring
+observability_pending_install_recovery_namespace: observability
+observability_pending_install_recovery_revision: 1
+observability_pending_install_recovery_status: pending-install
+observability_pending_install_recovery_pvc_name: storage-learning-platform-monitoring-grafana-0
+observability_pending_install_recovery_pvc_storage_class: local-path
+observability_pending_install_recovery_pvc_storage: 1Gi
+observability_pending_install_recovery_pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19
+observability_pending_install_recovery_statefulset_name: learning-platform-monitoring-grafana
+observability_pending_install_recovery_pv_reclaim_policy: Delete
 observability_minimum_free_disk_gib: 11
 observability_minimum_free_memory_mib: 2048
 observability_kubeconfig: /etc/rancher/k3s/k3s.yaml

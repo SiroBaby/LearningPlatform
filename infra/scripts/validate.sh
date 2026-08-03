@@ -110,12 +110,14 @@ check_observability_release_policy_when_present() {
   local observability_role_dir="${ANSIBLE_DIR}/roles/observability"
   local observability_tasks="${observability_role_dir}/tasks/main.yml"
   local observability_release_tasks="${observability_role_dir}/tasks/release.yml"
+  local observability_recovery_tasks="${observability_role_dir}/tasks/recovery-pending-install.yml"
 
-  [ -f "${observability_tasks}" ] && [ -f "${observability_release_tasks}" ] || return
+  [ -f "${observability_tasks}" ] && [ -f "${observability_release_tasks}" ] && [ -f "${observability_recovery_tasks}" ] || return
 
   if grep -RInE --include='*.yml' --include='*.yaml' \
     '(helm[[:space:]_-]*(uninstall|delete)|resource_definition:.*PersistentVolumeClaim)' \
-    "${observability_role_dir}" \
+    --exclude='recovery-pending-install.yml' \
+    "${observability_role_dir}/tasks" \
     || ! awk '
       /^- name:/ {
         if (task ~ /kind:[[:space:]]*(PersistentVolume|PersistentVolumeClaim)/ && task ~ /state:[[:space:]]*absent/) {
@@ -132,7 +134,27 @@ check_observability_release_policy_when_present() {
         exit forbidden
       }
     ' "${observability_role_dir}"/tasks/*.yml; then
-    fail 'Observability Ansible role must not uninstall releases or delete PVC/PV resources.'
+    fail 'Observability Ansible role must not uninstall releases or delete PVC/PV resources outside the reviewed recovery task.'
+  fi
+
+  if [ "$(grep -Fc '/usr/local/bin/helm uninstall learning-platform-monitoring --namespace observability' "${observability_recovery_tasks}")" -ne 1 ] \
+    || ! grep -Fq -- '--kubeconfig {{ observability_kubeconfig }} --wait' "${observability_recovery_tasks}" \
+    || ! grep -Fq -- '--timeout {{ observability_helm_timeout }} --cascade foreground' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'helm list --all --namespace observability' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'observability_recover_pending_install | bool' "${observability_tasks}" \
+    || ! grep -Fq 'observability_pending_install_recovery_completed' "${observability_release_tasks}" \
+    || ! grep -Fq 'observability_pending_install_recovery_absence_verified' "${observability_release_tasks}" \
+    || ! grep -Fq 'Require Helm metadata and every source-owned resource absent after recovery uninstall' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'app.kubernetes.io/instance=learning-platform-monitoring' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'ClusterRole, namespaced: false' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'ClusterRoleBinding, namespaced: false' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'Secret, namespaced: true' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'ServiceMonitor, namespaced: true' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'rescue:' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'Record sanitized pending-install recovery failure evidence' "${observability_recovery_tasks}" \
+    || ! grep -Fq 'Require fresh human review after pending-install recovery failure' "${observability_recovery_tasks}" \
+    || grep -Eq -- '--keep-history|--replace|ignore-not-found|helm rollback|retries:|until:|kubectl[[:space:]].*delete|state:[[:space:]]*absent|--filter[[:space:]]+[^[:space:]]*\*|uninstall[[:space:]]+\*' "${observability_recovery_tasks}"; then
+    fail 'Pending-install recovery must remain one exact opt-in Helm uninstall with explicit kubeconfig and no dangerous variants.'
   fi
 
   if grep -q -- '--cleanup-on-fail' "${observability_release_tasks}" \

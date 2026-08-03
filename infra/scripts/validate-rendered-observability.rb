@@ -32,6 +32,8 @@ RELOADER_ARGS = {
   '--config-reloader-cpu-limit=' => '100m',
   '--config-reloader-memory-limit=' => '64Mi'
 }.freeze
+FORBIDDEN_OPERATOR_ADMISSION_SECRET = 'learning-platform-monitori-admission'
+FORBIDDEN_OPERATOR_TLS_MOUNT_PATHS = %w[/cert /tls].freeze
 
 options = { inputs: [], junit: nil }
 OptionParser.new do |parser|
@@ -193,6 +195,11 @@ class Policy
     value(spec, 'template', 'spec', 'containers') || []
   end
 
+  def pod_spec_for(document)
+    return {} unless LONG_RUNNING_KINDS.include?(kind(document))
+    value(document, 'spec', 'template', 'spec') || {}
+  end
+
   def validate_long_running_resources(document)
     if kind(document) == 'Prometheus'
       resources = document['spec']['resources'] || {}
@@ -289,11 +296,27 @@ class Policy
     operators = @documents.select { |document| kind(document) == 'Deployment' && label(document, 'app.kubernetes.io/name') == 'kube-prometheus-stack-prometheus-operator' }
     fail_check("render must contain exactly one Prometheus Operator Deployment, got #{operators.length}") unless operators.length == 1
     return unless operators.length == 1
-    args = containers_for(operators.first).first['args'] || []
+    operator = operators.first
+    container = containers_for(operator).first || {}
+    args = container['args'] || []
     RELOADER_ARGS.each do |prefix, expected|
       matches = args.select { |argument| argument.start_with?(prefix) }
       fail_check("Prometheus Operator must contain exactly #{prefix}#{expected}") unless matches == ["#{prefix}#{expected}"]
     end
+    pod_spec = pod_spec_for(operator)
+    secret_volumes = (pod_spec['volumes'] || []).select do |volume|
+      value(volume, 'secret', 'secretName') == FORBIDDEN_OPERATOR_ADMISSION_SECRET
+    end
+    fail_check("Prometheus Operator must not depend on Secret/#{FORBIDDEN_OPERATOR_ADMISSION_SECRET} when admission webhooks are disabled") unless secret_volumes.empty?
+
+    volume_mounts = container['volumeMounts'] || []
+    forbidden_mounts = volume_mounts.select do |mount|
+      FORBIDDEN_OPERATOR_TLS_MOUNT_PATHS.include?(mount['mountPath']) || mount['name'].to_s.match?(/tls|cert/i)
+    end
+    fail_check('Prometheus Operator must not mount TLS certificate volumes when admission webhooks are disabled') unless forbidden_mounts.empty?
+
+    tls_args = args.select { |argument| argument.include?('/cert/') || argument.include?('/tls/') }
+    fail_check('Prometheus Operator must not reference TLS certificate paths when admission webhooks are disabled') unless tls_args.empty?
     add_resources({ 'cpu' => '25m', 'memory' => '32Mi' }, :requests, 'Prometheus config reloader')
     add_resources({ 'cpu' => '100m', 'memory' => '64Mi' }, :limits, 'Prometheus config reloader')
   end

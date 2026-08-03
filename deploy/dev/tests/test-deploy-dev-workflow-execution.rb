@@ -21,10 +21,10 @@ root = File.expand_path('../../..', __dir__)
 workflow = safe_yaml_load(File.read(File.join(root, '.github', 'workflows', 'deploy-dev.yml')))
 jobs = workflow.fetch('jobs')
 
-def workflow_context(outputs:, results:, event_name: 'push', ref: 'refs/heads/develop', target: 'auto')
+def workflow_context(outputs:, results:, event_name: 'push', ref: 'refs/heads/develop', target: 'auto', confirmation: '')
   {
     'github' => { 'event_name' => event_name, 'ref' => ref },
-    'inputs' => { 'target' => target },
+    'inputs' => { 'target' => target, 'observability_recovery_confirmation' => confirmation },
     'needs' => results.transform_values { |result| { 'result' => result } }.merge(
       'changes' => { 'result' => 'success', 'outputs' => outputs }
     )
@@ -80,8 +80,10 @@ end
 
 app_inventory = jobs.fetch('deploy').fetch('steps').find { |step| step['name'] == 'Create ephemeral Ansible inventory and deployment overrides' }.fetch('run')
 observability_inventory = jobs.fetch('deploy-observability').fetch('steps').find { |step| step['name'] == 'Create ephemeral Ansible inventory' }.fetch('run')
+recovery_inventory = jobs.fetch('recover-observability-pending-install').fetch('steps').find { |step| step['name'] == 'Create ephemeral Ansible inventory' }.fetch('run')
 ssh_trust = jobs.fetch('deploy-observability').fetch('steps').find { |step| step['name'] == 'Configure SSH trust' }.fetch('run')
 bootstrap = jobs.fetch('deploy-observability').fetch('steps').find { |step| step['name'] == 'Bootstrap observability AWS credential Secret' }.fetch('run')
+recovery_bootstrap = jobs.fetch('recover-observability-pending-install').fetch('steps').find { |step| step['name'] == 'Bootstrap observability AWS credential Secret' }.fetch('run')
 diagnose = jobs.fetch('deploy').fetch('steps').find { |step| step['name'] == 'Diagnose failed database migration gate' }.fetch('run')
 
 Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
@@ -114,6 +116,12 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   observability_dir = File.read(File.join(runner_temp, 'dev-k3s-observability-path')).strip
   assert(JSON.parse(File.read(File.join(observability_dir, 'hosts.yml'))) == { 'k3s_nodes' => { 'hosts' => { 'dev' => { 'ansible_host' => 'dev.example.test', 'ansible_user' => 'deploy_user' } } } }, 'observability inventory JSON differs')
   assert((File.stat(File.join(observability_dir, 'hosts.yml')).mode & 0o777) == 0o600, 'observability hosts mode must be 0600')
+
+  _stdout, stderr, status = run_step(recovery_inventory, environment)
+  assert(status.success?, "recovery inventory script failed: #{stderr}")
+  recovery_dir = File.read(File.join(runner_temp, 'dev-k3s-observability-recovery-path')).strip
+  assert(JSON.parse(File.read(File.join(recovery_dir, 'hosts.yml'))) == { 'k3s_nodes' => { 'hosts' => { 'dev' => { 'ansible_host' => 'dev.example.test', 'ansible_user' => 'deploy_user' } } } }, 'recovery inventory JSON differs')
+  assert((File.stat(File.join(recovery_dir, 'hosts.yml')).mode & 0o777) == 0o600, 'recovery hosts mode must be 0600')
 
   [ssh_trust, diagnose].each do |script|
     _stdout, stderr, status = Open3.capture3('bash', '-n', '-c', script)
@@ -197,6 +205,13 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   assert(!output.include?('fixture-access-key') && !output.include?('fixture-secret-key'), 'bootstrap fixture must not expose credentials')
   assert(Dir.children(remote_tmp).empty?, 'remote credential directory must be cleaned up')
   assert(Dir.children(runner_temp).none? { |name| name.start_with?('observability-aws-credentials.') }, 'local credential directory must be cleaned up')
+
+  stdout, stderr, status = run_step(recovery_bootstrap, bootstrap_environment)
+  output = "#{stdout}#{stderr}"
+  assert(status.success?, "recovery bootstrap SSH fixture failed: #{stderr}")
+  assert(!output.include?('fixture-access-key') && !output.include?('fixture-secret-key'), 'recovery bootstrap fixture must not expose credentials')
+  assert(Dir.children(remote_tmp).empty?, 'recovery remote credential directory must be cleaned up')
+  assert(Dir.children(runner_temp).none? { |name| name.start_with?('observability-aws-credentials.') }, 'recovery local credential directory must be cleaned up')
 
   broken = app_inventory.sub("\nhost, user", "\n host, user")
   broken_runner_temp = File.join(directory, 'broken-runner-temp')
