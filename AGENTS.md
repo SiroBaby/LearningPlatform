@@ -30,6 +30,7 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Chỉ promote release state sau khi toàn bộ service health check pass. Rollback first deployment chỉ được dọn container của candidate, không teardown volume hoặc hạ tầng dùng chung.
 - Backend deployment phải chạy tracked SQL migrations từ release image bằng bounded one-shot Job và chờ hoàn tất thành công trước khi apply API hoặc worker; không dựa vào application startup để tự tạo schema.
 - Automatic environment deployment chỉ chạy từ branch môi trường đã chỉ định. Phân loại thay đổi theo runtime và không build, restart hoặc rollback service không bị ảnh hưởng; shared backend change phải chọn mọi runtime backend phụ thuộc.
+- Mọi `workflow_dispatch` target mới phải được thêm đồng bộ vào input options, classifier allowlist và production-path regression; action upload artifact phải pin immutable SHA thuộc major còn được GitHub hỗ trợ.
 - Tách registry/SSH credential của CI khỏi application runtime credential. Không bake secret vào image; production orchestration ưu tiên workload identity hoặc secret manager thay vì sao chép static key theo node.
 - Fail-fast non-secret runtime config phải được khai báo bằng manifest literal rõ ràng và có static check; không đẩy các constant contract như AI provider/capability/transport sang ExternalSecret hoặc SSM.
 - SSH chạy bên trong loop đang đọc từ redirected stdin phải dùng `-n`, trừ khi cố ý truyền stdin cho remote command.
