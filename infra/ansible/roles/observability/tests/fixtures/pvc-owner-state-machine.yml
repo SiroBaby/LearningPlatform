@@ -1,0 +1,164 @@
+- name: monitoring-live-resources-select-exact-owners-and-retention
+  release_key: monitoring
+  records:
+    - {status: deployed, healthy: true}
+  namespace_pvcs:
+    - metadata:
+        name: storage-learning-platform-monitoring-grafana-0
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitoring
+    - metadata:
+        name: prometheus-learning-platform-monitori-prometheus-db-prometheus-learning-platform-monitori-prometheus-0
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitori-prometheus
+    - metadata:
+        name: data-learning-platform-loki-0
+        labels:
+          app.kubernetes.io/instance: learning-platform-loki
+  namespace_statefulsets:
+    - metadata:
+        name: learning-platform-monitoring-grafana
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitoring
+      spec:
+        persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+    - metadata:
+        name: prometheus-learning-platform-monitori-prometheus
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitori-prometheus
+      spec:
+        persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+    - metadata:
+        name: learning-platform-loki
+        labels:
+          app.kubernetes.io/instance: learning-platform-loki
+      spec:
+        persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  namespace_prometheuses:
+    - metadata:
+        name: learning-platform-monitori-prometheus
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitori-prometheus
+      spec:
+        persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  expected_release_pvc_names:
+    - storage-learning-platform-monitoring-grafana-0
+    - prometheus-learning-platform-monitori-prometheus-db-prometheus-learning-platform-monitori-prometheus-0
+  expected_unknown_owner_pvc_names: []
+  expected_retention_policies:
+    - {whenDeleted: Retain, whenScaled: Retain}
+    - {whenDeleted: Retain, whenScaled: Retain}
+    - {whenDeleted: Retain, whenScaled: Retain}
+  expected_state: healthy
+- name: monitoring-unknown-owner-from-namespace-fails-closed
+  release_key: monitoring
+  records:
+    - {status: deployed, healthy: true}
+  namespace_pvcs:
+    - metadata:
+        name: storage-unknown-owner-0
+        labels:
+          app.kubernetes.io/instance: learning-platform-unknown
+  namespace_statefulsets:
+    - metadata:
+        name: learning-platform-monitoring-grafana
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitoring
+      spec:
+        persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  namespace_prometheuses: []
+  expected_release_pvc_names: []
+  expected_unknown_owner_pvc_names: [storage-unknown-owner-0]
+  expected_retention_policies:
+    - {whenDeleted: Retain, whenScaled: Retain}
+  expected_state: mismatch
+- name: monitoring-missing-owner-from-namespace-fails-closed
+  release_key: monitoring
+  records:
+    - {status: deployed, healthy: true}
+  namespace_pvcs:
+    - metadata:
+        name: storage-missing-owner-0
+  namespace_statefulsets:
+    - metadata:
+        name: learning-platform-monitoring-grafana
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitoring
+      spec:
+        persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  namespace_prometheuses: []
+  expected_release_pvc_names: []
+  expected_unknown_owner_pvc_names: [storage-missing-owner-0]
+  expected_retention_policies:
+    - {whenDeleted: Retain, whenScaled: Retain}
+  expected_state: mismatch
+- name: monitoring-non-retain-policy-remains-mismatch
+  release_key: monitoring
+  records:
+    - {status: deployed, healthy: true}
+  namespace_pvcs:
+    - metadata:
+        name: storage-learning-platform-monitoring-grafana-0
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitoring
+  namespace_statefulsets:
+    - metadata:
+        name: learning-platform-monitoring-grafana
+        labels:
+          app.kubernetes.io/instance: learning-platform-monitoring
+      spec:
+        persistentVolumeClaimRetentionPolicy: {whenDeleted: Delete, whenScaled: Retain}
+  namespace_prometheuses: []
+  expected_release_pvc_names: [storage-learning-platform-monitoring-grafana-0]
+  expected_unknown_owner_pvc_names: []
+  expected_retention_policies:
+    - {whenDeleted: Delete, whenScaled: Retain}
+  expected_state: mismatch
+- name: loki-exact-owner-is-healthy
+  release_key: loki
+  records:
+    - {status: deployed, healthy: true}
+  namespace_pvcs:
+    - metadata:
+        name: data-learning-platform-loki-0
+        labels:
+          app.kubernetes.io/instance: learning-platform-loki
+  namespace_statefulsets:
+    - metadata:
+        name: learning-platform-loki
+        labels:
+          app.kubernetes.io/instance: learning-platform-loki
+      spec:
+        persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  namespace_prometheuses: []
+  expected_release_pvc_names: [data-learning-platform-loki-0]
+  expected_unknown_owner_pvc_names: []
+  expected_retention_policies:
+    - {whenDeleted: Retain, whenScaled: Retain}
+  expected_state: healthy
+- name: alloy-without-pvc-is-healthy
+  release_key: alloy
+  records:
+    - {status: deployed, healthy: true}
+  namespace_pvcs: []
+  namespace_statefulsets: []
+  namespace_prometheuses: []
+  expected_release_pvc_names: []
+  expected_unknown_owner_pvc_names: []
+  expected_retention_policies: []
+  expected_state: healthy
+- name: alloy-exact-label-pvc-fails-closed
+  release_key: alloy
+  records:
+    - {status: deployed, healthy: true}
+  namespace_pvcs:
+    - metadata:
+        name: storage-learning-platform-alloy-0
+        labels:
+          app.kubernetes.io/instance: learning-platform-alloy
+  namespace_statefulsets: []
+  namespace_prometheuses: []
+  expected_release_pvc_names: []
+  expected_unknown_owner_pvc_names: [storage-learning-platform-alloy-0]
+  expected_retention_policies: []
+  expected_state: mismatch
