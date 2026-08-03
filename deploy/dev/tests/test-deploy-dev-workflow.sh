@@ -32,6 +32,8 @@ main() {
   require_match 'site\.yml --tags external_secrets,observability'
   require_match 'if: always\(\)'
   require_match "github\.event_name == 'workflow_dispatch' && github\.ref == 'refs/heads/develop' && inputs\.target == 'observability'"
+  require_match "github\.event_name == 'workflow_dispatch' && github\.ref == 'refs/heads/develop' && inputs\.target == 'observability-health'"
+  require_match 'deploy/dev/observability-health\.sh'
   require_match 'while IFS= read -r target; do'
   require_match 'ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="\$HOME/\.ssh/known_hosts" "\$VPS_USER@\$VPS_HOST" "sudo k3s kubectl rollout status deployment/\$target --namespace learning-platform-dev --timeout=180s"'
   require_match 'done < "\$DEPLOYMENT_DIR/selected-targets"'
@@ -42,6 +44,7 @@ main() {
   reject_match 'site\.yml --tags (k3s|monitoring)'
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-policy.rb"
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-execution.rb"
+  bash "${ROOT_DIR}/deploy/dev/tests/test-observability-health.sh"
   printf '%s\n' 'deploy workflow static tests passed'
 }
 

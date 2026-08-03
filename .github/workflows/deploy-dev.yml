@@ -17,6 +17,7 @@ on:
           - worker
           - observability
           - observability-recovery
+          - observability-health
           - all
       observability_recovery_confirmation:
         description: Type RECOVER_MONITORING_PENDING_INSTALL_REVISION_1 to recover the known pending-install revision.
@@ -283,7 +284,6 @@ jobs:
             rm -rf -- "$DEPLOYMENT_DIR"
             rm -f -- "$RUNNER_TEMP/dev-k3s-deploy-path"
           fi
-
   deploy-observability:
     name: Deploy ESO and observability only
     needs: [changes, infra-quality]
@@ -541,6 +541,7 @@ jobs:
             printf '%s\n' 'observability credential Secret metadata contract failed' >&2
             exit 1
           fi
+
           printf '%s\n' 'observability credential Secret metadata verified: type=Opaque key_count=2 keys=access-key-id,secret-access-key'
           REMOTE_BASH
           tar -C "$CREDENTIAL_DIR" -cf - access-key-id secret-access-key | \
@@ -560,4 +561,94 @@ jobs:
             DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-observability-recovery-path")"
             rm -rf -- "$DEPLOYMENT_DIR"
             rm -f -- "$RUNNER_TEMP/dev-k3s-observability-recovery-path"
+          fi
+
+  observability-health:
+    name: Read-only observability health evidence
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/develop' && inputs.target == 'observability-health'
+    runs-on: ubuntu-24.04
+    environment: dev
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Create ephemeral observability health inventory
+        env:
+          VPS_HOST: ${{ vars.DEV_VPS_HOST }}
+          VPS_USER: ${{ vars.DEV_VPS_USER }}
+        run: |
+          HEALTH_DIR="$(mktemp -d "$RUNNER_TEMP/dev-k3s-observability-health.XXXXXX")"
+          printf '%s\n' "$HEALTH_DIR" > "$RUNNER_TEMP/dev-k3s-observability-health-path"
+          chmod 700 "$HEALTH_DIR"
+          export HEALTH_DIR
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          host, user = os.environ['VPS_HOST'], os.environ['VPS_USER']
+          if not host or not user: sys.exit('VPS_HOST and VPS_USER must be non-empty')
+          if not re.fullmatch(r'[A-Za-z0-9._-]+', user): sys.exit('VPS_USER contains unsupported characters')
+          if not re.fullmatch(r'[A-Za-z0-9.-]+', host): sys.exit('VPS_HOST contains unsupported characters')
+          with open(f"{os.environ['HEALTH_DIR']}/hosts.json", 'w', encoding='utf-8') as inventory:
+              json.dump({'host': host, 'user': user}, inventory)
+          PY
+          chmod 600 "$HEALTH_DIR/hosts.json"
+      - name: Configure SSH trust
+        env:
+          SSH_KEY: ${{ secrets.DEV_VPS_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEV_VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Capture read-only observability health evidence
+        id: capture-observability-health
+        run: |
+          HEALTH_DIR="$(<"$RUNNER_TEMP/dev-k3s-observability-health-path")"
+          export HEALTH_DIR
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          with open(f"{os.environ['HEALTH_DIR']}/hosts.json", encoding='utf-8') as inventory:
+              target = json.load(inventory)
+          subprocess.run([
+              'bash', 'deploy/dev/observability-health.sh', '--host', target['host'], '--user', target['user'],
+              '--known-hosts', f"{os.environ['HOME']}/.ssh/known_hosts", '--output',
+              f"{os.environ['HEALTH_DIR']}/observability-health.json",
+          ], check=True)
+          PY
+      - name: Upload sanitized observability health evidence
+        if: always()
+        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce
+        with:
+          name: observability-health-evidence
+          path: ${{ runner.temp }}/dev-k3s-observability-health.*/observability-health.json
+          if-no-files-found: error
+      - name: Fail health target from sanitized evidence
+        if: always()
+        run: |
+          HEALTH_DIR="$(<"$RUNNER_TEMP/dev-k3s-observability-health-path")"
+          python3 - "$HEALTH_DIR/observability-health.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding='utf-8') as evidence_file:
+              evidence = json.load(evidence_file)
+          if evidence.get('status') != 'PASS':
+              raise SystemExit('observability health evidence status is not PASS')
+          PY
+      - name: Remove ephemeral observability health files
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/dev-k3s-observability-health-path" ]]; then
+            HEALTH_DIR="$(<"$RUNNER_TEMP/dev-k3s-observability-health-path")"
+            rm -rf -- "$HEALTH_DIR"
+            rm -f -- "$RUNNER_TEMP/dev-k3s-observability-health-path"
           fi
