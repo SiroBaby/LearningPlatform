@@ -92,8 +92,11 @@ classify_changes() {
     observability-recovery)
       observability=true
       ;;
+    observability-health)
+      observability=true
+      ;;
     *)
-      fail "target must be auto, web, api, worker, observability, observability-recovery, or all"
+      fail "target must be auto, web, api, worker, observability, observability-recovery, observability-health, or all"
       ;;
   esac
 
@@ -115,7 +118,7 @@ classify_changes() {
 }
 
 main() {
-  [[ "$#" -eq 3 ]] || fail "usage: classify-changes.sh <auto|web|api|worker|observability|observability-recovery|all> <before-sha> <after-sha>"
+  [[ "$#" -eq 3 ]] || fail "usage: classify-changes.sh <auto|web|api|worker|observability|observability-recovery|observability-health|all> <before-sha> <after-sha>"
   classify_changes "$1" "$2" "$3"
 }
 

@@ -164,7 +164,7 @@ assert(failures, step_by_name(health, 'Capture read-only observability health ev
                    sampler_source.include?('StrictHostKeyChecking=yes'),
        'observability health must reuse source-managed sampler and strict SSH trust')
 upload = step_by_name(health, 'Upload sanitized observability health evidence')
-assert(failures, upload.fetch('if') == 'always()' && upload.fetch('uses') == 'actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce',
+assert(failures, upload.fetch('if') == 'always()' && upload.fetch('uses') == 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
        'health evidence upload must run on failure and use the verified immutable artifact action SHA')
 terminal_gate = step_by_name(health, 'Fail health target from sanitized evidence')
 assert(failures, terminal_gate.fetch('if') == 'always()' && terminal_gate.fetch('run').include?("evidence.get('status') != 'PASS'"),

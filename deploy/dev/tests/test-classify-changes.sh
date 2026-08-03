@@ -128,6 +128,8 @@ main() {
   (cd "${repository}" && assert_observability_output observability "${before_sha}" "${after_sha}" true)
   (cd "${repository}" && assert_output observability-recovery "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output observability-recovery "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_output observability-health "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output observability-health "${before_sha}" "${after_sha}" true)
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "0000000000000000000000000000000000000000" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output auto "0000000000000000000000000000000000000000" "${after_sha}" false)
