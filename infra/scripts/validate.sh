@@ -317,7 +317,8 @@ check_application_edge_contract() {
   if ! grep -q 'kubernetes.io/dockerconfigjson' "${app_tasks}" \
     || ! grep -q 'deployment_targets' "${app_tasks}" \
     || ! grep -q 'Require complete target selection for the first application deployment' "${app_tasks}" \
-    || grep -q 'label_selectors:' "${app_tasks}" \
+    || [ "$(grep -Fc '    label_selectors:' "${app_tasks}")" -ne 2 ] \
+    || [ "$(grep -Fc '      - job-name=database-migrate' "${app_tasks}")" -ne 2 ] \
     || ! grep -Fq "| intersect(['web', 'api', 'worker'])" "${app_tasks}" \
     || ! grep -Fq 'when: applications_existing_workload_names | length == 0' "${app_tasks}"; then
     fail 'Applications role must validate GHCR auth and selective rollout targets.'
@@ -457,11 +458,22 @@ check_application_edge_contract() {
     || ! grep -Fqx '          image: {{ migration_image }}' "${migration_template}" \
     || ! grep -Fqx '          resources: {{ api_resources | to_json }}' "${migration_template}" \
     || ! grep -Fqx 'const CONNECTION_TIMEOUT_MILLIS = 10_000;' "${migration_runner}" \
-    || ! grep -Fqx "const LOCK_TIMEOUT = '30s';" "${migration_runner}" \
-    || ! grep -Fqx "const STATEMENT_TIMEOUT = '480s';" "${migration_runner}" \
-    || ! grep -Fqx 'const STARTUP_OPTIONS = `-c timezone=UTC -c lock_timeout=${LOCK_TIMEOUT} -c statement_timeout=${STATEMENT_TIMEOUT}`;' "${migration_runner}" \
+    || ! grep -Fqx 'const QUERY_TIMEOUT_MILLIS = 240_000;' "${migration_runner}" \
+    || ! grep -Fqx 'const LOCK_TIMEOUT_MILLIS = 30_000;' "${migration_runner}" \
+    || ! grep -Fqx 'const STATEMENT_TIMEOUT_MILLIS = 240_000;' "${migration_runner}" \
+    || ! grep -Fqx 'const ADVISORY_LOCK_DEADLINE_MILLIS = 60_000;' "${migration_runner}" \
+    || ! grep -Fqx 'const CLEANUP_TIMEOUT_MILLIS = 5_000;' "${migration_runner}" \
+    || ! grep -Fqx 'const MIGRATION_TOTAL_DEADLINE_MILLIS = 360_000;' "${migration_runner}" \
+    || ! grep -Fqx 'const MIGRATION_OPERATION_DEADLINE_MILLIS = MIGRATION_TOTAL_DEADLINE_MILLIS - CLEANUP_TIMEOUT_MILLIS;' "${migration_runner}" \
     || ! grep -Fqx '    connectionTimeoutMillis: CONNECTION_TIMEOUT_MILLIS,' "${migration_runner}" \
-    || ! grep -Fqx '    options: STARTUP_OPTIONS,' "${migration_runner}"; then
+    || ! grep -Fqx '    query_timeout: QUERY_TIMEOUT_MILLIS,' "${migration_runner}" \
+    || ! grep -Fqx '    statement_timeout: STATEMENT_TIMEOUT_MILLIS,' "${migration_runner}" \
+    || ! grep -Fqx '    lock_timeout: LOCK_TIMEOUT_MILLIS,' "${migration_runner}" \
+    || ! grep -Fqx "    application_name: 'learning-platform-migration'," "${migration_runner}" \
+    || ! grep -Fqx "    const result = await client.query('SELECT pg_try_advisory_lock(\$1) AS acquired', [LOCK_KEY]);" "${migration_runner}" \
+    || ! grep -Fqx "      await client.query('SELECT pg_advisory_unlock(\$1)', [LOCK_KEY]);" "${migration_runner}" \
+    || ! grep -Fqx "    await runWithinMigrationDeadline(client, () => runMigration(client, process.argv[2] ?? 'up'));" "${migration_runner}" \
+    || ! grep -Fqx '    await closeClientAfterMigration(client, migrationFailure);' "${migration_runner}"; then
     fail 'Database migration Job must be bounded, use the selected immutable backend image, and reuse API resources.'
   fi
 
@@ -480,7 +492,14 @@ check_application_edge_contract() {
     'Delete a terminal database migration Job before rerunning it' \
     'Wait for terminal database migration Job deletion' \
     'Apply database migration Job for the selected backend image' \
+    'Wait for database migration Pod creation' \
+    'Record database migration startup evidence without reading Secret values' \
+    'Require database migration Pod creation before the deadline' \
     'Wait for database migration Job to reach a terminal state' \
+    'Record database migration missing Job failure evidence without reading Secret values' \
+    'Refresh database migration Pods after terminal Job failure' \
+    'Record database migration failure evidence without reading Secret values' \
+    'Record database migration missing Pod failure evidence without reading Secret values' \
     'Require database migration Job completion before workload rollout'; do
     if ! grep -Fq -- "- name: ${required_task}" "${app_tasks}"; then
       fail "Applications role is missing migration gate task: ${required_task}."
@@ -500,6 +519,25 @@ check_application_edge_contract() {
     || [ "$(grep -Fc 'status.conditions | default([])' "${app_tasks}")" -lt 4 ] \
     || ! grep -Fq 'Delete a terminal database migration Job before rerunning it' "${app_tasks}"; then
     fail 'Database migration replacement must delete only terminal Complete=True or Failed=True Jobs.'
+  fi
+
+  local pod_wait_line terminal_wait_line terminal_gate_line terminal_wait_task
+  pod_wait_line="$(grep -nF -- '- name: Wait for database migration Pod creation' "${app_tasks}" | cut -d: -f1)"
+  terminal_wait_line="$(grep -nF -- '- name: Wait for database migration Job to reach a terminal state' "${app_tasks}" | cut -d: -f1)"
+  terminal_gate_line="$(grep -nF -- '- name: Require database migration Job completion before workload rollout' "${app_tasks}" | cut -d: -f1)"
+  terminal_wait_task="$(awk '/^- name: Wait for database migration Job to reach a terminal state$/ { capture = 1 } capture { print } capture && /^- name: / && !/Wait for database migration Job to reach a terminal state/ { exit }' "${app_tasks}")"
+  if [ -z "${pod_wait_line}" ] || [ -z "${terminal_wait_line}" ] || [ -z "${terminal_gate_line}" ] \
+    || [ "${pod_wait_line}" -ge "${terminal_wait_line}" ] || [ "${terminal_wait_line}" -ge "${terminal_gate_line}" ] \
+    || ! grep -Fq 'retries: 30' "${app_tasks}" \
+    || ! grep -Fq 'retries: 210' "${app_tasks}" \
+    || ! grep -Fqx '  delay: 2' <<<"${terminal_wait_task}" \
+    || ! grep -Fqx '  failed_when: false' <<<"${terminal_wait_task}" \
+    || ! grep -Fq 'applications_database_migration_result.resources | length == 1' "${app_tasks}" \
+    || ! grep -Fq 'applications_database_migration_result.resources | length != 1' "${app_tasks}" \
+    || ! grep -Fq '[migration-diagnostics] job-not-found-after-terminal-poll' "${app_tasks}" \
+    || ! grep -Fq 'sort(attribute='"'"'metadata.creationTimestamp'"'"') | last' "${app_tasks}" \
+    || ! grep -Fq 'kubectl logs pod/{{ applications_database_migration_pod_name }} --all-containers=true --previous' "${app_tasks}"; then
+    fail 'Migration startup and failed-Pod evidence must be captured before the fail-closed completion gate.'
   fi
 }
 
