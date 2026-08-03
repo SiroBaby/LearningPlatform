@@ -88,6 +88,10 @@ recovery_bootstrap = jobs.fetch('recover-observability-pending-install').fetch('
 diagnose = jobs.fetch('deploy').fetch('steps').find { |step| step['name'] == 'Diagnose failed database migration gate' }.fetch('run')
 health_gate = jobs.fetch('observability-health').fetch('steps').find { |step| step['name'] == 'Fail health target from sanitized evidence' }.fetch('run')
 
+assert(diagnose.include?('kubectl describe job/database-migrate'), 'migration diagnostics must retain Job description')
+assert(diagnose.include?('kubectl logs job/database-migrate'), 'migration diagnostics must retain Job logs')
+assert(!diagnose.match?(/kubectl get secret|\.data/), 'migration diagnostics must not read Secret data')
+
 Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   runner_temp = File.join(directory, 'runner-temp')
   home = File.join(directory, 'home')

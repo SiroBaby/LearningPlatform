@@ -271,6 +271,7 @@ check_application_edge_contract() {
   local app_tasks="${ANSIBLE_DIR}/roles/applications/tasks/main.yml"
   local eso_template="${ANSIBLE_DIR}/roles/external_secrets/templates/external-secrets.yaml.j2"
   local app_template="${INFRA_DIR}/k8s/apps.yaml.j2"
+  local migration_runner="${INFRA_DIR}/../app/src/database/migrate.ts"
   local migration_template="${INFRA_DIR}/k8s/migration-job.yaml.j2"
   local swagger_external_secret_template="${INFRA_DIR}/k8s/swagger-external-secret.yaml.j2"
   local app_vars="${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"
@@ -435,7 +436,7 @@ check_application_edge_contract() {
     || grep -Fq 'migration_resources' "${migration_template}" "${app_tasks}" "${app_vars}" \
     || ! grep -Fqx '  name: database-migrate' "${migration_template}" \
     || ! grep -Fqx 'kind: Job' "${migration_template}" \
-    || ! grep -Fqx '  backoffLimit: 2' "${migration_template}" \
+    || ! grep -Fqx '  backoffLimit: 0' "${migration_template}" \
     || ! grep -Fqx '  activeDeadlineSeconds: 600' "${migration_template}" \
     || ! grep -Fqx '  ttlSecondsAfterFinished: 3600' "${migration_template}" \
     || ! grep -Fqx '  parallelism: 1' "${migration_template}" \
@@ -443,7 +444,13 @@ check_application_edge_contract() {
     || ! grep -Fqx '      restartPolicy: Never' "${migration_template}" \
     || ! grep -Fqx "          command: ['node', 'dist/database/migrate.js', 'up']" "${migration_template}" \
     || ! grep -Fqx '          image: {{ migration_image }}' "${migration_template}" \
-    || ! grep -Fqx '          resources: {{ api_resources | to_json }}' "${migration_template}"; then
+    || ! grep -Fqx '          resources: {{ api_resources | to_json }}' "${migration_template}" \
+    || ! grep -Fqx 'const CONNECTION_TIMEOUT_MILLIS = 10_000;' "${migration_runner}" \
+    || ! grep -Fqx "const LOCK_TIMEOUT = '30s';" "${migration_runner}" \
+    || ! grep -Fqx "const STATEMENT_TIMEOUT = '480s';" "${migration_runner}" \
+    || ! grep -Fqx 'const STARTUP_OPTIONS = `-c timezone=UTC -c lock_timeout=${LOCK_TIMEOUT} -c statement_timeout=${STATEMENT_TIMEOUT}`;' "${migration_runner}" \
+    || ! grep -Fqx '    connectionTimeoutMillis: CONNECTION_TIMEOUT_MILLIS,' "${migration_runner}" \
+    || ! grep -Fqx '    options: STARTUP_OPTIONS,' "${migration_runner}"; then
     fail 'Database migration Job must be bounded, use the selected immutable backend image, and reuse API resources.'
   fi
 
