@@ -413,7 +413,7 @@ jobs:
           ANSIBLE_STDOUT_CALLBACK: default
         run: |
           DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-observability-path")"
-          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags external_secrets,observability
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags k3s,external_secrets,observability
       - name: Remove ephemeral observability deployment files
         if: always()
         run: |

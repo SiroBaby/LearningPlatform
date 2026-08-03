@@ -29,7 +29,7 @@ main() {
   require_match 'k3s kubectl rollout status deployment/'
   require_match 'StrictHostKeyChecking=yes'
   require_match 'VPS_HOST and VPS_USER must be non-empty'
-  require_match 'site\.yml --tags external_secrets,observability'
+  require_match 'site\.yml --tags k3s,external_secrets,observability'
   require_match 'if: always\(\)'
   require_match "github\.event_name == 'workflow_dispatch' && github\.ref == 'refs/heads/develop' && inputs\.target == 'observability'"
   require_match "github\.event_name == 'workflow_dispatch' && github\.ref == 'refs/heads/develop' && inputs\.target == 'observability-health'"
@@ -41,7 +41,7 @@ main() {
   reject_match 'docker compose'
   reject_match 'DEV_GHCR_(USERNAME|READ_TOKEN)'
   reject_match 'secrets\.DEV_.*(AWS|AIVEN|RUNTIME)'
-  reject_match 'site\.yml --tags (k3s|monitoring)'
+  reject_match 'site\.yml --tags monitoring'
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-policy.rb"
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-execution.rb"
   bash "${ROOT_DIR}/deploy/dev/tests/test-observability-health.sh"

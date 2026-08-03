@@ -129,8 +129,15 @@ assert(failures, observability.fetch('needs') == %w[changes infra-quality],
 assert(failures, step_names(observability).include?('Apply External Secrets and observability through Ansible'),
        'target=observability must have its dedicated Ansible apply step')
 observability_apply = step_by_name(observability, 'Apply External Secrets and observability through Ansible').fetch('run')
-assert(failures, observability_apply.include?('--tags external_secrets,observability'),
-       'target=observability must apply only external_secrets and observability tags')
+assert(failures, observability_apply.include?('--tags k3s,external_secrets,observability'),
+        'target=observability must apply the reviewed K3s edge route with external_secrets and observability tags')
+selected_observability_roles = playbook.fetch('roles').select { |role| (role.fetch('tags') & %w[k3s external_secrets observability]).any? }.map { |role| role.fetch('role') }
+assert(failures, selected_observability_roles == %w[k3s external_secrets observability],
+        'observability Ansible tags must select only K3s edge, External Secrets, and observability roles')
+nginx_template = File.read(File.join(root, 'infra', 'ansible', 'roles', 'k3s', 'templates', 'nginx-learning-platform.conf.j2'))
+%w[server_name\ \{\{\ grafana_public_host\ \}\}; proxy_pass\ http://127.0.0.1:\{\{\ k3s_traefik_http_node_port\ \}\}; proxy_set_header\ Host\ \{\{\ grafana_ingress_host\ \}\};].each do |route_contract|
+  assert(failures, nginx_template.match?(Regexp.new(route_contract)), "observability K3s path must retain Nginx Grafana route contract: #{route_contract}")
+end
 forbidden_observability = %w[build-push-action applications rollout database-migrate]
 assert(failures, forbidden_observability.none? { |token| observability_apply.include?(token) || step_names(observability).join('\n').include?(token) },
         'target=observability must not build, migrate, or restart application workloads')
@@ -254,8 +261,8 @@ assert(failures, step_by_name(jobs.fetch('deploy'), 'Create ephemeral Ansible in
 source = File.read(workflow_path)
 assert(failures, !source.match?(/DEV_K3S_ANSIBLE_VARS_B64|ANSIBLE_VARS_B64|base64\s+--decode/),
        'workflow must not contain a desired-state base64 transport')
-assert(failures, source.match?(/site\.yml --tags applications/) && source.match?(/site\.yml --tags external_secrets,observability/),
-       'application and observability Ansible paths must remain distinct')
+assert(failures, source.match?(/site\.yml --tags applications/) && source.match?(/site\.yml --tags k3s,external_secrets,observability/),
+        'application and observability Ansible paths must remain distinct')
 assert(failures, !source.match?(/learning-platform-dev-aws-credentials|aws_credentials_secret_name.*observability/i),
        'observability bootstrap must not reuse the application AWS Secret contract')
 

@@ -20,6 +20,7 @@ end
 root = File.expand_path('../../..', __dir__)
 workflow = safe_yaml_load(File.read(File.join(root, '.github', 'workflows', 'deploy-dev.yml')))
 jobs = workflow.fetch('jobs')
+playbook = safe_yaml_load(File.read(File.join(root, 'infra', 'ansible', 'playbooks', 'site.yml'))).first
 
 def workflow_context(outputs:, results:, event_name: 'push', ref: 'refs/heads/develop', target: 'auto', confirmation: '')
   {
@@ -67,6 +68,11 @@ matrix = {
 %w[build-images deploy].each do |job_name|
   assert(jobs.fetch(job_name).fetch('if').include?('always()'), "#{job_name} must retain always() so skipped quality needs are evaluated")
 end
+
+observability_apply = jobs.fetch('deploy-observability').fetch('steps').find { |step| step['name'] == 'Apply External Secrets and observability through Ansible' }.fetch('run')
+assert(observability_apply.include?('--tags k3s,external_secrets,observability'), 'observability dispatch must execute the K3s edge route tag')
+selected_roles = playbook.fetch('roles').select { |role| (role.fetch('tags') & %w[k3s external_secrets observability]).any? }.map { |role| role.fetch('role') }
+assert(selected_roles == %w[k3s external_secrets observability], 'observability dispatch tags must exclude applications and migration role paths')
 
 matrix.each do |name, (outputs, results, build_expected, deploy_expected)|
   context = workflow_context(outputs: outputs, results: results)

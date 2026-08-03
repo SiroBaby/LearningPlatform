@@ -251,6 +251,7 @@ check_k3s_edge_contract() {
   local k3s_tasks="${ANSIBLE_DIR}/roles/k3s/tasks/main.yml"
   local k3s_template="${ANSIBLE_DIR}/roles/k3s/templates/config.yaml.j2"
   local k3s_handlers="${ANSIBLE_DIR}/roles/k3s/handlers/main.yml"
+  local nginx_template="${ANSIBLE_DIR}/roles/k3s/templates/nginx-learning-platform.conf.j2"
   local k3s_vars="${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"
 
   if grep -RInE -- '--disable=(traefik|servicelb)' "${ANSIBLE_DIR}"; then
@@ -264,6 +265,16 @@ check_k3s_edge_contract() {
     || ! grep -q '^k3s_traefik_http_node_port: 32080$' "${k3s_vars}" \
     || ! grep -q '^k3s_port_preflight_enabled: true$' "${k3s_vars}"; then
     fail 'K3s must manage declarative config, loopback NodePort, change-only restart, and edge preflight.'
+  fi
+
+  if ! grep -Fq 'server_name {{ grafana_public_host }};' "${nginx_template}" \
+    || ! grep -Fq 'proxy_pass http://127.0.0.1:{{ k3s_traefik_http_node_port }};' "${nginx_template}" \
+    || ! grep -Fq 'proxy_set_header Host {{ grafana_ingress_host }};' "${nginx_template}" \
+    || ! grep -Fq 'proxy_set_header X-Forwarded-Host $host;' "${nginx_template}" \
+    || ! grep -Fq 'proxy_set_header X-Forwarded-Proto https;' "${nginx_template}" \
+    || ! grep -Fq "grafana_public_host == '157.66.101.219'" "${k3s_tasks}" \
+    || ! grep -Fq "grafana_ingress_host == 'grafana.observability.internal'" "${k3s_tasks}"; then
+    fail 'Nginx must expose Grafana only through the public TLS host and internal ingress Host over loopback Traefik.'
   fi
 }
 

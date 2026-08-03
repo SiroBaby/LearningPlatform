@@ -27,6 +27,10 @@
       - nginx_learning_platform_config_path is string
       - nginx_tls_certificate_path is string
       - nginx_tls_certificate_key_path is string
+      - grafana_public_host is string
+      - grafana_public_host == '157.66.101.219'
+      - grafana_ingress_host is string
+      - grafana_ingress_host == 'grafana.observability.internal'
       - learning_platform_namespace is string
       - learning_platform_namespace | length > 0
     fail_msg: k3s_version and learning_platform_namespace must be explicitly configured.
