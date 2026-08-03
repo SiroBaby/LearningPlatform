@@ -4,8 +4,11 @@
 const { readFileSync } = require('node:fs');
 const { spawnSync } = require('node:child_process');
 
-const PATCHED_BRACE_EXPANSION_VERSIONS = new Set(['1.1.16', '2.1.2', '5.0.8']);
-const PATCHED_BRACE_EXPANSION_ADVISORY = 'https://github.com/advisories/GHSA-mh99-v99m-4gvg';
+const PATCHED_BRACE_EXPANSION_VERSIONS = new Set(['1.1.18', '2.1.4', '5.0.9']);
+const PATCHED_BRACE_EXPANSION_ADVISORIES = new Set([
+  'https://github.com/advisories/GHSA-mh99-v99m-4gvg',
+  'https://github.com/advisories/GHSA-rgw5-rvv9-x895',
+]);
 
 function commandJson(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8' });
@@ -30,7 +33,7 @@ function isPatchedBraceExpansion(vulnerability, installedVersions) {
   if (vulnerability.name !== 'brace-expansion' || installedVersions.size === 0) return false;
   const advisories = vulnerability.via.filter((entry) => typeof entry === 'object');
   return advisories.length > 0
-    && advisories.every((entry) => entry.url === PATCHED_BRACE_EXPANSION_ADVISORY)
+    && advisories.every((entry) => PATCHED_BRACE_EXPANSION_ADVISORIES.has(entry.url))
     && [...installedVersions].every((version) => PATCHED_BRACE_EXPANSION_VERSIONS.has(version));
 }
 
