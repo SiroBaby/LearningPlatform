@@ -4,6 +4,7 @@
 require 'open3'
 require 'optparse'
 require 'tmpdir'
+require 'yaml'
 
 options = {}
 OptionParser.new do |parser|
@@ -32,14 +33,24 @@ def mutate_operator_document(monitoring)
 end
 
 def mutate_alloy_document(alloy)
-  pattern = /(---\n# Source: alloy\/templates\/controller\.yaml\n.*?)(?=\n---\n# Source:|\z)/m
-  match = alloy.match(pattern)
-  abort 'ERROR: Alloy DaemonSet document not found in rendered Alloy manifest.' unless match
+  documents = alloy.split(/(?=^---\s*$)/)
+  index = documents.index do |document|
+    parsed = YAML.safe_load(document, permitted_classes: [], permitted_symbols: [], aliases: false)
+    parsed.is_a?(Hash) &&
+      parsed['kind'] == 'DaemonSet' &&
+      parsed.dig('metadata', 'name') == 'learning-platform-alloy' &&
+      parsed.dig('metadata', 'labels', 'app.kubernetes.io/instance') == 'learning-platform-alloy' &&
+      parsed.dig('metadata', 'labels', 'app.kubernetes.io/name') == 'alloy'
+  rescue Psych::SyntaxError
+    false
+  end
+  abort 'ERROR: Alloy DaemonSet document not found in rendered Alloy manifest.' unless index
 
-  mutated = yield(match[1])
-  abort 'ERROR: Alloy mutation did not change rendered Alloy manifest.' if mutated == match[1]
+  mutated = yield(documents[index])
+  abort 'ERROR: Alloy mutation did not change rendered Alloy manifest.' if mutated == documents[index]
 
-  alloy.sub(pattern, mutated)
+  documents[index] = mutated
+  documents.join
 end
 
 ingress = <<~YAML
