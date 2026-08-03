@@ -59,13 +59,13 @@ classify_changes() {
             # Application delivery automation and application manifests affect
             # every workload. Baseline K3s/ESO/monitoring changes deliberately
             # remain operator-run and never trigger this workflow.
-            .github/workflows/deploy-dev.yml|deploy/dev/classify-changes.sh|infra/k8s/*|infra/ansible/roles/applications/*)
+            infra/k8s/*|infra/ansible/roles/applications/*)
               web=true
               api=true
               worker=true
               observability=true
               ;;
-            infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/external_secrets/*|infra/ansible/vars/dev.yml|infra/scripts/*)
+            .github/workflows/deploy-dev.yml|deploy/dev/classify-changes.sh|deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/external_secrets/*|infra/ansible/roles/k3s/*|infra/ansible/vars/dev.yml|infra/scripts/*)
               observability=true
               ;;
           esac

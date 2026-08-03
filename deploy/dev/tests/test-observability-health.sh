@@ -107,12 +107,12 @@ def grafana_contract(datasources, health, dashboards):
         'Loki': ('loki', 'http://learning-platform-loki.observability.svc.cluster.local:3100'),
     }
     indexed = {item['name']: item for item in datasources}
-    return len(indexed) == 2 and all(name in indexed and (indexed[name]['type'], indexed[name]['url']) == contract and health[indexed[name]['id']] == 'OK' for name, contract in expected.items()) and dashboards == {
+    return len(indexed) == 2 and all(name in indexed and (indexed[name]['type'], indexed[name]['url']) == contract and health[indexed[name]['uid']] == 'OK' for name, contract in expected.items()) and dashboards == {
         'Kubernetes / Compute Resources / Cluster', 'Kubernetes / Compute Resources / Node (Pods)',
         'Kubernetes / Compute Resources / Namespace (Pods)', 'Node Exporter / Nodes'}
 
 def pvc_contract(items):
-    expected = {('learning-platform-monitoring', '3Gi'), ('learning-platform-monitoring', '1Gi'), ('learning-platform-loki', '2Gi')}
+    expected = {('learning-platform-monitori-prometheus', '3Gi'), ('learning-platform-monitoring', '1Gi'), ('learning-platform-loki', '2Gi')}
     return len(items) == 3 and {(item['owner'], item['size']) for item in items} == expected and all(item['phase'] == 'Bound' and item['storageClass'] == 'local-path' and item['uid'] and item['volumeName'] for item in items)
 
 def ksm_contract(items):
@@ -122,12 +122,12 @@ def ksm_contract(items):
 marker = '00000000-0000-4000-8000-000000000001'; start = 1_000_000_000_000
 assert loki_latency({'data': {'result': [{'values': [[str(start + 120_000_000_000), marker]]}]}}, start, start + 120_000_000_000, marker) == 120
 assert loki_latency({'data': {'result': [{'values': [[str(start - 1), marker]]}]}}, start, start + 120_000_000_000, marker) == 121
-sources = [{'name': 'Prometheus', 'type': 'prometheus', 'url': 'http://prometheus-operated.observability.svc.cluster.local:9090', 'id': 1}, {'name': 'Loki', 'type': 'loki', 'url': 'http://learning-platform-loki.observability.svc.cluster.local:3100', 'id': 2}]
+sources = [{'name': 'Prometheus', 'type': 'prometheus', 'url': 'http://prometheus-operated.observability.svc.cluster.local:9090', 'uid': 'prometheus'}, {'name': 'Loki', 'type': 'loki', 'url': 'http://learning-platform-loki.observability.svc.cluster.local:3100', 'uid': 'loki'}]
 dashboards = {'Kubernetes / Compute Resources / Cluster', 'Kubernetes / Compute Resources / Node (Pods)', 'Kubernetes / Compute Resources / Namespace (Pods)', 'Node Exporter / Nodes'}
-assert grafana_contract(sources, {1: 'OK', 2: 'OK'}, dashboards)
-assert not grafana_contract([{**sources[0], 'url': 'http://wrong'}, sources[1]], {1: 'OK', 2: 'OK'}, dashboards)
-assert not grafana_contract(sources, {1: 'OK', 2: 'ERROR'}, dashboards)
-claims = [{'owner': 'learning-platform-monitoring', 'size': '3Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'a', 'volumeName': 'pv-a'}, {'owner': 'learning-platform-monitoring', 'size': '1Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'b', 'volumeName': 'pv-b'}, {'owner': 'learning-platform-loki', 'size': '2Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'c', 'volumeName': 'pv-c'}]
+assert grafana_contract(sources, {'prometheus': 'OK', 'loki': 'OK'}, dashboards)
+assert not grafana_contract([{**sources[0], 'url': 'http://wrong'}, sources[1]], {'prometheus': 'OK', 'loki': 'OK'}, dashboards)
+assert not grafana_contract(sources, {'prometheus': 'OK', 'loki': 'ERROR'}, dashboards)
+claims = [{'owner': 'learning-platform-monitori-prometheus', 'size': '3Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'a', 'volumeName': 'pv-a'}, {'owner': 'learning-platform-monitoring', 'size': '1Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'b', 'volumeName': 'pv-b'}, {'owner': 'learning-platform-loki', 'size': '2Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'c', 'volumeName': 'pv-c'}]
 assert pvc_contract(claims)
 assert not pvc_contract([{**claims[0], 'phase': 'Pending'}, *claims[1:]])
 assert not pvc_contract([{**claims[0], 'storageClass': 'wrong'}, *claims[1:]])

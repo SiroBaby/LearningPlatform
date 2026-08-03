@@ -10,6 +10,31 @@ data:
   grafana.ini: |
     [server]
     root_url = https://157.66.101.219/
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus-operated.observability.svc.cluster.local:9090
+        isDefault: true
+        editable: false
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://learning-platform-loki.observability.svc.cluster.local:3100
+        editable: false
+  dashboardproviders.yaml: |
+    apiVersion: 1
+    providers:
+      - name: k8s-resources-cluster
+        options: {path: /var/lib/grafana/dashboards/k8s-resources-cluster}
+      - name: k8s-resources-node
+        options: {path: /var/lib/grafana/dashboards/k8s-resources-node}
+      - name: k8s-resources-namespace
+        options: {path: /var/lib/grafana/dashboards/k8s-resources-namespace}
+      - name: nodes
+        options: {path: /var/lib/grafana/dashboards/nodes}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -74,8 +99,26 @@ spec:
     - spec: {storageClassName: local-path, resources: {requests: {storage: 1Gi}}}
   template:
     spec:
+      volumes:
+        - name: dashboards-k8s-resources-cluster
+          configMap: {name: learning-platform-monitori-k8s-resources-cluster}
+        - name: dashboards-k8s-resources-node
+          configMap: {name: learning-platform-monitori-k8s-resources-node}
+        - name: dashboards-k8s-resources-namespace
+          configMap: {name: learning-platform-monitori-k8s-resources-namespace}
+        - name: dashboards-nodes
+          configMap: {name: learning-platform-monitori-nodes}
       containers:
         - name: grafana
+          volumeMounts:
+            - name: dashboards-k8s-resources-cluster
+              mountPath: /var/lib/grafana/dashboards/k8s-resources-cluster
+            - name: dashboards-k8s-resources-node
+              mountPath: /var/lib/grafana/dashboards/k8s-resources-node
+            - name: dashboards-k8s-resources-namespace
+              mountPath: /var/lib/grafana/dashboards/k8s-resources-namespace
+            - name: dashboards-nodes
+              mountPath: /var/lib/grafana/dashboards/nodes
           resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 500m, memory: 256Mi}}
 ---
 apiVersion: apps/v1

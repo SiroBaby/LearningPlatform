@@ -39,6 +39,28 @@ ALLOY_STORAGE_PATH = '/tmp/alloy'
 ALLOY_STORAGE_SIZE_LIMIT = '128Mi'
 ALLOY_USER_ID = 473
 RELOADER_USER_ID = 65_534
+GRAFANA_CONFIG_MAP = 'learning-platform-monitoring-grafana'
+GRAFANA_STATIC_FILES = %w[grafana.ini datasources.yaml dashboardproviders.yaml].freeze
+GRAFANA_DASHBOARDS = {
+  'k8s-resources-cluster' => 'learning-platform-monitori-k8s-resources-cluster',
+  'k8s-resources-node' => 'learning-platform-monitori-k8s-resources-node',
+  'k8s-resources-namespace' => 'learning-platform-monitori-k8s-resources-namespace',
+  'nodes' => 'learning-platform-monitori-nodes'
+}.freeze
+GRAFANA_DASHBOARD_VOLUMES = GRAFANA_DASHBOARDS.each_with_object({}) do |(provider, config_map), result|
+  result["dashboards-#{provider}"] = config_map
+end.freeze
+GRAFANA_DATASOURCES = {
+  'Prometheus' => {
+    'type' => 'prometheus',
+    'url' => 'http://prometheus-operated.observability.svc.cluster.local:9090',
+    'isDefault' => true
+  },
+  'Loki' => {
+    'type' => 'loki',
+    'url' => 'http://learning-platform-loki.observability.svc.cluster.local:3100'
+  }
+}.freeze
 
 options = { inputs: [], junit: nil }
 OptionParser.new do |parser|
@@ -126,9 +148,57 @@ class Policy
   end
 
   def validate_grafana_root_url(document)
-    return unless kind(document) == 'ConfigMap' && name(document) == 'learning-platform-monitoring-grafana'
+    return unless kind(document) == 'ConfigMap' && name(document) == GRAFANA_CONFIG_MAP
     content = (document['data'] || {}).values.join("\n")
     fail_check("Grafana ConfigMap/#{name(document)} must set root_url to https://157.66.101.219/") unless content.include?('root_url = https://157.66.101.219/')
+  end
+
+  def validate_grafana_provisioning
+    config_maps = @documents.select { |document| kind(document) == 'ConfigMap' && name(document) == GRAFANA_CONFIG_MAP }
+    unless config_maps.length == 1
+      fail_check("render must contain exactly one Grafana ConfigMap/#{GRAFANA_CONFIG_MAP}, got #{config_maps.length}")
+      return
+    end
+
+    data = config_maps.first['data'] || {}
+    missing = GRAFANA_STATIC_FILES - data.keys
+    fail_check("Grafana ConfigMap/#{GRAFANA_CONFIG_MAP} must contain static #{GRAFANA_STATIC_FILES.join(', ')}") unless missing.empty?
+    return unless missing.empty?
+
+    datasources = YAML.safe_load(data['datasources.yaml'], permitted_classes: [], permitted_symbols: [], aliases: false)
+    actual_datasources = (datasources || {}).fetch('datasources', []).each_with_object({}) { |datasource, result| result[datasource['name']] = datasource }
+    valid_datasources = actual_datasources.length == 2 && actual_datasources.keys.sort == GRAFANA_DATASOURCES.keys.sort && GRAFANA_DATASOURCES.all? do |name, expected|
+      datasource = actual_datasources[name] || {}
+      expected.all? { |key, value| datasource[key] == value } && datasource['access'] == 'proxy' && datasource['editable'] == false
+    end
+    fail_check('Grafana datasources.yaml must define exactly Prometheus and Loki with their static proxy contracts') unless valid_datasources
+
+    providers = YAML.safe_load(data['dashboardproviders.yaml'], permitted_classes: [], permitted_symbols: [], aliases: false)
+    actual = (providers || {}).fetch('providers', []).each_with_object({}) { |provider, result| result[provider['name']] = value(provider, 'options', 'path') }
+    expected = GRAFANA_DASHBOARDS.transform_keys(&:to_s).transform_values { |name| "/var/lib/grafana/dashboards/#{name.sub('learning-platform-monitori-', '')}" }
+    fail_check('Grafana dashboardproviders.yaml must define exactly the four static provider paths') unless actual == expected
+  rescue Psych::Exception, KeyError, NoMethodError
+    fail_check('Grafana ConfigMap static provisioning files must be valid YAML')
+  end
+
+  def validate_grafana_dashboard_mounts
+    statefulsets = @documents.select { |document| kind(document) == 'StatefulSet' && name(document) == GRAFANA_CONFIG_MAP }
+    unless statefulsets.length == 1
+      fail_check("render must contain exactly one Grafana StatefulSet/#{GRAFANA_CONFIG_MAP}, got #{statefulsets.length}")
+      return
+    end
+
+    pod_spec = pod_spec_for(statefulsets.first)
+    volumes = (pod_spec['volumes'] || []).each_with_object({}) { |volume, result| result[volume['name']] = value(volume, 'configMap', 'name') }
+    expected_volumes = GRAFANA_DASHBOARD_VOLUMES
+    dashboard_volumes = volumes.slice(*expected_volumes.keys)
+    fail_check('Grafana StatefulSet must define exactly four dashboard ConfigMap volumes') unless dashboard_volumes == expected_volumes
+
+    grafana = containers_for(statefulsets.first).find { |container| container['name'] == 'grafana' } || {}
+    mounts = (grafana['volumeMounts'] || []).each_with_object({}) { |mount, result| result[mount['name']] = mount['mountPath'] }
+    expected_mounts = GRAFANA_DASHBOARDS.each_with_object({}) { |(provider, _config_map), result| result["dashboards-#{provider}"] = "/var/lib/grafana/dashboards/#{provider}" }
+    dashboard_mounts = mounts.slice(*expected_mounts.keys)
+    fail_check('Grafana StatefulSet must mount exactly the four dashboard ConfigMaps at their provider paths') unless dashboard_mounts == expected_mounts
   end
 
   def validate_loki_auth
@@ -365,6 +435,8 @@ class Policy
     fail_check("persistent storage owners/sizes must be prometheus=3Gi, grafana=1Gi, loki=2Gi; got #{@claims.sort.inspect}") unless @claims.sort == [['grafana', '1Gi'], ['loki', '2Gi'], ['prometheus', '3Gi']]
     validate_operator_reloader
     validate_loki_auth
+    validate_grafana_provisioning
+    validate_grafana_dashboard_mounts
   end
 
   def validate_operator_reloader

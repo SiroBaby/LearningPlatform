@@ -69,6 +69,15 @@ def mutate_loki_config_map(loki)
   mutate_document(loki, 'Loki ConfigMap', predicate) { |document| yield(document) }
 end
 
+def mutate_grafana_document(monitoring, kind)
+  predicate = lambda do |document|
+    document.is_a?(Hash) && document['kind'] == kind &&
+      document.dig('metadata', 'name') == 'learning-platform-monitoring-grafana' &&
+      document.dig('metadata', 'labels', 'app.kubernetes.io/instance') == 'learning-platform-monitoring'
+  end
+  mutate_document(monitoring, "Grafana #{kind}", predicate) { |document| yield(document) }
+end
+
 ingress = <<~YAML
   ---
   apiVersion: networking.k8s.io/v1
@@ -87,6 +96,13 @@ mutations = {
   'second ingress' => monitoring + ingress,
   'wrong ingress port' => monitoring.sub('number: 80', 'number: 443'),
   'ingress TLS' => monitoring.sub("rules:\n", "tls: [{hosts: [grafana.observability.internal]}]\n  rules:\n"),
+  'missing Grafana datasource provisioning' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('datasources.yaml:', 'datasources-missing.yaml:') },
+  'wrong Grafana datasource URL' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('http://prometheus-operated.observability.svc.cluster.local:9090', 'http://wrong-prometheus') },
+  'missing Grafana datasource' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('name: Loki', 'name: Missing') },
+  'wrong Grafana dashboard provider path' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('/var/lib/grafana/dashboards/nodes', '/var/lib/grafana/dashboards/wrong') },
+  'wrong Grafana dashboard ConfigMap' => mutate_grafana_document(monitoring, 'StatefulSet') { |grafana| grafana.sub('learning-platform-monitori-nodes', 'wrong-dashboard-config-map') },
+  'wrong Grafana dashboard volume name' => mutate_grafana_document(monitoring, 'StatefulSet') { |grafana| grafana.sub('name: dashboards-nodes', 'name: wrong-dashboard-volume') },
+  'wrong Grafana dashboard mount' => mutate_grafana_document(monitoring, 'StatefulSet') { |grafana| grafana.sub('mountPath: /var/lib/grafana/dashboards/nodes', 'mountPath: /var/lib/grafana/dashboards/wrong') },
   'reloader drift' => mutate_operator_document(monitoring) { |operator| operator.sub('--config-reloader-cpu-request=25m', '--config-reloader-cpu-request=24m') },
   'duplicate PVC' => monitoring + pvc,
   'unexpected container' => mutate_operator_document(monitoring) do |operator|
