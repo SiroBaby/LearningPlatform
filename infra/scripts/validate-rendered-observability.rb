@@ -131,6 +131,33 @@ class Policy
     fail_check("Grafana ConfigMap/#{name(document)} must set root_url to https://157.66.101.219/") unless content.include?('root_url = https://157.66.101.219/')
   end
 
+  def validate_loki_auth
+    loki_config_maps = @documents.select do |document|
+      kind(document) == 'ConfigMap' &&
+        name(document) == 'loki' &&
+        label(document, 'app.kubernetes.io/instance') == 'learning-platform-loki'
+    end
+    unless loki_config_maps.length == 1
+      fail_check("render must contain exactly one Loki ConfigMap/loki for release learning-platform-loki, got #{loki_config_maps.length}")
+      return
+    end
+
+    config_yaml = value(loki_config_maps.first, 'data', 'config.yaml')
+    unless config_yaml.is_a?(String)
+      fail_check('Loki ConfigMap/loki must contain data.config.yaml')
+      return
+    end
+
+    config = YAML.safe_load(config_yaml, permitted_classes: [], permitted_symbols: [], aliases: false)
+    unless config.is_a?(Hash)
+      fail_check('Loki ConfigMap/loki data.config.yaml must be a YAML mapping')
+      return
+    end
+    fail_check('Loki ConfigMap/loki data.config.yaml must set top-level auth_enabled to boolean false') unless config['auth_enabled'] == false
+  rescue Psych::Exception => error
+    fail_check("Loki ConfigMap/loki data.config.yaml must be valid YAML: #{error.message}")
+  end
+
   def validate_namespace(document)
     return if CLUSTER_SCOPED_KINDS.include?(kind(document))
     return if %w[Service ServiceMonitor].include?(kind(document)) && namespace(document) == 'kube-system' && label(document, 'app.kubernetes.io/instance') == 'learning-platform-monitoring'
@@ -337,6 +364,7 @@ class Policy
     fail_check("render must contain exactly one kube-state-metrics workload, got #{kube_state_metrics}") unless kube_state_metrics == 1
     fail_check("persistent storage owners/sizes must be prometheus=3Gi, grafana=1Gi, loki=2Gi; got #{@claims.sort.inspect}") unless @claims.sort == [['grafana', '1Gi'], ['loki', '2Gi'], ['prometheus', '3Gi']]
     validate_operator_reloader
+    validate_loki_auth
   end
 
   def validate_operator_reloader
