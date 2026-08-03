@@ -95,8 +95,12 @@ diagnose = jobs.fetch('deploy').fetch('steps').find { |step| step['name'] == 'Di
 health_gate = jobs.fetch('observability-health').fetch('steps').find { |step| step['name'] == 'Fail health target from sanitized evidence' }.fetch('run')
 
 assert(diagnose.include?('kubectl describe job/database-migrate'), 'migration diagnostics must retain Job description')
-assert(diagnose.include?('kubectl logs job/database-migrate'), 'migration diagnostics must retain Job logs')
-assert(!diagnose.match?(/kubectl get secret|\.data/), 'migration diagnostics must not read Secret data')
+assert(diagnose.include?('kubectl describe pod/'), 'migration diagnostics must capture Pod description before deletion')
+assert(diagnose.include?('kubectl logs pod/'), 'migration diagnostics must capture Pod logs before deletion')
+assert(diagnose.include?('--previous'), 'migration diagnostics must capture previous container logs')
+assert(diagnose.include?('pod-never-started'), 'migration diagnostics must report terminal evidence when no Pod starts')
+assert(diagnose.include?('kubectl get events'), 'migration diagnostics must retain Job events when no Pod starts')
+assert(!diagnose.match?(/kubectl get secret|\.data/), 'migration diagnostics must not read Secret values')
 
 Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   runner_temp = File.join(directory, 'runner-temp')

@@ -23,9 +23,16 @@ loadEnv();
 const MIGRATIONS_DIR = join(__dirname, 'migrations');
 const LOCK_KEY = 4815162342; // advisory lock id cố định cho migration
 const CONNECTION_TIMEOUT_MILLIS = 10_000;
-const LOCK_TIMEOUT = '30s';
-const STATEMENT_TIMEOUT = '480s';
-const STARTUP_OPTIONS = `-c timezone=UTC -c lock_timeout=${LOCK_TIMEOUT} -c statement_timeout=${STATEMENT_TIMEOUT}`;
+const QUERY_TIMEOUT_MILLIS = 240_000;
+const LOCK_TIMEOUT_MILLIS = 30_000;
+const STATEMENT_TIMEOUT_MILLIS = 240_000;
+const ADVISORY_LOCK_DEADLINE_MILLIS = 60_000;
+const ADVISORY_LOCK_POLL_INTERVAL_MILLIS = 1_000;
+const CLEANUP_TIMEOUT_MILLIS = 5_000;
+// 355s operation budget + 5s cleanup budget = 360s total, leaving 60s before terminal polling ends.
+const MIGRATION_TOTAL_DEADLINE_MILLIS = 360_000;
+const MIGRATION_OPERATION_DEADLINE_MILLIS = MIGRATION_TOTAL_DEADLINE_MILLIS - CLEANUP_TIMEOUT_MILLIS;
+const STARTUP_OPTIONS = `-c timezone=UTC -c lock_timeout=${LOCK_TIMEOUT_MILLIS}ms -c statement_timeout=${STATEMENT_TIMEOUT_MILLIS}ms`;
 
 interface MigrationFile {
   readonly version: string; // timestamp prefix
@@ -45,7 +52,35 @@ interface MigrationEnvironment {
 }
 
 export interface MigrationLockClient {
-  query(text: string, values?: unknown[]): Promise<unknown>;
+  query(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<{ readonly rows: readonly { readonly acquired: boolean }[] }>;
+}
+
+interface MigrationLockOptions {
+  readonly deadlineMillis?: number;
+  readonly now?: () => number;
+  readonly pollIntervalMillis?: number;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
+}
+
+interface MigrationClientCleanup {
+  end(): Promise<void>;
+  connection: {
+    stream: {
+      destroy(error?: Error): void;
+    };
+  };
+}
+
+interface MigrationRuntimeClient extends MigrationClientCleanup {
+  connect(): Promise<unknown>;
+}
+
+interface MigrationDeadlineOptions {
+  readonly deadlineMillis?: number;
+  readonly onDeadline?: () => void;
 }
 
 function parsePort(value: string): number {
@@ -68,9 +103,13 @@ export function buildClientConfig(environment: MigrationEnvironment): ClientConf
     connectionTimeoutMillis: CONNECTION_TIMEOUT_MILLIS,
     database: environment.DB_NAME ?? 'learning',
     host: environment.DB_HOST ?? 'localhost',
+    application_name: 'learning-platform-migration',
+    lock_timeout: LOCK_TIMEOUT_MILLIS,
     options: STARTUP_OPTIONS,
     password: environment.DB_PASSWORD ?? 'learning',
     port: parsePort(environment.DB_PORT ?? '5432'),
+    query_timeout: QUERY_TIMEOUT_MILLIS,
+    statement_timeout: STATEMENT_TIMEOUT_MILLIS,
     user: environment.DB_USER ?? 'learning',
   };
   if (sslMode === 'verify-ca') {
@@ -132,12 +171,114 @@ async function appliedVersions(client: Client): Promise<Set<string>> {
   return new Set(res.rows.map((r: { version: string }) => r.version));
 }
 
-export async function withLock<T>(client: MigrationLockClient, fn: () => Promise<T>): Promise<T> {
-  await client.query('SELECT pg_advisory_lock($1)', [LOCK_KEY]);
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function withLock<T>(
+  client: MigrationLockClient,
+  fn: () => Promise<T>,
+  options: MigrationLockOptions = {},
+): Promise<T> {
+  const now = options.now ?? Date.now;
+  const deadlineMillis = options.deadlineMillis ?? ADVISORY_LOCK_DEADLINE_MILLIS;
+  const pollIntervalMillis = options.pollIntervalMillis ?? ADVISORY_LOCK_POLL_INTERVAL_MILLIS;
+  const sleepUntilNextAttempt = options.sleep ?? sleep;
+  const deadline = now() + deadlineMillis;
+  let acquired = false;
+
+  while (now() < deadline) {
+    const result = await client.query('SELECT pg_try_advisory_lock($1) AS acquired', [LOCK_KEY]);
+    acquired = result.rows[0]?.acquired === true;
+    if (acquired) {
+      break;
+    }
+    if (now() < deadline) {
+      await sleepUntilNextAttempt(pollIntervalMillis);
+    }
+  }
+
+  if (!acquired) {
+    throw new Error('Migration advisory lock could not be acquired before the lock deadline.');
+  }
+
+  let migrationFailure: unknown;
   try {
     return await fn();
+  } catch (error) {
+    migrationFailure = error;
+    throw error;
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]);
+    try {
+      await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]);
+    } catch (unlockError) {
+      if (!migrationFailure) {
+        throw unlockError;
+      }
+    }
+  }
+}
+
+export async function closeClient(client: MigrationClientCleanup): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      client.end(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Migration database cleanup timed out.')),
+          CLEANUP_TIMEOUT_MILLIS,
+        );
+      }),
+    ]);
+  } catch {
+    // node-postgres has no public force-close API. Destroy only after bounded cleanup fails.
+    client.connection.stream.destroy();
+    throw new Error('Migration database cleanup failed.');
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+export async function closeClientAfterMigration(
+  client: MigrationClientCleanup,
+  primaryFailure: unknown,
+): Promise<void> {
+  try {
+    await closeClient(client);
+  } catch (cleanupError) {
+    console.error('[migration] stage=cleanup-failed');
+    if (!primaryFailure) {
+      throw cleanupError;
+    }
+  }
+}
+
+export async function runWithinMigrationDeadline<T>(
+  client: MigrationClientCleanup,
+  operation: () => Promise<T>,
+  options: MigrationDeadlineOptions = {},
+): Promise<T> {
+  const deadlineMillis = options.deadlineMillis ?? MIGRATION_OPERATION_DEADLINE_MILLIS;
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          console.error('[migration] stage=deadline-exceeded');
+          options.onDeadline?.();
+          client.connection.stream.destroy();
+          reject(new Error('Migration runtime deadline exceeded.'));
+        }, deadlineMillis);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -218,26 +359,40 @@ async function runStatus(client: Client): Promise<void> {
   }
 }
 
-async function main(): Promise<void> {
-  const cmd = process.argv[2] ?? 'up';
-  const client = buildClient();
+async function runMigration(client: Client & MigrationRuntimeClient, cmd: string): Promise<void> {
+  console.info('[migration] stage=connect');
   await client.connect();
+  console.info('[migration] stage=lock');
+  await withLock(client, async () => {
+    console.info('[migration] stage=run');
+    if (cmd === 'up') await runUp(client);
+    else if (cmd === 'down') await runDown(client);
+    else if (cmd === 'status') await runStatus(client);
+    else throw new Error(`Lệnh không hợp lệ: ${cmd} (dùng up|down|status)`);
+  });
+}
+
+async function main(): Promise<void> {
+  const client = buildClient();
+  let migrationFailure: unknown;
   try {
-    await withLock(client, async () => {
-      if (cmd === 'up') await runUp(client);
-      else if (cmd === 'down') await runDown(client);
-      else if (cmd === 'status') await runStatus(client);
-      else throw new Error(`Lệnh không hợp lệ: ${cmd} (dùng up|down|status)`);
-    });
+    await runWithinMigrationDeadline(client, () => runMigration(client, process.argv[2] ?? 'up'));
+  } catch (error) {
+    migrationFailure = error;
+    throw error;
   } finally {
-    await client.end();
+    console.info('[migration] stage=cleanup');
+    await closeClientAfterMigration(client, migrationFailure);
+    if (!migrationFailure) {
+      console.info('[migration] stage=complete');
+    }
   }
 }
 
 // Chỉ chạy CLI khi gọi trực tiếp (node/ts-node migrate.ts), KHÔNG khi bị import (test).
 if (require.main === module) {
-  main().catch((err) => {
-    console.error(err instanceof Error ? err.message : err);
+  main().catch(() => {
+    console.error('[migration] stage=failed');
     process.exit(1);
   });
 }
