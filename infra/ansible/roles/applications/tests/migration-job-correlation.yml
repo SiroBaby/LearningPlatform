@@ -1,0 +1,98 @@
+---
+- name: Verify database migration Job and Pod correlation without a cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    current_job_uid: 5e634-current-job-uid
+    migration_pods:
+      - metadata:
+          name: database-migrate-7mpf8
+          controller_uid: c91b-stale-job-uid
+          labels:
+            job-name: database-migrate
+            batch.kubernetes.io/controller-uid: c91b-stale-job-uid
+          creationTimestamp: '2026-08-04T00:00:00Z'
+        status:
+          phase: Succeeded
+      - metadata:
+          name: database-migrate-f6x7b
+          controller_uid: 5e634-current-job-uid
+          labels:
+            job-name: database-migrate
+            batch.kubernetes.io/controller-uid: 5e634-current-job-uid
+          creationTimestamp: '2026-08-04T00:00:01Z'
+        status:
+          phase: Succeeded
+    applications_database_migration_job_current:
+      resources:
+        - metadata:
+            name: database-migrate
+            uid: 5e634-current-job-uid
+          status:
+            conditions:
+              - type: Complete
+                status: 'True'
+    skipped_evidence:
+      skipped: true
+  tasks:
+    - name: Derive the current database migration Job UID from the read-back source of truth
+      ansible.builtin.set_fact:
+        derived_current_job_uid: >-
+          {{ applications_database_migration_job_current.resources[0].metadata.uid }}
+
+    - name: Select only Pods controlled by the current database migration Job UID
+      ansible.builtin.set_fact:
+        current_migration_pods: >-
+          {{ migration_pods
+             | selectattr('metadata.controller_uid', 'equalto', derived_current_job_uid)
+             | list }}
+
+    - name: Require stale same-name Pod exclusion and immediate current completion
+      ansible.builtin.assert:
+        that:
+          - applications_database_migration_job_current.resources | length == 1
+          - derived_current_job_uid | length > 0
+          - current_migration_pods | length == 1
+          - current_migration_pods[0].metadata.name == 'database-migrate-f6x7b'
+          - derived_current_job_uid == current_job_uid
+          - >-
+            (applications_database_migration_job_current.resources[0].status.conditions | default([])
+              | selectattr('type', 'equalto', 'Complete')
+              | selectattr('status', 'equalto', 'True') | list | length) == 1
+          - current_migration_pods | length > 0
+        fail_msg: >-
+          A stale succeeded Pod sharing job-name must not delay or replace the
+          current Job's Complete=True rollout gate.
+
+    - name: Derive the publish decision for a skipped evidence result
+      ansible.builtin.set_fact:
+        publish_skipped_evidence: >-
+          {{ not (skipped_evidence.skipped | default(false) | bool) and
+             skipped_evidence.stdout_lines is defined }}
+
+    - name: Require skipped evidence results to remain safe to publish
+      ansible.builtin.assert:
+        that:
+          - not (publish_skipped_evidence | bool)
+        fail_msg: A registered skipped result must never dereference stdout_lines.
+
+    - name: Require production role to use exact UID selectors and publish guards
+      ansible.builtin.assert:
+        that:
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is search('batch\\.kubernetes\\.io/controller-uid=\\{\\{ applications_database_migration_job_uid \\}\\}')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is not search('      - job-name=database-migrate')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is search('applications_database_migration_job_current\.resources \| length == 1')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is not search('applications_database_migration_job_apply\.result\.metadata\.uid')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml')
+            is search('not \\(applications_database_migration_missing_job_evidence\\.skipped \\| default\\(false\\) \\| bool\\)')
+        fail_msg: Production migration correlation must use exact Job UID and safe publish guards.
