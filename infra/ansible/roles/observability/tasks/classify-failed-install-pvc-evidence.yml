@@ -1,0 +1,21 @@
+---
+- name: Classify failed-install PVC evidence by exact owner labels
+  ansible.builtin.set_fact:
+    observability_failed_install_release_pvc_names: >-
+      {%- set evidence = namespace(names=[]) -%}
+      {%- for pvc in observability_failed_install_namespace_pvcs.resources | default([]) -%}
+      {%- if (pvc.metadata.labels | default({})).get('app.kubernetes.io/instance') in observability_release.pvc_owner_instances -%}
+      {%- set _ = evidence.names.append(pvc.metadata.name) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ evidence.names }}
+    observability_failed_install_unknown_owner_pvc_names: >-
+      {%- set known_owner_instances = observability_releases.values()
+         | map(attribute='pvc_owner_instances') | flatten | list -%}
+      {%- set evidence = namespace(names=[]) -%}
+      {%- for pvc in observability_failed_install_namespace_pvcs.resources | default([]) -%}
+      {%- if (pvc.metadata.labels | default({})).get('app.kubernetes.io/instance') not in known_owner_instances -%}
+      {%- set _ = evidence.names.append(pvc.metadata.name) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ evidence.names }}

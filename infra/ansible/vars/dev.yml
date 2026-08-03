@@ -77,15 +77,21 @@ helm_repositories:
 observability_releases:
   monitoring:
     name: learning-platform-monitoring
+    pvc_owner_instances:
+      - learning-platform-monitoring
+      - learning-platform-monitori-prometheus
     chart: prometheus-community/kube-prometheus-stack
     chart_version: 87.21.0
   loki:
     name: learning-platform-loki
+    pvc_owner_instances:
+      - learning-platform-loki
     chart: grafana-community/loki
     chart_version: 18.7.0
     app_version: 3.7.4
   alloy:
     name: learning-platform-alloy
+    pvc_owner_instances: []
     chart: grafana/alloy
     chart_version: 1.11.0
     app_version: v1.18.0
