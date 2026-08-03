@@ -164,9 +164,11 @@ chạy trước khi PR được merge. Entry point duy nhất là **manual
 3. `observability_recovery_confirmation=RECOVER_MONITORING_PENDING_INSTALL_REVISION_1`
 4. job chạy trong environment `dev`
 
-Workflow source hiện buộc `environment: dev`, nhưng cấu hình reviewer/approval
-của GitHub Environment vẫn phải được human tự xác nhận và enforce ngoài source.
-Tài liệu này không coi cấu hình reviewer đó là điều đã được repo chứng minh.
+Repository private trên gói GitHub hiện tại không hỗ trợ required reviewer
+(người duyệt bắt buộc) cho Environment. `environment: dev` chỉ giới hạn phạm vi
+secret/variable của job; authorization (ủy quyền) recovery được thay bằng việc
+human đã merge source vào `develop`, manual dispatch, exact confirmation string,
+`infra-quality` pass và toàn bộ exact preflight fail-closed của role Ansible.
 
 Khi chạy đúng entry point này, role recovery sẽ làm đúng trình tự sau, không hơn:
 
