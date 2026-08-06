@@ -63,7 +63,7 @@ main() {
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 
   before_sha="${after_sha}"
-  after_sha="$(cd "${repository}" && commit_file app/src/database/migrate.ts)"
+  after_sha="$(cd "${repository}" && commit_file app/src/database/migrations/20260804-backend-startup.ts)"
   expected=$'web=false\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 
@@ -73,12 +73,13 @@ main() {
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 
   before_sha="${after_sha}"
-  after_sha="$(cd "${repository}" && commit_file infra/k8s/migration-job.yaml.j2)"
-  expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
+  after_sha="$(cd "${repository}" && commit_file app/src/database/migrate.ts)"
+  expected=$'web=false\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/applications/tasks/main.yml)"
+  expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 
   before_sha="${after_sha}"

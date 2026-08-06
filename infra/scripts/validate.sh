@@ -282,8 +282,6 @@ check_application_edge_contract() {
   local app_tasks="${ANSIBLE_DIR}/roles/applications/tasks/main.yml"
   local eso_template="${ANSIBLE_DIR}/roles/external_secrets/templates/external-secrets.yaml.j2"
   local app_template="${INFRA_DIR}/k8s/apps.yaml.j2"
-  local migration_runner="${INFRA_DIR}/../app/src/database/migrate.ts"
-  local migration_template="${INFRA_DIR}/k8s/migration-job.yaml.j2"
   local swagger_external_secret_template="${INFRA_DIR}/k8s/swagger-external-secret.yaml.j2"
   local app_vars="${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"
 
@@ -317,12 +315,9 @@ check_application_edge_contract() {
   if ! grep -q 'kubernetes.io/dockerconfigjson' "${app_tasks}" \
     || ! grep -q 'deployment_targets' "${app_tasks}" \
     || ! grep -q 'Require complete target selection for the first application deployment' "${app_tasks}" \
-    || [ "$(grep -Fc '    label_selectors:' "${app_tasks}")" -ne 2 ] \
-    || [ "$(grep -Fc '      - batch.kubernetes.io/controller-uid={{ applications_database_migration_job_uid }}' "${app_tasks}")" -ne 2 ] \
-    || grep -Fq '      - job-name=database-migrate' "${app_tasks}" \
     || ! grep -Fq "| intersect(['web', 'api', 'worker'])" "${app_tasks}" \
     || ! grep -Fq 'when: applications_existing_workload_names | length == 0' "${app_tasks}"; then
-    fail 'Applications role must validate GHCR auth, selective rollout targets, and exact migration Job UID Pod correlation.'
+    fail 'Applications role must validate GHCR auth and preserve selective rollout targets.'
   fi
 
   for required_assertion in \
@@ -410,9 +405,8 @@ check_application_edge_contract() {
     || ! grep -Fq "              value: 'true'" <<<"${api_block}" \
     || ! grep -Fq '            - name: SWAGGER_USERNAME' <<<"${api_block}" \
     || ! grep -Fq '            - name: SWAGGER_PASSWORD' <<<"${api_block}" \
-    || [ "$(grep -Fc '                  name: learning-platform-swagger-runtime' <<<"${api_block}")" -ne 2 ] \
-    || grep -Fq 'SWAGGER_' "${migration_template}"; then
-    fail 'Swagger must be enabled only for API with both dedicated Secret references, never for migration.'
+    || [ "$(grep -Fc '                  name: learning-platform-swagger-runtime' <<<"${api_block}")" -ne 2 ]; then
+    fail 'Swagger must be enabled only for API with both dedicated Secret references.'
   fi
 
   local worker_block
@@ -444,107 +438,21 @@ check_application_edge_contract() {
     fail 'Swagger ExternalSecret apply and readiness wait must precede workload application.'
   fi
 
-  if ! grep -qE '^api_resources:$' "${app_vars}" \
-    || ! grep -Fqx '      - api_resources is mapping' "${app_tasks}" \
-    || grep -Fq 'migration_resources' "${migration_template}" "${app_tasks}" "${app_vars}" \
-    || ! grep -Fqx '  name: database-migrate' "${migration_template}" \
-    || ! grep -Fqx 'kind: Job' "${migration_template}" \
-    || ! grep -Fqx '  backoffLimit: 0' "${migration_template}" \
-    || ! grep -Fqx '  activeDeadlineSeconds: 600' "${migration_template}" \
-    || ! grep -Fqx '  ttlSecondsAfterFinished: 3600' "${migration_template}" \
-    || ! grep -Fqx '  parallelism: 1' "${migration_template}" \
-    || ! grep -Fqx '  completions: 1' "${migration_template}" \
-    || ! grep -Fqx '      restartPolicy: Never' "${migration_template}" \
-    || ! grep -Fqx "          command: ['node', 'dist/database/migrate.js', 'up']" "${migration_template}" \
-    || ! grep -Fqx '          image: {{ migration_image }}' "${migration_template}" \
-    || ! grep -Fqx '          resources: {{ api_resources | to_json }}' "${migration_template}" \
-    || ! grep -Fqx 'const CONNECTION_TIMEOUT_MILLIS = 10_000;' "${migration_runner}" \
-    || ! grep -Fqx 'const QUERY_TIMEOUT_MILLIS = 240_000;' "${migration_runner}" \
-    || ! grep -Fqx 'const LOCK_TIMEOUT_MILLIS = 30_000;' "${migration_runner}" \
-    || ! grep -Fqx 'const STATEMENT_TIMEOUT_MILLIS = 240_000;' "${migration_runner}" \
-    || ! grep -Fqx 'const ADVISORY_LOCK_DEADLINE_MILLIS = 60_000;' "${migration_runner}" \
-    || ! grep -Fqx 'const CLEANUP_TIMEOUT_MILLIS = 5_000;' "${migration_runner}" \
-    || ! grep -Fqx 'const MIGRATION_TOTAL_DEADLINE_MILLIS = 360_000;' "${migration_runner}" \
-    || ! grep -Fqx 'const MIGRATION_OPERATION_DEADLINE_MILLIS = MIGRATION_TOTAL_DEADLINE_MILLIS - CLEANUP_TIMEOUT_MILLIS;' "${migration_runner}" \
-    || ! grep -Fqx '    connectionTimeoutMillis: CONNECTION_TIMEOUT_MILLIS,' "${migration_runner}" \
-    || ! grep -Fqx '    query_timeout: QUERY_TIMEOUT_MILLIS,' "${migration_runner}" \
-    || ! grep -Fqx '    statement_timeout: STATEMENT_TIMEOUT_MILLIS,' "${migration_runner}" \
-    || ! grep -Fqx '    lock_timeout: LOCK_TIMEOUT_MILLIS,' "${migration_runner}" \
-    || ! grep -Fqx "    application_name: 'learning-platform-migration'," "${migration_runner}" \
-    || ! grep -Fqx "    const result = await client.query('SELECT pg_try_advisory_lock(\$1) AS acquired', [LOCK_KEY]);" "${migration_runner}" \
-    || ! grep -Fqx "      await client.query('SELECT pg_advisory_unlock(\$1)', [LOCK_KEY]);" "${migration_runner}" \
-    || ! grep -Fqx "    await runWithinMigrationDeadline(client, () => runMigration(client, process.argv[2] ?? 'up'));" "${migration_runner}" \
-    || ! grep -Fqx '    await closeClientAfterMigration(client, migrationFailure);' "${migration_runner}"; then
-    fail 'Database migration Job must be bounded, use the selected immutable backend image, and reuse API resources.'
+  if [ -e "${INFRA_DIR}/k8s/migration-job.yaml.j2" ] \
+    || [ -e "${ANSIBLE_DIR}/roles/applications/tests/migration-job-correlation.yml" ] \
+    || grep -qE 'database-migrate|applications_database_migration|migration_image|applications_backend_selected' "${app_tasks}"; then
+    fail 'Database migration ownership belongs to backend startup; external Kubernetes Job orchestration is forbidden.'
   fi
 
-  if [ "$(grep -c 'name: learning-platform-api-runtime' "${migration_template}")" -ne 1 ] \
-    || [ "$(grep -c 'secretKeyRef:' "${migration_template}")" -ne 1 ] \
-    || [ "$(grep -c "\['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA'\]" "${migration_template}")" -ne 1 ] \
-    || grep -qE 'ports:|[Pp]robe:|kind: (Service|Ingress)' "${migration_template}"; then
-    fail 'Database migration Job must expose only the seven API runtime database keys and no network workload resources.'
-  fi
-
-  for required_task in \
-    'Derive whether a selected backend requires database migration' \
-    'Require identical API and worker images for a shared migration rollout' \
-    'Inspect existing database migration Job' \
-    'Refuse to replace a non-terminal database migration Job' \
-    'Delete a terminal database migration Job before rerunning it' \
-    'Wait for terminal database migration Job deletion' \
-    'Apply database migration Job for the selected backend image' \
-    'Read the newly applied database migration Job identity' \
-    'Require exactly one newly applied database migration Job UID' \
-    'Wait for database migration Pod creation' \
-    'Record database migration startup evidence without reading Secret values' \
-    'Require database migration Pod creation before the deadline' \
-    'Wait for database migration Job to reach a terminal state' \
-    'Record database migration missing or replaced Job failure evidence without reading Secret values' \
-    'Refresh database migration Pods after terminal Job failure' \
-    'Record database migration failure evidence without reading Secret values' \
-    'Record database migration missing Pod failure evidence without reading Secret values' \
-    'Require database migration Job completion before workload rollout'; do
-    if ! grep -Fq -- "- name: ${required_task}" "${app_tasks}"; then
-      fail "Applications role is missing migration gate task: ${required_task}."
-    fi
-  done
-
-  if ! grep -Fq 'when: applications_backend_selected | bool' "${app_tasks}" \
-    || ! grep -Fq "when: \"'api' in deployment_targets and 'worker' in deployment_targets\"" "${app_tasks}" \
-    || ! grep -Fq "migration_image: \"{{ api_image if 'api' in deployment_targets else worker_image }}\"" "${app_tasks}" \
-    || ! grep -Fq 'api_image == worker_image' "${app_tasks}"; then
-    fail 'Applications role must select migration only for backend targets and require a shared backend image.'
-  fi
-
-  if grep -Fq 'status.active' "${app_tasks}" \
-    || ! grep -Fq 'Complete=True or' "${app_tasks}" \
-    || ! grep -Fq 'Failed=True' "${app_tasks}" \
-    || [ "$(grep -Fc 'status.conditions | default([])' "${app_tasks}")" -lt 4 ] \
-    || ! grep -Fq 'Delete a terminal database migration Job before rerunning it' "${app_tasks}"; then
-    fail 'Database migration replacement must delete only terminal Complete=True or Failed=True Jobs.'
-  fi
-
-  local pod_wait_line terminal_wait_line terminal_gate_line terminal_wait_task
-  pod_wait_line="$(grep -nF -- '- name: Wait for database migration Pod creation' "${app_tasks}" | cut -d: -f1)"
-  terminal_wait_line="$(grep -nF -- '- name: Wait for database migration Job to reach a terminal state' "${app_tasks}" | cut -d: -f1)"
-  terminal_gate_line="$(grep -nF -- '- name: Require database migration Job completion before workload rollout' "${app_tasks}" | cut -d: -f1)"
-  terminal_wait_task="$(awk '/^- name: Wait for database migration Job to reach a terminal state$/ { capture = 1 } capture { print } capture && /^- name: / && !/Wait for database migration Job to reach a terminal state/ { exit }' "${app_tasks}")"
-  if [ -z "${pod_wait_line}" ] || [ -z "${terminal_wait_line}" ] || [ -z "${terminal_gate_line}" ] \
-    || [ "${pod_wait_line}" -ge "${terminal_wait_line}" ] || [ "${terminal_wait_line}" -ge "${terminal_gate_line}" ] \
-    || ! grep -Fq 'retries: 30' "${app_tasks}" \
-    || ! grep -Fq 'retries: 210' "${app_tasks}" \
-    || ! grep -Fqx '  delay: 2' <<<"${terminal_wait_task}" \
-    || ! grep -Fqx '  failed_when: false' <<<"${terminal_wait_task}" \
-    || ! grep -Fq 'applications_database_migration_result.resources | length == 1' "${app_tasks}" \
-    || ! grep -Fq 'applications_database_migration_job_uid' "${app_tasks}" \
-    || ! grep -Fq 'job-missing-or-uid-mismatch-after-terminal-poll' "${app_tasks}" \
-    || ! grep -Fq 'not (applications_database_migration_startup_evidence.skipped | default(false) | bool)' "${app_tasks}" \
-    || ! grep -Fq 'not (applications_database_migration_pod_evidence.skipped | default(false) | bool)' "${app_tasks}" \
-    || ! grep -Fq 'not (applications_database_migration_missing_pod_evidence.skipped | default(false) | bool)' "${app_tasks}" \
-    || ! grep -Fq 'not (applications_database_migration_missing_job_evidence.skipped | default(false) | bool)' "${app_tasks}" \
-    || ! grep -Fq 'sort(attribute='"'"'metadata.creationTimestamp'"'"') | last' "${app_tasks}" \
-    || ! grep -Fq 'kubectl logs pod/{{ applications_database_migration_pod_name }} --all-containers=true --previous' "${app_tasks}"; then
-    fail 'Migration startup and failed-Pod evidence must be captured before the fail-closed completion gate.'
+  local api_runtime_wait_line worker_runtime_wait_line workload_apply_line
+  api_runtime_wait_line="$(grep -nF -- '- name: Wait for API runtime ExternalSecret readiness' "${app_tasks}" | cut -d: -f1)"
+  worker_runtime_wait_line="$(grep -nF -- '- name: Wait for worker runtime ExternalSecret readiness' "${app_tasks}" | cut -d: -f1)"
+  workload_apply_line="$(grep -nF -- '- name: Apply selected stateless Learning Platform workloads' "${app_tasks}" | cut -d: -f1)"
+  if [ -z "${api_runtime_wait_line}" ] || [ -z "${worker_runtime_wait_line}" ] || [ -z "${workload_apply_line}" ] \
+    || [ "${api_runtime_wait_line}" -ge "${workload_apply_line}" ] || [ "${worker_runtime_wait_line}" -ge "${workload_apply_line}" ] \
+    || ! grep -Fq "when: \"'api' in deployment_targets\"" "${app_tasks}" \
+    || ! grep -Fq "when: \"'worker' in deployment_targets\"" "${app_tasks}"; then
+    fail 'API and worker runtime ExternalSecret readiness must precede selected workload application.'
   fi
 }
 
@@ -571,8 +479,6 @@ check_ansible_when_installed() {
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       -i "${ANSIBLE_DIR}/inventory/hosts.example.yml" \
       "${ANSIBLE_DIR}/playbooks/site.yml" --syntax-check
-    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
-      "${ANSIBLE_DIR}/roles/applications/tests/migration-job-correlation.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/observability/tests/state-machine.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \

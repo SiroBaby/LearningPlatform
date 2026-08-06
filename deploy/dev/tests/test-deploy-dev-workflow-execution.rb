@@ -91,16 +91,9 @@ health_inventory = jobs.fetch('observability-health').fetch('steps').find { |ste
 ssh_trust = jobs.fetch('deploy-observability').fetch('steps').find { |step| step['name'] == 'Configure SSH trust' }.fetch('run')
 bootstrap = jobs.fetch('deploy-observability').fetch('steps').find { |step| step['name'] == 'Bootstrap observability AWS credential Secret' }.fetch('run')
 recovery_bootstrap = jobs.fetch('recover-observability-pending-install').fetch('steps').find { |step| step['name'] == 'Bootstrap observability AWS credential Secret' }.fetch('run')
-diagnose = jobs.fetch('deploy').fetch('steps').find { |step| step['name'] == 'Diagnose failed database migration gate' }.fetch('run')
 health_gate = jobs.fetch('observability-health').fetch('steps').find { |step| step['name'] == 'Fail health target from sanitized evidence' }.fetch('run')
 
-assert(diagnose.include?('kubectl describe job/database-migrate'), 'migration diagnostics must retain Job description')
-assert(diagnose.include?('kubectl describe pod/'), 'migration diagnostics must capture Pod description before deletion')
-assert(diagnose.include?('kubectl logs pod/'), 'migration diagnostics must capture Pod logs before deletion')
-assert(diagnose.include?('--previous'), 'migration diagnostics must capture previous container logs')
-assert(diagnose.include?('pod-never-started'), 'migration diagnostics must report terminal evidence when no Pod starts')
-assert(diagnose.include?('kubectl get events'), 'migration diagnostics must retain Job events when no Pod starts')
-assert(!diagnose.match?(/kubectl get secret|\.data/), 'migration diagnostics must not read Secret values')
+assert(jobs.fetch('deploy').fetch('steps').none? { |step| step['name'] == 'Diagnose failed database migration gate' }, 'deploy must not retain external migration Job diagnostics')
 
 Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   runner_temp = File.join(directory, 'runner-temp')
@@ -145,7 +138,7 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   assert(JSON.parse(File.read(File.join(health_dir, 'hosts.json'))) == { 'host' => 'dev.example.test', 'user' => 'deploy_user' }, 'health inventory JSON differs')
   assert((File.stat(File.join(health_dir, 'hosts.json')).mode & 0o777) == 0o600, 'health hosts mode must be 0600')
 
-  [ssh_trust, diagnose].each do |script|
+  [ssh_trust].each do |script|
     _stdout, stderr, status = Open3.capture3('bash', '-n', '-c', script)
     assert(status.success?, "workflow shell syntax failed: #{stderr}")
   end

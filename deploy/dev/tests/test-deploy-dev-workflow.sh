@@ -42,6 +42,7 @@ main() {
   reject_match 'DEV_GHCR_(USERNAME|READ_TOKEN)'
   reject_match 'secrets\.DEV_.*(AWS|AIVEN|RUNTIME)'
   reject_match 'site\.yml --tags monitoring'
+  reject_match 'database-migrate|migration-diagnostics|job-name='
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-policy.rb"
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-execution.rb"
   bash "${ROOT_DIR}/deploy/dev/tests/test-observability-health.sh"
