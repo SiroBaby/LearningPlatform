@@ -28,9 +28,9 @@
       - nginx_tls_certificate_path is string
       - nginx_tls_certificate_key_path is string
       - grafana_public_host is string
-      - grafana_public_host == '157.66.101.219'
+      - grafana_public_host == 'grafana.sirobabycloud.io.vn'
       - grafana_ingress_host is string
-      - grafana_ingress_host == 'grafana.observability.internal'
+      - grafana_ingress_host == grafana_public_host
       - learning_platform_namespace is string
       - learning_platform_namespace | length > 0
     fail_msg: k3s_version and learning_platform_namespace must be explicitly configured.

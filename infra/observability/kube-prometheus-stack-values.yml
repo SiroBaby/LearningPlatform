@@ -179,13 +179,18 @@ grafana:
   ingress:
     enabled: true
     hosts:
-      - grafana.observability.internal
+      - grafana.sirobabycloud.io.vn
     path: /
     pathType: Prefix
     tls: []
   grafana.ini:
     server:
-      root_url: https://157.66.101.219/
-      domain: 157.66.101.219
+      root_url: https://grafana.sirobabycloud.io.vn/
+      domain: grafana.sirobabycloud.io.vn
       serve_from_sub_path: false
-      enforce_domain: false
+      enforce_domain: true
+    auth.anonymous:
+      enabled: false
+    security:
+      cookie_secure: true
+      cookie_samesite: lax
