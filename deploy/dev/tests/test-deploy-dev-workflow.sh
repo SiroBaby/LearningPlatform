@@ -31,7 +31,7 @@ main() {
   require_match 'VPS_HOST and VPS_USER must be non-empty'
   require_match 'site\.yml --tags k3s,external_secrets,observability'
   require_match 'if: always\(\)'
-  require_match "github\.event_name == 'workflow_dispatch' && github\.ref == 'refs/heads/develop' && inputs\.target == 'observability'"
+  require_match "github\.ref == 'refs/heads/develop' && \(github\.event_name == 'push' \|\| \(github\.event_name == 'workflow_dispatch' && inputs\.target == 'observability'\)\)"
   require_match "github\.event_name == 'workflow_dispatch' && github\.ref == 'refs/heads/develop' && inputs\.target == 'observability-health'"
   require_match 'deploy/dev/observability-health\.sh'
   require_match 'while IFS= read -r target; do'

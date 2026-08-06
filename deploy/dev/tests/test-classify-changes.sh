@@ -105,6 +105,12 @@ main() {
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/k3s/tasks/main.yml)"
   expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file infra/observability/kube-prometheus-stack-values.yml)"
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/external_secrets/tasks/main.yml)"
