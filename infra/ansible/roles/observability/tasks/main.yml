@@ -22,9 +22,9 @@
       - observability_releases.alloy.chart_version == '1.11.0'
       - observability_resources is mapping
       - observability_aggregate_resources.requests.cpu == '785m'
-      - observability_aggregate_resources.requests.memory == '1266Mi'
+      - observability_aggregate_resources.requests.memory == '1394Mi'
       - observability_aggregate_resources.limits.cpu == '2950m'
-      - observability_aggregate_resources.limits.memory == '2496Mi'
+      - observability_aggregate_resources.limits.memory == '2752Mi'
       - k3s_traefik_http_node_port | int == 32080
       - 32080 in k3s_ingress_ports
       - observability_grafana_external_secret_template is string
