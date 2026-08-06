@@ -96,10 +96,10 @@ grafana:
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
       cpu: 500m
-      memory: 256Mi
+      memory: 512Mi
   persistence:
     type: sts
     enabled: true
@@ -191,6 +191,8 @@ grafana:
       enforce_domain: true
     auth.anonymous:
       enabled: false
+    feature_toggles:
+      kubernetesLogsDrilldown: false
     security:
       cookie_secure: true
       cookie_samesite: lax

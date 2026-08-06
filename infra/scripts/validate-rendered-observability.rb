@@ -14,8 +14,8 @@ end
 require 'optparse'
 
 EXPECTED_NAMESPACE = 'observability'
-EXPECTED_REQUESTS = { 'cpu' => 785, 'memory' => 1266 }.freeze
-EXPECTED_LIMITS = { 'cpu' => 2950, 'memory' => 2496 }.freeze
+EXPECTED_REQUESTS = { 'cpu' => 785, 'memory' => 1394 }.freeze
+EXPECTED_LIMITS = { 'cpu' => 2950, 'memory' => 2752 }.freeze
 LONG_RUNNING_KINDS = %w[DaemonSet Deployment StatefulSet].freeze
 CLUSTER_SCOPED_KINDS = %w[ClusterRole ClusterRoleBinding CustomResourceDefinition].freeze
 EXPECTED_WORKLOAD_CONTAINERS = {
@@ -42,6 +42,11 @@ RELOADER_USER_ID = 65_534
 GRAFANA_CONFIG_MAP = 'learning-platform-monitoring-grafana'
 GRAFANA_PUBLIC_HOST = 'grafana.sirobabycloud.io.vn'
 GRAFANA_PUBLIC_URL = "https://#{GRAFANA_PUBLIC_HOST}/"
+GRAFANA_RESOURCES = {
+  'requests' => { 'cpu' => '100m', 'memory' => '256Mi' },
+  'limits' => { 'cpu' => '500m', 'memory' => '512Mi' }
+}.freeze
+GRAFANA_DISABLED_FEATURE = 'kubernetesLogsDrilldown'
 GRAFANA_STATIC_FILES = %w[grafana.ini datasources.yaml dashboardproviders.yaml].freeze
 GRAFANA_DASHBOARDS = {
   'k8s-resources-cluster' => 'learning-platform-monitori-k8s-resources-cluster',
@@ -157,6 +162,8 @@ class Policy
            content.include?('enforce_domain = true') &&
            content.include?('[auth.anonymous]') &&
            content.include?('enabled = false') &&
+           content.include?('[feature_toggles]') &&
+           content.include?("#{GRAFANA_DISABLED_FEATURE} = false") &&
            content.include?('[security]') &&
            content.include?('cookie_secure = true') &&
            content.include?('cookie_samesite = lax')
@@ -206,6 +213,7 @@ class Policy
     fail_check('Grafana StatefulSet must define exactly four dashboard ConfigMap volumes') unless dashboard_volumes == expected_volumes
 
     grafana = containers_for(statefulsets.first).find { |container| container['name'] == 'grafana' } || {}
+    fail_check('Grafana StatefulSet must use the approved CPU and memory resources') unless grafana['resources'] == GRAFANA_RESOURCES
     mounts = (grafana['volumeMounts'] || []).each_with_object({}) { |mount, result| result[mount['name']] = mount['mountPath'] }
     expected_mounts = GRAFANA_DASHBOARDS.each_with_object({}) { |(provider, _config_map), result| result["dashboards-#{provider}"] = "/var/lib/grafana/dashboards/#{provider}" }
     dashboard_mounts = mounts.slice(*expected_mounts.keys)

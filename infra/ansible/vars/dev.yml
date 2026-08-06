@@ -111,8 +111,8 @@ observability_resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
   grafana:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {cpu: 500m, memory: 256Mi}
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
   kube_state_metrics:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
@@ -129,5 +129,5 @@ observability_resources:
     requests: {cpu: 10m, memory: 50Mi}
     limits: {cpu: 100m, memory: 64Mi}
 observability_aggregate_resources:
-  requests: {cpu: 785m, memory: 1266Mi}
-  limits: {cpu: 2950m, memory: 2496Mi}
+  requests: {cpu: 785m, memory: 1394Mi}
+  limits: {cpu: 2950m, memory: 2752Mi}

@@ -132,6 +132,18 @@ mutations = {
   'second ingress' => monitoring + ingress,
   'wrong ingress port' => monitoring.sub('number: 80', 'number: 443'),
   'ingress TLS' => monitoring.sub("rules:\n", "tls: [{hosts: [grafana.observability.internal]}]\n  rules:\n"),
+  'wrong Grafana root URL' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('https://grafana.sirobabycloud.io.vn/', 'https://wrong.example/') },
+  'enabled Kubernetes Logs Drilldown' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('kubernetesLogsDrilldown = false', 'kubernetesLogsDrilldown = true') },
+  'wrong Grafana memory request' => mutate_grafana_statefulset(monitoring) do |grafana|
+    mutated = Marshal.load(Marshal.dump(grafana))
+    grafana_container!(mutated).dig('resources', 'requests')['memory'] = '128Mi'
+    mutated
+  end,
+  'wrong Grafana memory limit' => mutate_grafana_statefulset(monitoring) do |grafana|
+    mutated = Marshal.load(Marshal.dump(grafana))
+    grafana_container!(mutated).dig('resources', 'limits')['memory'] = '256Mi'
+    mutated
+  end,
   'missing Grafana datasource provisioning' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('datasources.yaml:', 'datasources-missing.yaml:') },
   'wrong Grafana datasource URL' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('http://prometheus-operated.observability.svc.cluster.local:9090', 'http://wrong-prometheus') },
   'missing Grafana datasource' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('name: Loki', 'name: Missing') },

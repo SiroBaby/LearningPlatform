@@ -134,8 +134,8 @@ Tổng storage cục bộ cần dành riêng cho observability là 6Gi. Vì stor
 
 `infra/ansible/vars/dev.yml` khai báo tổng tài nguyên observability như sau:
 
-- requests tổng: `cpu 785m`, `memory 1266Mi`
-- limits tổng: `cpu 2950m`, `memory 2496Mi`
+- requests tổng: `cpu 785m`, `memory 1394Mi`
+- limits tổng: `cpu 2950m`, `memory 2752Mi`
 
 Chart values pin resource chi tiết cho Prometheus, Grafana, Loki, Alloy, Prometheus Operator, config reloaders, kube-state-metrics và node-exporter. Nếu host không còn chỗ cho request tối thiểu này, không được tiếp tục cutover.
 

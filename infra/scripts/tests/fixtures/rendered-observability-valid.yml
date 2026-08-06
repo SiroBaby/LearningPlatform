@@ -14,6 +14,8 @@ data:
     enforce_domain = true
     [auth.anonymous]
     enabled = false
+    [feature_toggles]
+    kubernetesLogsDrilldown = false
     [security]
     cookie_secure = true
     cookie_samesite = lax
@@ -126,7 +128,7 @@ spec:
               mountPath: /var/lib/grafana/dashboards/k8s-resources-namespace
             - name: dashboards-nodes
               mountPath: /var/lib/grafana/dashboards/nodes
-          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 500m, memory: 256Mi}}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
 ---
 apiVersion: apps/v1
 kind: Deployment
