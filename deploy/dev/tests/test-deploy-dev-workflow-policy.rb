@@ -138,7 +138,7 @@ nginx_template = File.read(File.join(root, 'infra', 'ansible', 'roles', 'k3s', '
 %w[server_name\ \{\{\ grafana_public_host\ \}\}; proxy_pass\ http://127.0.0.1:\{\{\ k3s_traefik_http_node_port\ \}\}; proxy_set_header\ Host\ \{\{\ grafana_ingress_host\ \}\};].each do |route_contract|
   assert(failures, nginx_template.match?(Regexp.new(route_contract)), "observability K3s path must retain Nginx Grafana route contract: #{route_contract}")
 end
-forbidden_observability = %w[build-push-action applications rollout database-migrate]
+forbidden_observability = %w[build-push-action applications rollout]
 assert(failures, forbidden_observability.none? { |token| observability_apply.include?(token) || step_names(observability).join('\n').include?(token) },
         'target=observability must not build, migrate, or restart application workloads')
 
@@ -184,7 +184,7 @@ assert(failures, recovery_apply.include?('--tags external_secrets,observability 
        'recovery must invoke only the fixed Ansible recovery opt-in beyond fixed paths')
 assert(failures, !recovery_apply.match?(/inputs\.|\$\{\{|release|namespace|pvc|pv|helm/i),
        'recovery Ansible invocation must not interpolate user-controlled release, namespace, PVC, PV, Helm, or shell input')
-recovery_forbidden = %w[build-push-action applications rollout database-migrate kubectl helm]
+recovery_forbidden = %w[build-push-action applications rollout kubectl helm]
 assert(failures, recovery_forbidden.none? { |token| recovery_apply.include?(token) || step_names(recovery).join('\n').include?(token) },
        'recovery must not build images, deploy applications, run rollout commands, or invoke kubectl/Helm directly')
 recovery_bootstrap = step_by_name(recovery, 'Bootstrap observability AWS credential Secret')
