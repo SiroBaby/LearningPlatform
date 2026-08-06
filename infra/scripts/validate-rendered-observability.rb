@@ -14,8 +14,8 @@ end
 require 'optparse'
 
 EXPECTED_NAMESPACE = 'observability'
-EXPECTED_REQUESTS = { 'cpu' => 785, 'memory' => 1394 }.freeze
-EXPECTED_LIMITS = { 'cpu' => 2950, 'memory' => 2752 }.freeze
+EXPECTED_REQUESTS = { 'cpu' => 835, 'memory' => 1458 }.freeze
+EXPECTED_LIMITS = { 'cpu' => 3050, 'memory' => 2880 }.freeze
 LONG_RUNNING_KINDS = %w[DaemonSet Deployment StatefulSet].freeze
 CLUSTER_SCOPED_KINDS = %w[ClusterRole ClusterRoleBinding CustomResourceDefinition].freeze
 EXPECTED_WORKLOAD_CONTAINERS = {
@@ -67,6 +67,12 @@ GRAFANA_DATASOURCES = {
     'type' => 'loki',
     'url' => 'http://learning-platform-loki.observability.svc.cluster.local:3100'
   }
+}.freeze
+ALERTMANAGER_NAME = 'learning-platform-monitori-alertmanager'
+ALERTMANAGER_CONFIG_SECRET = 'alertmanager-telegram-config'
+ALERTMANAGER_RESOURCES = {
+  'requests' => { 'cpu' => '50m', 'memory' => '64Mi' },
+  'limits' => { 'cpu' => '100m', 'memory' => '128Mi' }
 }.freeze
 
 options = { inputs: [], junit: nil }
@@ -148,6 +154,7 @@ class Policy
     validate_ingress(document) if kind(document) == 'Ingress'
     validate_secret(document) if kind(document) == 'Secret'
     validate_persistence(document)
+    validate_alertmanager(document)
     validate_long_running_resources(document)
     validate_disabled_components(document)
     validate_alloy(document)
@@ -293,7 +300,28 @@ class Policy
       validate_claim(storage, "Prometheus/#{name(document)}")
       fail_check("Prometheus/#{name(document)} retention must be 7d") unless spec['retention'] == '7d'
       fail_check("Prometheus/#{name(document)} retentionSize must be 2500MB") unless spec['retentionSize'] == '2500MB'
+      alertmanagers = value(spec, 'alerting', 'alertmanagers')
+      expected_alertmanager = [{
+        'namespace' => EXPECTED_NAMESPACE,
+        'name' => ALERTMANAGER_NAME,
+        'port' => 'http-web',
+        'pathPrefix' => '/',
+        'apiVersion' => 'v2'
+      }]
+      fail_check("Prometheus/#{name(document)} must target the enabled Alertmanager") unless alertmanagers == expected_alertmanager
     end
+  end
+
+  def validate_alertmanager(document)
+    return unless kind(document) == 'Alertmanager'
+    spec = document['spec'] || {}
+    fail_check("Alertmanager/#{name(document)} must be the single configured instance") unless name(document) == ALERTMANAGER_NAME
+    fail_check("Alertmanager/#{name(document)} must run one replica") unless spec['replicas'] == 1
+    fail_check("Alertmanager/#{name(document)} must use Secret/#{ALERTMANAGER_CONFIG_SECRET}") unless spec['configSecret'] == ALERTMANAGER_CONFIG_SECRET
+    fail_check("Alertmanager/#{name(document)} must use approved CPU and memory resources") unless spec['resources'] == ALERTMANAGER_RESOURCES
+    fail_check("Alertmanager/#{name(document)} must not create persistent storage") unless (spec['storage'] || {}).empty?
+    add_resources(spec['resources']['requests'], :requests, "Alertmanager/#{name(document)}")
+    add_resources(spec['resources']['limits'], :limits, "Alertmanager/#{name(document)}")
   end
 
   def validate_claim(spec, label)
@@ -371,7 +399,7 @@ class Policy
 
   def validate_disabled_components(document)
     return unless %w[Deployment StatefulSet DaemonSet Service PersistentVolumeClaim].include?(kind(document))
-    fail_check("disabled component workload rendered: #{kind(document)}/#{name(document)}") if name(document).match?(/alertmanager|minio/i)
+    fail_check("disabled component workload rendered: #{kind(document)}/#{name(document)}") if name(document).match?(/minio/i)
   end
 
   def validate_alloy(document)
@@ -444,7 +472,7 @@ class Policy
   end
 
   def validate_required_resources
-    required = { 'Prometheus' => 1, 'Ingress' => 1 }
+    required = { 'Prometheus' => 1, 'Alertmanager' => 1, 'Ingress' => 1 }
     required.each do |resource_kind, count|
       actual = @documents.count { |document| kind(document) == resource_kind }
       fail_check("render must contain exactly #{count} #{resource_kind} resource(s), got #{actual}") unless actual == count

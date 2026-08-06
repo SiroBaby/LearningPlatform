@@ -104,6 +104,14 @@ def mutate_grafana_statefulset(monitoring)
   mutate_structured_document(monitoring, 'Grafana StatefulSet', predicate) { |document| yield(document) }
 end
 
+def mutate_alertmanager(monitoring)
+  predicate = lambda do |document|
+    document.is_a?(Hash) && document['kind'] == 'Alertmanager' &&
+      document.dig('metadata', 'name') == 'learning-platform-monitori-alertmanager'
+  end
+  mutate_structured_document(monitoring, 'Alertmanager', predicate) { |alertmanager| yield(alertmanager) }
+end
+
 def grafana_container!(statefulset)
   containers = statefulset.dig('spec', 'template', 'spec', 'containers')
   abort 'ERROR: Grafana StatefulSet containers are missing.' unless containers.is_a?(Array)
@@ -179,6 +187,26 @@ mutations = {
     mutated = Marshal.load(Marshal.dump(grafana))
     target = grafana_container!(mutated)['volumeMounts'].find { |entry| entry['name'] == 'dashboards-nodes' }
     target['mountPath'] = '/var/lib/grafana/dashboards/wrong'
+    mutated
+  end,
+  'Alertmanager replica count' => mutate_alertmanager(monitoring) do |alertmanager|
+    mutated = Marshal.load(Marshal.dump(alertmanager))
+    mutated['spec']['replicas'] = 2
+    mutated
+  end,
+  'Alertmanager configuration Secret' => mutate_alertmanager(monitoring) do |alertmanager|
+    mutated = Marshal.load(Marshal.dump(alertmanager))
+    mutated['spec']['configSecret'] = 'literal-alertmanager-config'
+    mutated
+  end,
+  'Alertmanager storage' => mutate_alertmanager(monitoring) do |alertmanager|
+    mutated = Marshal.load(Marshal.dump(alertmanager))
+    mutated['spec']['storage'] = { 'emptyDir' => {} }
+    mutated
+  end,
+  'Prometheus Alertmanager target' => mutate_structured_document(monitoring, 'Prometheus Alertmanager target', lambda { |document| document.is_a?(Hash) && document['kind'] == 'Prometheus' }) do |prometheus|
+    mutated = Marshal.load(Marshal.dump(prometheus))
+    mutated.dig('spec', 'alerting', 'alertmanagers').first['name'] = 'wrong-alertmanager'
     mutated
   end,
   'reloader drift' => mutate_operator_document(monitoring) { |operator| operator.sub('--config-reloader-cpu-request=25m', '--config-reloader-cpu-request=24m') },

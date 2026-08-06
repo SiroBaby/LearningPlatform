@@ -1,7 +1,18 @@
 ---
 alertmanager:
-  enabled: false
+  enabled: true
   forceDeployDashboards: false
+  alertmanagerSpec:
+    replicas: 1
+    useExistingSecret: true
+    configSecret: alertmanager-telegram-config
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
 
 windowsMonitoring:
   enabled: false
