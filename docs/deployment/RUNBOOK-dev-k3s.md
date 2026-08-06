@@ -75,6 +75,34 @@ sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-w
 sudo k3s kubectl -n learning-platform-dev get externalsecret learning-platform-swagger-runtime -o yaml
 ```
 
+### 4.1. Chẩn đoán startup migration của backend
+
+Khi rollout `api` hoặc `worker` không lên, ưu tiên xác nhận startup migration ở
+backend trước khi coi đây là lỗi readiness chung. Với contract hiện tại, hai pod
+này tự chạy pending tracked SQL migration trước readiness; nếu migration fail thì
+pod phải fail-closed, không được báo healthy rồi mới lỗi sau.
+
+Các lệnh đọc trạng thái ngắn gọn cần chạy là:
+
+```bash
+sudo k3s kubectl -n learning-platform-dev get pods
+sudo k3s kubectl -n learning-platform-dev get events --sort-by=.lastTimestamp
+sudo k3s kubectl -n learning-platform-dev rollout status deployment/api --timeout=180s
+sudo k3s kubectl -n learning-platform-dev rollout status deployment/worker --timeout=180s
+sudo k3s kubectl -n learning-platform-dev logs deployment/api --tail=200
+sudo k3s kubectl -n learning-platform-dev logs deployment/worker --tail=200
+```
+
+Diễn giải vận hành cần giữ đúng các điểm sau:
+
+1. Chỉ promote rollout sau khi toàn bộ deployment được chọn đều healthy.
+2. Nếu `api` hoặc `worker` chưa qua readiness sau khi chạy migration, dùng pod
+   status, event và application log để xác nhận starter nào đang chờ lock,
+   starter nào fail ở migration, và starter nào đã chạy xong.
+3. Không có automatic DB rollback khi rollout backend lỗi sau khi migration đã
+   áp. Xử lý tiếp theo phải dựa trên expand/contract compatibility của schema và
+   evidence runtime thực tế.
+
 ## 5. Observability ownership mới
 
 ### 5.1. Release pin phải đúng

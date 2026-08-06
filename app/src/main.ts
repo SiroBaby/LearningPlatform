@@ -7,8 +7,10 @@ import { createApplicationLogger } from './common/logging/application-logger.fac
 import { createRequestLifecycleMiddleware } from './common/logging/request-lifecycle.middleware';
 import { ApplicationConfigService } from './config/application-config.service';
 import { createSwaggerBasicAuthMiddleware } from './common/swagger/swagger-basic-auth.middleware';
+import { runStartupMigrations } from './database/migrate';
 
-async function bootstrap(): Promise<void> {
+export async function bootstrapApi(): Promise<void> {
+  await runStartupMigrations();
   const logger = createApplicationLogger({ environment: process.env.NODE_ENV });
   const app = await NestFactory.create(AppModule, { logger });
   app.enableShutdownHooks();
@@ -65,10 +67,13 @@ async function bootstrap(): Promise<void> {
   logger.log({ event: 'api.started', port: application.port, runtime: 'api' }, 'ApiBootstrap');
 }
 
-void bootstrap().catch(() => {
-  createApplicationLogger({ environment: process.env.NODE_ENV }).error(
-    { event: 'api.bootstrap.failed', runtime: 'api' },
-    undefined,
-    'ApiBootstrap',
-  );
-});
+if (require.main === module) {
+  void bootstrapApi().catch(() => {
+    createApplicationLogger({ environment: process.env.NODE_ENV }).error(
+      { event: 'api.bootstrap.failed', runtime: 'api' },
+      undefined,
+      'ApiBootstrap',
+    );
+    process.exitCode = 1;
+  });
+}

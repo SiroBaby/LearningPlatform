@@ -6,7 +6,7 @@ Setup guide: `../docs/deployment/GUIDE-dev-k3s.md`.
 
 Operations runbook: `../docs/deployment/RUNBOOK-dev-k3s.md`.
 
-`web`, `api` và `worker` vẫn giữ contract stateless: không tạo PostgreSQL, không tạo PersistentVolume, PersistentVolumeClaim (PVC), StatefulSet, Terraform, và không mở public ingress cho worker. Ngoại lệ duy nhất là scope `infra/observability/`, nơi chart values hoặc manifest render được phép tạo storage cục bộ cho Prometheus, Grafana và Loki theo contract retention (giữ dữ liệu) có kiểm soát. Trước khi rollout backend đã chọn, baseline vẫn chạy SQL migration hiện có bằng bounded one-shot K3s Job và chặn apply workload nếu Job đó không hoàn tất thành công. `deploy/` Compose còn giữ làm fallback tài liệu tham chiếu, nhưng không còn là nhánh rollback vận hành cho observability đã bị xoá theo nhánh `deleted` trong cutover contract hiện tại.
+`web`, `api` và `worker` vẫn giữ contract stateless: không tạo PostgreSQL, không tạo PersistentVolume, PersistentVolumeClaim (PVC), StatefulSet, Terraform, và không mở public ingress cho worker. Ngoại lệ duy nhất là scope `infra/observability/`, nơi chart values hoặc manifest render được phép tạo storage cục bộ cho Prometheus, Grafana và Loki theo contract retention (giữ dữ liệu) có kiểm soát. Với backend đã chọn rollout, pod `api` và `worker` tự chạy pending tracked SQL migration tại startup trước readiness bằng cùng bounded runner trong release image; nếu migration không hoàn tất sạch thì pod phải fail-closed và không được coi là healthy. `deploy/` Compose còn giữ làm fallback tài liệu tham chiếu, nhưng không còn là nhánh rollback vận hành cho observability đã bị xoá theo nhánh `deleted` trong cutover contract hiện tại.
 
 ## Layout
 

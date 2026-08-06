@@ -53,6 +53,38 @@ describe('buildClientConfig', () => {
     });
   });
 
+  it.each([undefined, 'disabled'])('rejects DB_SSL_MODE=%s in production', (sslMode) => {
+    // Given
+    const environment = {
+      DB_SSL_MODE: sslMode,
+      NODE_ENV: 'production',
+    };
+
+    // When
+    const buildConfig = () => buildClientConfig(environment);
+
+    // Then
+    expect(buildConfig).toThrow('DB_SSL_MODE must be verify-ca when NODE_ENV is production');
+  });
+
+  it('preserves verified TLS settings in production', () => {
+    // Given
+    const certificateAuthority = '-----BEGIN CERTIFICATE-----\ncertificate\n-----END CERTIFICATE-----';
+
+    // When
+    const config = buildClientConfig({
+      DB_SSL_CA: certificateAuthority,
+      DB_SSL_MODE: 'verify-ca',
+      NODE_ENV: 'production',
+    });
+
+    // Then
+    expect(config.ssl).toEqual({
+      ca: certificateAuthority,
+      rejectUnauthorized: true,
+    });
+  });
+
   it.each([undefined, '', '  \n\t  '])(
     'rejects a blank DB_SSL_CA when DB_SSL_MODE is verify-ca',
     (certificateAuthority) => {

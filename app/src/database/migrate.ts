@@ -49,6 +49,7 @@ interface MigrationEnvironment {
   readonly DB_SSL_CA?: string;
   readonly DB_SSL_MODE?: string;
   readonly DB_USER?: string;
+  readonly NODE_ENV?: string;
 }
 
 export interface MigrationLockClient {
@@ -98,6 +99,9 @@ export function buildClientConfig(environment: MigrationEnvironment): ClientConf
   const sslMode = environment.DB_SSL_MODE ?? 'disabled';
   if (sslMode !== 'disabled' && sslMode !== 'verify-ca') {
     throw new Error('DB_SSL_MODE must be disabled or verify-ca');
+  }
+  if (environment.NODE_ENV === 'production' && sslMode !== 'verify-ca') {
+    throw new Error('DB_SSL_MODE must be verify-ca when NODE_ENV is production');
   }
   const config: ClientConfig = {
     connectionTimeoutMillis: CONNECTION_TIMEOUT_MILLIS,
@@ -372,11 +376,11 @@ async function runMigration(client: Client & MigrationRuntimeClient, cmd: string
   });
 }
 
-async function main(): Promise<void> {
+async function runMigrationCommand(command: string): Promise<void> {
   const client = buildClient();
   let migrationFailure: unknown;
   try {
-    await runWithinMigrationDeadline(client, () => runMigration(client, process.argv[2] ?? 'up'));
+    await runWithinMigrationDeadline(client, () => runMigration(client, command));
   } catch (error) {
     migrationFailure = error;
     throw error;
@@ -387,6 +391,19 @@ async function main(): Promise<void> {
       console.info('[migration] stage=complete');
     }
   }
+}
+
+export async function runStartupMigrations(): Promise<void> {
+  await runMigrationCommand('up');
+}
+
+async function main(): Promise<void> {
+  const command = process.argv[2] ?? 'up';
+  if (command === 'up') {
+    await runStartupMigrations();
+    return;
+  }
+  await runMigrationCommand(command);
 }
 
 // Chỉ chạy CLI khi gọi trực tiếp (node/ts-node migrate.ts), KHÔNG khi bị import (test).
