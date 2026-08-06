@@ -269,7 +269,7 @@ check_k3s_edge_contract() {
 
   if ! grep -Fq 'server_name {{ grafana_public_host }};' "${nginx_template}" \
     || ! grep -Fq 'proxy_pass http://127.0.0.1:{{ k3s_traefik_http_node_port }};' "${nginx_template}" \
-    || ! grep -Fq 'proxy_set_header Host {{ grafana_ingress_host }};' "${nginx_template}" \
+    || ! grep -Fq 'proxy_set_header Host $host;' "${nginx_template}" \
     || ! grep -Fq 'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' "${nginx_template}" \
     || ! grep -Fq 'proxy_set_header X-Forwarded-Host $host;' "${nginx_template}" \
     || ! grep -Fq 'proxy_set_header X-Forwarded-Proto https;' "${nginx_template}" \
@@ -501,6 +501,7 @@ check_ansible_when_installed() {
 
 check_application_workloads_are_stateless
 check_observability_workloads
+ruby "${ANSIBLE_DIR}/roles/k3s/tests/test-nginx-grafana-route.rb"
 check_observability_release_policy_when_present
 check_observability_workflow_bootstrap_contract
 check_plaintext_secrets

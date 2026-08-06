@@ -62,6 +62,10 @@ observability_results = { 'infra-quality' => 'success' }
 recovery_confirmation = 'RECOVER_MONITORING_PENDING_INSTALL_REVISION_1'
 assert(failures, workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability')),
        'observability dispatch on develop must evaluate the YAML deployment expression to true')
+assert(failures, workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'push', ref: 'refs/heads/develop', target: '')),
+       'classified observability changes pushed to develop must run the dedicated deployment job')
+assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs.merge('observability' => 'false'), results: observability_results, event_name: 'push', ref: 'refs/heads/develop', target: '')),
+       'unclassified push changes must not run the observability deployment job')
 assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: observability_results, event_name: 'workflow_dispatch', ref: 'refs/heads/feature/test', target: 'observability')),
        'observability dispatch on feature refs must evaluate the YAML deployment expression to false')
 assert(failures, !workflow_job_runs?(jobs, 'deploy-observability', workflow_context(outputs: observability_outputs, results: { 'infra-quality' => 'skipped' }, event_name: 'workflow_dispatch', ref: 'refs/heads/develop', target: 'observability')),
@@ -116,8 +120,8 @@ assert(failures, deploy.fetch('if').include?("needs.infra-quality.result == 'suc
 
 observability = jobs.fetch('deploy-observability')
 observability_if = observability.fetch('if')
-assert(failures, observability_if.include?("github.event_name == 'workflow_dispatch'") && observability_if.include?("inputs.target == 'observability'"),
-        'target=observability must only be remotely deployable by explicit dispatch')
+assert(failures, observability_if.include?("github.event_name == 'push'") && observability_if.include?("inputs.target == 'observability'"),
+       'target=observability must deploy classified pushes and explicit dispatches only')
 assert(failures, observability_if.include?("github.ref == 'refs/heads/develop'"),
        'target=observability must only be remotely deployable from refs/heads/develop')
 assert(failures, observability_if.include?("needs.changes.outputs.observability == 'true'"),
@@ -135,7 +139,7 @@ selected_observability_roles = playbook.fetch('roles').select { |role| (role.fet
 assert(failures, selected_observability_roles == %w[k3s external_secrets observability],
         'observability Ansible tags must select only K3s edge, External Secrets, and observability roles')
 nginx_template = File.read(File.join(root, 'infra', 'ansible', 'roles', 'k3s', 'templates', 'nginx-learning-platform.conf.j2'))
-%w[server_name\ \{\{\ grafana_public_host\ \}\}; proxy_pass\ http://127.0.0.1:\{\{\ k3s_traefik_http_node_port\ \}\}; proxy_set_header\ Host\ \{\{\ grafana_ingress_host\ \}\};].each do |route_contract|
+%w[server_name\ \{\{\ grafana_public_host\ \}\}; proxy_pass\ http://127.0.0.1:\{\{\ k3s_traefik_http_node_port\ \}\}; proxy_set_header\ Host\ \$host;].each do |route_contract|
   assert(failures, nginx_template.match?(Regexp.new(route_contract)), "observability K3s path must retain Nginx Grafana route contract: #{route_contract}")
 end
 forbidden_observability = %w[build-push-action applications rollout]
