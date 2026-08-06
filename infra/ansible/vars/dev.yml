@@ -42,6 +42,8 @@ ssm_parameter_keys:
   swagger_password: /learning-platform/dev/swagger-password
   grafana_admin_user: /learning-platform/dev/grafana-admin-user
   grafana_admin_password: /learning-platform/dev/grafana-admin-password
+  alertmanager_telegram_bot_token: /learning-platform/dev/alertmanager-telegram-bot-token
+  alertmanager_telegram_chat_id: /learning-platform/dev/alertmanager-telegram-chat-id
 
 ghcr_pull_secret_name: learning-platform-dev-ghcr
 web_public_host: learningplatform-dev.sirobabycloud.io.vn
@@ -66,6 +68,7 @@ monitoring_enabled: false
 observability_namespace: observability
 observability_aws_credentials_secret_name: observability-aws-credentials
 grafana_admin_secret_name: grafana-admin
+alertmanager_config_secret_name: alertmanager-telegram-config
 grafana_public_host: grafana.sirobabycloud.io.vn
 grafana_ingress_host: grafana.sirobabycloud.io.vn
 
@@ -110,6 +113,9 @@ observability_resources:
   prometheus_operator:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
+  alertmanager:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 100m, memory: 128Mi}
   grafana:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: 500m, memory: 512Mi}
@@ -129,5 +135,5 @@ observability_resources:
     requests: {cpu: 10m, memory: 50Mi}
     limits: {cpu: 100m, memory: 64Mi}
 observability_aggregate_resources:
-  requests: {cpu: 785m, memory: 1394Mi}
-  limits: {cpu: 2950m, memory: 2752Mi}
+  requests: {cpu: 835m, memory: 1458Mi}
+  limits: {cpu: 3050m, memory: 2880Mi}

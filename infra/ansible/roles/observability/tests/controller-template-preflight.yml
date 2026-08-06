@@ -58,6 +58,27 @@
             | map(attribute='remoteRef.key') | list
             == [ssm_parameter_keys.grafana_admin_user, ssm_parameter_keys.grafana_admin_password]
 
+    - name: Require the Alertmanager template to render the exact secret contract
+      ansible.builtin.assert:
+        that:
+          - observability_alertmanager_eso_definition.kind == 'ExternalSecret'
+          - observability_alertmanager_eso_definition.metadata.name == alertmanager_config_secret_name
+          - observability_alertmanager_eso_definition.metadata.namespace == observability_namespace
+          - observability_alertmanager_eso_definition.spec.secretStoreRef.name == 'aws-parameter-store'
+          - observability_alertmanager_eso_definition.spec.target.name == alertmanager_config_secret_name
+          - observability_alertmanager_eso_definition.spec.target.template.engineVersion == 'v2'
+          - observability_alertmanager_eso_definition.spec.target.template.mergePolicy == 'Replace'
+          - >-
+            observability_alertmanager_eso_definition.spec.data
+            | map(attribute='remoteRef.key') | list
+            == [ssm_parameter_keys.alertmanager_telegram_bot_token, ssm_parameter_keys.alertmanager_telegram_chat_id]
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+            is search('bot_token:\s+\x27\{\{ \.telegram_bot_token \}\}\x27')
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+            is search('chat_id:\s+\{\{ \.telegram_chat_id \}\}')
+
     - name: Require the controller preflight to precede every Helm action
       ansible.builtin.assert:
         that:
@@ -115,6 +136,42 @@
         that:
           - observability_expected_template_preflight_failed
         fail_msg: Missing controller template unexpectedly allowed the observability role to continue.
+
+- name: Verify a missing Alertmanager controller template blocks before Helm
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    ansible_architecture: x86_64
+    observability_alertmanager_external_secret_template: /tmp/learning-platform-missing-alertmanager-external-secret.yaml.j2
+    observability_helm_action_count: 0
+    observability_expected_alertmanager_template_preflight_failed: false
+  tasks:
+    - name: Run the observability role with a missing Alertmanager controller template
+      block:
+        - name: Include observability role with a missing Alertmanager controller template
+          ansible.builtin.include_role:
+            name: observability
+      rescue:
+        - name: Require the Alertmanager preflight failure before Helm mutation
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Fail before Helm when the Alertmanager ExternalSecret contract is absent'
+              - observability_helm_action_count == 0
+            fail_msg: Missing Alertmanager template must fail before any Helm action.
+
+        - name: Record the expected Alertmanager controller template preflight failure
+          ansible.builtin.set_fact:
+            observability_expected_alertmanager_template_preflight_failed: true
+
+    - name: Require the missing Alertmanager template to fail before Helm
+      ansible.builtin.assert:
+        that:
+          - observability_expected_alertmanager_template_preflight_failed
+        fail_msg: Missing Alertmanager template unexpectedly allowed the observability role to continue.
 
 - name: Verify malformed Grafana ESO template fixtures fail before Kubernetes mutation
   hosts: localhost

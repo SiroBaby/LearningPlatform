@@ -21,13 +21,14 @@
       - observability_releases.alloy.chart == 'grafana/alloy'
       - observability_releases.alloy.chart_version == '1.11.0'
       - observability_resources is mapping
-      - observability_aggregate_resources.requests.cpu == '785m'
-      - observability_aggregate_resources.requests.memory == '1394Mi'
-      - observability_aggregate_resources.limits.cpu == '2950m'
-      - observability_aggregate_resources.limits.memory == '2752Mi'
+      - observability_aggregate_resources.requests.cpu == '835m'
+      - observability_aggregate_resources.requests.memory == '1458Mi'
+      - observability_aggregate_resources.limits.cpu == '3050m'
+      - observability_aggregate_resources.limits.memory == '2880Mi'
       - k3s_traefik_http_node_port | int == 32080
       - 32080 in k3s_ingress_ports
       - observability_grafana_external_secret_template is string
+      - observability_alertmanager_external_secret_template is string
     fail_msg: >-
       Observability requires the canonical three-release, resource, Grafana
       ExternalSecret, and shared Traefik NodePort contract.
@@ -64,6 +65,26 @@
     - observability_grafana_external_secret_template_file.stat.isreg
     - observability_grafana_external_secret_template_file.stat.readable
 
+- name: Check Alertmanager ExternalSecret contract template is available before Helm
+  ansible.builtin.stat:
+    path: '{{ observability_alertmanager_external_secret_template }}'
+  register: observability_alertmanager_external_secret_template_file
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Read Alertmanager ExternalSecret contract template from the controller
+  ansible.builtin.slurp:
+    src: '{{ observability_alertmanager_external_secret_template }}'
+  register: observability_alertmanager_external_secret_template_content
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when:
+    - observability_alertmanager_external_secret_template_file.stat.exists
+    - observability_alertmanager_external_secret_template_file.stat.isreg
+    - observability_alertmanager_external_secret_template_file.stat.readable
+
 - name: Fail before Helm when the Grafana ExternalSecret contract is absent
   ansible.builtin.assert:
     that:
@@ -84,6 +105,25 @@
     fail_msg: >-
       Todo 7's Grafana ExternalSecret template and exact non-secret variable
       contract must exist before any observability Helm action.
+
+- name: Fail before Helm when the Alertmanager ExternalSecret contract is absent
+  ansible.builtin.assert:
+    that:
+      - observability_alertmanager_external_secret_template_file.stat.exists
+      - observability_alertmanager_external_secret_template_file.stat.isreg
+      - observability_alertmanager_external_secret_template_file.stat.readable
+      - observability_alertmanager_external_secret_template_content.content | b64decode | trim | length > 0
+      - observability_alertmanager_external_secret_template_content.content | b64decode is search('kind:\s+ExternalSecret')
+      - >-
+        observability_alertmanager_external_secret_template_content.content | b64decode
+        is search('name:\s+\{\{\s*alertmanager_config_secret_name\s*\}\}')
+      - alertmanager_config_secret_name is string
+      - alertmanager_config_secret_name | length > 0
+      - ssm_parameter_keys.alertmanager_telegram_bot_token is match('^/')
+      - ssm_parameter_keys.alertmanager_telegram_chat_id is match('^/')
+    fail_msg: >-
+      Alertmanager requires its externally managed Telegram configuration
+      Secret contract and exact SSM parameter paths before any Helm action.
 
 - name: Render Grafana ESO documents on the controller before Kubernetes mutation
   ansible.builtin.set_fact:
@@ -111,6 +151,40 @@
     fail_msg: >-
       Grafana ESO template must render exactly the expected SecretStore and
       ExternalSecret documents before Kubernetes mutation.
+  no_log: true
+
+- name: Render Alertmanager ESO document on the controller before Kubernetes mutation
+  ansible.builtin.set_fact:
+    observability_alertmanager_eso_definition: >-
+      {{ lookup('template', observability_alertmanager_external_secret_template)
+         | from_yaml }}
+  no_log: true
+
+- name: Validate rendered Alertmanager ESO document before Kubernetes mutation
+  ansible.builtin.assert:
+    that:
+      - observability_alertmanager_eso_definition.kind == 'ExternalSecret'
+      - observability_alertmanager_eso_definition.apiVersion == 'external-secrets.io/v1beta1'
+      - observability_alertmanager_eso_definition.metadata.name == alertmanager_config_secret_name
+      - observability_alertmanager_eso_definition.metadata.namespace == observability_namespace
+      - observability_alertmanager_eso_definition.spec.target.name == alertmanager_config_secret_name
+      - observability_alertmanager_eso_definition.spec.target.creationPolicy == 'Owner'
+      - observability_alertmanager_eso_definition.spec.target.template.engineVersion == 'v2'
+      - observability_alertmanager_eso_definition.spec.target.template.mergePolicy == 'Replace'
+      - observability_alertmanager_eso_definition.spec.data | length == 2
+      - >-
+        observability_alertmanager_eso_definition.spec.data
+        | map(attribute='remoteRef.key') | list
+        == [ssm_parameter_keys.alertmanager_telegram_bot_token, ssm_parameter_keys.alertmanager_telegram_chat_id]
+      - >-
+        observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+        is search('bot_token:\s+\x27\{\{ \.telegram_bot_token \}\}\x27')
+      - >-
+        observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+        is search('chat_id:\s+\{\{ \.telegram_chat_id \}\}')
+    fail_msg: >-
+      Alertmanager ESO template must render exactly one externally managed
+      configuration Secret without literal Telegram credentials.
   no_log: true
 
 - name: Render observability check-mode decisions without mutation
@@ -164,6 +238,13 @@
     definition: '{{ observability_grafana_eso_definitions }}'
   no_log: true
 
+- name: Apply Alertmanager ESO configuration contract
+  kubernetes.core.k8s:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    state: present
+    definition: '{{ observability_alertmanager_eso_definition }}'
+  no_log: true
+
 - name: Wait for Grafana ExternalSecret readiness
   kubernetes.core.k8s_info:
     kubeconfig: '{{ observability_kubeconfig }}'
@@ -177,6 +258,24 @@
   until: >-
     observability_grafana_external_secret.resources | length == 1 and
     (observability_grafana_external_secret.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  no_log: true
+
+- name: Wait for Alertmanager ExternalSecret readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    namespace: '{{ observability_namespace }}'
+    name: '{{ alertmanager_config_secret_name }}'
+  register: observability_alertmanager_external_secret
+  retries: 30
+  delay: 2
+  until: >-
+    observability_alertmanager_external_secret.resources | length == 1 and
+    (observability_alertmanager_external_secret.resources[0].status.conditions | default([])
       | selectattr('type', 'equalto', 'Ready')
       | selectattr('status', 'equalto', 'True')
       | list | length) == 1
@@ -199,6 +298,52 @@
       - "'admin-user' in (observability_grafana_admin_secret.resources[0].data | default({}))"
       - "'admin-password' in (observability_grafana_admin_secret.resources[0].data | default({}))"
     fail_msg: Grafana admin Secret is not ready with the expected data keys.
+  no_log: true
+
+- name: Verify ready Alertmanager configuration Secret contract
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: v1
+    kind: Secret
+    namespace: '{{ observability_namespace }}'
+    name: '{{ alertmanager_config_secret_name }}'
+  register: observability_alertmanager_config_secret
+  no_log: true
+
+- name: Require ready Alertmanager configuration Secret key
+  ansible.builtin.assert:
+    that:
+      - observability_alertmanager_config_secret.resources | length == 1
+      - "'alertmanager.yaml' in (observability_alertmanager_config_secret.resources[0].data | default({}))"
+      - >-
+        (observability_alertmanager_config_secret.resources[0].data | default({})).keys()
+        | list | sort == ['alertmanager.yaml']
+    fail_msg: Alertmanager configuration Secret is not ready with alertmanager.yaml.
+  no_log: true
+
+- name: Parse the ready Alertmanager configuration without logging credentials
+  ansible.builtin.set_fact:
+    observability_alertmanager_config: >-
+      {{ observability_alertmanager_config_secret.resources[0].data['alertmanager.yaml']
+         | b64decode | from_yaml }}
+  no_log: true
+
+- name: Require the ready Alertmanager Telegram routing contract
+  ansible.builtin.assert:
+    that:
+      - observability_alertmanager_config.route.receiver == 'telegram'
+      - observability_alertmanager_config.route.group_by == ['alertname', 'namespace', 'severity']
+      - observability_alertmanager_config.route.group_wait == '30s'
+      - observability_alertmanager_config.route.group_interval == '5m'
+      - observability_alertmanager_config.route.repeat_interval == '4h'
+      - observability_alertmanager_config.receivers | length == 1
+      - observability_alertmanager_config.receivers[0].name == 'telegram'
+      - observability_alertmanager_config.receivers[0].telegram_configs | length == 1
+      - observability_alertmanager_config.receivers[0].telegram_configs[0].bot_token is string
+      - observability_alertmanager_config.receivers[0].telegram_configs[0].bot_token | length > 0
+      - observability_alertmanager_config.receivers[0].telegram_configs[0].chat_id | string is match('^-?[0-9]+$')
+      - observability_alertmanager_config.receivers[0].telegram_configs[0].send_resolved == true
+    fail_msg: Alertmanager Telegram routing Secret is incomplete or malformed.
   no_log: true
 
 - name: Collect capacity facts before observability Helm actions

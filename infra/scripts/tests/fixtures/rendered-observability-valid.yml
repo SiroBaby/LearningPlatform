@@ -75,6 +75,13 @@ apiVersion: monitoring.coreos.com/v1
 kind: Prometheus
 metadata: {name: learning-platform-monitoring-prometheus, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
 spec:
+  alerting:
+    alertmanagers:
+      - namespace: observability
+        name: learning-platform-monitori-alertmanager
+        port: http-web
+        pathPrefix: "/"
+        apiVersion: v2
   retention: 7d
   retentionSize: 2500MB
   resources: {requests: {cpu: 300m, memory: 512Mi}, limits: {cpu: "1", memory: 1Gi}}
@@ -85,6 +92,14 @@ spec:
     volumeClaimTemplate:
       spec: {storageClassName: local-path, resources: {requests: {storage: 3Gi}}}
   persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Alertmanager
+metadata: {name: learning-platform-monitori-alertmanager, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
+spec:
+  replicas: 1
+  configSecret: alertmanager-telegram-config
+  resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 100m, memory: 128Mi}}
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -23,6 +23,8 @@ observability_values_staging_directory_mode: '0750'
 observability_values_staging_file_mode: '0640'
 observability_grafana_external_secret_template: >-
   {{ role_path }}/templates/grafana-external-secret.yaml.j2
+observability_alertmanager_external_secret_template: >-
+  {{ role_path }}/templates/alertmanager-external-secret.yaml.j2
 observability_helm_archives:
   x86_64:
     architecture: amd64

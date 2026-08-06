@@ -22,6 +22,7 @@ Observability hiện tại không còn được mô tả là “tái dùng Prome
 - namespace observability: `observability`
 - bootstrap AWS Secret cho observability namespace: `observability-aws-credentials`
 - Grafana admin Secret trong cluster: `grafana-admin`
+- Alertmanager configuration Secret trong cluster: `alertmanager-telegram-config`
 - Helm version pin: `v3.21.3`
 - chart pin:
   - `prometheus-community/kube-prometheus-stack` `87.21.0`
@@ -62,9 +63,10 @@ Không chạy `kubectl`, K3s installer hoặc Ansible trực tiếp trên VPS. C
    - `learning-platform-dev-aws-credentials` trong namespace `learning-platform-dev`, key đúng là `access-key-id`, `secret-access-key`
    - `learning-platform-dev-ghcr` trong namespace `learning-platform-dev`, type đúng là `kubernetes.io/dockerconfigjson`
 
-6. Với observability ownership mới, không tạo tay `observability-aws-credentials`. Workflow dispatch `target=observability` dùng GitHub Environment `dev` làm bootstrap trust anchor và idempotently tạo namespace/Secret trước Ansible. `grafana-admin` vẫn do ESO tạo từ SSM:
+6. Với observability ownership mới, không tạo tay `observability-aws-credentials`. Workflow dispatch `target=observability` dùng GitHub Environment `dev` làm bootstrap trust anchor và idempotently tạo namespace/Secret trước Ansible. `grafana-admin` và cấu hình Alertmanager đều do ESO tạo từ SSM:
 
    - `grafana-admin` trong namespace `observability`, key đúng theo chart values là `admin-user`, `admin-password`
+   - `alertmanager-telegram-config` trong namespace `observability`, chỉ cần key `alertmanager.yaml`; không tạo tay Secret này.
 
 7. Validate local rồi apply baseline ứng dụng:
 
@@ -103,6 +105,8 @@ Runtime secret source chính là AWS SSM Parameter Store. `group_vars/k3s_nodes.
 - `/learning-platform/dev/swagger-password`
 - `/learning-platform/dev/grafana-admin-user`
 - `/learning-platform/dev/grafana-admin-password`
+- `/learning-platform/dev/alertmanager-telegram-bot-token`
+- `/learning-platform/dev/alertmanager-telegram-chat-id`
 
 GitHub Secrets và GitHub Variables chỉ dùng để chuyển deployment contract vào workflow. Riêng job `deploy-observability` nhận đúng hai static credential (credential tĩnh) bootstrap ESO; chúng không được chuyển cho application job, artifact, cache hoặc Ansible:
 
@@ -116,7 +120,7 @@ Non-secret deployment contract được đọc trực tiếp từ source `infra/
 
 Bootstrap IAM cho ESO phải giới hạn quyền `ssm:GetParameter` và `ssm:GetParameters` đúng trên exact parameter ARN đã cấu hình. Nếu `SecureString` dùng customer-managed KMS key, chỉ thêm `kms:Decrypt` cho đúng key ARN đó. Không cấp prefix rộng, không cấp wildcard path, không cấp quyền ghi SSM.
 
-Credential observability phải chỉ đọc `/learning-platform/dev/grafana-admin-user` và `/learning-platform/dev/grafana-admin-password` (cùng exact KMS key ARN nếu cần). Khi rotate/revoke hoặc đổi VPS, cập nhật Environment `dev` rồi rerun workflow `target=observability`; không SSH thủ công để tạo lại Secret. Static credential hiện tại là tradeoff bootstrap; hướng mạnh hơn là GitHub OIDC/workload identity hoặc secret manager short-lived credential.
+Credential observability phải chỉ đọc bốn exact SSM parameter: `/learning-platform/dev/grafana-admin-user`, `/learning-platform/dev/grafana-admin-password`, `/learning-platform/dev/alertmanager-telegram-bot-token`, và `/learning-platform/dev/alertmanager-telegram-chat-id` (cùng exact KMS key ARN nếu cần). Hai parameter Telegram phải là `SecureString` không rỗng: token bot Telegram và chat ID dạng số nguyên. Không đặt token hoặc chat ID trong GitHub Secret, source, Helm values, inventory, log, hoặc `kubectl` command. Khi rotate/revoke hoặc đổi VPS, cập nhật parameter SSM rồi rerun workflow `target=observability`; không SSH thủ công để tạo lại Secret. Static credential hiện tại là tradeoff bootstrap; hướng mạnh hơn là GitHub OIDC/workload identity hoặc secret manager short-lived credential.
 
 ## Observability chart contract
 
@@ -127,6 +131,7 @@ Observability values hiện tại giả định đúng các mức sau:
 - Prometheus: `3Gi`, retention `7d`, retention size `2500MB`
 - Loki: `2Gi`, retention `72h`
 - Grafana: `1Gi`
+- Alertmanager: không tạo PVC; một replica dùng state ephemeral (trạng thái tạm) để không tăng storage owner.
 
 Tổng storage cục bộ cần dành riêng cho observability là 6Gi. Vì storage class là `local-path`, cần chừa thêm headroom (dung lượng đệm) cho metadata, file system và rollback chart. Runbook dùng ngưỡng block sau cutover là còn tối thiểu 11Gi disk và 2Gi RAM available sau khi dừng legacy stack và sau nhánh xoá có điều kiện. `local-path` không hỗ trợ mở rộng volume tại chỗ một cách an toàn trong contract này. Nếu sizing thiếu, phải dừng rollout và tăng dung lượng host trước, không sửa tay PVC đã tạo.
 
@@ -134,10 +139,14 @@ Tổng storage cục bộ cần dành riêng cho observability là 6Gi. Vì stor
 
 `infra/ansible/vars/dev.yml` khai báo tổng tài nguyên observability như sau:
 
-- requests tổng: `cpu 785m`, `memory 1394Mi`
-- limits tổng: `cpu 2950m`, `memory 2752Mi`
+- requests tổng: `cpu 835m`, `memory 1458Mi`
+- limits tổng: `cpu 3050m`, `memory 2880Mi`
 
-Chart values pin resource chi tiết cho Prometheus, Grafana, Loki, Alloy, Prometheus Operator, config reloaders, kube-state-metrics và node-exporter. Nếu host không còn chỗ cho request tối thiểu này, không được tiếp tục cutover.
+Chart values pin resource chi tiết cho Prometheus, Alertmanager, Grafana, Loki, Alloy, Prometheus Operator, config reloaders, kube-state-metrics và node-exporter. Alertmanager dùng request `50m`/`64Mi`, limit `100m`/`128Mi`, một replica. Nếu host không còn chỗ cho request tối thiểu này, không được tiếp tục cutover.
+
+### Alertmanager Telegram routing
+
+`kube-prometheus-stack` chỉ tham chiếu Secret ngoài chart `alertmanager-telegram-config`; chart không render Secret hoặc Telegram value. ESO dựng key `alertmanager.yaml` từ đúng hai SecureString SSM parameter ở trên. Route mặc định gom theo `alertname`, `namespace`, `severity`, chờ `30s`, cập nhật nhóm `5m`, lặp `4h`, và gửi resolved alert. Prometheus tự trỏ tới Alertmanager được bật trong cùng namespace.
 
 ### Loki Retain/Retain decision
 
