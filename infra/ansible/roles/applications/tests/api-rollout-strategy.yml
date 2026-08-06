@@ -1,0 +1,41 @@
+---
+- name: Verify API development rollout strategy
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    deployment_targets: [api]
+    ghcr_pull_secret_name: learning-platform-dev-ghcr
+    web_public_host: learningplatform-dev.example.test
+    api_public_host: learningplatform-dev-api.example.test
+    ingress_tls_secret_name: ''
+    api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    api_resources:
+      requests: {cpu: 200m, memory: 256Mi}
+      limits: {cpu: '1', memory: 512Mi}
+  tasks:
+    - name: Render the API-only application manifest
+      ansible.builtin.set_fact:
+        applications_rendered_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2') | from_yaml_all | list }}
+
+    - name: Select the rendered API Deployment
+      ansible.builtin.set_fact:
+        applications_rendered_api_deployments: >-
+          {{ applications_rendered_manifests
+             | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'api')
+             | list }}
+
+    - name: Require a capacity-safe API rolling update
+      ansible.builtin.assert:
+        that:
+          - applications_rendered_api_deployments | length == 1
+          - applications_rendered_api_deployments[0].spec.replicas == 2
+          - applications_rendered_api_deployments[0].spec.strategy.type == 'RollingUpdate'
+          - applications_rendered_api_deployments[0].spec.strategy.rollingUpdate.maxSurge == 0
+          - applications_rendered_api_deployments[0].spec.strategy.rollingUpdate.maxUnavailable == 1
+        fail_msg: >-
+          The API Deployment must retain two replicas and use a rolling update
+          with no surge pod and one unavailable replica.
