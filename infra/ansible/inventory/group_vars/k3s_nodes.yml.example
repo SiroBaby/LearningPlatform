@@ -59,6 +59,10 @@ ssm_parameter_keys:
 observability_namespace: observability
 observability_aws_credentials_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_OBSERVABILITY_AWS_CREDENTIAL_SECRET
 grafana_admin_secret_name: grafana-admin
+# Nginx terminates TLS for this public name, then forwards the same Host header
+# over the loopback-only Traefik NodePort.
+grafana_public_host: grafana.sirobabycloud.io.vn
+grafana_ingress_host: grafana.sirobabycloud.io.vn
 
 # Immutable image digests are required. Replace every placeholder with an
 # image reference ending in @sha256:<64 hexadecimal characters>.

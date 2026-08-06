@@ -270,11 +270,17 @@ check_k3s_edge_contract() {
   if ! grep -Fq 'server_name {{ grafana_public_host }};' "${nginx_template}" \
     || ! grep -Fq 'proxy_pass http://127.0.0.1:{{ k3s_traefik_http_node_port }};' "${nginx_template}" \
     || ! grep -Fq 'proxy_set_header Host {{ grafana_ingress_host }};' "${nginx_template}" \
+    || ! grep -Fq 'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' "${nginx_template}" \
     || ! grep -Fq 'proxy_set_header X-Forwarded-Host $host;' "${nginx_template}" \
     || ! grep -Fq 'proxy_set_header X-Forwarded-Proto https;' "${nginx_template}" \
-    || ! grep -Fq "grafana_public_host == '157.66.101.219'" "${k3s_tasks}" \
-    || ! grep -Fq "grafana_ingress_host == 'grafana.observability.internal'" "${k3s_tasks}"; then
-    fail 'Nginx must expose Grafana only through the public TLS host and internal ingress Host over loopback Traefik.'
+    || ! grep -Fq 'proxy_set_header X-Forwarded-Port 443;' "${nginx_template}" \
+    || ! grep -Fq 'ssl_certificate {{ nginx_tls_certificate_path }};' "${nginx_template}" \
+    || ! grep -Fq 'ssl_certificate_key {{ nginx_tls_certificate_key_path }};' "${nginx_template}" \
+    || ! grep -Fq "grafana_public_host == 'grafana.sirobabycloud.io.vn'" "${k3s_tasks}" \
+    || ! grep -Fq 'grafana_ingress_host == grafana_public_host' "${k3s_tasks}" \
+    || ! grep -Fqx 'grafana_public_host: grafana.sirobabycloud.io.vn' "${k3s_vars}" \
+    || ! grep -Fqx 'grafana_ingress_host: grafana.sirobabycloud.io.vn' "${k3s_vars}"; then
+    fail 'Nginx must terminate existing TLS for the Grafana public host and forward its Host over loopback Traefik.'
   fi
 }
 

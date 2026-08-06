@@ -40,6 +40,8 @@ ALLOY_STORAGE_SIZE_LIMIT = '128Mi'
 ALLOY_USER_ID = 473
 RELOADER_USER_ID = 65_534
 GRAFANA_CONFIG_MAP = 'learning-platform-monitoring-grafana'
+GRAFANA_PUBLIC_HOST = 'grafana.sirobabycloud.io.vn'
+GRAFANA_PUBLIC_URL = "https://#{GRAFANA_PUBLIC_HOST}/"
 GRAFANA_STATIC_FILES = %w[grafana.ini datasources.yaml dashboardproviders.yaml].freeze
 GRAFANA_DASHBOARDS = {
   'k8s-resources-cluster' => 'learning-platform-monitori-k8s-resources-cluster',
@@ -150,7 +152,16 @@ class Policy
   def validate_grafana_root_url(document)
     return unless kind(document) == 'ConfigMap' && name(document) == GRAFANA_CONFIG_MAP
     content = (document['data'] || {}).values.join("\n")
-    fail_check("Grafana ConfigMap/#{name(document)} must set root_url to https://157.66.101.219/") unless content.include?('root_url = https://157.66.101.219/')
+    unless content.include?("root_url = #{GRAFANA_PUBLIC_URL}") &&
+           content.include?("domain = #{GRAFANA_PUBLIC_HOST}") &&
+           content.include?('enforce_domain = true') &&
+           content.include?('[auth.anonymous]') &&
+           content.include?('enabled = false') &&
+           content.include?('[security]') &&
+           content.include?('cookie_secure = true') &&
+           content.include?('cookie_samesite = lax')
+      fail_check("Grafana ConfigMap/#{name(document)} must enforce #{GRAFANA_PUBLIC_URL}")
+    end
   end
 
   def validate_grafana_provisioning
@@ -246,8 +257,8 @@ class Policy
     root = paths.first || {}
     backend = value(root || {}, 'backend', 'service', 'name').to_s
     port = value(root, 'backend', 'service', 'port', 'number')
-    exact = name(document) == 'learning-platform-monitoring-grafana' && rules.length == 1 && grafana_rule['host'] == 'grafana.observability.internal' && paths.length == 1 && root['path'] == '/' && root['pathType'] == 'Prefix' && backend == 'learning-platform-monitoring-grafana' && port == 80 && (value(document, 'spec', 'tls') || []).empty? && (value(document, 'spec', 'ingressClassName').nil? || value(document, 'spec', 'ingressClassName') == 'traefik')
-    fail_check('Grafana Ingress must be the exact sole Traefik root route without TLS') unless exact
+    exact = name(document) == 'learning-platform-monitoring-grafana' && rules.length == 1 && grafana_rule['host'] == GRAFANA_PUBLIC_HOST && paths.length == 1 && root['path'] == '/' && root['pathType'] == 'Prefix' && backend == 'learning-platform-monitoring-grafana' && port == 80 && (value(document, 'spec', 'tls') || []).empty? && (value(document, 'spec', 'ingressClassName').nil? || value(document, 'spec', 'ingressClassName') == 'traefik')
+    fail_check('Grafana Ingress must be the exact public Traefik root route without TLS') unless exact
   end
 
   def validate_secret(document)

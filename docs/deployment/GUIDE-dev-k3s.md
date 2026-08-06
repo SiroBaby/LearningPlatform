@@ -93,8 +93,8 @@ IAM bootstrap cho ESO phải giới hạn như sau:
 - `observability_namespace`
 - `observability_aws_credentials_secret_name`
 - `grafana_admin_secret_name`
-- `grafana_public_host`
-- `grafana_ingress_host`
+- `grafana_public_host: grafana.sirobabycloud.io.vn`
+- `grafana_ingress_host: grafana.sirobabycloud.io.vn`
 - `helm_version`
 - `helm_repositories.*`
 - `observability_releases.*`
@@ -115,6 +115,12 @@ IAM bootstrap cho ESO phải giới hạn như sau:
 | Source repository | `infra/ansible/vars/dev.yml` | non-secret deployment contract đọc bởi playbook `vars_files` |
 
 Workflow không truyền desired-state blob. Inventory tạm thời chỉ chứa host/user; deployment ứng dụng chỉ truyền image override của target đã chọn với digest bất biến.
+
+TLS cho Grafana vẫn do Nginx trên host terminate. Trước khi deploy, operator phải
+provision certificate hiện có theo cơ chế Nginx của host và xác nhận certificate
+bao gồm SAN `grafana.sirobabycloud.io.vn`; chỉ cấu hình path certificate/key vào
+`nginx_tls_certificate_path` và `nginx_tls_certificate_key_path`. Không tạo TLS
+Secret ở Traefik/Kubernetes và không commit certificate hoặc private key.
 
 ## 6. Hai namespace bootstrap Secrets
 

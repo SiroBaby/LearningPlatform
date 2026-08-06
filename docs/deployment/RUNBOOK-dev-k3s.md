@@ -785,10 +785,13 @@ sudo k3s kubectl -n observability get pvc
 sudo k3s kubectl -n observability get ingress
 sudo k3s kubectl -n observability get svc
 sudo k3s kubectl -n observability top pods
-curl -I https://157.66.101.219/
+curl -I https://grafana.sirobabycloud.io.vn/
 ```
 
-Nếu Grafana ingress host thật vẫn qua `grafana.observability.internal`, dùng đúng host hoặc route nội bộ đã xác minh trong môi trường hiện tại. Không ép URL public khác nếu chưa được operator cấu hình DNS hoặc TLS tương ứng.
+Trước smoke test, xác nhận DNS `grafana.sirobabycloud.io.vn` trỏ đến VPS và
+certificate Nginx đã provision có SAN đúng hostname này. TLS chỉ terminate ở
+Nginx; Traefik nhận HTTP qua NodePort `127.0.0.1:32080`, nên Grafana Ingress
+không có TLS Secret riêng.
 
 ## 10. Các claim đã bị loại bỏ
 
