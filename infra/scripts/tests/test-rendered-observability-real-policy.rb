@@ -104,6 +104,27 @@ def mutate_grafana_statefulset(monitoring)
   mutate_structured_document(monitoring, 'Grafana StatefulSet', predicate) { |document| yield(document) }
 end
 
+def mutate_grafana_datasources(monitoring, label)
+  mutate_structured_document(monitoring, label, lambda { |document|
+    document.is_a?(Hash) && document['kind'] == 'ConfigMap' &&
+      document.dig('metadata', 'name') == 'learning-platform-monitoring-grafana' &&
+      document.dig('metadata', 'labels', 'app.kubernetes.io/instance') == 'learning-platform-monitoring'
+  }) do |config_map|
+    mutated = Marshal.load(Marshal.dump(config_map))
+    datasources = YAML.safe_load(mutated.fetch('data').fetch('datasources.yaml'), permitted_classes: [], permitted_symbols: [], aliases: false)
+    yield(datasources)
+    mutated['data']['datasources.yaml'] = YAML.dump(datasources)
+    mutated
+  end
+end
+
+def alertmanager_datasource!(datasources)
+  datasource = datasources.fetch('datasources').find { |entry| entry['name'] == 'Alertmanager' }
+  abort 'ERROR: Grafana Alertmanager datasource not found.' unless datasource.is_a?(Hash)
+
+  datasource
+end
+
 def mutate_alertmanager(monitoring)
   predicate = lambda do |document|
     document.is_a?(Hash) && document['kind'] == 'Alertmanager' &&
@@ -155,6 +176,15 @@ mutations = {
   'missing Grafana datasource provisioning' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('datasources.yaml:', 'datasources-missing.yaml:') },
   'wrong Grafana datasource URL' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('http://prometheus-operated.observability.svc.cluster.local:9090', 'http://wrong-prometheus') },
   'missing Grafana datasource' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('name: Loki', 'name: Missing') },
+  'missing Grafana Alertmanager jsonData' => mutate_grafana_datasources(monitoring, 'Grafana Alertmanager jsonData') do |datasources|
+    alertmanager_datasource!(datasources).delete('jsonData')
+  end,
+  'wrong Grafana Alertmanager implementation' => mutate_grafana_datasources(monitoring, 'Grafana Alertmanager implementation') do |datasources|
+    alertmanager_datasource!(datasources).fetch('jsonData')['implementation'] = 'mimir'
+  end,
+  'enabled Grafana managed alerts' => mutate_grafana_datasources(monitoring, 'Grafana Alertmanager managed alerts') do |datasources|
+    alertmanager_datasource!(datasources).fetch('jsonData')['handleGrafanaManagedAlerts'] = true
+  end,
   'wrong Grafana dashboard provider path' => mutate_grafana_document(monitoring, 'ConfigMap') { |config_map| config_map.sub('/var/lib/grafana/dashboards/nodes', '/var/lib/grafana/dashboards/wrong') },
   'wrong Grafana dashboard ConfigMap' => mutate_grafana_statefulset(monitoring) do |grafana|
     volumes = grafana.dig('spec', 'template', 'spec', 'volumes')

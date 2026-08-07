@@ -69,7 +69,11 @@ GRAFANA_DATASOURCES = {
   },
   'Alertmanager' => {
     'type' => 'alertmanager',
-    'url' => 'http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093'
+    'url' => 'http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093',
+    'jsonData' => {
+      'implementation' => 'prometheus',
+      'handleGrafanaManagedAlerts' => false
+    }
   }
 }.freeze
 ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS = %w[
@@ -78,7 +82,6 @@ ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS = %w[
   basicAuth
   basicAuthPassword
   basicAuthUser
-  jsonData
   password
   secureJsonData
   secret
@@ -223,9 +226,13 @@ class Policy
     end
 
     if alertmanager_datasources.length == 1
-      forbidden_fields = alertmanager_datasources.first.keys & ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS
+      alertmanager_datasource = alertmanager_datasources.first
+      forbidden_fields = alertmanager_datasource.keys & ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS
       unless forbidden_fields.empty?
         fail_check("Grafana Alertmanager datasource must not define credential or auth fields: #{forbidden_fields.sort.join(', ')}")
+      end
+      unless alertmanager_datasource['jsonData'] == GRAFANA_DATASOURCES['Alertmanager']['jsonData']
+        fail_check('Grafana Alertmanager datasource jsonData must set implementation=prometheus and handleGrafanaManagedAlerts=false exactly')
       end
     end
 

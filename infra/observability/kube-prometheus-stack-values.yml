@@ -147,6 +147,9 @@ grafana:
           type: alertmanager
           access: proxy
           url: http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093
+          jsonData:
+            implementation: prometheus
+            handleGrafanaManagedAlerts: false
           editable: false
   dashboardProviders:
     dashboardproviders.yaml:
