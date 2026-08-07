@@ -143,6 +143,11 @@ grafana:
           access: proxy
           url: http://learning-platform-loki.observability.svc.cluster.local:3100
           editable: false
+        - name: Alertmanager
+          type: alertmanager
+          access: proxy
+          url: http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093
+          editable: false
   dashboardProviders:
     dashboardproviders.yaml:
       apiVersion: 1

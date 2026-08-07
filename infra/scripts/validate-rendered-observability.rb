@@ -66,8 +66,32 @@ GRAFANA_DATASOURCES = {
   'Loki' => {
     'type' => 'loki',
     'url' => 'http://learning-platform-loki.observability.svc.cluster.local:3100'
+  },
+  'Alertmanager' => {
+    'type' => 'alertmanager',
+    'url' => 'http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093'
   }
 }.freeze
+ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS = %w[
+  accessToken
+  authType
+  basicAuth
+  basicAuthPassword
+  basicAuthUser
+  jsonData
+  password
+  secureJsonData
+  secret
+  tlsAuth
+  tlsAuthWithCACert
+  tlsCACert
+  tlsClientCert
+  tlsClientKey
+  token
+  user
+  username
+  withCredentials
+].freeze
 ALERTMANAGER_NAME = 'learning-platform-monitori-alertmanager'
 ALERTMANAGER_CONFIG_SECRET = 'alertmanager-telegram-config'
 ALERTMANAGER_RESOURCES = {
@@ -191,12 +215,25 @@ class Policy
     return unless missing.empty?
 
     datasources = YAML.safe_load(data['datasources.yaml'], permitted_classes: [], permitted_symbols: [], aliases: false)
-    actual_datasources = (datasources || {}).fetch('datasources', []).each_with_object({}) { |datasource, result| result[datasource['name']] = datasource }
-    valid_datasources = actual_datasources.length == 2 && actual_datasources.keys.sort == GRAFANA_DATASOURCES.keys.sort && GRAFANA_DATASOURCES.all? do |name, expected|
+    configured_datasources = (datasources || {}).fetch('datasources', [])
+    actual_datasources = configured_datasources.each_with_object({}) { |datasource, result| result[datasource['name']] = datasource }
+    alertmanager_datasources = configured_datasources.select { |datasource| datasource.is_a?(Hash) && datasource['name'] == 'Alertmanager' }
+    unless alertmanager_datasources.length == 1
+      fail_check("Grafana datasources.yaml must define exactly one Alertmanager datasource, got #{alertmanager_datasources.length}")
+    end
+
+    if alertmanager_datasources.length == 1
+      forbidden_fields = alertmanager_datasources.first.keys & ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS
+      unless forbidden_fields.empty?
+        fail_check("Grafana Alertmanager datasource must not define credential or auth fields: #{forbidden_fields.sort.join(', ')}")
+      end
+    end
+
+    valid_datasources = actual_datasources.length == GRAFANA_DATASOURCES.length && actual_datasources.keys.sort == GRAFANA_DATASOURCES.keys.sort && GRAFANA_DATASOURCES.all? do |name, expected|
       datasource = actual_datasources[name] || {}
       expected.all? { |key, value| datasource[key] == value } && datasource['access'] == 'proxy' && datasource['editable'] == false
     end
-    fail_check('Grafana datasources.yaml must define exactly Prometheus and Loki with their static proxy contracts') unless valid_datasources
+    fail_check('Grafana datasources.yaml must define exactly Prometheus, Loki, and Alertmanager with their static proxy contracts') unless valid_datasources
 
     providers = YAML.safe_load(data['dashboardproviders.yaml'], permitted_classes: [], permitted_symbols: [], aliases: false)
     actual = (providers || {}).fetch('providers', []).each_with_object({}) { |provider, result| result[provider['name']] = value(provider, 'options', 'path') }
