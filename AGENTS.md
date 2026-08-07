@@ -7,6 +7,10 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Domain, ADR và PRD ở root `CONTEXT.md` và `docs/` là nguồn tham khảo chung, không phải coding rule cho mọi service.
 - Issue cục bộ nằm trong `.scratch/<feature>/issues/`.
 
+## Quy tắc workspace
+
+- Mặc định làm việc trong workspace canonical; chỉ tạo Git worktree riêng khi người dùng yêu cầu rõ ràng hoặc thay đổi đồng thời không thể cô lập an toàn theo cách khác, và phải xóa worktree tạm sau khi công việc được merge hoặc từ bỏ.
+
 ## Quản lý công việc trên GitHub Project
 
 - GitHub Project `LearningPlatform` là nguồn sự thật cho việc quản lý công việc đang hoạt động. `CONTEXT.md`, `docs/`, ADR, PRD và `.scratch/` vẫn là nguồn tham khảo về domain, kiến trúc, phạm vi và lịch sử, nhưng không thay thế trạng thái và bằng chứng trên GitHub Project.
