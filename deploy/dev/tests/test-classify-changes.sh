@@ -81,11 +81,17 @@ main() {
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/applications/tasks/main.yml)"
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file infra/k8s/apps.yaml.j2)"
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/cert_manager/tasks/main.yml)"
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
-  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file .github/workflows/deploy-dev.yml)"
