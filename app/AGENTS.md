@@ -89,6 +89,7 @@
 
 ## Production Quality
 
+- mTLS Secret mounts for the Node runtime UID `1000` must set pod-level `fsGroup: 1000` and `defaultMode: 0440`; this keeps private keys group-readable by the non-root runtime without making them world-readable.
 - Object-storage bucket production phải được provision ngoài application. Startup chỉ kiểm tra quyền truy cập bucket và fail-fast; không tự tạo bucket hoặc yêu cầu `CreateBucket`.
 - Trước khi gọi một flow là production-ready, phải xác minh end-to-end behavior, failure handling, bounded resource usage, graceful shutdown và configuration validation; không dựa vào happy path hoặc hard-code interval/batch/credential.
 - Background processing phải chạy trong worker entrypoint/deployment role riêng, có typed configuration cho throughput/backoff, không overlap một worker loop, và không làm HTTP API process chạy worker ngầm.
