@@ -239,7 +239,7 @@ mutations = {
     mutated.dig('spec', 'alerting', 'alertmanagers').first['name'] = 'wrong-alertmanager'
     mutated
   end,
-  'reloader drift' => mutate_operator_document(monitoring) { |operator| operator.sub('--config-reloader-cpu-request=25m', '--config-reloader-cpu-request=24m') },
+  'reloader drift' => mutate_operator_document(monitoring) { |operator| operator.sub('--config-reloader-cpu-request=15m', '--config-reloader-cpu-request=14m') },
   'duplicate PVC' => monitoring + pvc,
   'unexpected container' => mutate_operator_document(monitoring) do |operator|
     operator.sub("      containers:\n", "      containers:\n        - name: unexpected\n          resources: {requests: {cpu: 1m, memory: 1Mi}, limits: {cpu: 1m, memory: 1Mi}}\n")
