@@ -48,7 +48,7 @@
              | selectattr('metadata.name', 'equalto', 'worker')
              | list }}
 
-    - name: Require capacity-safe application replica counts and rollout strategy
+    - name: Require capacity-safe application replica counts and rollout revision
       ansible.builtin.assert:
         that:
           - applications_rendered_web_deployments | length == 1
@@ -59,13 +59,22 @@
           - applications_rendered_worker_deployments[0].spec.replicas == 1
           - applications_rendered_web_deployments[0].spec.strategy.type == 'Recreate'
           - applications_rendered_web_deployments[0].spec.strategy.rollingUpdate is none
+          - >-
+            applications_rendered_web_deployments[0].spec.template.metadata.annotations['learning-platform.io/rollout-revision']
+            == 'recreate-rollout-recovery-v1'
           - applications_rendered_api_deployments[0].spec.strategy.type == 'Recreate'
           - applications_rendered_api_deployments[0].spec.strategy.rollingUpdate is none
+          - >-
+            applications_rendered_api_deployments[0].spec.template.metadata.annotations['learning-platform.io/rollout-revision']
+            == 'recreate-rollout-recovery-v1'
           - applications_rendered_worker_deployments[0].spec.strategy.type == 'Recreate'
           - applications_rendered_worker_deployments[0].spec.strategy.rollingUpdate is none
+          - >-
+            applications_rendered_worker_deployments[0].spec.template.metadata.annotations['learning-platform.io/rollout-revision']
+            == 'recreate-rollout-recovery-v1'
         fail_msg: >-
-          Web, API, and worker Deployments must run one replica and use the
-          Recreate strategy to avoid surge pods on the single-node cluster.
+          Web, API, and worker Deployments must run one replica, use Recreate
+          with rollingUpdate null, and carry the source-controlled rollout revision.
 
     - name: Select internal API service and public ingress
       ansible.builtin.set_fact:
