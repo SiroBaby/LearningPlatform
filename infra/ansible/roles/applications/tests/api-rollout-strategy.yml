@@ -1,15 +1,21 @@
 ---
-- name: Verify API development rollout strategy
+- name: Verify application development rollout strategy
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
     learning_platform_namespace: learning-platform-dev
-    deployment_targets: [api, worker]
+    deployment_targets: [web, api, worker]
     ghcr_pull_secret_name: learning-platform-dev-ghcr
     web_public_host: learningplatform-dev.example.test
     api_public_host: learningplatform-dev-api.example.test
+    phase0_api_base_url: http://api:3000/api/v1
+    phase0_dev_owner_id: 123e4567-e89b-12d3-a456-426614174000
     ingress_tls_secret_name: ''
+    web_image: ghcr.io/sirobaby/learningplatform-web@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    web_resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 256Mi}
     api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     api_resources:
       requests: {cpu: 200m, memory: 256Mi}
@@ -24,12 +30,17 @@
         applications_rendered_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2') | from_yaml_all | list }}
 
-    - name: Select rendered API and worker Deployments
+    - name: Select rendered application Deployments
       ansible.builtin.set_fact:
         applications_rendered_api_deployments: >-
           {{ applications_rendered_manifests
              | selectattr('kind', 'equalto', 'Deployment')
              | selectattr('metadata.name', 'equalto', 'api')
+             | list }}
+        applications_rendered_web_deployments: >-
+          {{ applications_rendered_manifests
+             | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'web')
              | list }}
         applications_rendered_worker_deployments: >-
           {{ applications_rendered_manifests
@@ -37,17 +48,21 @@
              | selectattr('metadata.name', 'equalto', 'worker')
              | list }}
 
-    - name: Require a capacity-safe API rolling update
+    - name: Require capacity-safe application replica counts and rollout strategy
       ansible.builtin.assert:
         that:
+          - applications_rendered_web_deployments | length == 1
+          - applications_rendered_web_deployments[0].spec.replicas == 1
           - applications_rendered_api_deployments | length == 1
-          - applications_rendered_api_deployments[0].spec.replicas == 2
-          - applications_rendered_api_deployments[0].spec.strategy.type == 'RollingUpdate'
-          - applications_rendered_api_deployments[0].spec.strategy.rollingUpdate.maxSurge == 0
-          - applications_rendered_api_deployments[0].spec.strategy.rollingUpdate.maxUnavailable == 1
+          - applications_rendered_api_deployments[0].spec.replicas == 1
+          - applications_rendered_worker_deployments | length == 1
+          - applications_rendered_worker_deployments[0].spec.replicas == 1
+          - applications_rendered_web_deployments[0].spec.strategy.type == 'Recreate'
+          - applications_rendered_api_deployments[0].spec.strategy.type == 'Recreate'
+          - applications_rendered_worker_deployments[0].spec.strategy.type == 'Recreate'
         fail_msg: >-
-          The API Deployment must retain two replicas and use a rolling update
-          with no surge pod and one unavailable replica.
+          Web, API, and worker Deployments must run one replica and use the
+          Recreate strategy to avoid surge pods on the single-node cluster.
 
     - name: Select internal API service and public ingress
       ansible.builtin.set_fact:
@@ -68,17 +83,21 @@
           - applications_internal_services[0].spec.type == 'ClusterIP'
           - "applications_internal_services[0].spec.ports == [{'name': 'https', 'port': 3443, 'targetPort': 'internal-https'}]"
           - applications_rendered_api_deployments[0].spec.template.spec.serviceAccountName == 'api-internal'
+          - "applications_rendered_api_deployments[0].spec.template.spec.securityContext == {'runAsNonRoot': true, 'runAsUser': 1000, 'runAsGroup': 1000, 'fsGroup': 1000}"
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].volumeMounts | selectattr('name', 'equalto', 'api-internal-tls') | selectattr('readOnly', 'equalto', true) | list | length == 1
           - applications_rendered_api_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'api-internal-tls') | map(attribute='secret.secretName') | list == ['api-internal-tls']
+          - applications_rendered_api_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'api-internal-tls') | map(attribute='secret.defaultMode') | list == [288]
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI') | map(attribute='value') | list == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/go-worker']
           - applications_rendered_worker_deployments | length == 1
           - applications_rendered_worker_deployments[0].spec.template.spec.serviceAccountName == 'go-worker'
+          - "applications_rendered_worker_deployments[0].spec.template.spec.securityContext == {'runAsNonRoot': true, 'runAsUser': 1000, 'runAsGroup': 1000, 'fsGroup': 1000}"
           - applications_rendered_worker_deployments[0].spec.template.spec.containers[0].volumeMounts | selectattr('name', 'equalto', 'go-worker-tls') | selectattr('readOnly', 'equalto', true) | list | length == 1
           - applications_rendered_worker_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'go-worker-tls') | map(attribute='secret.secretName') | list == ['go-worker-tls']
+          - applications_rendered_worker_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'go-worker-tls') | map(attribute='secret.defaultMode') | list == [288]
           - applications_public_ingresses | length == 1
           - applications_public_ingresses[0].spec.ingressClassName == 'traefik'
           - applications_public_ingresses[0].spec.rules[0].http.paths | selectattr('path', 'equalto', '/api/v1') | selectattr('backend.service.name', 'equalto', 'api') | list | length == 1
           - applications_public_ingresses | to_json is not search('api-internal')
         fail_msg: >-
-          api-internal must remain ClusterIP-only with read-only mTLS material,
-          while the public /api/v1 Ingress continues to target only api.
+          api-internal and go-worker mTLS material must be readable only by the
+          non-root runtime group, while the public /api/v1 Ingress targets api.
