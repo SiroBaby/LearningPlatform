@@ -8,6 +8,7 @@ import { createRequestLifecycleMiddleware } from './common/logging/request-lifec
 import { ApplicationConfigService } from './config/application-config.service';
 import { createSwaggerBasicAuthMiddleware } from './common/swagger/swagger-basic-auth.middleware';
 import { runStartupMigrations } from './database/migrate';
+import { createInternalMtlsServer } from './internal-mtls-server';
 
 export async function bootstrapApi(): Promise<void> {
   await runStartupMigrations();
@@ -18,7 +19,7 @@ export async function bootstrapApi(): Promise<void> {
 
   app.use(createRequestLifecycleMiddleware());
 
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1', { exclude: ['internal/v1/(.*)'] });
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -63,6 +64,11 @@ export async function bootstrapApi(): Promise<void> {
     });
   }
 
+  const internalMtls = await createInternalMtlsServer(app, application.internalMtls);
+  if (internalMtls) {
+    await new Promise<void>((resolve) => internalMtls.server.listen(application.internalMtls.port, resolve));
+    app.getHttpServer().once('close', () => void internalMtls.close());
+  }
   await app.listen(application.port);
   logger.log({ event: 'api.started', port: application.port, runtime: 'api' }, 'ApiBootstrap');
 }

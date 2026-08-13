@@ -38,10 +38,14 @@ import { WORKER_DNS_LOOKUP, WORKER_EGRESS_VALIDATOR } from './contracts/worker-e
 import { lookup } from 'node:dns/promises';
 import { UnpinnedClientDnsEgressValidator } from './worker-egress-validator.service';
 import { CUSTOM_MODEL_PROVIDER } from './contracts/custom-model-provider.port';
+import { InternalLeaseController } from './internal-lease.controller';
+import { InternalLeaseGuard } from './internal-lease.guard';
+import { LEASE_AUTHORITY } from './contracts/lease-authority.contract';
+import { LeaseAuthorityService } from './lease-authority.service';
 
 @Module({
   imports: [AssessmentModule, forwardRef(() => ContentModule)],
-  controllers: [ModelCatalogController],
+  controllers: [InternalLeaseController, ModelCatalogController],
   providers: [
     AiIngestionService,
     AiOutboxRepository,
@@ -89,6 +93,9 @@ import { CUSTOM_MODEL_PROVIDER } from './contracts/custom-model-provider.port';
     { provide: PROVIDER_USAGE, useExisting: ProviderUsageRepository },
     JobPoller,
     StuckJobDetector,
+    InternalLeaseGuard,
+    LeaseAuthorityService,
+    { provide: LEASE_AUTHORITY, useExisting: LeaseAuthorityService },
   ],
   exports: [AI_INGESTION, AiOutboxRepository, JobPoller, MODEL_CATALOG, StuckJobDetector],
 })

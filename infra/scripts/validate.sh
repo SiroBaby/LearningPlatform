@@ -216,7 +216,7 @@ check_image_policy() {
 
 check_artifact_integrity_contract() {
   local checksum_name
-  for checksum_name in k3s_installer_sha256 external_secrets_manifest_sha256 kube_state_metrics_manifest_sha256; do
+  for checksum_name in k3s_installer_sha256 external_secrets_manifest_sha256 cert_manager_manifest_sha256 kube_state_metrics_manifest_sha256; do
     if ! grep -qE "^${checksum_name}:[[:space:]]+(REPLACE_WITH_OFFICIAL_64_HEX_SHA256|[a-f0-9]{64})$" \
       "${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"; then
       fail "${checksum_name} must require an official SHA-256 value."
@@ -224,7 +224,7 @@ check_artifact_integrity_contract() {
   done
 
   local url_name
-  for url_name in external_secrets_manifest_url kube_state_metrics_manifest_url; do
+  for url_name in external_secrets_manifest_url cert_manager_manifest_url kube_state_metrics_manifest_url; do
     if ! grep -qE "^${url_name}:[[:space:]]+(REPLACE_WITH_VERIFIED_HTTPS_MANIFEST_URL|https://[^[:space:]]+)$" \
       "${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"; then
       fail "${url_name} must require an explicitly verified HTTPS artifact URL."
@@ -493,6 +493,10 @@ check_ansible_when_installed() {
 "${ANSIBLE_DIR}/roles/observability/tests/controller-template-preflight.yml" --check
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/observability/tests/values-staging.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/cert_manager/tests/internal-pki-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/api-rollout-strategy.yml"
     return
   fi
 

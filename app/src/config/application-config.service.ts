@@ -101,8 +101,27 @@ export class ApplicationConfigService {
   }
 
   get application(): ApplicationSettings {
+    const internalMtls = {
+      caPath: this.config.get<string>(CONFIG_PATH.app.internalMtls.caPath),
+      certPath: this.config.get<string>(CONFIG_PATH.app.internalMtls.certPath),
+      expectedClientSpiffeUri: this.config.get<string>(CONFIG_PATH.app.internalMtls.expectedClientSpiffeUri),
+      keyPath: this.config.get<string>(CONFIG_PATH.app.internalMtls.keyPath),
+      port: this.config.get<number>(CONFIG_PATH.app.internalMtls.port) ?? 3443,
+    };
+    const configuredPaths = [internalMtls.caPath, internalMtls.certPath, internalMtls.keyPath]
+      .filter((value): value is string => Boolean(value?.trim()));
+    if (configuredPaths.length !== 0 && configuredPaths.length !== 3) {
+      throw new Error('INTERNAL_MTLS_CA_PATH, INTERNAL_MTLS_CERT_PATH, and INTERNAL_MTLS_KEY_PATH must be configured together');
+    }
+    if (configuredPaths.length === 3 && !/^spiffe:\/\/learning-platform\.local\/ns\/[a-z0-9]([-a-z0-9]*[a-z0-9])?\/sa\/go-worker$/.test(internalMtls.expectedClientSpiffeUri ?? '')) {
+      throw new Error('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI must be a valid Go worker SPIFFE URI');
+    }
+    if (!Number.isInteger(internalMtls.port) || internalMtls.port < 1 || internalMtls.port > 65535) {
+      throw new Error('INTERNAL_MTLS_PORT must be a valid TCP port');
+    }
     return {
       environment: this.required<string>(CONFIG_PATH.app.environment),
+      internalMtls: { ...internalMtls, enabled: configuredPaths.length === 3 },
       port: this.required<number>(CONFIG_PATH.app.port),
       swagger: {
         enabled: this.required<boolean>(CONFIG_PATH.app.swagger.enabled),

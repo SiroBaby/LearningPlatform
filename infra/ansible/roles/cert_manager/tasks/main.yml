@@ -1,0 +1,146 @@
+---
+- name: Validate cert-manager internal PKI bootstrap contract
+  ansible.builtin.assert:
+    that:
+      - cert_manager_version == 'v1.16.2'
+      - cert_manager_manifest_url == 'https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml'
+      - cert_manager_manifest_sha256 == '1d51cdecd442f1f5f89783e9e0169b95d372724da203cc75dd7a5c4e50a10ce6'
+      - cert_manager_namespace == 'cert-manager'
+      - cert_manager_resources.requests.cpu == '250m'
+      - cert_manager_resources.requests.memory == '256Mi'
+      - cert_manager_resources.limits.cpu == '500m'
+      - cert_manager_resources.limits.memory == '512Mi'
+    fail_msg: >-
+      cert-manager must use the reviewed v1.16.2 manifest checksum and the
+      approved aggregate resource budget.
+
+- name: Download checksum-pinned cert-manager release manifest
+  ansible.builtin.get_url:
+    url: '{{ cert_manager_manifest_url }}'
+    dest: '/usr/local/src/cert-manager-{{ cert_manager_version }}.yaml'
+    mode: '0644'
+    checksum: 'sha256:{{ cert_manager_manifest_sha256 }}'
+
+- name: Apply checksum-pinned cert-manager release manifest
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    src: '/usr/local/src/cert-manager-{{ cert_manager_version }}.yaml'
+
+- name: Apply approved aggregate resources to cert-manager controllers
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: '{{ item.name }}'
+        namespace: '{{ cert_manager_namespace }}'
+      spec:
+        template:
+          spec:
+            containers:
+              - name: '{{ item.container }}'
+                resources: '{{ item.resources }}'
+  loop:
+    - name: cert-manager
+      container: cert-manager-controller
+      resources:
+        requests: {cpu: 150m, memory: 128Mi}
+        limits: {cpu: 300m, memory: 256Mi}
+    - name: cert-manager-cainjector
+      container: cert-manager-cainjector
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {cpu: 100m, memory: 128Mi}
+    - name: cert-manager-webhook
+      container: cert-manager-webhook
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {cpu: 100m, memory: 128Mi}
+
+- name: Wait for cert-manager Certificate custom resource definition
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: certificates.cert-manager.io
+  register: cert_manager_certificate_crd
+  retries: 30
+  delay: 2
+  until: cert_manager_certificate_crd.resources | length == 1
+
+- name: Wait for cert-manager controllers to become available
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ cert_manager_namespace }}'
+    name: '{{ item }}'
+  register: cert_manager_controller_deployments
+  retries: 30
+  delay: 2
+  until: >-
+    cert_manager_controller_deployments.resources | length == 1 and
+    (cert_manager_controller_deployments.resources[0].status.availableReplicas | default(0) | int) > 0
+  loop:
+    - cert-manager
+    - cert-manager-cainjector
+    - cert-manager-webhook
+
+- name: Render internal PKI identities on the controller
+  ansible.builtin.set_fact:
+    cert_manager_internal_pki_definitions: >-
+      {{ lookup('template', 'internal-pki.yaml.j2') | from_yaml_all | list }}
+  no_log: true
+
+- name: Validate internal PKI identity documents before Kubernetes mutation
+  ansible.builtin.assert:
+    that:
+      - cert_manager_internal_pki_definitions | length == 7
+      - cert_manager_internal_pki_definitions | map(attribute='kind') | list == ['ServiceAccount', 'Issuer', 'Certificate', 'Issuer', 'Certificate', 'Certificate', 'NetworkPolicy']
+      - cert_manager_internal_pki_definitions | map(attribute='metadata.namespace') | unique | list == [learning_platform_namespace]
+      - cert_manager_internal_pki_definitions[4].spec.duration == '24h'
+      - cert_manager_internal_pki_definitions[4].spec.renewBefore == '8h'
+      - cert_manager_internal_pki_definitions[5].spec.duration == '24h'
+      - cert_manager_internal_pki_definitions[5].spec.renewBefore == '8h'
+      - cert_manager_internal_pki_definitions[4].spec.uris == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/api-internal']
+      - cert_manager_internal_pki_definitions[5].spec.uris == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/go-worker']
+      - "cert_manager_internal_pki_definitions[6].spec.podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'api'}"
+      - "cert_manager_internal_pki_definitions[6].spec.ingress[0].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'worker'}"
+      - "cert_manager_internal_pki_definitions[6].spec.ingress[0].ports == [{'protocol': 'TCP', 'port': 3443}]"
+      - "cert_manager_internal_pki_definitions[6].spec.ingress[1].from[0].namespaceSelector.matchLabels == {'kubernetes.io/metadata.name': 'kube-system'}"
+      - "cert_manager_internal_pki_definitions[6].spec.ingress[1].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'traefik'}"
+      - "cert_manager_internal_pki_definitions[6].spec.ingress[1].ports == [{'protocol': 'TCP', 'port': 3000}]"
+    fail_msg: >-
+      Internal PKI must remain namespace-scoped, use the approved SPIFFE URI
+      identities, and rotate server and client credentials every 24h with 8h renewal.
+  no_log: true
+
+- name: Apply internal PKI identities
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition: '{{ cert_manager_internal_pki_definitions }}'
+  no_log: true
+
+- name: Wait for internal API and Go worker certificates to become ready
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: cert-manager.io/v1
+    kind: Certificate
+    namespace: '{{ learning_platform_namespace }}'
+    name: '{{ item }}'
+  register: cert_manager_internal_certificates
+  retries: 30
+  delay: 2
+  until: >-
+    cert_manager_internal_certificates.resources | length == 1 and
+    (cert_manager_internal_certificates.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  loop:
+    - api-internal
+    - go-worker

@@ -10,6 +10,8 @@
       tags: [k3s]
     - role: external_secrets
       tags: [external_secrets]
+    - role: cert_manager
+      tags: [cert_manager]
     - role: observability
       tags: [observability]
     - role: applications
