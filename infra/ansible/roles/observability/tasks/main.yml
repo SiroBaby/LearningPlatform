@@ -21,7 +21,7 @@
       - observability_releases.alloy.chart == 'grafana/alloy'
       - observability_releases.alloy.chart_version == '1.11.0'
       - observability_resources is mapping
-      - observability_aggregate_resources.requests.cpu == '835m'
+      - observability_aggregate_resources.requests.cpu == '645m'
       - observability_aggregate_resources.requests.memory == '1458Mi'
       - observability_aggregate_resources.limits.cpu == '3050m'
       - observability_aggregate_resources.limits.memory == '2880Mi'

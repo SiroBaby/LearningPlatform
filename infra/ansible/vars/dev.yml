@@ -113,35 +113,35 @@ observability_storage:
   grafana: {size: 1Gi}
 observability_resources:
   prometheus:
-    requests: {cpu: 300m, memory: 512Mi}
+    requests: {cpu: 250m, memory: 512Mi}
     limits: {cpu: "1", memory: 1Gi}
   prometheus_config_reloader:
-    requests: {cpu: 25m, memory: 32Mi}
+    requests: {cpu: 15m, memory: 32Mi}
     limits: {cpu: 100m, memory: 64Mi}
   prometheus_operator:
-    requests: {cpu: 50m, memory: 64Mi}
+    requests: {cpu: 35m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
   alertmanager:
-    requests: {cpu: 50m, memory: 64Mi}
+    requests: {cpu: 35m, memory: 64Mi}
     limits: {cpu: 100m, memory: 128Mi}
   grafana:
-    requests: {cpu: 100m, memory: 256Mi}
+    requests: {cpu: 75m, memory: 256Mi}
     limits: {cpu: 500m, memory: 512Mi}
   kube_state_metrics:
-    requests: {cpu: 50m, memory: 64Mi}
+    requests: {cpu: 35m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
   node_exporter:
-    requests: {cpu: 25m, memory: 32Mi}
+    requests: {cpu: 15m, memory: 32Mi}
     limits: {cpu: 100m, memory: 64Mi}
   loki:
-    requests: {cpu: 150m, memory: 256Mi}
+    requests: {cpu: 120m, memory: 256Mi}
     limits: {cpu: 500m, memory: 512Mi}
   alloy:
-    requests: {cpu: 75m, memory: 128Mi}
+    requests: {cpu: 60m, memory: 128Mi}
     limits: {cpu: 250m, memory: 256Mi}
   alloy_config_reloader:
-    requests: {cpu: 10m, memory: 50Mi}
+    requests: {cpu: 5m, memory: 50Mi}
     limits: {cpu: 100m, memory: 64Mi}
 observability_aggregate_resources:
-  requests: {cpu: 835m, memory: 1458Mi}
+  requests: {cpu: 645m, memory: 1458Mi}
   limits: {cpu: 3050m, memory: 2880Mi}

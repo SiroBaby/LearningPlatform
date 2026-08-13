@@ -8,7 +8,7 @@ alertmanager:
     configSecret: alertmanager-telegram-config
     resources:
       requests:
-        cpu: 50m
+        cpu: 35m
         memory: 64Mi
       limits:
         cpu: 100m
@@ -43,7 +43,7 @@ prometheusOperator:
     enabled: false
   resources:
     requests:
-      cpu: 50m
+      cpu: 35m
       memory: 64Mi
     limits:
       cpu: 200m
@@ -51,7 +51,7 @@ prometheusOperator:
   prometheusConfigReloader:
     resources:
       requests:
-        cpu: 25m
+        cpu: 15m
         memory: 32Mi
       limits:
         cpu: 100m
@@ -63,7 +63,7 @@ prometheus:
     retentionSize: 2500MB
     resources:
       requests:
-        cpu: 300m
+        cpu: 250m
         memory: 512Mi
       limits:
         cpu: "1"
@@ -84,7 +84,7 @@ prometheus:
 kube-state-metrics:
   resources:
     requests:
-      cpu: 50m
+      cpu: 35m
       memory: 64Mi
     limits:
       cpu: 200m
@@ -93,7 +93,7 @@ kube-state-metrics:
 prometheus-node-exporter:
   resources:
     requests:
-      cpu: 25m
+      cpu: 15m
       memory: 32Mi
     limits:
       cpu: 100m
@@ -106,7 +106,7 @@ grafana:
     passwordKey: admin-password
   resources:
     requests:
-      cpu: 100m
+      cpu: 75m
       memory: 256Mi
     limits:
       cpu: 500m
