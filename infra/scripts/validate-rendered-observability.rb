@@ -14,7 +14,7 @@ end
 require 'optparse'
 
 EXPECTED_NAMESPACE = 'observability'
-EXPECTED_REQUESTS = { 'cpu' => 835, 'memory' => 1458 }.freeze
+EXPECTED_REQUESTS = { 'cpu' => 645, 'memory' => 1458 }.freeze
 EXPECTED_LIMITS = { 'cpu' => 3050, 'memory' => 2880 }.freeze
 LONG_RUNNING_KINDS = %w[DaemonSet Deployment StatefulSet].freeze
 CLUSTER_SCOPED_KINDS = %w[ClusterRole ClusterRoleBinding CustomResourceDefinition].freeze
@@ -27,7 +27,7 @@ EXPECTED_WORKLOAD_CONTAINERS = {
   'alloy' => %w[alloy config-reloader]
 }.freeze
 RELOADER_ARGS = {
-  '--config-reloader-cpu-request=' => '25m',
+  '--config-reloader-cpu-request=' => '15m',
   '--config-reloader-memory-request=' => '32Mi',
   '--config-reloader-cpu-limit=' => '100m',
   '--config-reloader-memory-limit=' => '64Mi'
@@ -43,7 +43,7 @@ GRAFANA_CONFIG_MAP = 'learning-platform-monitoring-grafana'
 GRAFANA_PUBLIC_HOST = 'grafana.sirobabycloud.io.vn'
 GRAFANA_PUBLIC_URL = "https://#{GRAFANA_PUBLIC_HOST}/"
 GRAFANA_RESOURCES = {
-  'requests' => { 'cpu' => '100m', 'memory' => '256Mi' },
+  'requests' => { 'cpu' => '75m', 'memory' => '256Mi' },
   'limits' => { 'cpu' => '500m', 'memory' => '512Mi' }
 }.freeze
 GRAFANA_DISABLED_FEATURE = 'kubernetesLogsDrilldown'
@@ -98,8 +98,44 @@ ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS = %w[
 ALERTMANAGER_NAME = 'learning-platform-monitori-alertmanager'
 ALERTMANAGER_CONFIG_SECRET = 'alertmanager-telegram-config'
 ALERTMANAGER_RESOURCES = {
-  'requests' => { 'cpu' => '50m', 'memory' => '64Mi' },
+  'requests' => { 'cpu' => '35m', 'memory' => '64Mi' },
   'limits' => { 'cpu' => '100m', 'memory' => '128Mi' }
+}.freeze
+RESOURCE_PROFILES = {
+  'prometheus' => {
+    'requests' => { 'cpu' => '250m', 'memory' => '512Mi' },
+    'limits' => { 'cpu' => '1', 'memory' => '1Gi' }
+  },
+  'prometheus-config-reloader' => {
+    'requests' => { 'cpu' => '15m', 'memory' => '32Mi' },
+    'limits' => { 'cpu' => '100m', 'memory' => '64Mi' }
+  },
+  'alertmanager' => ALERTMANAGER_RESOURCES,
+  'prometheus-operator' => {
+    'requests' => { 'cpu' => '35m', 'memory' => '64Mi' },
+    'limits' => { 'cpu' => '200m', 'memory' => '128Mi' }
+  },
+  'grafana' => GRAFANA_RESOURCES,
+  'kube-state-metrics' => {
+    'requests' => { 'cpu' => '35m', 'memory' => '64Mi' },
+    'limits' => { 'cpu' => '200m', 'memory' => '128Mi' }
+  },
+  'node-exporter' => {
+    'requests' => { 'cpu' => '15m', 'memory' => '32Mi' },
+    'limits' => { 'cpu' => '100m', 'memory' => '64Mi' }
+  },
+  'loki' => {
+    'requests' => { 'cpu' => '120m', 'memory' => '256Mi' },
+    'limits' => { 'cpu' => '500m', 'memory' => '512Mi' }
+  },
+  'alloy' => {
+    'requests' => { 'cpu' => '60m', 'memory' => '128Mi' },
+    'limits' => { 'cpu' => '250m', 'memory' => '256Mi' }
+  },
+  'alloy-config-reloader' => {
+    'requests' => { 'cpu' => '5m', 'memory' => '50Mi' },
+    'limits' => { 'cpu' => '100m', 'memory' => '64Mi' }
+  }
 }.freeze
 
 options = { inputs: [], junit: nil }
@@ -396,6 +432,7 @@ class Policy
   def validate_long_running_resources(document)
     if kind(document) == 'Prometheus'
       resources = document['spec']['resources'] || {}
+      validate_resource_profile(resources, RESOURCE_PROFILES.fetch('prometheus'), "Prometheus/#{name(document)}")
       add_resources(resources['requests'] || {}, :requests, "Prometheus/#{name(document)}")
       add_resources(resources['limits'] || {}, :limits, "Prometheus/#{name(document)}")
       return
@@ -413,10 +450,28 @@ class Policy
       label = "#{kind(document)}/#{name(document)} container/#{container['name']}"
       fail_check("#{label} must declare cpu and memory requests") unless request['cpu'] && request['memory']
       fail_check("#{label} must declare cpu and memory limits") unless limit['cpu'] && limit['memory']
+      profile = resource_profile_for(workload_component, container['name'])
+      validate_resource_profile(resources, profile, label) if profile
       add_resources(request, :requests, label) if request['cpu'] && request['memory']
       add_resources(limit, :limits, label) if limit['cpu'] && limit['memory']
     end
 
+  end
+
+  def resource_profile_for(workload_component, container_name)
+    component = {
+      'kube-prometheus-stack-prometheus-operator' => 'prometheus-operator',
+      'kube-state-metrics' => 'kube-state-metrics',
+      'prometheus-node-exporter' => 'node-exporter',
+      'grafana' => 'grafana',
+      'loki' => 'loki',
+      'alloy' => container_name == 'config-reloader' ? 'alloy-config-reloader' : 'alloy'
+    }[workload_component]
+    RESOURCE_PROFILES[component]
+  end
+
+  def validate_resource_profile(actual, expected, label)
+    fail_check("#{label} must use approved CPU and memory resources") unless actual == expected
   end
 
   def cpu_millicores(raw)
@@ -555,8 +610,9 @@ class Policy
 
     tls_args = args.select { |argument| argument.include?('/cert/') || argument.include?('/tls/') }
     fail_check('Prometheus Operator must not reference TLS certificate paths when admission webhooks are disabled') unless tls_args.empty?
-    add_resources({ 'cpu' => '25m', 'memory' => '32Mi' }, :requests, 'Prometheus config reloader')
-    add_resources({ 'cpu' => '100m', 'memory' => '64Mi' }, :limits, 'Prometheus config reloader')
+    reloader = RESOURCE_PROFILES.fetch('prometheus-config-reloader')
+    add_resources(reloader['requests'], :requests, 'Prometheus config reloader')
+    add_resources(reloader['limits'], :limits, 'Prometheus config reloader')
   end
 
   def validate_metadata

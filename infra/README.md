@@ -139,10 +139,10 @@ Tổng storage cục bộ cần dành riêng cho observability là 6Gi. Vì stor
 
 `infra/ansible/vars/dev.yml` khai báo tổng tài nguyên observability như sau:
 
-- requests tổng: `cpu 835m`, `memory 1458Mi`
+- requests tổng: `cpu 645m`, `memory 1458Mi`
 - limits tổng: `cpu 3050m`, `memory 2880Mi`
 
-Chart values pin resource chi tiết cho Prometheus, Alertmanager, Grafana, Loki, Alloy, Prometheus Operator, config reloaders, kube-state-metrics và node-exporter. Alertmanager dùng request `50m`/`64Mi`, limit `100m`/`128Mi`, một replica. Nếu host không còn chỗ cho request tối thiểu này, không được tiếp tục cutover.
+Chart values pin resource chi tiết cho Prometheus, Alertmanager, Grafana, Loki, Alloy, Prometheus Operator, config reloaders, kube-state-metrics và node-exporter. Alertmanager dùng request `35m`/`64Mi`, limit `100m`/`128Mi`, một replica. Nếu host không còn chỗ cho request tối thiểu này, không được tiếp tục cutover.
 
 ### Alertmanager Telegram routing
 

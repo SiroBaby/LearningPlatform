@@ -179,8 +179,8 @@ Helm binary pin là `v3.21.3`.
 
 | Mốc | Giá trị |
 | --- | --- |
-| Requests tổng observability | `cpu 785m`, `memory 1266Mi` |
-| Limits tổng observability | `cpu 2950m`, `memory 2496Mi` |
+| Requests tổng observability | `cpu 645m`, `memory 1458Mi` |
+| Limits tổng observability | `cpu 3050m`, `memory 2880Mi` |
 | Ngưỡng còn trống sau khi dừng legacy stack | `>= 11Gi` disk, `>= 2Gi` RAM available |
 
 Nếu host không đáp ứng, Todo 12 phải chặn.

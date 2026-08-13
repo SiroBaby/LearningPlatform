@@ -26,10 +26,12 @@
           - internal_pki_documents[5].spec.uris == ['spiffe://learning-platform.local/ns/learning-platform-dev/sa/go-worker']
           - internal_pki_documents[6].spec.policyTypes == ['Ingress']
           - "internal_pki_documents[6].spec.podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'api'}"
-          - internal_pki_documents[6].spec.ingress | length == 2
+          - internal_pki_documents[6].spec.ingress | length == 3
           - "internal_pki_documents[6].spec.ingress[0].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'worker'}"
           - "internal_pki_documents[6].spec.ingress[0].ports == [{'protocol': 'TCP', 'port': 3443}]"
           - "internal_pki_documents[6].spec.ingress[1].from[0].namespaceSelector.matchLabels == {'kubernetes.io/metadata.name': 'kube-system'}"
           - "internal_pki_documents[6].spec.ingress[1].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'traefik'}"
           - "internal_pki_documents[6].spec.ingress[1].ports == [{'protocol': 'TCP', 'port': 3000}]"
+          - "internal_pki_documents[6].spec.ingress[2].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'web'}"
+          - "internal_pki_documents[6].spec.ingress[2].ports == [{'protocol': 'TCP', 'port': 3000}]"
           - internal_pki_documents[6].spec is not search('egress')

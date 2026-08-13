@@ -92,10 +92,10 @@ spec:
         apiVersion: v2
   retention: 7d
   retentionSize: 2500MB
-  resources: {requests: {cpu: 300m, memory: 512Mi}, limits: {cpu: "1", memory: 1Gi}}
+  resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: "1", memory: 1Gi}}
   containers:
     - name: config-reloader
-      resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
+      resources: {requests: {cpu: 15m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
   storage:
     volumeClaimTemplate:
       spec: {storageClassName: local-path, resources: {requests: {storage: 3Gi}}}
@@ -107,7 +107,7 @@ metadata: {name: learning-platform-monitori-alertmanager, namespace: observabili
 spec:
   replicas: 1
   configSecret: alertmanager-telegram-config
-  resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 100m, memory: 128Mi}}
+  resources: {requests: {cpu: 35m, memory: 64Mi}, limits: {cpu: 100m, memory: 128Mi}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -117,8 +117,8 @@ spec:
     spec:
       containers:
         - name: kube-prometheus-stack
-          args: [--config-reloader-cpu-request=25m, --config-reloader-memory-request=32Mi, --config-reloader-cpu-limit=100m, --config-reloader-memory-limit=64Mi]
-          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 200m, memory: 128Mi}}
+          args: [--config-reloader-cpu-request=15m, --config-reloader-memory-request=32Mi, --config-reloader-cpu-limit=100m, --config-reloader-memory-limit=64Mi]
+          resources: {requests: {cpu: 35m, memory: 64Mi}, limits: {cpu: 200m, memory: 128Mi}}
           volumeMounts: []
       volumes: []
 ---
@@ -151,7 +151,7 @@ spec:
               mountPath: /var/lib/grafana/dashboards/k8s-resources-namespace
             - name: dashboards-nodes
               mountPath: /var/lib/grafana/dashboards/nodes
-          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
+          resources: {requests: {cpu: 75m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -161,7 +161,7 @@ spec:
     spec:
       containers:
         - name: kube-state-metrics
-          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 200m, memory: 128Mi}}
+          resources: {requests: {cpu: 35m, memory: 64Mi}, limits: {cpu: 200m, memory: 128Mi}}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -171,7 +171,7 @@ spec:
     spec:
       containers:
         - name: node-exporter
-          resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
+          resources: {requests: {cpu: 15m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -184,7 +184,7 @@ spec:
     spec:
       containers:
         - name: loki
-          resources: {requests: {cpu: 150m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
+          resources: {requests: {cpu: 120m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -205,10 +205,10 @@ spec:
           volumeMounts:
             - name: alloy-storage
               mountPath: /tmp/alloy
-          resources: {requests: {cpu: 75m, memory: 128Mi}, limits: {cpu: 250m, memory: 256Mi}}
+          resources: {requests: {cpu: 60m, memory: 128Mi}, limits: {cpu: 250m, memory: 256Mi}}
         - name: config-reloader
           securityContext: {privileged: false, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534}
-          resources: {requests: {cpu: 10m, memory: 50Mi}, limits: {cpu: 100m, memory: 64Mi}}
+          resources: {requests: {cpu: 5m, memory: 50Mi}, limits: {cpu: 100m, memory: 64Mi}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
