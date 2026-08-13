@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://learningplatform.local/contracts/document.processing.requested.v1.schema.json",
+  "title": "document.processing.requested v1",
+  "description": "Metadata-only durable-work-queue envelope. It deliberately excludes secrets and document or prompt content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "messageType",
+    "messageId",
+    "documentId",
+    "ownerId",
+    "job",
+    "correlationId",
+    "provider",
+    "prompt",
+    "occurredAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1" },
+    "messageType": { "const": "document.processing.requested" },
+    "messageId": { "$ref": "#/$defs/uuid" },
+    "documentId": { "$ref": "#/$defs/uuid" },
+    "ownerId": { "$ref": "#/$defs/uuid" },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "jobType", "attempt", "idempotencyKey", "leaseId"],
+      "properties": {
+        "jobId": { "$ref": "#/$defs/uuid" },
+        "jobType": { "const": "FULL_PIPELINE" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "idempotencyKey": { "$ref": "#/$defs/sha256" },
+        "leaseId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "correlationId": { "$ref": "#/$defs/uuid" },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectionKind", "providerIdentity"],
+      "properties": {
+        "selectionKind": { "enum": ["PLAN", "CUSTOM"] },
+        "providerIdentity": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "fingerprint"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "fingerprint": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}
