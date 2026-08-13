@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: go-worker
+  namespace: {{ learning_platform_namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: internal-ca-bootstrap
+  namespace: {{ learning_platform_namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: internal-ca
+  namespace: {{ learning_platform_namespace }}
+spec:
+  isCA: true
+  commonName: learning-platform-internal-ca
+  secretName: internal-ca-key-pair
+  issuerRef:
+    name: internal-ca-bootstrap
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: internal-ca
+  namespace: {{ learning_platform_namespace }}
+spec:
+  ca:
+    secretName: internal-ca-key-pair
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-internal
+  namespace: {{ learning_platform_namespace }}
+spec:
+  secretName: api-internal-tls
+  privateKey:
+    rotationPolicy: Always
+  duration: 24h
+  renewBefore: 8h
+  commonName: api-internal
+  dnsNames:
+    - api-internal
+    - api-internal.{{ learning_platform_namespace }}
+    - api-internal.{{ learning_platform_namespace }}.svc
+  uris:
+    - spiffe://learning-platform.local/ns/{{ learning_platform_namespace }}/sa/api-internal
+  issuerRef:
+    name: internal-ca
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: go-worker
+  namespace: {{ learning_platform_namespace }}
+spec:
+  secretName: go-worker-tls
+  privateKey:
+    rotationPolicy: Always
+  duration: 24h
+  renewBefore: 8h
+  commonName: go-worker
+  uris:
+    - spiffe://learning-platform.local/ns/{{ learning_platform_namespace }}/sa/go-worker
+  issuerRef:
+    name: internal-ca
+    kind: Issuer
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-internal-mtls
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: 3443
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 3000

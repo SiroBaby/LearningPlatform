@@ -3,9 +3,29 @@ import { spawnSync } from 'child_process';
 
 const mockStartupEvents: string[] = [];
 const mockRunStartupMigrations = jest.fn<() => Promise<void>>();
+const mockInternalMtlsClose = jest.fn<() => Promise<void>>();
+const mockApiClose = jest.fn<() => Promise<void>>();
+let httpCloseListener: (() => void) | undefined;
+const mockHttpServer = {
+  once: jest.fn((event: string, listener: () => void) => {
+    if (event === 'close') httpCloseListener = listener;
+    return mockHttpServer;
+  }),
+  emit: jest.fn((event: string) => {
+    if (event === 'close') httpCloseListener?.();
+    return true;
+  }),
+};
 
 jest.mock('./database/migrate', () => ({
   runStartupMigrations: mockRunStartupMigrations,
+}));
+
+jest.mock('./internal-mtls-server', () => ({
+  createInternalMtlsServer: async () => ({
+    close: mockInternalMtlsClose,
+    server: { listen: async (port: number, callback: () => void) => callback() },
+  }),
 }));
 
 jest.mock('@nestjs/core', () => ({
@@ -14,12 +34,22 @@ jest.mock('@nestjs/core', () => ({
       mockStartupEvents.push('api.create');
       return {
         enableShutdownHooks: () => undefined,
+        close: mockApiClose,
         get: () => ({
           application: {
+            internalMtls: {
+              caPath: '/tmp/ca.crt',
+              certPath: '/tmp/server.crt',
+              enabled: true,
+              expectedClientSpiffeUri: 'spiffe://test',
+              keyPath: '/tmp/server.key',
+              port: 9443,
+            },
             port: 3000,
             swagger: { enabled: false },
           },
         }),
+        getHttpServer: () => mockHttpServer,
         listen: async () => {
           mockStartupEvents.push('api.listen');
         },
@@ -52,6 +82,14 @@ describe('backend-owned startup migrations', () => {
   beforeEach(() => {
     mockStartupEvents.splice(0);
     mockRunStartupMigrations.mockReset();
+    mockInternalMtlsClose.mockReset();
+    mockApiClose.mockReset();
+    mockApiClose.mockImplementation(async () => {
+      mockHttpServer.emit('close');
+    });
+    mockHttpServer.once.mockClear();
+    mockHttpServer.emit.mockClear();
+    httpCloseListener = undefined;
   });
 
   it('runs API migrations before creating and listening on the Nest application', async () => {
@@ -65,6 +103,16 @@ describe('backend-owned startup migrations', () => {
 
     // Then
     expect(mockStartupEvents).toEqual(['api.migrate', 'api.create', 'api.listen']);
+  });
+
+  it('closes the internal mTLS listener during normal API shutdown', async () => {
+    mockRunStartupMigrations.mockResolvedValueOnce(undefined);
+
+    await bootstrapApi();
+    await mockApiClose();
+
+    expect(mockHttpServer.once).toHaveBeenCalledWith('close', expect.any(Function));
+    expect(mockInternalMtlsClose).toHaveBeenCalledTimes(1);
   });
 
   it('does not create or listen on the API application when migrations reject', async () => {

@@ -45,6 +45,29 @@ const databaseConfig = (
 
 describe('ApplicationConfigService', () => {
 
+  it('requires a strict Go worker SPIFFE URI when internal mTLS is enabled', () => {
+    const application = (expectedClientSpiffeUri: string | undefined): ApplicationConfigService => new ApplicationConfigService(new ConfigService({
+      app: {
+        env: 'test',
+        internalMtls: {
+          caPath: '/identity/ca.crt',
+          certPath: '/identity/tls.crt',
+          expectedClientSpiffeUri,
+          keyPath: '/identity/tls.key',
+          port: 3443,
+        },
+        port: 3000,
+        swagger: { enabled: false },
+      },
+    }));
+
+    expect(application('spiffe://learning-platform.local/ns/learning-platform-qa/sa/go-worker').application.internalMtls.expectedClientSpiffeUri)
+      .toBe('spiffe://learning-platform.local/ns/learning-platform-qa/sa/go-worker');
+    expect(() => application(undefined).application).toThrow('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI');
+    expect(() => application('spiffe://learning-platform.local/ns/INVALID/sa/go-worker').application).toThrow('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI');
+    expect(() => application('spiffe://learning-platform.local/ns/learning-platform-qa/sa/other').application).toThrow('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI');
+  });
+
   it('returns verified database TLS settings when a CA is configured', () => {
     const config = databaseConfig('development', {
       ca: '-----BEGIN CERTIFICATE-----\ncertificate\n-----END CERTIFICATE-----',

@@ -6,8 +6,18 @@ export interface SwaggerSettings {
 
 export interface ApplicationSettings {
   environment: string;
+  internalMtls: InternalMtlsSettings;
   port: number;
   swagger: SwaggerSettings;
+}
+
+export interface InternalMtlsSettings {
+  readonly caPath: string | undefined;
+  readonly certPath: string | undefined;
+  readonly enabled: boolean;
+  readonly expectedClientSpiffeUri: string | undefined;
+  readonly keyPath: string | undefined;
+  readonly port: number;
 }
 
 export type LlmProviderType = 'fake' | 'openai';
@@ -127,6 +137,13 @@ export const CONFIG_PATH = {
   app: {
     environment: 'app.env',
     port: 'app.port',
+    internalMtls: {
+      caPath: 'app.internalMtls.caPath',
+      certPath: 'app.internalMtls.certPath',
+      expectedClientSpiffeUri: 'app.internalMtls.expectedClientSpiffeUri',
+      keyPath: 'app.internalMtls.keyPath',
+      port: 'app.internalMtls.port',
+    },
     swagger: {
       enabled: 'app.swagger.enabled',
       password: 'app.swagger.password',
