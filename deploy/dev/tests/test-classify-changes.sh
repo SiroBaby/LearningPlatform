@@ -83,6 +83,11 @@ main() {
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 
   before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/cert_manager/tasks/main.yml)"
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+
+  before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file .github/workflows/deploy-dev.yml)"
   expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")

@@ -24,7 +24,7 @@ main() {
   require_match 'ansible-core==2\.21\.2'
   require_match 'node \.\./deploy/dev/audit-high\.js'
   require_match 'ansible-galaxy.*collection install -r infra/ansible/requirements\.yml'
-  require_match 'site\.yml --tags applications'
+  require_match 'site\.yml --tags cert_manager,applications'
   reject_match 'DEV_K3S_ANSIBLE_VARS_B64|ANSIBLE_VARS_B64|base64 --decode'
   require_match 'k3s kubectl rollout status deployment/'
   require_match 'StrictHostKeyChecking=yes'

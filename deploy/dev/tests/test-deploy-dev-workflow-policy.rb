@@ -29,6 +29,10 @@ def step_by_name(job, name)
   job.fetch('steps', []).find { |step| step['name'] == name }
 end
 
+def ansible_tags(step)
+  step.fetch('run').match(/--tags\s+([^\s]+)/)[1].split(',')
+end
+
 def job_secret_references(job)
   job.to_s.scan(/secrets\.([A-Z0-9_]+)/).flatten
 end
@@ -105,8 +109,11 @@ assert(failures, jobs.fetch('deploy').fetch('if').include?("needs.changes.output
        'target=api deploy must remain gated by selected application changes')
 assert(failures, step_names(jobs.fetch('deploy')).include?('Apply selected applications through Ansible'),
        'target=api deploy must apply applications')
-assert(failures, step_by_name(jobs.fetch('deploy'), 'Apply selected applications through Ansible').fetch('run').include?('--tags applications'),
-        'target=api deploy must retain applications-only Ansible tags')
+assert(failures, ansible_tags(step_by_name(jobs.fetch('deploy'), 'Apply selected applications through Ansible')) == %w[cert_manager applications],
+        'target=api deploy must use exactly cert_manager,applications tags')
+application_roles = playbook.fetch('roles').select { |role| (role.fetch('tags') & %w[cert_manager applications]).any? }.map { |role| role.fetch('role') }
+assert(failures, application_roles == %w[cert_manager applications],
+        'application deployment tags must select cert-manager before applications')
 build_images = jobs.fetch('build-images')
 deploy = jobs.fetch('deploy')
 assert(failures, build_images.fetch('needs') == %w[changes backend-quality frontend-quality infra-quality],
@@ -133,8 +140,10 @@ assert(failures, observability.fetch('needs') == %w[changes infra-quality],
 assert(failures, step_names(observability).include?('Apply External Secrets and observability through Ansible'),
        'target=observability must have its dedicated Ansible apply step')
 observability_apply = step_by_name(observability, 'Apply External Secrets and observability through Ansible').fetch('run')
-assert(failures, observability_apply.include?('--tags k3s,external_secrets,observability'),
-        'target=observability must apply the reviewed K3s edge route with external_secrets and observability tags')
+assert(failures, ansible_tags(step_by_name(observability, 'Apply External Secrets and observability through Ansible')) == %w[k3s external_secrets observability],
+        'target=observability must use exactly k3s,external_secrets,observability tags')
+assert(failures, ansible_tags(step_by_name(jobs.fetch('deploy'), 'Apply selected applications through Ansible')) != ansible_tags(step_by_name(observability, 'Apply External Secrets and observability through Ansible')),
+        'application and observability deployment tags must remain distinct')
 selected_observability_roles = playbook.fetch('roles').select { |role| (role.fetch('tags') & %w[k3s external_secrets observability]).any? }.map { |role| role.fetch('role') }
 assert(failures, selected_observability_roles == %w[k3s external_secrets observability],
         'observability Ansible tags must select only K3s edge, External Secrets, and observability roles')
@@ -265,7 +274,7 @@ assert(failures, step_by_name(jobs.fetch('deploy'), 'Create ephemeral Ansible in
 source = File.read(workflow_path)
 assert(failures, !source.match?(/DEV_K3S_ANSIBLE_VARS_B64|ANSIBLE_VARS_B64|base64\s+--decode/),
        'workflow must not contain a desired-state base64 transport')
-assert(failures, source.match?(/site\.yml --tags applications/) && source.match?(/site\.yml --tags k3s,external_secrets,observability/),
+assert(failures, source.match?(/site\.yml --tags cert_manager,applications/) && source.match?(/site\.yml --tags k3s,external_secrets,observability/),
         'application and observability Ansible paths must remain distinct')
 assert(failures, !source.match?(/learning-platform-dev-aws-credentials|aws_credentials_secret_name.*observability/i),
        'observability bootstrap must not reuse the application AWS Secret contract')
