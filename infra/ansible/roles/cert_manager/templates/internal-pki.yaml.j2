@@ -105,3 +105,11 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: web
+      ports:
+        - protocol: TCP
+          port: 3000

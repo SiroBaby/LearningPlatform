@@ -113,6 +113,8 @@
       - "cert_manager_internal_pki_definitions[6].spec.ingress[1].from[0].namespaceSelector.matchLabels == {'kubernetes.io/metadata.name': 'kube-system'}"
       - "cert_manager_internal_pki_definitions[6].spec.ingress[1].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'traefik'}"
       - "cert_manager_internal_pki_definitions[6].spec.ingress[1].ports == [{'protocol': 'TCP', 'port': 3000}]"
+      - "cert_manager_internal_pki_definitions[6].spec.ingress[2].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'web'}"
+      - "cert_manager_internal_pki_definitions[6].spec.ingress[2].ports == [{'protocol': 'TCP', 'port': 3000}]"
     fail_msg: >-
       Internal PKI must remain namespace-scoped, use the approved SPIFFE URI
       identities, and rotate server and client credentials every 24h with 8h renewal.
