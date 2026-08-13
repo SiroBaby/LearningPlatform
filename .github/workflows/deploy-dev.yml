@@ -237,7 +237,7 @@ jobs:
           ANSIBLE_STDOUT_CALLBACK: default
         run: |
           DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
-          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags applications -e "@$DEPLOYMENT_DIR/overrides.yml"
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags cert_manager,applications -e "@$DEPLOYMENT_DIR/overrides.yml"
       - name: Wait for selected K3s rollouts
         env:
           VPS_HOST: ${{ vars.DEV_VPS_HOST }}

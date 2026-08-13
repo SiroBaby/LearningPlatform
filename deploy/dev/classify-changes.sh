@@ -59,7 +59,7 @@ classify_changes() {
             # Application delivery automation and application manifests affect
             # every workload. Baseline K3s/ESO/monitoring changes deliberately
             # remain operator-run and never trigger this workflow.
-            infra/k8s/*|infra/ansible/roles/applications/*)
+            infra/k8s/*|infra/ansible/roles/cert_manager/*|infra/ansible/roles/applications/*)
               web=true
               api=true
               worker=true
