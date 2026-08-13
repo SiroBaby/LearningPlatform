@@ -58,8 +58,11 @@
           - applications_rendered_worker_deployments | length == 1
           - applications_rendered_worker_deployments[0].spec.replicas == 1
           - applications_rendered_web_deployments[0].spec.strategy.type == 'Recreate'
+          - applications_rendered_web_deployments[0].spec.strategy.rollingUpdate is none
           - applications_rendered_api_deployments[0].spec.strategy.type == 'Recreate'
+          - applications_rendered_api_deployments[0].spec.strategy.rollingUpdate is none
           - applications_rendered_worker_deployments[0].spec.strategy.type == 'Recreate'
+          - applications_rendered_worker_deployments[0].spec.strategy.rollingUpdate is none
         fail_msg: >-
           Web, API, and worker Deployments must run one replica and use the
           Recreate strategy to avoid surge pods on the single-node cluster.
