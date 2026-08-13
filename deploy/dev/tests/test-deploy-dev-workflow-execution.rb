@@ -92,6 +92,7 @@ ssh_trust = jobs.fetch('deploy-observability').fetch('steps').find { |step| step
 bootstrap = jobs.fetch('deploy-observability').fetch('steps').find { |step| step['name'] == 'Bootstrap observability AWS credential Secret' }.fetch('run')
 recovery_bootstrap = jobs.fetch('recover-observability-pending-install').fetch('steps').find { |step| step['name'] == 'Bootstrap observability AWS credential Secret' }.fetch('run')
 health_gate = jobs.fetch('observability-health').fetch('steps').find { |step| step['name'] == 'Fail health target from sanitized evidence' }.fetch('run')
+rollout_wait = jobs.fetch('deploy').fetch('steps').find { |step| step['name'] == 'Wait for selected K3s rollouts' }.fetch('run')
 
 assert(jobs.fetch('deploy').fetch('steps').none? { |step| step['name'] == 'Diagnose failed database migration gate' }, 'deploy must not retain external migration Job diagnostics')
 
@@ -163,6 +164,12 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
     set -Eeuo pipefail
     exec "$@"
   BASH
+  File.write(File.join(mock_bin, 'timeout'), <<~'BASH')
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+    shift
+    exec "$@"
+  BASH
   File.write(File.join(mock_bin, 'k3s'), <<~'BASH')
     #!/usr/bin/env bash
     set -Eeuo pipefail
@@ -176,7 +183,26 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
         [ "$2" = -f ] && [ "$3" = - ]
         cat >/dev/null
         ;;
+      rollout)
+        [ "$2" = status ]
+        printf '%s\n' 'rollout did not finish' >&2
+        exit 1
+        ;;
       get)
+        if [ "${MOCK_ROLLOUT_DIAGNOSTICS:-false}" = true ]; then
+          printf 'get %s\n' "$*" >> "$MOCK_K3S_TRACE"
+          case "$2" in
+            pods)
+              if [[ " $* " == *' jsonpath='* ]]; then
+                printf '%s\n' 'node-a' 'node-a'
+              else
+                printf '%s\n' 'pod-a'
+              fi
+              ;;
+            *) printf '%s\n' 'resource-a' ;;
+          esac
+          exit 0
+        fi
         [ "$2" = secret ]
         [ "$3" = observability-aws-credentials ]
         [ "$4" = --namespace ]
@@ -190,15 +216,20 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
           *)
             printf '%s\n' "unsupported kubectl Secret metadata output: $7" >&2
             exit 1
-            ;;
+          ;;
         esac
+        ;;
+      describe)
+        [ "${MOCK_ROLLOUT_DIAGNOSTICS:-false}" = true ]
+        printf 'describe %s\n' "$*" >> "$MOCK_K3S_TRACE"
+        printf '%s\n' 'description'
         ;;
       *)
         exit 1
         ;;
     esac
   BASH
-  %w[ssh sudo k3s].each { |name| File.chmod(0o700, File.join(mock_bin, name)) }
+  %w[ssh sudo timeout k3s].each { |name| File.chmod(0o700, File.join(mock_bin, name)) }
   bootstrap_environment = environment.merge(
     'PATH' => "#{mock_bin}:#{ENV.fetch('PATH')}",
     'MOCK_BASH_ENV' => brittle_bash_env,
@@ -227,6 +258,20 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   assert(!output.include?('fixture-access-key') && !output.include?('fixture-secret-key'), 'recovery bootstrap fixture must not expose credentials')
   assert(Dir.children(remote_tmp).empty?, 'recovery remote credential directory must be cleaned up')
   assert(Dir.children(runner_temp).none? { |name| name.start_with?('observability-aws-credentials.') }, 'recovery local credential directory must be cleaned up')
+
+  File.write(File.join(deployment_dir, 'selected-targets'), "web\n")
+  rollout_trace = File.join(directory, 'rollout-diagnostics.trace')
+  stdout, stderr, status = run_step(rollout_wait, bootstrap_environment.merge(
+    'MOCK_ROLLOUT_DIAGNOSTICS' => 'true',
+    'MOCK_K3S_TRACE' => rollout_trace
+  ))
+  output = "#{stdout}#{stderr}"
+  assert(!status.success?, 'rollout failure diagnostics must preserve a nonzero exit')
+  assert(File.exist?(rollout_trace), "rollout diagnostics must invoke K3s reads: #{output}")
+  trace = File.read(rollout_trace)
+  assert(trace.include?('get pods') && trace.include?('jsonpath='), 'diagnostics must derive target pod nodes')
+  assert(trace.include?('describe node node-a'), 'diagnostics must describe only the derived node')
+  assert(output.include?('--- target node diagnostic: node-a ---'), 'diagnostics must label each target node')
 
   broken = app_inventory.sub("\nhost, user", "\n host, user")
   broken_runner_temp = File.join(directory, 'broken-runner-temp')

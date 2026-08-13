@@ -253,7 +253,16 @@ jobs:
                   print(target)
           PY
           while IFS= read -r target; do
-            ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo k3s kubectl rollout status deployment/$target --namespace learning-platform-dev --timeout=180s"
+            case "$target" in
+              web|api|worker) ;;
+              *) printf 'unsupported rollout target: %s\n' "$target" >&2; exit 1 ;;
+            esac
+            if ! ssh -n -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo timeout 190s k3s kubectl rollout status deployment/$target --namespace learning-platform-dev --timeout=180s"; then
+              # Begin rollout failure diagnostics
+              ssh -n -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo env ROLLOUT_TARGET=$target bash -c 'namespace=learning-platform-dev; selector=app.kubernetes.io/component=\$ROLLOUT_TARGET; kubectl_timeout() { timeout 20s sudo k3s kubectl \"\$@\"; }; kubectl_timeout get deployment/\$ROLLOUT_TARGET --namespace \$namespace -o wide || true; kubectl_timeout get replicasets --namespace \$namespace --selector=\$selector -o wide || true; kubectl_timeout get pods --namespace \$namespace --selector=\$selector -o wide || true; kubectl_timeout describe deployment/\$ROLLOUT_TARGET --namespace \$namespace || true; kubectl_timeout get events --namespace \$namespace --field-selector=involvedObject.kind=Deployment,involvedObject.name=\$ROLLOUT_TARGET --sort-by=.lastTimestamp | tail -n 50 || true; nodes=\$(kubectl_timeout get pods --namespace \$namespace --selector=\$selector -o '\''jsonpath={range .items[?(@.spec.nodeName)]}{.spec.nodeName}{"\\n"}{end}'\'' 2>/dev/null || true); if [ -z \"\$nodes\" ]; then printf '\''%s\\n'\'' '\''No selected target pods have an assigned node.'\''; else printf '\''%s\\n'\'' \"\$nodes\" | sort -u | grep -Ex '\''[A-Za-z0-9][A-Za-z0-9.-]*'\'' | while IFS= read -r node; do printf '\''%s\\n'\'' \"--- target node diagnostic: \$node ---\"; kubectl_timeout describe node \"\$node\" 2>&1 | head -n 200 || true; done; fi'" || true
+              # End rollout failure diagnostics
+              exit 1
+            fi
           done < "$DEPLOYMENT_DIR/selected-targets"
       - name: Remove ephemeral deployment files
         if: always()
