@@ -72,6 +72,7 @@ main() {
   reject_match 'database-migrate|migration-diagnostics|job-name='
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-policy.rb"
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-execution.rb"
+  bash "${ROOT_DIR}/deploy/dev/tests/test-classify-changes.sh"
   bash "${ROOT_DIR}/deploy/dev/tests/test-observability-health.sh"
   printf '%s\n' 'deploy workflow static tests passed'
 }

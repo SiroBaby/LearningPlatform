@@ -116,8 +116,10 @@ assert(failures, application_roles == %w[cert_manager applications],
         'application deployment tags must select cert-manager before applications')
 build_images = jobs.fetch('build-images')
 deploy = jobs.fetch('deploy')
+assert(failures, jobs.fetch('worker-quality').fetch('if') == "needs.changes.outputs.go_worker == 'true'",
+       'worker quality must run only for worker/** changes')
 assert(failures, build_images.fetch('needs') == %w[changes backend-quality frontend-quality infra-quality],
-       'application image build must wait for infra-quality')
+       'application image build must wait for infrastructure quality')
 assert(failures, build_images.fetch('if').include?("needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped'"),
        'application image build must block failed infra-quality but allow skipped infra-quality')
 assert(failures, deploy.fetch('needs') == %w[changes infra-quality build-images],

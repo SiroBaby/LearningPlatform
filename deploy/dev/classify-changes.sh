@@ -29,6 +29,7 @@ classify_changes() {
   local web=false
   local api=false
   local worker=false
+  local go_worker=false
   local observability=false
   local changed_file
 
@@ -45,6 +46,9 @@ classify_changes() {
               ;;
             web/*)
               web=true
+              ;;
+            worker/*)
+              go_worker=true
               ;;
             app/src/worker/*|app/src/worker.ts)
               worker=true
@@ -111,6 +115,7 @@ classify_changes() {
   printf 'web=%s\n' "${web}"
   printf 'api=%s\n' "${api}"
   printf 'worker=%s\n' "${worker}"
+  printf 'go_worker=%s\n' "${go_worker}"
   printf 'observability=%s\n' "${observability}"
   printf 'backend=%s\n' "${backend}"
   printf 'deploy_any=%s\n' "${deploy_any}"
