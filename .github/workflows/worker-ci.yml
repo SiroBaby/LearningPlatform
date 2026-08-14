@@ -24,7 +24,7 @@ jobs:
         working-directory: worker
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: worker/go.mod
       - run: test -z "$(gofmt -l .)"
