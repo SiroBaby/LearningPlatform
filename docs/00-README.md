@@ -1,7 +1,7 @@
 # AI Learning Platform — Bản Thiết Kế Hệ Thống
 
-> Tài liệu kiến trúc cho nền tảng biến mọi tài liệu học tập thành trải nghiệm học tập tương tác bằng AI.
-> Phục vụ thị trường **Việt Nam / SEA**, khách hàng **B2C** (học sinh, sinh viên, người tự học). Platform Model dùng managed inference; Custom AI/BYOM qua endpoint OpenAI-compatible được mở cho mọi gói khi identity, secret-management, admin feature setting và egress boundary sẵn sàng theo ADR-0021. Local AI Connector để phase sau.
+> Tài liệu kiến trúc cho MVP biến PDF/text, sau đó Video/Audio/STT và OCR, thành trải nghiệm học tập tương tác bằng AI.
+> Phục vụ thị trường **Việt Nam / SEA**, khách hàng **B2C** (học sinh, sinh viên, người tự học). Platform Model dùng managed inference; Custom AI/BYOM qua endpoint OpenAI-compatible được mở cho mọi gói khi identity, secret-management, admin feature setting và egress boundary sẵn sàng theo ADR-0021. Local AI Connector thuộc Post-MVP Improvement Backlog.
 
 ---
 
@@ -27,26 +27,26 @@ Bộ tài liệu được chia thành các phần, mỗi phần một file. Đ�
 
 ---
 
-## 1. Recalibrated Stance: Đây là dự án HỌC TẬP
+## 1. Recalibrated Stance: Shipping MVP trước
 
-Bạn đã chốt: **theo đúng full polyglot stack** (NestJS + Spring Boot + Go + Kafka + OpenSearch + K8s) vì mục tiêu là rèn kỹ năng hệ thống và đa ngôn ngữ lập trình — không phải tối ưu thời gian launch.
+MVP được chốt theo capability có thể shipping: PDF/text baseline → Video/Audio/STT → OCR. MVP giữ NestJS modular monolith, AI Worker Golang và PostgreSQL durable queue; không lấy full polyglot stack làm scope hiện tại.
 
 Quyết định này thay đổi cách tôi tư vấn:
 
-- **"Over-engineering" giờ là tính năng, không phải bug.** Bình thường tôi sẽ ngăn 1 dev dựng 5 service + Kafka + mesh. Ở đây, đó chính là giáo trình.
-- **Nhưng tôi không bỏ vai CTO.** Tôi thêm một **Build Order** (thứ tự xây) để bạn không chết chìm khi dựng mọi thứ cùng lúc. Bạn xây *đúng kiến trúc target*, theo *trình tự học được*.
-- **Những thứ KHÔNG nhân nhượng dù là dự án học:** unit economics (vì bạn muốn kiếm tiền thật), chất lượng pipeline AI (phần khó nhất, khó hơn toàn bộ phần microservices cộng lại), và các rủi ro kỹ thuật. Tôi flag đầy đủ trong từng phần.
+- Chất lượng extraction/grounding và luồng Owner → Quiz → Attempt → Grading là ưu tiên MVP.
+- PostgreSQL queue và Go worker là boundary vận hành đủ dùng cho MVP; không thay bằng Kafka chỉ để học công nghệ.
+- Redis, Kafka, Spring auth split, API Gateway, OpenSearch/RAG, service split, KEDA/HPA/HA, GitOps, mesh và CQRS thuộc **Post-MVP Improvement Backlog** trong `11-roadmaps.md`.
 
 ### 1.1. Tiêu chuẩn phát triển và thời điểm triển khai production
 
-Dự án được phát triển cho một sản phẩm production có người dùng thật. Tuy nhiên, hệ thống **chưa được triển khai production trong các phase xây dựng core**. Hai quyết định này không mâu thuẫn:
+Dự án được phát triển cho một sản phẩm production có người dùng thật. Tuy nhiên, hệ thống **chưa được triển khai production trong các capability MVP**. Hai quyết định này không mâu thuẫn:
 
-- **Production-grade engineering từ ngày đầu:** code trong từng phase phải có cấu trúc rõ ràng, contract tường minh, validation, ownership, idempotency, failure handling, bounded resource usage, graceful shutdown, test và cấu hình vận hành phù hợp với phạm vi phase đó.
-- **Không giả lập target state quá sớm:** không đưa Kafka, K8s hoặc microservice vào phase trước chỉ để mang nhãn production. Mỗi công nghệ vẫn được thêm theo đúng roadmap và phải thay thế qua seam đã thiết kế, không viết lại business flow.
-- **Production launch chỉ sau core phases:** Phase 0 đến Phase 6 phải hoàn thành, sau đó hệ thống phải qua production-readiness review về bảo mật, dữ liệu, tải, quan sát, backup/restore và rollback trước khi phục vụ người dùng thật.
-- **Phase completion không đồng nghĩa production release:** một phase có thể hoàn thành về chức năng và kiến trúc nhưng toàn hệ thống vẫn chỉ chạy ở local/dev hoặc staging cho tới khi đạt production launch gate.
+- **Production-grade engineering từ ngày đầu:** code trong từng capability phải có cấu trúc rõ ràng, contract tường minh, validation, ownership, idempotency, failure handling, bounded resource usage, graceful shutdown, test và cấu hình vận hành phù hợp với phạm vi capability đó.
+- **Không mở rộng hạ tầng trong MVP:** không thêm broker, datastore, cluster topology, autoscaling hay platform vận hành mới chỉ để đón trước nhu cầu.
+- **Production launch cần gate riêng:** hoàn thành capability MVP không mặc nhiên là đủ điều kiện phục vụ production traffic.
+- **Hoàn thành capability không đồng nghĩa production release:** một capability có thể hoàn thành về chức năng và kiến trúc nhưng toàn hệ thống vẫn chỉ chạy ở local/dev hoặc staging cho tới khi đạt production launch gate.
 
-Phase 7 là phần mở rộng sau core; Analytics CQRS nên làm theo nhu cầu sản phẩm, còn service mesh là tùy chọn và không chặn lần triển khai production đầu tiên.
+Các hạng mục mở rộng được xem lại sau MVP theo problem statement và bằng chứng nhu cầu, không theo lịch cố định.
 
 ---
 
