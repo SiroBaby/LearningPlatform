@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"testing"
 )
 
@@ -17,10 +18,8 @@ func TestServerReportsLivenessAndReadinessOnlyAfterStart(t *testing.T) {
 		t.Fatalf("release address: %v", err)
 	}
 
-	server := NewServer(address)
-	if server.ready.Load() {
-		t.Fatal("server should not be ready before Start")
-	}
+	var ready atomic.Bool
+	server := NewServer(address, ready.Load)
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -31,10 +30,23 @@ func TestServerReportsLivenessAndReadinessOnlyAfterStart(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf("GET %s status = %d", path, response.StatusCode)
+		wantStatus := http.StatusOK
+		if path == "/readyz" {
+			wantStatus = http.StatusServiceUnavailable
+		}
+		if response.StatusCode != wantStatus {
+			t.Fatalf("GET %s status = %d, want %d", path, response.StatusCode, wantStatus)
 		}
 		_ = response.Body.Close()
+	}
+	ready.Store(true)
+	response, err := http.Get("http://" + address + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("GET /readyz status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 }
 
@@ -45,7 +57,7 @@ func TestServerFailsFastWhenHealthAddressCannotBeBound(t *testing.T) {
 	}
 	defer func() { _ = listener.Close() }()
 
-	if err := NewServer(listener.Addr().String()).Start(); err == nil {
+	if err := NewServer(listener.Addr().String(), func() bool { return true }).Start(); err == nil {
 		t.Fatal("Start() error = nil")
 	}
 }

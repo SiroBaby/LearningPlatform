@@ -38,6 +38,7 @@ jobs:
       web: ${{ steps.classify.outputs.web }}
       api: ${{ steps.classify.outputs.api }}
       worker: ${{ steps.classify.outputs.worker }}
+      go_worker: ${{ steps.classify.outputs.go_worker }}
       observability: ${{ steps.classify.outputs.observability }}
       backend: ${{ steps.classify.outputs.backend }}
       deploy_any: ${{ steps.classify.outputs.deploy_any }}
@@ -78,6 +79,27 @@ jobs:
       - run: npm run test:e2e -- --runInBand
       - run: npm run build
       - run: npx tsc -p tsconfig.spec.json --noEmit
+
+  worker-quality:
+    name: Worker quality
+    needs: changes
+    if: needs.changes.outputs.go_worker == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab0
+        with:
+          go-version-file: worker/go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go build ./cmd/ai-worker
 
   frontend-quality:
     name: Frontend quality

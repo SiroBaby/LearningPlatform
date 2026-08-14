@@ -15,11 +15,12 @@ const shutdownTimeout = 5 * time.Second
 type Server struct {
 	address string
 	server  *http.Server
-	ready   atomic.Bool
+	started atomic.Bool
+	ready   func() bool
 }
 
-func NewServer(address string) *Server {
-	server := &Server{address: address}
+func NewServer(address string, ready func() bool) *Server {
+	server := &Server{address: address, ready: ready}
 	server.server = &http.Server{Handler: http.HandlerFunc(server.handle)}
 	return server
 }
@@ -29,18 +30,18 @@ func (server *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("listen for worker health server: %w", err)
 	}
-	server.ready.Store(true)
+	server.started.Store(true)
 
 	go func() {
 		if err := server.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			server.ready.Store(false)
+			server.started.Store(false)
 		}
 	}()
 	return nil
 }
 
 func (server *Server) Close(ctx context.Context) error {
-	server.ready.Store(false)
+	server.started.Store(false)
 	shutdownContext, cancel := context.WithTimeout(ctx, shutdownTimeout)
 	defer cancel()
 	if err := server.server.Shutdown(shutdownContext); err != nil {
@@ -54,7 +55,7 @@ func (server *Server) handle(response http.ResponseWriter, request *http.Request
 	case "/healthz":
 		response.WriteHeader(http.StatusOK)
 	case "/readyz":
-		if !server.ready.Load() {
+		if !server.started.Load() || server.ready == nil || !server.ready() {
 			http.Error(response, "not ready", http.StatusServiceUnavailable)
 			return
 		}

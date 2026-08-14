@@ -16,8 +16,17 @@ assert_output() {
   local after_sha="$3"
   local expected="$4"
   local actual
-  actual="$("${CLASSIFIER}" "${target}" "${before_sha}" "${after_sha}" | grep -v '^observability=')"
+  actual="$("${CLASSIFIER}" "${target}" "${before_sha}" "${after_sha}" | grep -Ev '^(observability|go_worker)=')"
   [[ "${actual}" == "${expected}" ]] || fail "unexpected ${target} output: ${actual}"
+}
+
+assert_go_worker_output() {
+  local before_sha="$1"
+  local after_sha="$2"
+  local actual
+
+  actual="$("${CLASSIFIER}" auto "${before_sha}" "${after_sha}")"
+  grep -Fxq 'go_worker=true' <<<"${actual}" || fail "worker/** must enable Go worker CI: ${actual}"
 }
 
 assert_observability_output() {
@@ -53,6 +62,12 @@ main() {
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 
   before_sha="${after_sha}"
+	after_sha="$(cd "${repository}" && commit_file worker/internal/consumer/consumer.go)"
+	expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
+	(cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+	(cd "${repository}" && assert_go_worker_output "${before_sha}" "${after_sha}")
+
+	before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file app/src/worker/job.ts)"
   expected=$'web=false\napi=false\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")

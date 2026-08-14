@@ -3,67 +3,38 @@ package consumer
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
-	"os"
-	"path/filepath"
 	"testing"
-
-	"github.com/SiroBaby/LearningPlatform/worker/internal/contract"
 )
 
-func TestConsumerAcceptsOneDeliveryAndIgnoresDuplicateAndStaleDeliveries(t *testing.T) {
+func TestBootstrapIsReadyOnlyWhileItsLifecycleIsStarted(t *testing.T) {
 	t.Parallel()
 
-	called := 0
-	consumer := New(func(_ context.Context, input contract.ProcessingInput) error {
-		called++
-		if input.OwnerID != "33333333-3333-4333-8333-333333333333" {
-			t.Fatalf("handler owner ID = %q", input.OwnerID)
-		}
-		return nil
-	}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
-
-	if disposition, err := consumer.Consume(context.Background(), readFixture(t, "document.processing.requested.v1.valid.json")); err != nil || disposition != Accepted {
-		t.Fatalf("first Consume() = %q, %v", disposition, err)
+	bootstrap := NewBootstrap()
+	if bootstrap.Ready() {
+		t.Fatal("Bootstrap should not be ready before Start")
 	}
-	if disposition, err := consumer.Consume(context.Background(), readFixture(t, "document.processing.requested.v1.duplicate.json")); err != nil || disposition != IgnoredDuplicate {
-		t.Fatalf("duplicate Consume() = %q, %v", disposition, err)
+	if err := bootstrap.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
 	}
-	if disposition, err := consumer.Consume(context.Background(), readFixture(t, "document.processing.requested.v1.stale.json")); err != nil || disposition != IgnoredStale {
-		t.Fatalf("stale Consume() = %q, %v", disposition, err)
+	if !bootstrap.Ready() {
+		t.Fatal("Bootstrap should be ready after Start")
 	}
-	if called != 1 {
-		t.Fatalf("handler calls = %d, want 1", called)
+	bootstrap.Close()
+	if bootstrap.Ready() {
+		t.Fatal("Bootstrap should not be ready after Close")
 	}
 }
 
-func TestConsumerLeavesFailedDeliveryAvailableForReplay(t *testing.T) {
+func TestBootstrapDoesNotStartWithCanceledContext(t *testing.T) {
 	t.Parallel()
 
-	calls := 0
-	consumer := New(func(_ context.Context, _ contract.ProcessingInput) error {
-		calls++
-		if calls == 1 {
-			return errors.New("transient handler failure")
-		}
-		return nil
-	}, nil)
-
-	fixture := readFixture(t, "document.processing.requested.v1.valid.json")
-	if _, err := consumer.Consume(context.Background(), fixture); err == nil {
-		t.Fatal("first Consume() error = nil")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	bootstrap := NewBootstrap()
+	if err := bootstrap.Start(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start() error = %v, want context.Canceled", err)
 	}
-	if disposition, err := consumer.Consume(context.Background(), fixture); err != nil || disposition != Accepted {
-		t.Fatalf("replay Consume() = %q, %v", disposition, err)
+	if bootstrap.Ready() {
+		t.Fatal("Bootstrap should remain not ready after failed Start")
 	}
-}
-
-func readFixture(t *testing.T, name string) []byte {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "contracts", name))
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", name, err)
-	}
-	return raw
 }

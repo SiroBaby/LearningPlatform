@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/SiroBaby/LearningPlatform/worker/internal/config"
+	"github.com/SiroBaby/LearningPlatform/worker/internal/consumer"
 	"github.com/SiroBaby/LearningPlatform/worker/internal/health"
 )
 
@@ -24,7 +26,13 @@ func run() error {
 		return err
 	}
 
-	server := health.NewServer(workerConfig.HealthAddress)
+	bootstrap := consumer.NewBootstrap()
+	if err := bootstrap.Start(context.Background()); err != nil {
+		return fmt.Errorf("start consumer bootstrap: %w", err)
+	}
+	defer bootstrap.Close()
+
+	server := health.NewServer(workerConfig.HealthAddress, bootstrap.Ready)
 	if err := server.Start(); err != nil {
 		return err
 	}

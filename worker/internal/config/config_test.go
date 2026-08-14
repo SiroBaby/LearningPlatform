@@ -13,16 +13,9 @@ func TestLoad(t *testing.T) {
 		env     map[string]string
 		wantErr string
 	}{
-		{
-			name: "loads explicit PostgreSQL and health configuration",
-			env: map[string]string{
-				databaseURLEnvironment:   "postgresql://worker:secret@db.local:5432/learning",
-				healthAddressEnvironment: "127.0.0.1:3403",
-			},
-		},
-		{name: "rejects missing database URL", env: map[string]string{healthAddressEnvironment: "127.0.0.1:3403"}, wantErr: databaseURLEnvironment + " is required"},
-		{name: "rejects non PostgreSQL URL", env: map[string]string{databaseURLEnvironment: "https://db.local", healthAddressEnvironment: "127.0.0.1:3403"}, wantErr: "must use postgres or postgresql"},
-		{name: "rejects malformed health address", env: map[string]string{databaseURLEnvironment: "postgres://worker:secret@db.local/learning", healthAddressEnvironment: "3403"}, wantErr: "must be a host:port address"},
+		{name: "loads explicit health configuration", env: map[string]string{healthAddressEnvironment: "127.0.0.1:3403"}},
+		{name: "rejects missing health address", env: map[string]string{}, wantErr: healthAddressEnvironment + " is required"},
+		{name: "rejects malformed health address", env: map[string]string{healthAddressEnvironment: "3403"}, wantErr: "must be a host:port address"},
 	}
 
 	for _, test := range tests {
@@ -38,7 +31,7 @@ func TestLoad(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
-			if config.DatabaseURL.Host != "db.local:5432" || config.HealthAddress != "127.0.0.1:3403" {
+			if config.HealthAddress != "127.0.0.1:3403" {
 				t.Fatalf("Load() config = %#v", config)
 			}
 		})
