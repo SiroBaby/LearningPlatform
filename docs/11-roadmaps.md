@@ -1,196 +1,104 @@
-# 11 — Roadmaps
+# 11 — MVP Shipping Roadmap
 
-> Mục tiêu: lộ trình MVP theo hướng học sâu nhưng vẫn bám implementation thật. Roadmap này đã cập nhật theo kiến trúc được duyệt: Phase 0 đã có baseline remote single-node K3s dưới `infra/**`, còn Phase 6 là giai đoạn production Kubernetes hardening.
+> Nguồn sự thật cho thứ tự giao năng lực MVP. ADR vẫn thắng tài liệu này khi có mâu thuẫn; riêng `docs/adr/0023-postgresql-durable-work-queue-contract.md` giữ nguyên technical queue contract.
 
 ---
 
-## 1. Triết lý roadmap: Vertical Slice → Bóc tách dần
+## 1. Quyết định rebaseline
 
-Rủi ro lớn nhất vẫn là ôm quá nhiều khái niệm cùng lúc. Vì vậy roadmap tiếp tục giữ nguyên nguyên tắc:
+Mục tiêu hiện tại là đưa một MVP có giá trị học tập đến người dùng, không hoàn thành trước toàn bộ giáo trình distributed systems. MVP giữ modular monolith hiện có, một AI Worker Golang và PostgreSQL durable queue; chỉ mở rộng năng lực xử lý nguồn theo từng lát có thể kiểm chứng.
 
-> Mỗi phase phải kết thúc bằng một hệ thống chạy được trong phạm vi phase đó. Công nghệ mới chỉ được đưa vào khi phục vụ bài học hoặc giảm rủi ro vận hành thật.
+Nguyên tắc thực thi:
 
-### 1.1. Production-grade development, deferred production launch
-
-Roadmap này mô tả thứ tự đưa năng lực vào hệ thống, không cho phép hạ tiêu chuẩn chất lượng.
-
-- Contract, validation và module boundary phải rõ.
-- Luồng ghi phải idempotent, có failure handling.
-- Background work có resource bound, retry/backoff và graceful shutdown.
-- Secret, config và dependency ngoài hệ thống phải fail-fast, không hard-code.
-- Mỗi thay đổi quan trọng phải có test phù hợp.
-
-Hệ thống chỉ phục vụ production traffic sau khi hoàn thành core phases và vượt launch gate. Việc đã có baseline K3s sớm không đồng nghĩa đã sẵn sàng production.
-
-### 1.2. Sơ đồ phase cập nhật
+- Mỗi capability phải hoàn tất end-to-end: ingest, xử lý nền, Quiz grounded có Citation, Attempt và Grading.
+- Không thay đổi API/ownership/idempotency chỉ để thêm loại nguồn mới.
+- Không mở rộng hạ tầng trong MVP. Baseline remote hiện có chỉ được sửa để vận hành an toàn capability đã chốt, không thêm broker, datastore, cluster topology hay platform vận hành mới.
+- Production-grade trong phạm vi lát đang làm không đồng nghĩa production launch hay mở rộng production infrastructure.
 
 ```mermaid
-graph TB
-    P0[Phase 0: Monolith Slice<br/>+ remote single-node K3s baseline] --> P1[Phase 1: Tách AI Worker<br/>Golang + queue]
-    P1 --> P2[Phase 2: Kafka<br/>thay queue bằng event bus]
-    P2 --> P3[Phase 3: Tách Auth<br/>Spring Boot + JWT]
-    P3 --> P4[Phase 4: Tách Course/Quiz<br/>+ API Gateway]
-    P4 --> P5[Phase 5: OpenSearch + RAG<br/>AI Tutor + Custom AI/BYOM hardening]
-    P5 --> P6[Phase 6: K8s production hardening<br/>HA + GitOps + observability + DR]
-    P6 --> P7[Phase 7: Analytics CQRS<br/>+ Service Mesh]
+graph LR
+    A[MVP-1: PDF/text baseline] --> B[MVP-2: Video/audio + STT]
+    B --> C[MVP-3: OCR]
+    C --> D[Post-MVP improvement backlog]
 ```
 
----
+## 2. Nền tảng MVP giữ nguyên
 
-## 2. Phase 0 — Vertical Slice + Remote K3s Baseline (Tuần 1-4)
+| Thành phần | Quyết định MVP |
+| --- | --- |
+| API và domain | Modular monolith hiện có, giữ Owner, Document, Quiz, Attempt và Grading contract |
+| Xử lý nền | AI Worker Golang với bounded concurrency, cancellation, readiness và graceful shutdown |
+| Hàng đợi | PostgreSQL durable queue theo ADR-0023; at-least-once và idempotency vẫn bắt buộc |
+| Lưu trữ | PostgreSQL là durable boundary, object storage giữ source object |
+| AI output | `ai.chunks.text` là source of truth; Quiz grounded có Citation tự chứa |
+| Hạ tầng | Giữ baseline hiện hữu, đóng băng mọi expansion không cần thiết cho MVP |
 
-Setup guide cho phần remote K3s của Phase 0: `docs/deployment/GUIDE-dev-k3s.md`.
+## 3. Chuỗi capability MVP
 
-Operations runbook cho phần remote K3s của Phase 0: `docs/deployment/RUNBOOK-dev-k3s.md`.
+### MVP-1 — PDF/text baseline
 
-**Mục tiêu học:** Hiểu end-to-end product flow và đồng thời chốt boundary hạ tầng tối thiểu cho remote dev/stg-like VPS.
+**Outcome:** Owner upload PDF có text layer hoặc plain text, nhận Quiz MCQ grounded có Citation, làm Attempt và nhận Grading tất định.
 
-**Kiến trúc ứng dụng:** Một app NestJS duy nhất theo modular monolith.
+**Bao gồm:** forward/return seam, PostgreSQL queue, Go worker, extraction PDF/text, chunk/generation/validation, retry an toàn, status/error và bounded lifecycle.
 
-**Kiến trúc hạ tầng Phase 0:**
+**Không bao gồm:** scan PDF/OCR, Video/Audio/STT, Retrieval/RAG hay hạ tầng mới.
 
-- local developer loop vẫn dùng `docker compose`,
-- remote dev/stg-like VPS dùng Ansible-managed single-node K3s,
-- chỉ chạy workload stateless `web`, `api`, `worker`,
-- PostgreSQL dùng Aiven managed service bên ngoài cluster,
-- secret runtime lấy từ AWS SSM Parameter Store SecureString qua ESO exact key mapping,
-- monitoring tái sử dụng Prometheus/Grafana hiện có trên host, chỉ bổ sung `node-exporter` nếu host chưa có và `kube-state-metrics` trong K3s,
-- Compose trong `deploy/` vẫn giữ làm fallback tạm thời cho đến khi cutover K3s được xác nhận.
+**Gate:** chứng minh `Document → PostgreSQL queue → Go worker → Quiz → Attempt → Grade`, gồm duplicate delivery, crash/replay, retry, ownership và graceful shutdown.
 
-**Làm gì ở Phase 0:**
+### MVP-2 — Video/audio và STT
 
-- Upload PDF + plain text.
-- Extract text từ PDF có text layer.
-- Chunk + sinh quiz.
-- Hiển thị quiz, làm bài, chấm điểm.
-- Auth tạm trong monolith.
-- Chuẩn hóa baseline remote VPS theo `infra/README.md`.
-- Hoàn thiện cost-guard tối thiểu: credit preflight, reserve trước enqueue, trạng thái lỗi rõ và retry chủ động.
-- Xây Custom AI OpenAI-compatible baseline cho mọi gói khi ownership, secret-management, verification, feature setting và egress guard tối thiểu đã sẵn sàng.
+**Outcome:** Owner xử lý được Video hoặc Audio; STT tạo `ExtractedSegment` có time Locator, rồi dùng lại downstream chunk, grounded Quiz, Citation, Attempt và Grading của MVP-1.
 
-**Ràng buộc bắt buộc:**
+**Bao gồm:** ingest validation cho Video/Audio, STT, time-based Citation, job progress/failure/retry tương thích và kiểm thử nguồn tiếng Việt đại diện.
 
-- không đưa PostgreSQL, PVC hoặc stateful workload vào K3s,
-- không dùng Terraform,
-- Ansible phải idempotent: `state: present`, facts detection, handler chỉ chạy khi có thay đổi, pin version và checksum, hỗ trợ rerun và check-mode,
-- không claim remote deployment đã chạy thật,
-- không claim Aiven remote connectivity đã chạy thật.
+**Không bao gồm:** VideoCheckpoint, Retrieval/RAG, Kafka hoặc thay đổi queue envelope/contract của ADR-0023.
 
-### 2.1. Trạng thái Aiven ở cuối Phase 0
+**Gate:** fixture Video/Audio cho transcript và time Locator; E2E tạo Quiz có Citation theo thời gian; retry/replay không tạo Quiz hoặc Question trùng.
 
-Application support cho Aiven TLS hiện đã có và đã được kiểm tra cục bộ. Để hoàn tất hướng Aiven trên remote còn cần:
+### MVP-3 — OCR
 
-1. operator đưa CA thật vào SSM,
-2. operator allowlist đúng IP thật của VPS,
-3. operator chạy remote rollout và smoke test end-to-end trên host thật.
+**Outcome:** Owner xử lý được PDF scan hoặc ảnh tài liệu qua OCR, sau đó dùng cùng pipeline grounded Quiz của MVP-1.
 
-Trong lúc ba bước này chưa diễn ra, tài liệu vẫn chỉ được mô tả Aiven là target architecture đã được code xong ở mức repository, chưa phải trạng thái remote đã vận hành xong.
+**Bao gồm:** source validation, OCR extraction thành `ExtractedSegment` có page Locator, quality/failure classification và retry an toàn.
 
----
+**Không bao gồm:** DOCX/PPTX/XLSX, taxonomy tài liệu, RAG hoặc infrastructure expansion.
 
-## 3. Phase 1 — Tách AI Worker (Tuần 5-7)
+**Gate:** fixture scan/OCR có Citation trang đúng; chất lượng đầu ra và lỗi OCR được hiển thị/retry theo contract Document hiện có; replay vẫn idempotent.
 
-**Mục tiêu học:** Tách workload nặng khỏi API và học concurrency.
+## 4. Post-MVP Improvement Backlog
 
-**Thay đổi:** Tách AI Processing thành service Go riêng, giao tiếp qua queue đơn giản trước khi vào Kafka.
+Những hạng mục sau được đặt tên rõ là **Post-MVP Improvement Backlog**. Chúng không được kéo vào capability MVP qua thay đổi tiện tay hay “chuẩn bị trước”.
 
-**Bài học chính:** Service separation theo workload profile, async job, concurrency, idempotency, graceful shutdown.
+| Nhóm | Hạng mục hoãn |
+| --- | --- |
+| Transport và cache | Redis, Kafka, retry topic/DLQ Kafka |
+| Service boundary | Spring Boot auth split, JWT/JWKS migration, Course/Quiz service split, API Gateway |
+| Search và AI nâng cao | OpenSearch, embedding, Retrieval/RAG, AI Tutor |
+| Scale và vận hành | KEDA, HPA, HA/multi-node, GitOps, service mesh, full production observability/DR |
+| Kiến trúc dữ liệu | Analytics CQRS, read model chuyên biệt |
+| Product mở rộng | VideoCheckpoint, flashcard, Course/Learning Path, DOCX/PPTX/XLSX, advanced billing/model routing |
 
----
+Mỗi hạng mục chỉ được chuyển khỏi backlog khi có problem statement, đo lường nhu cầu và ticket riêng; không coi là điều kiện hoàn tất MVP.
 
-## 4. Phase 2 — Giới thiệu Kafka (Tuần 8-10)
+## 5. Đóng băng hạ tầng MVP
 
-**Mục tiêu học:** Event-driven architecture chính danh.
+Trong MVP, không thêm Redis, Kafka, OpenSearch, database/broker mới, KEDA/HPA/HA, GitOps, mesh hoặc service runtime mới. Không thay đổi topology K3s/VPS chỉ để “sẵn sàng scale”.
 
-**Thay đổi:** Thay queue đơn giản bằng Kafka, thêm outbox, idempotent consumer, retry topics và DLQ.
+Cho phép sửa hạ tầng khi và chỉ khi cần để giữ an toàn, khắc phục lỗi hoặc vận hành capability đã chốt trên baseline hiện hữu. Các sửa đổi đó phải giữ nguyên boundary: workload stateless, PostgreSQL ngoài cluster và không thêm stateful platform component.
 
-**Bài học chính:** Partition key, ordering, at-least-once, outbox, retry/DLQ, correlation ID.
+## 6. Bảng theo dõi và tiêu chí đóng MVP
 
----
+| Capability | Theo dõi | Hoàn tất khi |
+| --- | --- | --- |
+| MVP-1 PDF/text baseline | #19 và các issue implementation MVP-1 | Go worker + PostgreSQL queue xử lý PDF/text E2E với evidence contract và lifecycle |
+| MVP-2 Video/audio + STT | capability issue riêng | Transcript/time Citation, E2E và retry/replay evidence |
+| MVP-3 OCR | capability issue riêng | OCR/page Citation, E2E và retry/replay evidence |
 
-## 5. Phase 3 — Tách Auth Service (Tuần 11-13)
+MVP chỉ hoàn tất khi cả ba capability có evidence product và technical/operational phù hợp, không có regression của ownership, idempotency, Citation, Attempt hoặc Grading. Các item Post-MVP không phải completion gate.
 
-**Mục tiêu học:** Polyglot service và security foundation.
+## 7. Ghi nhớ khi triển khai
 
-**Thay đổi:** Tách Auth thành Spring Boot service với JWT và JWKS.
-
-**Bài học chính:** Spring Security, JWT/JWKS, refresh rotation, polyglot interop.
-
----
-
-## 6. Phase 4 — Tách Course/Quiz + API Gateway (Tuần 14-17)
-
-**Mục tiêu học:** Hoàn tất service boundary chính và edge layer.
-
-**Thay đổi:** Tách Course Service, Quiz Service và thêm API Gateway.
-
-**Bài học chính:** Database-per-service, API Gateway, rate limit, tránh distributed monolith.
-
----
-
-## 7. Phase 5 — OpenSearch + RAG Tutor + Custom AI/BYOM Hardening (Tuần 18-21)
-
-**Mục tiêu học:** Search, RAG production, NLP tiếng Việt và secret boundary cho provider ngoài.
-
-**Thay đổi:** Thêm OpenSearch, embedding pipeline, AI Tutor; hoàn thiện Custom AI/BYOM với identity thật, secret-management, admin feature setting, egress control và vận hành production. Capability không bị giới hạn theo plan; Free và Paid đều được dùng.
-
-**Bài học chính:** Hybrid retrieval, tenant-safe retrieval, encrypted provider secret, egress control.
-
----
-
-## 8. Phase 6 — Kubernetes Production Hardening (Tuần 22-25)
-
-**Mục tiêu học:** Nâng baseline K8s sớm ở Phase 0 lên mức production thật.
-
-Phase 6 không phải lần đầu có K8s. K3s single-node đã xuất hiện từ Phase 0 cho remote dev/stg-like VPS. Giai đoạn này tập trung vào hardening và mở rộng:
-
-- multi-node hoặc HA phù hợp,
-- HPA cho stateless workload,
-- KEDA cho worker queue-driven,
-- GitOps,
-- full observability: metrics, logs, traces, alerting,
-- backup, restore và DR hardening,
-- ingress, policy, rollout strategy và operational guardrail ở mức production.
-
-**Bài học chính:** Scale theo đúng metric, chuẩn hóa production ops, rollback, restore và readiness gate thực sự.
-
----
-
-## 9. Phase 7 — Analytics CQRS + Service Mesh (Tuần 26+)
-
-**Mục tiêu học:** CQRS read model và service mesh như phần mở rộng nâng cao.
-
-**Thay đổi:** Tách Analytics read model, thêm mesh nếu thực sự cần cho mục tiêu học.
-
-**Bài học chính:** CQRS, materialized view, mTLS, traffic split, observability L7.
-
----
-
-## 10. Bảng tổng hợp roadmap
-
-| Phase | Tên | Concept mới | Ghi chú hạ tầng |
-| --- | --- | --- | --- |
-| 0 | Monolith Slice + remote K3s baseline | Vertical slice + remote infra baseline | Local dùng Compose, remote VPS dùng single-node K3s, Compose còn là fallback |
-| 1 | Tách AI Worker | Async worker, concurrency | Không đổi boundary Phase 0 của remote VPS |
-| 2 | Kafka | EDA, outbox, DLQ | Chuẩn bị dữ liệu cho scale queue-driven |
-| 3 | Tách Auth | Polyglot, JWT/security | Tăng complexity bảo mật |
-| 4 | Course/Quiz + Gateway | Service boundary, BFF | Edge và quota rõ hơn |
-| 5 | OpenSearch + RAG + Custom AI/BYOM hardening | Search, RAG, provider boundary | Hoàn thiện secret/egress/admin boundary; capability có ở mọi gói |
-| 6 | K8s production hardening | HA, autoscaling, GitOps, observability, DR | Không phải first K8s introduction |
-| 7 | Analytics CQRS + Mesh | CQRS, mesh | Mesh vẫn là optional learning track |
-
----
-
-## 11. Ghi nhớ quan trọng khi triển khai
-
-- Local dev loop vẫn dùng Compose.
-- Remote dev/stg-like VPS dùng K3s theo `infra/README.md` sau khi cutover được thực thi.
-- Compose chưa bị xóa vì vẫn là fallback tạm thời.
-- Không được tuyên bố Aiven remote connectivity đã hoạt động cho tới khi operator rollout thật và smoke test xong.
-- Không được diễn giải Phase 6 như thời điểm đầu tiên hệ thống chạm Kubernetes.
-
----
-
-## 12. Tổng kết
-
-Roadmap sau khi cập nhật vẫn giữ tinh thần học sâu theo từng lớp, nhưng không còn mâu thuẫn với baseline hạ tầng mới. Local vẫn đơn giản với Compose, remote dev/stg-like VPS chuẩn hóa sớm bằng single-node K3s, còn production thật sự chỉ đến sau giai đoạn hardening ở Phase 6.
+- PostgreSQL queue và Go worker là lựa chọn MVP, không phải bước đệm bắt buộc phải thay bằng Kafka trước khi shipping.
+- Video/Audio/STT đứng sau PDF/text để tái sử dụng pipeline; OCR đứng sau STT để cô lập rủi ro chất lượng extraction.
+- ADR-0023 là technical queue contract bất biến trong lần rebaseline này.
+- Không tuyên bố production launch, remote rollout hay capacity/HA readiness khi chưa có bằng chứng riêng.
