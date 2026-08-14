@@ -28,6 +28,8 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 
 ## Deployment
 
+- Fixture Git repository trong deployment shell test phải đặt `user.name=test` và `user.email=test@example.com` bằng local config trước mọi commit, và cleanup chỉ xóa thư mục tạm do fixture tạo khi EXIT/HUP/INT/TERM.
+
 - Với inventory Ansible tùy chỉnh, đặt biến group tại `<inventory-dir>/group_vars/<group>.yml` hoặc nạp bằng `vars_files`; không đặt ở thư mục khác rồi giả định Ansible sẽ tự tìm thấy.
 - Trong `ansible.builtin.assert.that`, mọi dấu `-` phải cùng mức thụt lề; YAML có thể gộp dòng lệch một space vào biểu thức trước mà syntax-check vẫn không báo lỗi.
 - Remote deploy phải dùng đúng deployment path đã cấu hình xuyên suốt bước upload và execute; không dựa vào default path khác với GitHub Environment.

@@ -4,6 +4,34 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 readonly ROOT_DIR
 readonly CLASSIFIER="${ROOT_DIR}/deploy/dev/classify-changes.sh"
+readonly FIXTURE_DIRECTORY_TEMPLATE="${TMPDIR:-/tmp}/learning-platform-classify-changes.XXXXXX"
+
+repository=""
+
+cleanup() {
+  local exit_status="$?"
+
+  # Only remove the fixture directory that this test created under the fixed template.
+  if [[ "${repository}" == "${TMPDIR:-/tmp}/learning-platform-classify-changes."* ]]; then
+    rm -rf -- "${repository}"
+  fi
+
+  exit "${exit_status}"
+}
+
+if [[ "${TEST_GIT_USE_CONFIG_ONLY:-}" != "true" ]]; then
+  TEST_GIT_USE_CONFIG_ONLY=true \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=user.useConfigOnly \
+    GIT_CONFIG_VALUE_0=true \
+    bash "$0" "$@"
+  exit $?
+fi
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail() {
   printf 'test failed: %s\n' "$*" >&2
@@ -45,16 +73,16 @@ commit_file() {
   mkdir -p "$(dirname "${path}")"
   printf '%s\n' "${path}" > "${path}"
   git add "${path}"
-  git -c user.name=test -c user.email=test@example.com commit -qm "change ${path}"
+  git commit -qm "change ${path}"
   git rev-parse HEAD
 }
 
 main() {
-  local repository
-  repository="$(mktemp -d)"
-  trap 'rm -rf -- "${repository:-}"' EXIT
+  repository="$(mktemp -d "${FIXTURE_DIRECTORY_TEMPLATE}")"
   git -C "${repository}" init -q
-  git -C "${repository}" commit --allow-empty -qm initial --author='Test <test@example.com>'
+  git -C "${repository}" config user.name test
+  git -C "${repository}" config user.email test@example.com
+  git -C "${repository}" commit --allow-empty -qm initial
   local before_sha after_sha expected
   before_sha="$(git -C "${repository}" rev-parse HEAD)"
   after_sha="$(cd "${repository}" && commit_file web/page.tsx)"
