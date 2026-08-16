@@ -32,10 +32,10 @@ func ChunkText(documentID, ownerID string, segments []struct {
 				if limit > len(text) {
 					limit = len(text)
 				}
-				candidate := strings.LastIndexAny(text[start:end], " \n\t")
+				candidate := strings.IndexAny(text[end:limit], " \n\t")
 				if candidate >= 0 {
-					end = start + candidate + 1
-				} else if end > limit {
+					end += candidate + 1
+				} else {
 					end = limit
 				}
 			}

@@ -52,7 +52,10 @@ func (store *PostgresStore) Source(ctx context.Context, job Job) (Source, error)
 	var source Source
 	err := store.pool.QueryRow(ctx, `SELECT storage_ref,type FROM course.documents WHERE id=$1 AND owner_id=$2 AND status='PROCESSING'`, job.DocumentID, job.OwnerID).Scan(&source.StorageRef, &source.Type)
 	if err != nil {
-		return Source{}, Failure{Code: ObjectNotFound}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Source{}, Failure{Code: ObjectNotFound}
+		}
+		return Source{}, Failure{Code: ProcessingFailed, Technical: true}
 	}
 	return source, nil
 }

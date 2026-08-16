@@ -69,6 +69,28 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		assertInsufficientPrivilege(t, err)
 	})
 
+	t.Run("classifies only missing descriptors as final failures", func(t *testing.T) {
+		_, ownerID := database.insertDocumentAndJob(t, ctx)
+		job := database.claim(t, ctx)
+		job.DocumentID = "00000000-0000-0000-0000-000000000000"
+		job.OwnerID = ownerID
+
+		_, err := database.store.Source(ctx, *job)
+		assertFailure(t, err, ObjectNotFound, false)
+
+		if _, err := database.admin.Exec(ctx, "REVOKE SELECT ON course.documents FROM ai_worker"); err != nil {
+			t.Fatalf("revoke descriptor select: %v", err)
+		}
+		t.Cleanup(func() {
+			if _, err := database.admin.Exec(ctx, "GRANT SELECT (id, owner_id, type, storage_ref, size_bytes, status) ON course.documents TO ai_worker"); err != nil {
+				t.Errorf("restore descriptor select: %v", err)
+			}
+		})
+		database.insertDocumentAndJob(t, ctx)
+		_, err = database.store.Source(ctx, *database.claim(t, ctx))
+		assertFailure(t, err, ProcessingFailed, true)
+	})
+
 	t.Run("reclaims expired leases and rejects stale attempt fences", func(t *testing.T) {
 		database.insertDocumentAndJob(t, ctx)
 		first := database.claim(t, ctx)
@@ -264,6 +286,14 @@ func assertInsufficientPrivilege(t *testing.T, err error) {
 	var databaseError *pgconn.PgError
 	if !errors.As(err, &databaseError) || databaseError.Code != "42501" {
 		t.Fatalf("error = %v, want PostgreSQL insufficient privilege", err)
+	}
+}
+
+func assertFailure(t *testing.T, err error, code FailureCode, technical bool) {
+	t.Helper()
+	var failure Failure
+	if !errors.As(err, &failure) || failure.Code != code || failure.Technical != technical {
+		t.Fatalf("error = %#v, want failure (%s, technical=%t)", err, code, technical)
 	}
 }
 

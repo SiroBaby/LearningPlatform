@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/ledongthuc/pdf"
 	"github.com/minio/minio-go/v7"
@@ -40,17 +41,25 @@ func NewS3Reader(endpoint, accessKey, secretKey, bucket string) (*S3Reader, erro
 func (reader *S3Reader) Read(ctx context.Context, key string, max int64) ([]byte, error) {
 	object, err := reader.client.GetObject(ctx, reader.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, Failure{Code: ObjectNotFound}
+		return nil, classifyObjectReadError(err)
 	}
 	defer object.Close()
 	bytes, err := io.ReadAll(io.LimitReader(object, max+1))
 	if err != nil {
-		return nil, Failure{Code: ObjectNotFound}
+		return nil, classifyObjectReadError(err)
 	}
 	if int64(len(bytes)) > max {
 		return nil, Failure{Code: ObjectTooLarge}
 	}
 	return bytes, nil
+}
+
+func classifyObjectReadError(err error) Failure {
+	var response minio.ErrorResponse
+	if errors.As(err, &response) && (response.Code == "NoSuchKey" || response.Code == "NoSuchObject") {
+		return Failure{Code: ObjectNotFound}
+	}
+	return Failure{Code: ProcessingFailed, Technical: true}
 }
 
 func (reader *S3Reader) Check(ctx context.Context) error {
