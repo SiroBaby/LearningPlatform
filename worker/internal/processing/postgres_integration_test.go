@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/SiroBaby/LearningPlatform/worker/internal/migrations"
+	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -177,7 +180,9 @@ func startPostgresIntegration(t *testing.T, ctx context.Context) *postgresIntegr
 	container, err := testcontainers.Run(ctx, postgresImage,
 		testcontainers.WithEnv(map[string]string{"POSTGRES_PASSWORD": "postgres", "POSTGRES_USER": "postgres", "POSTGRES_DB": "learning"}),
 		testcontainers.WithExposedPorts("5432/tcp"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+		testcontainers.WithWaitStrategy(wait.ForSQL("5432/tcp", "pgx", func(host string, port nat.Port) string {
+			return fmt.Sprintf("postgres://postgres:postgres@%s:%s/learning?sslmode=disable", host, port.Port())
+		}).WithStartupTimeout(60*time.Second)),
 	)
 	if err != nil {
 		t.Fatalf("start PostgreSQL test container: %v", err)
