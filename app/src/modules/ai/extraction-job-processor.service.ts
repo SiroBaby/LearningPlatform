@@ -32,6 +32,9 @@ export class ExtractionJobProcessor implements JobProcessor {
   ) {}
 
   async process(job: ProcessingJob): Promise<void> {
+    if (!job.leaseId) {
+      throw new ExtractionError(DocumentProcessingFailureCode.PROCESSING_FAILED);
+    }
     const sourceStartedAt = performance.now();
     const source = await this.sources.read(job);
     this.logStage(job, 'source_read', sourceStartedAt);
@@ -61,6 +64,7 @@ export class ExtractionJobProcessor implements JobProcessor {
       chunks,
       documentId: job.documentId,
       jobId: job.id,
+      leaseId: job.leaseId,
       ownerId: job.ownerId,
     });
     if (!persisted) {
@@ -78,6 +82,7 @@ export class ExtractionJobProcessor implements JobProcessor {
         correlationId: job.correlationId,
         documentId: job.documentId,
         id: job.id,
+        leaseId: job.leaseId,
         ownerId: job.ownerId,
         selection: job.modelSelectionKind === null
           ? null

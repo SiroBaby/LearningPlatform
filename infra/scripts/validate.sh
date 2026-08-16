@@ -346,9 +346,14 @@ check_application_edge_contract() {
     fail 'Unselected workload images must not block selective application deployment.'
   fi
 
-  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 3 ] \
+  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 4 ] \
     || grep -Fqx '           env:' "${app_template}"; then
-    fail 'Each workload env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
+    fail 'Each workload container env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
+  fi
+
+  if ! grep -A 90 'name: go-worker' "${app_template}" \
+    | grep -Fq 'name: AI_WORKER_MIGRATIONS_DIR'; then
+    fail 'Go worker must run the tracked migration runner before readiness.'
   fi
 
   if ! grep -A 50 'name: worker' "${app_template}" \
@@ -359,13 +364,9 @@ check_application_edge_contract() {
 
   for required_worker_literal in \
     '            - name: AI_LLM_PROVIDER' \
-    '              value: openai' \
-    '            - name: OPENAI_CAPABILITY_VERSION' \
-    '              value: chat-completions-json-v1' \
-    '            - name: OPENAI_STRUCTURED_OUTPUT_MODE' \
-    '              value: json-object' \
-    '            - name: OPENAI_TRANSPORT' \
-    '              value: chat-completions'; do
+    '              value: openai-compatible' \
+    '            - name: AI_WORKER_MIGRATIONS_DIR' \
+    '              value: /app/migrations'; do
     if ! grep -Fqx "${required_worker_literal}" "${app_template}"; then
       fail "Worker manifest must include explicit runtime literal: ${required_worker_literal}."
     fi

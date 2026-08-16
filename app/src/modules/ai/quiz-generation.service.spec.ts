@@ -580,6 +580,7 @@ function job(): {
   readonly correlationId: string;
   readonly documentId: string;
   readonly id: string;
+  readonly leaseId: string;
   readonly ownerId: string;
   readonly selection: { readonly customModelConfigId: null; readonly kind: 'PLAN'; readonly platformModelId: 'platform-default' };
 } {
@@ -588,6 +589,7 @@ function job(): {
     correlationId: randomUUID(),
     documentId: randomUUID(),
     id: randomUUID(),
+    leaseId: randomUUID(),
     ownerId: randomUUID(),
     selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'platform-default' },
   };

@@ -49,6 +49,7 @@ classify_changes() {
               ;;
             worker/*)
               go_worker=true
+              worker=true
               ;;
             app/src/worker/*|app/src/worker.ts)
               worker=true
@@ -59,6 +60,7 @@ classify_changes() {
             app/*)
               api=true
               worker=true
+              go_worker=true
               ;;
             # Application delivery automation and application manifests affect
             # every workload. Baseline K3s/ESO/monitoring changes deliberately
@@ -105,7 +107,7 @@ classify_changes() {
 
   local backend=false
   local deploy_any=false
-  if [[ "${api}" == true || "${worker}" == true ]]; then
+  if [[ "${api}" == true || "${worker}" == true || "${go_worker}" == true ]]; then
     backend=true
   fi
   if [[ "${web}" == true || "${backend}" == true ]]; then

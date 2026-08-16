@@ -16,6 +16,10 @@ Các decision record hiện có liên quan là `docs/adr/0004-llm-provider-port-
 
 Phase 1 dùng PostgreSQL làm durable work queue (hàng đợi công việc bền) dựa trên `ai.processing_jobs`; `course.outbox` vẫn là transactional outbox (bảng phát sự kiện cùng transaction) cho handoff `course -> ai`. Một consumer logic duy nhất chạy vòng poll mỗi 1 giây, claim batch `1`; forward relay poll mỗi 1 giây với outbox batch `50`.
 
+Go AI worker được phép có một ngoại lệ read-only (chỉ đọc) rất hẹp qua PostgreSQL role `ai_worker`: đọc đúng source descriptor của `course.documents` theo cặp `id` và `owner_id`, với các cột `id`, `owner_id`, `type`, `storage_ref`, `size_bytes`, và `status`. Descriptor này không được thêm vào envelope v1, không được sao chép thành projection lâu dài của `ai`, và không được log. Role này không có `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` hay quyền đọc `course.outbox` trên schema `course`.
+
+Đây là ngoại lệ truy vấn chéo schema duy nhất của consumer. Tất cả mutation của course, gồm `course.documents`, trạng thái Document và budget thuộc course, vẫn chỉ do Node return relay thực hiện sau khi đọc `ai.outbox`. Go worker chỉ ghi vào schema `ai`; dưới attempt fence còn hiệu lực, nó persist side effect AI và một `ai.outbox` result trong cùng transaction rồi mới ACK/finalize delivery. Return relay vẫn at-least-once, nên projection course phải idempotent.
+
 Mỗi claim có visibility lease (thời hạn độc quyền xử lý) `15 phút`. Lỗi kỹ thuật retry sau `5 giây`, `30 giây`, rồi `5 phút`, tối đa ba lần retry kỹ thuật; sau lần retry kỹ thuật cuối, job vào DLQ (dead-letter queue, vùng giữ việc không thể giao) và giữ `30 ngày`. Worker cycle bị lỗi trước khi claim hoặc lỗi hạ tầng toàn vòng chờ `5 giây` trước cycle kế tiếp.
 
 Lỗi domain hoặc LLM đã được phân loại là final: không tự retry bằng chính job đó. Quyền Owner retry của `docs/adr/0022-credit-preflight-processing-retry-and-quiz-state.md` vẫn giữ nguyên; retry do Owner tạo attempt mới có attempt fence (khóa theo attempt), không hồi sinh delivery cũ.
@@ -34,7 +38,9 @@ AiIngestion port
 ai.processing_jobs (nguồn replay bền)
         |  consumer: poll 1s, claim batch 1, lease 15m
         v
-AI worker -> ai.outbox / kết quả đã fence -> return relay
+Go AI worker --read-only source descriptor--> course.documents
+        |
+        +-> ai writes đã fence + ai.outbox (một transaction) -> Node return relay -> course.documents
 ```
 
 Topology local và remote giống nhau về PostgreSQL transaction, poll, lease, retry và contract. Khác biệt chỉ là endpoint PostgreSQL/deployment role; API process không chạy consumer ngầm. Credential provider chỉ được resolve trong worker theo `docs/adr/0004-llm-provider-port-from-phase-0.md`, không nằm trong message.
@@ -115,5 +121,6 @@ Phase 2 thay transport, không thay envelope v1 hay policy nghiệp vụ: produc
 
 - Implementation sau này cần migration và repository contract cho lease, next-visible time, safe failure code và DLQ; Issue này cố ý không làm các thay đổi đó.
 - At-least-once là contract chủ động, nên consumer/result write phải idempotent và fenced.
+- Database role là backstop cho ownership: `ai_worker` chỉ được đọc source descriptor tối thiểu ở `course.documents`; không có Go write path nào vào `course`.
 - Một consumer/batch nhỏ ưu tiên recovery rõ ràng hơn throughput ở Phase 1.
 - Owner approval evidence: scope và các tham số định lượng trong GitHub Issue #20 đã được Owner phê duyệt trước khi tạo tài liệu này.

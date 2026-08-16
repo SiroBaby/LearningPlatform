@@ -21,6 +21,7 @@
       requests: {cpu: 200m, memory: 256Mi}
       limits: {cpu: '1', memory: 512Mi}
     worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
     worker_resources:
       requests: {cpu: 250m, memory: 512Mi}
       limits: {cpu: '1', memory: 1Gi}

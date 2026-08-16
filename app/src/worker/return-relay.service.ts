@@ -8,6 +8,10 @@ import {
 } from '../modules/ai/contracts/document-processing-result';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
 import {
+  QUIZ_GENERATION_HANDOFF,
+  type QuizGenerationHandoffPort,
+} from '../modules/assessment/contracts/quiz-generation-handoff.contract';
+import {
   DOCUMENT_STATUS_PROJECTION,
   DocumentStatusProjection,
 } from '../modules/content/contracts/document-status-projection.port';
@@ -25,6 +29,8 @@ export class ReturnRelay {
     private readonly outbox: AiOutboxRepository,
     @Inject(DOCUMENT_STATUS_PROJECTION)
     private readonly projection: DocumentStatusProjection,
+    @Inject(QUIZ_GENERATION_HANDOFF)
+    private readonly quizHandoff: QuizGenerationHandoffPort,
   ) {}
 
   async pump(limit: number): Promise<void> {
@@ -34,6 +40,15 @@ export class ReturnRelay {
       const startedAt = performance.now();
       const queueWaitMs = Math.max(0, Date.now() - row.createdAt.getTime());
       const payload = this.parseResult(row.payload);
+      if (payload.status === DocumentProcessingResultStatus.READY && payload.questions) {
+        await this.quizHandoff.persist({
+          documentId: payload.documentId,
+          minimumQuestionCount: 1,
+          ownerId: payload.ownerId,
+          promptVersion: 'phase0-v1',
+          questions: payload.questions,
+        });
+      }
       const projectionStartedAt = performance.now();
       await this.projection.project({
         documentId: payload.documentId,
@@ -71,6 +86,7 @@ export class ReturnRelay {
     const estimatedCredits = payload.estimatedCredits ?? null;
     const estimateStatus = payload.estimateStatus ?? null;
     const settledCredits = payload.settledCredits ?? null;
+    const questions = this.parseQuestions(payload.questions);
 
     if (
       payload.version !== 1 ||
@@ -82,6 +98,7 @@ export class ReturnRelay {
       (settledCredits !== null && typeof settledCredits !== 'number') ||
       (payload.errorMessage !== null && typeof payload.errorMessage !== 'string') ||
       errorCode === undefined ||
+      questions === undefined ||
       (payload.status !== DocumentProcessingResultStatus.READY &&
         payload.status !== DocumentProcessingResultStatus.FAILED)
     ) {
@@ -96,10 +113,33 @@ export class ReturnRelay {
       errorCode,
       errorMessage: payload.errorMessage,
       ownerId: payload.ownerId,
+      questions,
       settledCredits,
       status: payload.status,
       version: payload.version,
     };
+  }
+
+  private parseQuestions(
+    value: unknown,
+  ): DocumentProcessingResult['questions'] | undefined {
+    if (value === undefined || value === null) return null;
+    if (!Array.isArray(value)) return undefined;
+    const questions = value as DocumentProcessingResult['questions'];
+    if (!questions) return null;
+    if (!questions.every((question) =>
+      typeof question.chunkId === 'string' &&
+      Number.isInteger(question.chunkIndex) &&
+      Number.isInteger(question.ordinal) &&
+      typeof question.stem === 'string' &&
+      typeof question.explanation === 'string' &&
+      typeof question.citation?.chunkId === 'string' &&
+      typeof question.citation?.snippet === 'string' &&
+      typeof question.citation?.locator === 'object' && question.citation.locator !== null &&
+      Array.isArray(question.options) &&
+      question.options.every((option) => typeof option.content === 'string' && typeof option.isCorrect === 'boolean')
+    )) return undefined;
+    return questions;
   }
 
   private parseFailureCode(

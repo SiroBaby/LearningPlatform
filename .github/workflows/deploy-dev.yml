@@ -145,8 +145,8 @@ jobs:
 
   build-images:
     name: Build and push images
-    needs: [changes, backend-quality, frontend-quality, infra-quality]
-    if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped') && (needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped')
+    needs: [changes, backend-quality, frontend-quality, infra-quality, worker-quality]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.worker-quality.result == 'success' || needs.worker-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped') && (needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -154,6 +154,7 @@ jobs:
     outputs:
       api_digest: ${{ steps.api-build.outputs.digest }}
       web_digest: ${{ steps.web-build.outputs.digest }}
+      go_worker_digest: ${{ steps.go-worker-build.outputs.digest }}
     steps:
       # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -179,6 +180,14 @@ jobs:
           context: web
           push: true
           tags: ghcr.io/sirobaby/learningplatform-web:sha-${{ github.sha }}
+      - id: go-worker-build
+        if: needs.changes.outputs.go_worker == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: worker/Dockerfile
+          push: true
+          tags: ghcr.io/sirobaby/learningplatform-ai-worker:sha-${{ github.sha }}
 
   deploy:
     name: Deploy immutable digests to K3s
@@ -205,6 +214,7 @@ jobs:
           SELECT_WORKER: ${{ needs.changes.outputs.worker }}
           WEB_DIGEST: ${{ needs.build-images.outputs.web_digest }}
           BACKEND_DIGEST: ${{ needs.build-images.outputs.api_digest }}
+          GO_WORKER_DIGEST: ${{ needs.build-images.outputs.go_worker_digest }}
         run: |
           DEPLOYMENT_DIR="$(mktemp -d "$RUNNER_TEMP/dev-k3s-deploy.XXXXXX")"
           printf '%s\n' "$DEPLOYMENT_DIR" > "$RUNNER_TEMP/dev-k3s-deploy-path"
@@ -234,6 +244,9 @@ jobs:
                   image_overrides['api_image'] = f'ghcr.io/sirobaby/learningplatform-api@{backend_digest}'
               if 'worker' in selected:
                   image_overrides['worker_image'] = f'ghcr.io/sirobaby/learningplatform-api@{backend_digest}'
+                  go_digest = os.environ['GO_WORKER_DIGEST']
+                  if not re.fullmatch(r'sha256:[a-f0-9]{64}', go_digest): sys.exit('Go worker digest is not immutable')
+                  image_overrides['go_worker_image'] = f'ghcr.io/sirobaby/learningplatform-ai-worker@{go_digest}'
           deployment_dir = os.environ['DEPLOYMENT_DIR']
           with open(f'{deployment_dir}/hosts.yml', 'w', encoding='utf-8') as inventory:
               json.dump({'k3s_nodes': {'hosts': {'dev': {'ansible_host': host, 'ansible_user': user}}}}, inventory)

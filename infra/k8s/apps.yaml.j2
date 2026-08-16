@@ -254,21 +254,13 @@ spec:
           env:
             - name: NODE_ENV
               value: production
-            - name: AI_LLM_PROVIDER
-              value: openai
-            - name: OPENAI_CAPABILITY_VERSION
-              value: chat-completions-json-v1
-            - name: OPENAI_STRUCTURED_OUTPUT_MODE
-              value: json-object
-            - name: OPENAI_TRANSPORT
-              value: chat-completions
             - name: WORKER_HEALTH_HOST
               value: 0.0.0.0
             - name: WORKER_HEALTH_PORT
               value: '3403'
             - name: WORKER_QUIZ_GENERATION_CONCURRENCY
               value: '8'
-{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'AI_CREDENTIAL_ENCRYPTION_KEY', 'OPENAI_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_MODEL'] %}
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'AI_CREDENTIAL_ENCRYPTION_KEY'] %}
             - name: {{ key }}
               valueFrom:
                 secretKeyRef:
@@ -291,6 +283,45 @@ spec:
             httpGet:
               path: /health
               port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources: {{ worker_resources | to_json }}
+        - name: go-worker
+          image: {{ go_worker_image | default(worker_image) }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: go-health
+              containerPort: 3404
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: AI_LLM_PROVIDER
+              value: openai-compatible
+            - name: AI_WORKER_HEALTH_ADDRESS
+              value: 0.0.0.0:3404
+            - name: AI_WORKER_MIGRATIONS_DIR
+              value: /app/migrations
+{% for key in ['AI_WORKER_DATABASE_URL', 'AI_WORKER_MIGRATION_DATABASE_URL', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'OPENAI_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_MODEL'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-go-worker-runtime
+                  key: {{ key }}
+{% endfor %}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: go-health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: go-health
             initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 3

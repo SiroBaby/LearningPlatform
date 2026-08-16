@@ -5,7 +5,6 @@ import { DataSource } from 'typeorm';
 
 import type { ApplicationConfigService } from '../../../config/application-config.service';
 import type { ChunkCandidate } from '../contracts/chunk.contracts';
-import { JobStatus } from '../enums/job-status.enum';
 import { ChunkRepository } from './chunk.repository';
 
 describe('ChunkRepository', () => {
@@ -15,15 +14,10 @@ describe('ChunkRepository', () => {
     const ownerId = randomUUID();
     const insert = jest.fn(async (_target: unknown, _entities: unknown[]) => undefined);
     const manager = {
-      findOne: jest.fn(async () => ({
-        attempts: 1,
-        documentId,
-        id: jobId,
-        ownerId,
-        status: JobStatus.RUNNING,
-      })),
       insert,
-      query: jest.fn(async () => undefined),
+      query: jest.fn(async (sql: string) => (
+        sql.includes('SELECT "id"') ? [{ id: jobId }] : undefined
+      )),
     };
     const dataSource = {
       createEntityManager: () => ({}),
@@ -46,6 +40,7 @@ describe('ChunkRepository', () => {
       chunks: candidates,
       documentId,
       jobId,
+      leaseId: randomUUID(),
       ownerId,
     })).resolves.toBe(true);
 

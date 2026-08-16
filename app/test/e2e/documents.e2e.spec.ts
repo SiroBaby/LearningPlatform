@@ -6,27 +6,14 @@ import { DataSource } from 'typeorm';
 
 import { AppModule } from '../../src/app.module';
 import { Document } from '../../src/modules/content/entities/document.entity';
-import { Chunk } from '../../src/modules/ai/entities/chunk.entity';
-import { GenerationCacheRecord } from '../../src/modules/ai/entities/generation-cache.entity';
-import { PromptVersion } from '../../src/modules/ai/entities/prompt-version.entity';
-import { LLM_PROVIDER } from '../../src/modules/ai/contracts/llm-provider.contracts';
-import { QuizGenerationService } from '../../src/modules/ai/quiz-generation.service';
-import { QuestionEntity } from '../../src/modules/assessment/entities/question.entity';
-import { QuestionOptionEntity } from '../../src/modules/assessment/entities/question-option.entity';
-import { QuizEntity } from '../../src/modules/assessment/entities/quiz.entity';
 import { STORAGE_VERIFIER } from '../../src/storage/contracts/storage-verifier.port';
-import { STORAGE_OBJECT_READER } from '../../src/storage/contracts/storage-object-reader.port';
 import { StorageService } from '../../src/storage/storage.service';
 import { PDF_JS_MODULE } from '../../src/modules/ai/extraction.service';
 import { startTestDb, TestDb } from '../../src/test-support/test-db';
-import { WorkerModule } from '../../src/worker/worker.module';
-import { WorkerRunner } from '../../src/worker/worker-runner.service';
 import {
-  CountingLlmProvider,
   pdfJsWithText,
   TestStorageServer,
 } from '../support/document-flow-test-doubles';
-import { verifyQuizAttemptFlow } from '../support/quiz-attempt-flow';
 
 describe('Document HTTP flow', () => {
   let db: TestDb;
@@ -189,27 +176,14 @@ describe('Document HTTP flow', () => {
       retryable: true,
     });
 
-    // A compiled WorkerModule executes the production relay/poller/return wiring
-    // deterministically in-process, without a separate child process.
-    const workerModule = await Test.createTestingModule({
-      imports: [WorkerModule],
-    })
-      .overrideProvider(PDF_JS_MODULE)
-      .useValue(pdfJsWithText('Chunkable lecture content'))
-      .overrideProvider(STORAGE_OBJECT_READER)
-      .useValue({ read: (objectKey: string) => storage.read(objectKey) })
-      .overrideProvider(LLM_PROVIDER)
-      .useClass(CountingLlmProvider)
-      .compile();
-    const workerRunner = workerModule.get(WorkerRunner);
-    await workerRunner.onApplicationBootstrap();
-    await workerRunner.onApplicationShutdown();
-
-    const ready = await request(`/api/v1/documents/${upload.documentId}`, {
+    // The Node runtime only forwards course outbox events. Go is the sole
+    // durable-queue consumer, so this HTTP boundary remains PROCESSING until
+    // the Go worker emits its fenced ai.outbox result.
+    const processing = await request(`/api/v1/documents/${upload.documentId}`, {
       headers: ownerHeaders(),
     });
-    expect(ready.status).toBe(200);
-    expect(await ready.json()).toMatchObject({ status: 'READY' });
+    expect(processing.status).toBe(200);
+    expect(await processing.json()).toMatchObject({ status: 'PROCESSING' });
 
     const hidden = await request(`/api/v1/documents/${upload.documentId}`, {
       headers: ownerHeaders(otherOwnerId),
@@ -220,77 +194,6 @@ describe('Document HTTP flow', () => {
       id: upload.documentId,
     });
     expect(document.ownerId).toBe(ownerId);
-    const chunks = await dataSource.getRepository(Chunk).find({
-      where: { documentId: upload.documentId, ownerId },
-      order: { chunkIndex: 'ASC' },
-    });
-    expect(chunks).toHaveLength(1);
-    expect(chunks[0]).toMatchObject({
-      locator: { kind: 'page', page: 1 },
-      text: 'Chunkable lecture content',
-    });
-    const quizzes = await dataSource.getRepository(QuizEntity).find({
-      where: { documentId: upload.documentId, ownerId },
-    });
-    const questions = await dataSource.getRepository(QuestionEntity).find({
-      where: { ownerId, quizId: quizzes[0]?.id },
-    });
-    const options = await dataSource.getRepository(QuestionOptionEntity).find({
-      where: { ownerId, questionId: questions[0]?.id },
-    });
-    expect(quizzes).toHaveLength(1);
-    expect(questions).toHaveLength(1);
-    expect(options).toHaveLength(2);
-    expect(questions[0]?.citation).toEqual({
-      chunkId: chunks[0]?.id,
-      locator: { kind: 'page', page: 1 },
-      snippet: 'Chunkable lecture content',
-    });
-    expect(await dataSource.getRepository(GenerationCacheRecord).count()).toBe(1);
-    expect(await dataSource.getRepository(PromptVersion).count()).toBe(1);
-
-    const quiz = quizzes[0];
-    const question = questions[0];
-    if (!quiz || !question) {
-      throw new Error('Document flow must generate one Quiz and one Question');
-    }
-    const discoveredQuiz = await request(`/api/v1/documents/${upload.documentId}/quiz`, {
-      headers: ownerHeaders(),
-    });
-    expect(discoveredQuiz.status).toBe(200);
-    expect(await discoveredQuiz.json()).toEqual({
-      documentId: upload.documentId,
-      questionCount: 1,
-      quizId: quiz.id,
-    });
-    const hiddenDiscovery = await request(`/api/v1/documents/${upload.documentId}/quiz`, {
-      headers: ownerHeaders(otherOwnerId),
-    });
-    expect(hiddenDiscovery.status).toBe(404);
-    await verifyQuizAttemptFlow({
-      dataSource,
-      options,
-      otherOwnerId,
-      ownerHeaders,
-      ownerId,
-      question,
-      quiz,
-      request,
-    });
-
-    const provider = workerModule.get<CountingLlmProvider>(LLM_PROVIDER);
-    await workerModule.get(QuizGenerationService).generate({
-      chunks,
-      job: {
-        correlationId: randomUUID(),
-        documentId: upload.documentId,
-        ownerId,
-        selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'platform-default' },
-      },
-    });
-    expect(provider.callCount).toBe(1);
-    expect(await dataSource.getRepository(QuizEntity).count()).toBe(1);
-    expect(await dataSource.getRepository(QuestionEntity).count()).toBe(1);
   });
 
   function ownerHeaders(id: string = ownerId): HeadersInit {

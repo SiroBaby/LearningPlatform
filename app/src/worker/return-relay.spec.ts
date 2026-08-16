@@ -28,6 +28,8 @@ import { createTestDataSource } from '../test-support/test-data-source';
 import { startTestDb, TestDb } from '../test-support/test-db';
 import { ReturnRelay } from './return-relay.service';
 
+const quizHandoff = { persist: async () => ({ optionCount: 0, questionCount: 0, questionIds: [], quizId: randomUUID() }) };
+
 describe('ReturnRelay', () => {
   let db: TestDb;
   let ds: DataSource;
@@ -50,6 +52,7 @@ describe('ReturnRelay', () => {
     relay = new ReturnRelay(
       new AiOutboxRepository(ds),
       new DocumentStatusProjectionService(new ContentRepository(ds)),
+      quizHandoff,
     );
     await db.client.query('TRUNCATE "ai"."outbox", "course"."documents"');
   });
@@ -129,7 +132,7 @@ describe('ReturnRelay', () => {
         throw new Error('content unavailable');
       },
     };
-    const failingRelay = new ReturnRelay(new AiOutboxRepository(ds), failingProjection);
+    const failingRelay = new ReturnRelay(new AiOutboxRepository(ds), failingProjection, quizHandoff);
 
     await expect(failingRelay.pump(10)).rejects.toThrow('content unavailable');
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();

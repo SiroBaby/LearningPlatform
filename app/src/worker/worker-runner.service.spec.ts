@@ -23,7 +23,7 @@ describe('WorkerRunner', () => {
         .mockResolvedValueOnce(false),
     };
     const stuckJobs = {
-      detectAndFail: jest.fn<StuckJobDetector['detectAndFail']>().mockResolvedValue(0),
+      requeueExpiredLeases: jest.fn<StuckJobDetector['requeueExpiredLeases']>().mockResolvedValue(0),
     };
     const returnRelay = {
       pump: jest.fn<ReturnRelay['pump']>().mockResolvedValue(undefined),
@@ -51,12 +51,12 @@ describe('WorkerRunner', () => {
 
     expect(relay.pump).toHaveBeenCalledWith(5);
     expect(poller.tick).toHaveBeenCalledTimes(2);
-    expect(stuckJobs.detectAndFail).toHaveBeenCalledWith(8_000, 7);
+    expect(stuckJobs.requeueExpiredLeases).toHaveBeenCalledWith(7);
     expect(returnRelay.pump).toHaveBeenCalledWith(5);
     expect(relay.pump.mock.invocationCallOrder[0]).toBeLessThan(
       poller.tick.mock.invocationCallOrder[0],
     );
-    expect(stuckJobs.detectAndFail.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(stuckJobs.requeueExpiredLeases.mock.invocationCallOrder[0]).toBeLessThan(
       returnRelay.pump.mock.invocationCallOrder[0],
     );
     expect(logger).toHaveBeenCalledWith({ event: 'worker.started', runtime: 'worker' });
@@ -87,7 +87,7 @@ describe('WorkerRunner', () => {
       { pump: async () => undefined } as unknown as ForwardRelay,
       { tick: async () => false } as unknown as JobPoller,
       { pump: async () => undefined } as unknown as ReturnRelay,
-      { detectAndFail: async () => 0 } as unknown as StuckJobDetector,
+      { requeueExpiredLeases: async () => 0 } as unknown as StuckJobDetector,
     );
 
     await runner.onApplicationBootstrap();
@@ -119,7 +119,7 @@ describe('WorkerRunner', () => {
       { pump: async () => { throw new Error('raw document: secret lecture text'); } } as unknown as ForwardRelay,
       { tick: async () => false } as unknown as JobPoller,
       { pump: async () => undefined } as unknown as ReturnRelay,
-      { detectAndFail: async () => 0 } as unknown as StuckJobDetector,
+      { requeueExpiredLeases: async () => 0 } as unknown as StuckJobDetector,
     );
 
     await runner.onApplicationBootstrap();

@@ -5,8 +5,6 @@ import { ApplicationConfigService } from '../../../config/application-config.ser
 import { BaseRepository } from '../../../database/base.repository';
 import type { ChunkRecord, ChunkStore, ReplaceDocumentChunks } from '../contracts/chunk.contracts';
 import { Chunk } from '../entities/chunk.entity';
-import { ProcessingJob } from '../entities/processing-job.entity';
-import { JobStatus } from '../enums/job-status.enum';
 
 @Injectable()
 export class ChunkRepository extends BaseRepository<Chunk> implements ChunkStore {
@@ -19,18 +17,15 @@ export class ChunkRepository extends BaseRepository<Chunk> implements ChunkStore
 
   async replaceForDocument(input: ReplaceDocumentChunks): Promise<boolean> {
     return this.dataSource.transaction(async (manager) => {
-      const activeJob = await manager.findOne(ProcessingJob, {
-        where: {
-          attempts: input.attempt,
-          id: input.jobId,
-          status: JobStatus.RUNNING,
-        },
-        lock: { mode: 'pessimistic_write' },
-      });
+      const activeJobs: Array<{ readonly id: string }> = await manager.query(
+        `SELECT "id" FROM "ai"."processing_jobs"
+         WHERE "id" = $1 AND "attempts" = $2 AND "lease_id" = $3 AND "status" = 'RUNNING'
+           AND "lease_until" > now() AND "document_id" = $4 AND "owner_id" = $5
+         FOR UPDATE`,
+        [input.jobId, input.attempt, input.leaseId, input.documentId, input.ownerId],
+      );
       if (
-        !activeJob ||
-        activeJob.documentId !== input.documentId ||
-        activeJob.ownerId !== input.ownerId
+        activeJobs.length !== 1
       ) {
         return false;
       }

@@ -41,6 +41,24 @@ export class ProcessingJob {
   @Column({ type: 'int', default: 0 })
   attempts!: number;
 
+  @Column({ name: 'lease_id', type: 'uuid', nullable: true })
+  leaseId!: string | null;
+
+  @Column({ name: 'lease_until', type: 'timestamptz', nullable: true })
+  leaseUntil!: Date | null;
+
+  @Column({ name: 'next_visible_at', type: 'timestamptz', default: () => 'now()' })
+  nextVisibleAt!: Date;
+
+  @Column({ name: 'technical_retry_count', type: 'int', default: 0 })
+  technicalRetryCount!: number;
+
+  @Column({ name: 'failure_code', type: 'varchar', length: 80, nullable: true })
+  failureCode!: string | null;
+
+  @Column({ name: 'completed_at', type: 'timestamptz', nullable: true })
+  completedAt!: Date | null;
+
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage!: string | null;
 

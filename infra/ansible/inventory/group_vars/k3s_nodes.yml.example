@@ -49,6 +49,8 @@ ssm_parameter_keys:
   db_name: /REPLACE/WITH/EXACT/db-name
   db_ssl_mode: /REPLACE/WITH/EXACT/db-ssl-mode
   db_ssl_ca: /REPLACE/WITH/EXACT/db-ssl-ca
+  ai_worker_database_url: /REPLACE/WITH/EXACT/ai-worker-database-url
+  ai_worker_migration_database_url: /REPLACE/WITH/EXACT/ai-worker-migration-database-url
   object_storage_endpoint: /REPLACE/WITH/EXACT/object-storage-endpoint
   object_storage_port: /REPLACE/WITH/EXACT/object-storage-port
   object_storage_region: /REPLACE/WITH/EXACT/object-storage-region

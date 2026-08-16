@@ -10,6 +10,7 @@ export interface GenerateQuizCommand {
     readonly correlationId: string;
     readonly documentId: string;
     readonly id?: string;
+    readonly leaseId?: string;
     readonly ownerId: string;
     readonly selection?: DocumentModelSelection | null;
   };

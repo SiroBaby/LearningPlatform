@@ -32,6 +32,7 @@ describe('ExtractionJobProcessor', () => {
     expect(chunks.replaceForDocument).toHaveBeenCalledWith(expect.objectContaining({
       documentId: job.documentId,
       jobId: job.id,
+      leaseId: job.leaseId,
       ownerId: job.ownerId,
       chunks: [expect.objectContaining({ text: 'notes' })],
     }));
@@ -169,6 +170,12 @@ function createJob(): ProcessingJob {
     idempotencyKey: randomUUID(),
     correlationId: randomUUID(),
     attempts: 0,
+    leaseId: randomUUID(),
+    leaseUntil: new Date(Date.now() + 60_000),
+    nextVisibleAt: new Date(),
+    technicalRetryCount: 0,
+    failureCode: null,
+    completedAt: null,
     errorMessage: null,
     estimatedCredits: null,
     settledCredits: null,
