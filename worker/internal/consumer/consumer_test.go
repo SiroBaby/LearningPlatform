@@ -152,7 +152,41 @@ func TestProcessOneLogsSafeParserReason(t *testing.T) {
 	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.failed" || entry["phase"] != "finalize" || entry["attempt"] != float64(2) || entry["category"] != string(processing.OutputInvalid) || entry["reason"] != string(processing.EmptyStem) {
 		t.Fatalf("log entry = %#v", entry)
 	}
+	if _, present := entry["choice_count"]; present {
+		t.Fatalf("log entry has irrelevant choice count: %#v", entry)
+	}
 	assertLogDoesNotExposeJobData(t, output.String())
+}
+
+func TestProcessOneLogsChoiceCountOnlyForChoiceCountFailures(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		choiceCount int
+	}{
+		{name: "zero choices", choiceCount: 0},
+		{name: "multiple choices", choiceCount: 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &storeMock{
+				job:    &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
+				source: processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+			}
+			var output bytes.Buffer
+			worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.OutputInvalid, Reason: processing.ChoiceCount, ChoiceCount: test.choiceCount}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+			if err := worker.processOne(context.Background()); err != nil {
+				t.Fatalf("processOne() error = %v", err)
+			}
+
+			entry := decodeLogEntry(t, output.String())
+			if entry["reason"] != string(processing.ChoiceCount) || entry["choice_count"] != float64(test.choiceCount) {
+				t.Fatalf("log entry = %#v", entry)
+			}
+			assertLogDoesNotExposeJobData(t, output.String())
+		})
+	}
 }
 
 func TestProcessOneLogsSafeDLQFailure(t *testing.T) {

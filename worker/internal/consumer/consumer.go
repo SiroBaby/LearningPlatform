@@ -158,6 +158,9 @@ func (bootstrap *Bootstrap) logFailure(event, phase string, job processing.Job, 
 	if failure.Code == processing.OutputInvalid && failure.Reason.Valid() {
 		attributes = append(attributes, "reason", string(failure.Reason))
 	}
+	if failure.Code == processing.OutputInvalid && failure.Reason == processing.ChoiceCount {
+		attributes = append(attributes, "choice_count", failure.ChoiceCount)
+	}
 	bootstrap.logger.Log(context.Background(), logLevelFor(event), event, attributes...)
 }
 
