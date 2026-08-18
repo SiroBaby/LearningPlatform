@@ -71,12 +71,14 @@ func TestClassifyObjectReadErrorOnlyFinalizesMissingObjects(t *testing.T) {
 func TestOpenAIGenerateClassifiesInvalidOutputReasons(t *testing.T) {
 	validQuestion := `{"questions":[{"stem":"stem","explanation":"explanation","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`
 	tests := []struct {
-		name     string
-		response string
-		reason   ParserReason
+		name        string
+		response    string
+		reason      ParserReason
+		choiceCount int
 	}{
 		{name: "invalid envelope", response: `{`, reason: InvalidEnvelope},
-		{name: "choice count", response: providerResponse(t), reason: ChoiceCount},
+		{name: "zero choices", response: providerResponse(t), reason: ChoiceCount, choiceCount: 0},
+		{name: "multiple choices", response: providerResponse(t, validQuestion, validQuestion), reason: ChoiceCount, choiceCount: 2},
 		{name: "invalid JSON", response: providerResponse(t, `{`), reason: InvalidJSON},
 		{name: "question count", response: providerResponse(t, `{"questions":[]}`), reason: QuestionCount},
 		{name: "empty stem", response: providerResponse(t, strings.Replace(validQuestion, `"stem"`, `""`, 1)), reason: EmptyStem},
@@ -94,8 +96,33 @@ func TestOpenAIGenerateClassifiesInvalidOutputReasons(t *testing.T) {
 			defer server.Close()
 
 			_, err := NewOpenAI("test-key", server.URL, "test-model").Generate(context.Background(), "source content")
-			assertParserFailure(t, err, test.reason)
+			assertParserFailure(t, err, test.reason, test.choiceCount)
 		})
+	}
+}
+
+func TestOpenAIGenerateRequestsOneChoice(t *testing.T) {
+	response := providerResponse(t, `{"questions":[{"stem":"stem","explanation":"explanation","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			N              int `json:"n"`
+			ResponseFormat struct {
+				Type string `json:"type"`
+			} `json:"response_format"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode provider request: %v", err)
+		}
+		if payload.N != 1 || payload.ResponseFormat.Type != "json_object" {
+			t.Fatalf("provider request = %#v", payload)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(response))
+	}))
+	defer server.Close()
+
+	if _, err := NewOpenAI("test-key", server.URL, "test-model").Generate(context.Background(), "source content"); err != nil {
+		t.Fatalf("Generate() error = %v", err)
 	}
 }
 
@@ -150,10 +177,10 @@ func providerResponse(t *testing.T, contents ...string) string {
 	return string(encoded)
 }
 
-func assertParserFailure(t *testing.T, err error, reason ParserReason) {
+func assertParserFailure(t *testing.T, err error, reason ParserReason, choiceCount int) {
 	t.Helper()
 	var failure Failure
-	if !errors.As(err, &failure) || failure.Code != OutputInvalid || failure.Reason != reason {
+	if !errors.As(err, &failure) || failure.Code != OutputInvalid || failure.Reason != reason || failure.ChoiceCount != choiceCount {
 		t.Fatalf("error = %#v, want output-invalid failure with reason %q", err, reason)
 	}
 }

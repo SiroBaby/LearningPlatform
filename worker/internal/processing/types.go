@@ -75,9 +75,10 @@ func (reason ParserReason) Valid() bool {
 }
 
 type Failure struct {
-	Code      FailureCode
-	Reason    ParserReason
-	Technical bool
+	Code        FailureCode
+	Reason      ParserReason
+	ChoiceCount int
+	Technical   bool
 }
 
 func (failure Failure) Error() string { return string(failure.Code) }

@@ -155,7 +155,7 @@ func NewOpenAI(apiKey, baseURL, model string) *OpenAI {
 	return &OpenAI{client: &http.Client{}, apiKey: apiKey, baseURL: strings.TrimRight(baseURL, "/"), model: model}
 }
 func (provider *OpenAI) Generate(ctx context.Context, source string) (Question, error) {
-	payload := map[string]any{"model": provider.model, "max_tokens": 8000, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": "Return JSON {questions:[{stem,explanation,options:[{content,isCorrect}]}]}. Generate one Vietnamese grounded MCQ."}, {"role": "user", "content": source}}}
+	payload := map[string]any{"model": provider.model, "max_tokens": 8000, "n": 1, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": "Return JSON {questions:[{stem,explanation,options:[{content,isCorrect}]}]}. Generate one Vietnamese grounded MCQ."}, {"role": "user", "content": source}}}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Question{}, fmt.Errorf("encode provider request: %w", err)
@@ -186,7 +186,7 @@ func (provider *OpenAI) Generate(ctx context.Context, source string) (Question, 
 		return Question{}, Failure{Code: OutputInvalid, Reason: InvalidEnvelope}
 	}
 	if len(decoded.Choices) != 1 {
-		return Question{}, Failure{Code: OutputInvalid, Reason: ChoiceCount}
+		return Question{}, Failure{Code: OutputInvalid, Reason: ChoiceCount, ChoiceCount: len(decoded.Choices)}
 	}
 	if decoded.Choices[0].FinishReason == "length" {
 		return Question{}, Failure{Code: OutputTruncated, Technical: true}
