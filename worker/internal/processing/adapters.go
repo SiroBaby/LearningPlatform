@@ -183,10 +183,10 @@ func (provider *OpenAI) Generate(ctx context.Context, source string) (Question, 
 		} `json:"choices"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&decoded); err != nil {
-		return Question{}, Failure{Code: OutputInvalid}
+		return Question{}, Failure{Code: OutputInvalid, Reason: InvalidEnvelope}
 	}
 	if len(decoded.Choices) != 1 {
-		return Question{}, Failure{Code: OutputInvalid}
+		return Question{}, Failure{Code: OutputInvalid, Reason: ChoiceCount}
 	}
 	if decoded.Choices[0].FinishReason == "length" {
 		return Question{}, Failure{Code: OutputTruncated, Technical: true}
@@ -207,24 +207,33 @@ func decodeQuiz(raw string) (Question, error) {
 			} `json:"options"`
 		} `json:"questions"`
 	}
-	if json.Unmarshal([]byte(raw), &output) != nil || len(output.Questions) != 1 {
-		return Question{}, Failure{Code: OutputInvalid}
+	if json.Unmarshal([]byte(raw), &output) != nil {
+		return Question{}, Failure{Code: OutputInvalid, Reason: InvalidJSON}
+	}
+	if len(output.Questions) != 1 {
+		return Question{}, Failure{Code: OutputInvalid, Reason: QuestionCount}
 	}
 	question := output.Questions[0]
-	if strings.TrimSpace(question.Stem) == "" || strings.TrimSpace(question.Explanation) == "" || len(question.Options) != 4 {
-		return Question{}, Failure{Code: OutputInvalid}
+	if strings.TrimSpace(question.Stem) == "" {
+		return Question{}, Failure{Code: OutputInvalid, Reason: EmptyStem}
+	}
+	if strings.TrimSpace(question.Explanation) == "" {
+		return Question{}, Failure{Code: OutputInvalid, Reason: EmptyExplanation}
+	}
+	if len(question.Options) != 4 {
+		return Question{}, Failure{Code: OutputInvalid, Reason: OptionCount}
 	}
 	correct := 0
 	for _, option := range question.Options {
 		if strings.TrimSpace(option.Content) == "" {
-			return Question{}, Failure{Code: OutputInvalid}
+			return Question{}, Failure{Code: OutputInvalid, Reason: EmptyOption}
 		}
 		if option.Correct {
 			correct++
 		}
 	}
 	if correct != 1 {
-		return Question{}, Failure{Code: OutputInvalid}
+		return Question{}, Failure{Code: OutputInvalid, Reason: AnswerCount}
 	}
 	options := make([]Option, len(question.Options))
 	for index, option := range question.Options {

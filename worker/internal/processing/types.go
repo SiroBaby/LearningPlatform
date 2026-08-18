@@ -38,6 +38,9 @@ type Citation struct {
 }
 type FailureCode string
 
+// ParserReason is a bounded, in-memory diagnostic for invalid generated output.
+type ParserReason string
+
 const (
 	ObjectNotFound      FailureCode = "EXTRACTION_OBJECT_NOT_FOUND"
 	ObjectTooLarge      FailureCode = "EXTRACTION_OBJECT_TOO_LARGE"
@@ -50,8 +53,30 @@ const (
 	ProcessingFailed    FailureCode = "PROCESSING_FAILED"
 )
 
+const (
+	InvalidEnvelope  ParserReason = "invalid_envelope"
+	ChoiceCount      ParserReason = "choice_count"
+	InvalidJSON      ParserReason = "invalid_json"
+	QuestionCount    ParserReason = "question_count"
+	EmptyStem        ParserReason = "empty_stem"
+	EmptyExplanation ParserReason = "empty_explanation"
+	OptionCount      ParserReason = "option_count"
+	EmptyOption      ParserReason = "empty_option"
+	AnswerCount      ParserReason = "answer_count"
+)
+
+func (reason ParserReason) Valid() bool {
+	switch reason {
+	case InvalidEnvelope, ChoiceCount, InvalidJSON, QuestionCount, EmptyStem, EmptyExplanation, OptionCount, EmptyOption, AnswerCount:
+		return true
+	default:
+		return false
+	}
+}
+
 type Failure struct {
 	Code      FailureCode
+	Reason    ParserReason
 	Technical bool
 }
 
