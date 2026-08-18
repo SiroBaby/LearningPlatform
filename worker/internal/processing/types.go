@@ -57,12 +57,17 @@ type Failure struct {
 
 func (failure Failure) Error() string { return string(failure.Code) }
 
+type RetryResult struct {
+	Scheduled bool
+	Finalized bool
+}
+
 type Store interface {
 	Claim(context.Context) (*Job, error)
 	Source(context.Context, Job) (Source, error)
 	PersistAndComplete(context.Context, Job, []Chunk, []Question) (bool, error)
 	Fail(context.Context, Job, Failure) (bool, error)
-	Retry(context.Context, Job, FailureCode) (bool, error)
+	Retry(context.Context, Job, FailureCode) (RetryResult, error)
 }
 type ObjectReader interface {
 	Read(context.Context, string, int64) ([]byte, error)

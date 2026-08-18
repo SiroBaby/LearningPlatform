@@ -4,6 +4,7 @@ package consumer
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,7 @@ type Bootstrap struct {
 	store     processing.Store
 	objects   processing.ObjectReader
 	generator processing.Generator
+	logger    *slog.Logger
 }
 
 func NewBootstrap() *Bootstrap {
@@ -24,7 +26,11 @@ func NewBootstrap() *Bootstrap {
 }
 
 func New(store processing.Store, objects processing.ObjectReader, generator processing.Generator) *Bootstrap {
-	return &Bootstrap{store: store, objects: objects, generator: generator}
+	return newWithLogger(store, objects, generator, slog.Default())
+}
+
+func newWithLogger(store processing.Store, objects processing.ObjectReader, generator processing.Generator, logger *slog.Logger) *Bootstrap {
+	return &Bootstrap{store: store, objects: objects, generator: generator, logger: logger}
 }
 
 func (bootstrap *Bootstrap) Start(ctx context.Context) error {
@@ -99,8 +105,16 @@ func (bootstrap *Bootstrap) processOne(ctx context.Context) error {
 		question.Citation = processing.Citation{ChunkID: chunk.ID, Locator: chunk.Locator, Snippet: chunk.Text}
 		questions = append(questions, question)
 	}
-	_, err = bootstrap.store.PersistAndComplete(ctx, *job, chunks, questions)
-	return err
+	persisted, err := bootstrap.store.PersistAndComplete(ctx, *job, chunks, questions)
+	if err == nil {
+		return nil
+	}
+	if persisted {
+		// A commit error leaves the final state uncertain; retrying could duplicate the result.
+		bootstrap.logFailure("worker.processing.persistence_ambiguous", "persist", *job, processing.Failure{Code: processing.ProcessingFailed, Technical: true})
+		return err
+	}
+	return bootstrap.finish(ctx, *job, err)
 }
 
 func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err error) error {
@@ -109,9 +123,43 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 		failure = processing.Failure{Code: processing.ProcessingFailed, Technical: true}
 	}
 	if failure.Technical {
-		_, retryErr := bootstrap.store.Retry(ctx, job, failure.Code)
+		result, retryErr := bootstrap.store.Retry(ctx, job, failure.Code)
+		if retryErr != nil {
+			bootstrap.logFailure("worker.processing.retry.persistence_failed", "retry", job, failure)
+			return retryErr
+		}
+		if result.Scheduled {
+			bootstrap.logFailure("worker.processing.retry.scheduled", "retry", job, failure)
+		}
+		if result.Finalized {
+			bootstrap.logFailure("worker.processing.failed", "dlq", job, failure)
+		}
 		return retryErr
 	}
-	_, failErr := bootstrap.store.Fail(ctx, job, failure)
+	finalized, failErr := bootstrap.store.Fail(ctx, job, failure)
+	if failErr != nil {
+		bootstrap.logFailure("worker.processing.failure.persistence_failed", "finalize", job, failure)
+	} else if finalized {
+		bootstrap.logFailure("worker.processing.failed", "finalize", job, failure)
+	}
 	return failErr
+}
+
+func (bootstrap *Bootstrap) logFailure(event, phase string, job processing.Job, failure processing.Failure) {
+	if bootstrap.logger == nil {
+		return
+	}
+	bootstrap.logger.Log(context.Background(), logLevelFor(event), event,
+		"event", event,
+		"phase", phase,
+		"attempt", job.Attempt,
+		"category", string(failure.Code),
+	)
+}
+
+func logLevelFor(event string) slog.Level {
+	if event == "worker.processing.retry.scheduled" {
+		return slog.LevelWarn
+	}
+	return slog.LevelError
 }

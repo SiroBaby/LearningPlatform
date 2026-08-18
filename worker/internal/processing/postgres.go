@@ -164,36 +164,37 @@ func nilIfEmpty(value string) any {
 	}
 	return value
 }
-func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode) (bool, error) {
+func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode) (RetryResult, error) {
 	delays := []string{"5 seconds", "30 seconds", "5 minutes"}
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return RetryResult{}, err
 	}
 	defer tx.Rollback(ctx)
 	var retry int
 	err = tx.QueryRow(ctx, `SELECT technical_retry_count FROM ai.processing_jobs WHERE id=$1 AND attempts=$2 AND lease_id=$3 AND status='RUNNING' AND lease_until>now() FOR UPDATE`, job.ID, job.Attempt, job.LeaseID).Scan(&retry)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return RetryResult{}, nil
 		}
-		return false, err
+		return RetryResult{}, err
 	}
 	if retry >= len(delays) {
 		// finalizeWithDLQ obtains its own transaction; release this row lock first.
 		if err = tx.Rollback(ctx); err != nil {
-			return false, err
+			return RetryResult{}, err
 		}
-		return store.finalizeWithDLQ(ctx, job, code)
+		finalized, finalizeErr := store.finalizeWithDLQ(ctx, job, code)
+		return RetryResult{Finalized: finalized}, finalizeErr
 	}
 	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs SET status='PENDING',technical_retry_count=technical_retry_count+1,failure_code=$4,lease_id=NULL,lease_until=NULL,next_visible_at=now()+$5::interval,updated_at=now() WHERE id=$1 AND attempts=$2 AND lease_id=$3 AND status='RUNNING' AND lease_until>now()`, job.ID, job.Attempt, job.LeaseID, code, delays[retry])
 	if err != nil || tag.RowsAffected() != 1 {
-		return false, err
+		return RetryResult{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return false, err
+		return RetryResult{}, err
 	}
-	return true, nil
+	return RetryResult{Scheduled: true}, nil
 }
 
 func (store *PostgresStore) finalizeWithDLQ(ctx context.Context, job Job, code FailureCode) (bool, error) {

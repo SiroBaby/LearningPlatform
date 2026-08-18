@@ -55,6 +55,32 @@ alloy:
 
         stage.cri {}
 
+        # Rewrite only recognized JSON levels in the log line; Grafana derives level from it.
+        stage.replace {
+          expression = "\\\"level\\\"\\s*:\\s*\\\"(?i:log|info)\\\""
+          replace    = "\\\"level\\\":\\\"info\\\""
+        }
+
+        stage.replace {
+          expression = "\\\"level\\\"\\s*:\\s*\\\"(?i:warn|warning)\\\""
+          replace    = "\\\"level\\\":\\\"warn\\\""
+        }
+
+        stage.replace {
+          expression = "\\\"level\\\"\\s*:\\s*\\\"(?i:err|error|fatal|critical)\\\""
+          replace    = "\\\"level\\\":\\\"error\\\""
+        }
+
+        stage.replace {
+          expression = "\\\"level\\\"\\s*:\\s*\\\"(?i:debug)\\\""
+          replace    = "\\\"level\\\":\\\"debug\\\""
+        }
+
+        stage.replace {
+          expression = "\\\"level\\\"\\s*:\\s*\\\"(?i:trace)\\\""
+          replace    = "\\\"level\\\":\\\"trace\\\""
+        }
+
         stage.static_labels {
           values = {
             cluster = "learning-platform-dev",

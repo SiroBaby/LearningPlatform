@@ -17,6 +17,7 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
 		slog.Error("worker.bootstrap.failed", "code", "WORKER_BOOTSTRAP_FAILED")
 		os.Exit(1)
