@@ -119,7 +119,7 @@ func TestProcessOneLogsSafeProviderRetry(t *testing.T) {
 		retryResult: processing.RetryResult{Scheduled: true},
 	}
 	var output bytes.Buffer
-	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Technical: true}}, slog.New(slog.NewJSONHandler(&output, nil)))
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Reason: processing.EmptyStem, Technical: true}}, slog.New(slog.NewJSONHandler(&output, nil)))
 
 	if err := worker.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne() error = %v", err)
@@ -127,6 +127,29 @@ func TestProcessOneLogsSafeProviderRetry(t *testing.T) {
 
 	entry := decodeLogEntry(t, output.String())
 	if entry["level"] != "WARN" || entry["event"] != "worker.processing.retry.scheduled" || entry["phase"] != "retry" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProviderUnavailable) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	if _, present := entry["reason"]; present {
+		t.Fatalf("log entry has misleading parser reason: %#v", entry)
+	}
+	assertLogDoesNotExposeJobData(t, output.String())
+}
+
+func TestProcessOneLogsSafeParserReason(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:    &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
+		source: processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.OutputInvalid, Reason: processing.EmptyStem}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.failed" || entry["phase"] != "finalize" || entry["attempt"] != float64(2) || entry["category"] != string(processing.OutputInvalid) || entry["reason"] != string(processing.EmptyStem) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	assertLogDoesNotExposeJobData(t, output.String())

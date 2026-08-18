@@ -149,12 +149,16 @@ func (bootstrap *Bootstrap) logFailure(event, phase string, job processing.Job, 
 	if bootstrap.logger == nil {
 		return
 	}
-	bootstrap.logger.Log(context.Background(), logLevelFor(event), event,
+	attributes := []any{
 		"event", event,
 		"phase", phase,
 		"attempt", job.Attempt,
 		"category", string(failure.Code),
-	)
+	}
+	if failure.Code == processing.OutputInvalid && failure.Reason.Valid() {
+		attributes = append(attributes, "reason", string(failure.Reason))
+	}
+	bootstrap.logger.Log(context.Background(), logLevelFor(event), event, attributes...)
 }
 
 func logLevelFor(event string) slog.Level {
