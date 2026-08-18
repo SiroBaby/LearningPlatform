@@ -6,6 +6,7 @@ export interface ProcessingJobBudget {
     readonly budgetStatus: string;
     readonly estimatedCredits: number;
     readonly jobId: string;
+    readonly leaseId: string;
     readonly settledCredits: number;
-  }): Promise<void>;
+  }): Promise<boolean>;
 }

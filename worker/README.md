@@ -1,13 +1,20 @@
-# AI Worker Bootstrap
+# AI Worker
 
-This bootstrap validates the `document.processing.requested` v1 envelope and
-serves health endpoints. It does not receive or acknowledge deliveries.
+This worker claims `ai.processing_jobs` from PostgreSQL, reads the minimal
+read-only `course.documents` descriptor, extracts PDF/text, writes fenced
+`ai.chunks`, calls the configured LLM, and writes the final job state with an
+`ai.outbox` result in one transaction. Node remains the only runtime that
+projects that result into `course`.
 
-The PostgreSQL handoff, durable replay source, idempotency, and attempt/lease
-fence must be implemented at the persistence boundary in issue #21. Until
-then, this worker intentionally performs no durable delivery or deduplication;
-it must not be used to claim ADR-0023 at-least-once guarantees.
+`/healthz` reports that the health server is alive. `/readyz` becomes ready
+only after the database connection and consumer lifecycle start.
 
-Set `AI_WORKER_HEALTH_ADDRESS` to a valid `host:port`. `/healthz` reports that
-the health server is running. `/readyz` reports ready only after the bootstrap
-consumer lifecycle has started.
+Required configuration: the existing backend database keys `DB_HOST`,
+`DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME`,
+`OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_ACCESS_KEY`,
+`OBJECT_STORAGE_SECRET_KEY`, `OBJECT_STORAGE_BUCKET`, and
+`AI_WORKER_HEALTH_ADDRESS`. `AI_LLM_PROVIDER` defaults to `fake` for local
+development. Production reuses `learning-platform-api-runtime` for the shared
+database and does not require separate SSM parameters, a Secret, or a
+PostgreSQL role. It sets `AI_LLM_PROVIDER` to `openai-compatible` with
+`OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.

@@ -5,6 +5,7 @@
       - "'web' not in deployment_targets or web_image is match('^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')"
       - "'api' not in deployment_targets or api_image is match('^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')"
       - "'worker' not in deployment_targets or worker_image is match('^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')"
+      - "'worker' not in deployment_targets or go_worker_image is match('^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$')"
       - web_resources is mapping
       - api_resources is mapping
       - worker_resources is mapping
@@ -125,7 +126,7 @@
       | selectattr('type', 'equalto', 'Ready')
       | selectattr('status', 'equalto', 'True')
       | list | length) == 1
-  when: "'api' in deployment_targets"
+  when: "'api' in deployment_targets or 'worker' in deployment_targets"
 
 - name: Wait for API runtime ExternalSecret readiness
   kubernetes.core.k8s_info:

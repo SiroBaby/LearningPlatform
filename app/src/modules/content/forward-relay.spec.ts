@@ -74,6 +74,24 @@ describe('ForwardRelay.pump', () => {
     expect(all).toHaveLength(1);
   });
 
+  it('keeps the course outbox unpublished when ingestion fails, then replays once', async () => {
+    const { documentId } = await seedOutbox();
+    const failingRelay = new ForwardRelay(
+      new CourseOutboxRepository(ds),
+      { enqueue: async () => { throw new Error('queue unavailable'); } },
+    );
+
+    await expect(failingRelay.pump(100)).rejects.toThrow('queue unavailable');
+    expect((await outbox.findOneByOrFail({ aggregateId: documentId })).publishedAt).toBeNull();
+    expect(await jobs.findBy({ documentId })).toHaveLength(0);
+
+    await relay.pump(100);
+    await relay.pump(100);
+
+    expect((await outbox.findOneByOrFail({ aggregateId: documentId })).publishedAt).not.toBeNull();
+    expect(await jobs.findBy({ documentId })).toHaveLength(1);
+  });
+
   it('chỉ xử lý row chưa publish (đã publish -> bỏ qua)', async () => {
     const { documentId } = await seedOutbox();
     await relay.pump(100);

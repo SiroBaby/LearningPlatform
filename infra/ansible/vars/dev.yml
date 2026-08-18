@@ -70,6 +70,7 @@ api_resources:
 worker_resources:
   requests: {cpu: 250m, memory: 512Mi}
   limits: {cpu: "1", memory: 1Gi}
+go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:REPLACE_WITH_64_HEX_DIGEST
 
 monitoring_enabled: false
 

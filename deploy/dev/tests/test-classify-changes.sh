@@ -91,7 +91,7 @@ main() {
 
   before_sha="${after_sha}"
 	after_sha="$(cd "${repository}" && commit_file worker/internal/consumer/consumer.go)"
-	expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
+	expected=$'web=false\napi=false\nworker=true\nbackend=true\ndeploy_any=true'
 	(cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 	(cd "${repository}" && assert_go_worker_output "${before_sha}" "${after_sha}")
 
@@ -168,11 +168,13 @@ main() {
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/external_secrets/tasks/main.yml)"
+  expected=$'web=false\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
-  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/monitoring/tasks/main.yml)"
+  expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 
   before_sha="${after_sha}"

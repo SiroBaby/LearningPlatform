@@ -1,3 +1,5 @@
+import type { CitationLocator } from '../../assessment/contracts/quiz-generation-handoff.contract';
+
 export const DOCUMENT_PROCESSING_RESULT_EVENT = 'DocumentProcessingResult' as const;
 export const DOCUMENT_PROCESSING_RESULT_VERSION = 1 as const;
 
@@ -39,7 +41,18 @@ export interface DocumentProcessingResult {
   readonly errorCode: DocumentProcessingFailureCode | null;
   readonly errorMessage: string | null;
   readonly ownerId: string;
+  readonly questions: readonly DocumentProcessingQuestion[] | null;
   readonly settledCredits: number | null;
   readonly status: DocumentProcessingResultStatus;
   readonly version: typeof DOCUMENT_PROCESSING_RESULT_VERSION;
+}
+
+export interface DocumentProcessingQuestion {
+  readonly chunkId: string;
+  readonly chunkIndex: number;
+  readonly citation: { readonly chunkId: string; readonly locator: CitationLocator; readonly snippet: string };
+  readonly explanation: string;
+  readonly options: readonly { readonly content: string; readonly isCorrect: boolean }[];
+  readonly ordinal: number;
+  readonly stem: string;
 }

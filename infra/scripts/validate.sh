@@ -4,6 +4,7 @@ set -euo pipefail
 INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly INFRA_DIR
 readonly ANSIBLE_DIR="${INFRA_DIR}/ansible"
+readonly WORKSPACE_DIR="$(cd "${INFRA_DIR}/.." && pwd)"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -318,6 +319,16 @@ check_application_edge_contract() {
     fail 'Ingress must route only web and API, with image pull secrets on every pod.'
   fi
 
+  if grep -R -Eq 'AI_WORKER_(DATABASE|MIGRATION)_URL|ai_worker_(database|migration)_url' \
+    "${INFRA_DIR}" "${WORKSPACE_DIR}/worker" "${WORKSPACE_DIR}/app"; then
+    fail 'Go worker must reuse the existing backend database Secret without separate SSM database URLs.'
+  fi
+
+  if ! grep -Fq "{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'] %}" "${app_template}" \
+    || ! grep -Fqx '                  name: learning-platform-api-runtime' "${app_template}"; then
+    fail 'Go worker must source its shared PostgreSQL configuration from the backend runtime Secret.'
+  fi
+
   if ! grep -q 'kubernetes.io/dockerconfigjson' "${app_tasks}" \
     || ! grep -q 'deployment_targets' "${app_tasks}" \
     || ! grep -q 'Require complete target selection for the first application deployment' "${app_tasks}" \
@@ -346,9 +357,14 @@ check_application_edge_contract() {
     fail 'Unselected workload images must not block selective application deployment.'
   fi
 
-  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 3 ] \
+  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 4 ] \
     || grep -Fqx '           env:' "${app_template}"; then
-    fail 'Each workload env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
+    fail 'Each workload container env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
+  fi
+
+  if ! grep -A 90 'name: go-worker' "${app_template}" \
+    | grep -Fq 'name: AI_WORKER_MIGRATIONS_DIR'; then
+    fail 'Go worker must run the tracked migration runner before readiness.'
   fi
 
   if ! grep -A 50 'name: worker' "${app_template}" \
@@ -359,13 +375,9 @@ check_application_edge_contract() {
 
   for required_worker_literal in \
     '            - name: AI_LLM_PROVIDER' \
-    '              value: openai' \
-    '            - name: OPENAI_CAPABILITY_VERSION' \
-    '              value: chat-completions-json-v1' \
-    '            - name: OPENAI_STRUCTURED_OUTPUT_MODE' \
-    '              value: json-object' \
-    '            - name: OPENAI_TRANSPORT' \
-    '              value: chat-completions'; do
+    '              value: openai-compatible' \
+    '            - name: AI_WORKER_MIGRATIONS_DIR' \
+    '              value: /app/migrations'; do
     if ! grep -Fqx "${required_worker_literal}" "${app_template}"; then
       fail "Worker manifest must include explicit runtime literal: ${required_worker_literal}."
     fi
@@ -456,7 +468,7 @@ check_application_edge_contract() {
   workload_apply_line="$(grep -nF -- '- name: Apply selected stateless Learning Platform workloads' "${app_tasks}" | cut -d: -f1)"
   if [ -z "${api_runtime_wait_line}" ] || [ -z "${worker_runtime_wait_line}" ] || [ -z "${workload_apply_line}" ] \
     || [ "${api_runtime_wait_line}" -ge "${workload_apply_line}" ] || [ "${worker_runtime_wait_line}" -ge "${workload_apply_line}" ] \
-    || ! grep -Fq "when: \"'api' in deployment_targets\"" "${app_tasks}" \
+    || ! grep -Fq "when: \"'api' in deployment_targets or 'worker' in deployment_targets\"" "${app_tasks}" \
     || ! grep -Fq "when: \"'worker' in deployment_targets\"" "${app_tasks}"; then
     fail 'API and worker runtime ExternalSecret readiness must precede selected workload application.'
   fi

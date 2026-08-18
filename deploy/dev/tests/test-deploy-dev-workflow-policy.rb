@@ -118,7 +118,7 @@ build_images = jobs.fetch('build-images')
 deploy = jobs.fetch('deploy')
 assert(failures, jobs.fetch('worker-quality').fetch('if') == "needs.changes.outputs.go_worker == 'true'",
        'worker quality must run only for worker/** changes')
-assert(failures, build_images.fetch('needs') == %w[changes backend-quality frontend-quality infra-quality],
+assert(failures, build_images.fetch('needs') == %w[changes backend-quality frontend-quality infra-quality worker-quality],
        'application image build must wait for infrastructure quality')
 assert(failures, build_images.fetch('if').include?("needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped'"),
        'application image build must block failed infra-quality but allow skipped infra-quality')

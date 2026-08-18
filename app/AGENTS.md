@@ -23,11 +23,13 @@
 ## Database And Async
 
 - Schema ownership: content/course -> `course`, AI processing -> `ai`, assessment -> `quiz`.
-- Không cross-schema query hoặc transaction. Một transaction chỉ thay đổi schema mà module đó sở hữu.
+- Không cross-schema query hoặc transaction. Một transaction chỉ thay đổi schema mà module đó sở hữu. Go AI worker chỉ đọc source descriptor tối thiểu (`id`, `owner_id`, `type`, `storage_ref`, `size_bytes`, `status`) từ `course.documents` theo `id` + `owner_id`; không được query `course.outbox` hay mutate bất kỳ dữ liệu `course` nào.
 - Mọi query resource-facing bắt buộc filter `owner_id`.
 - `content -> ai`: `course.outbox` -> relay -> `AiIngestion`; content không ghi `ai.*`.
 - `ai -> content`: dùng `ai.outbox` return seam; AI không ghi trực tiếp `course.documents`.
 - Relay là at-least-once. Consumer/repository write phải idempotent.
+- Go worker phải persist mọi thay đổi `ai` và `ai.outbox` result trong cùng transaction khi `attempt` + `lease_id` còn hiệu lực, rồi mới ACK/finalize. Node return relay là owner duy nhất của course write và phải project idempotent mọi course/document/budget outcome.
+- Production Go worker tái sử dụng các key database hiện có từ Secret `learning-platform-api-runtime` để kết nối cùng PostgreSQL. Consumer store và tracked migration runner dùng cùng một database URL; không tạo SSM parameter, Secret hay PostgreSQL role riêng cho Go worker.
 - Return-relay payload validation must accept every value of its versioned domain error-code enum; add a FAILED relay test whenever a producer introduces a new code.
 - Không tạo/sửa migration nếu không có yêu cầu rõ. Migration SQL thuần có cặp `.up.sql`/`.down.sql` trong `src/database/migrations/`.
 

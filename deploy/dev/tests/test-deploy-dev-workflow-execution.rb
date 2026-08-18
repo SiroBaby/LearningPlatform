@@ -35,32 +35,32 @@ end
 matrix = {
   'app-only infra skipped' => [
     { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'false', 'observability' => 'false' },
-    { 'backend-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'skipped', 'build-images' => 'success' },
+    { 'backend-quality' => 'success', 'worker-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'skipped', 'build-images' => 'success' },
     true, true
   ],
   'mixed app and infra success' => [
     { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'true', 'observability' => 'true' },
-    { 'backend-quality' => 'success', 'frontend-quality' => 'success', 'infra-quality' => 'success', 'build-images' => 'success' },
+    { 'backend-quality' => 'success', 'worker-quality' => 'success', 'frontend-quality' => 'success', 'infra-quality' => 'success', 'build-images' => 'success' },
     true, true
   ],
   'infra failure blocks application flow' => [
     { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'false', 'observability' => 'true' },
-    { 'backend-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'failure', 'build-images' => 'skipped' },
+    { 'backend-quality' => 'success', 'worker-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'failure', 'build-images' => 'skipped' },
     false, false
   ],
   'infra cancelled blocks application flow' => [
     { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'false', 'observability' => 'true' },
-    { 'backend-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'cancelled', 'build-images' => 'skipped' },
+    { 'backend-quality' => 'success', 'worker-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'cancelled', 'build-images' => 'skipped' },
     false, false
   ],
   'backend skipped frontend succeeds' => [
     { 'deploy_any' => 'true', 'backend' => 'false', 'web' => 'true', 'observability' => 'false' },
-    { 'backend-quality' => 'skipped', 'frontend-quality' => 'success', 'infra-quality' => 'skipped', 'build-images' => 'success' },
+    { 'backend-quality' => 'skipped', 'worker-quality' => 'skipped', 'frontend-quality' => 'success', 'infra-quality' => 'skipped', 'build-images' => 'success' },
     true, true
   ],
   'frontend skipped backend succeeds' => [
     { 'deploy_any' => 'true', 'backend' => 'true', 'web' => 'false', 'observability' => 'false' },
-    { 'backend-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'skipped', 'build-images' => 'success' },
+    { 'backend-quality' => 'success', 'worker-quality' => 'success', 'frontend-quality' => 'skipped', 'infra-quality' => 'skipped', 'build-images' => 'success' },
     true, true
   ]
 }

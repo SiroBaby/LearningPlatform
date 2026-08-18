@@ -49,6 +49,7 @@ classify_changes() {
               ;;
             worker/*)
               go_worker=true
+              worker=true
               ;;
             app/src/worker/*|app/src/worker.ts)
               worker=true
@@ -59,6 +60,7 @@ classify_changes() {
             app/*)
               api=true
               worker=true
+              go_worker=true
               ;;
             # Application delivery automation and application manifests affect
             # every workload. Baseline K3s/ESO/monitoring changes deliberately
@@ -68,7 +70,11 @@ classify_changes() {
               api=true
               worker=true
               ;;
-            .github/workflows/deploy-dev.yml|deploy/dev/classify-changes.sh|deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/external_secrets/*|infra/ansible/roles/k3s/*|infra/ansible/vars/dev.yml|infra/scripts/*)
+            infra/ansible/roles/external_secrets/*|infra/ansible/vars/dev.yml)
+              api=true
+              worker=true
+              ;;
+            .github/workflows/deploy-dev.yml|deploy/dev/classify-changes.sh|deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/k3s/*|infra/scripts/*)
               observability=true
               ;;
           esac
@@ -105,7 +111,7 @@ classify_changes() {
 
   local backend=false
   local deploy_any=false
-  if [[ "${api}" == true || "${worker}" == true ]]; then
+  if [[ "${api}" == true || "${worker}" == true || "${go_worker}" == true ]]; then
     backend=true
   fi
   if [[ "${web}" == true || "${backend}" == true ]]; then

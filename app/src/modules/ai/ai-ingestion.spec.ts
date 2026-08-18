@@ -68,12 +68,12 @@ describe('AiIngestionService.enqueue', () => {
     expect(all).toHaveLength(1);
   });
 
-  it('job đang FAILED -> re-arm về PENDING + tăng attempts', async () => {
+  it('job đang FAILED -> re-arm về PENDING + tăng attempts và reset technical retry count', async () => {
     const cmd = baseCmd();
     await ingestion.enqueue(cmd);
     await jobs.update(
       { documentId: cmd.documentId },
-      { status: JobStatus.FAILED },
+      { status: JobStatus.FAILED, technicalRetryCount: 3 },
     );
 
     await ingestion.enqueue(cmd);
@@ -81,6 +81,7 @@ describe('AiIngestionService.enqueue', () => {
     const found = await jobs.findOneByOrFail({ documentId: cmd.documentId });
     expect(found.status).toBe(JobStatus.PENDING);
     expect(found.attempts).toBe(1);
+    expect(found.technicalRetryCount).toBe(0);
   });
 
   it.each([JobStatus.PENDING, JobStatus.RUNNING, JobStatus.COMPLETED])(

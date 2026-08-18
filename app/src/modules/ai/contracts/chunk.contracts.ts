@@ -19,6 +19,7 @@ export interface ReplaceDocumentChunks {
   readonly attempt: number;
   readonly documentId: string;
   readonly jobId: string;
+  readonly leaseId: string;
   readonly ownerId: string;
   readonly chunks: readonly ChunkCandidate[];
 }

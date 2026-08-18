@@ -13,9 +13,12 @@ func TestLoad(t *testing.T) {
 		env     map[string]string
 		wantErr string
 	}{
-		{name: "loads explicit health configuration", env: map[string]string{healthAddressEnvironment: "127.0.0.1:3403"}},
+		{name: "loads shared backend database configuration", env: validEnvironment()},
+		{name: "rejects insecure object storage outside explicit local override", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "http://localhost:9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents"}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
+		{name: "rejects local override in production", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "http://localhost:9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true", "NODE_ENV": "production"}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
 		{name: "rejects missing health address", env: map[string]string{}, wantErr: healthAddressEnvironment + " is required"},
 		{name: "rejects malformed health address", env: map[string]string{healthAddressEnvironment: "3403"}, wantErr: "must be a host:port address"},
+		{name: "requires shared backend database configuration", env: map[string]string{healthAddressEnvironment: "127.0.0.1:3403"}, wantErr: databaseHostEnvironment + " is required"},
 	}
 
 	for _, test := range tests {
@@ -36,4 +39,18 @@ func TestLoad(t *testing.T) {
 			}
 		})
 	}
+}
+
+func environmentWithDatabase(env map[string]string) map[string]string {
+	env[healthAddressEnvironment] = "127.0.0.1:3403"
+	env[databaseHostEnvironment] = "postgres"
+	env[databasePortEnvironment] = "5432"
+	env[databaseUserEnvironment] = "learning"
+	env[databasePasswordEnvironment] = "password"
+	env[databaseNameEnvironment] = "learning"
+	return env
+}
+
+func validEnvironment() map[string]string {
+	return environmentWithDatabase(map[string]string{storageEndpointEnvironment: "http://localhost:9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true"})
 }

@@ -44,6 +44,8 @@ import {
 const MINIMUM_VALID_QUESTIONS = 1;
 const DEFAULT_QUIZ_GENERATION_CONCURRENCY = 8;
 
+class StaleLeaseError extends Error {}
+
 type ChunkGenerationResult = {
   readonly credits: number;
   readonly output: GeneratedQuestionOutput;
@@ -133,7 +135,9 @@ export class QuizGenerationService implements QuizGenerator {
         questionCount: questions.length,
       });
     } catch (error) {
-      await this.settleBudget(budget, resolvedCommand.job);
+      if (!(error instanceof StaleLeaseError)) {
+        await this.settleBudget(budget, resolvedCommand.job);
+      }
       if (
         error instanceof AssessmentError &&
         error.code === AssessmentErrorCode.INSUFFICIENT_VALID_QUESTIONS
@@ -158,12 +162,13 @@ export class QuizGenerationService implements QuizGenerator {
   private async resolveDefaultPlatformModel(command: GenerateQuizCommand): Promise<GenerateQuizCommand> {
     if (command.job.selection) return command;
     const modelId = this.config?.ai.platformModels[0]?.id;
-    if (!modelId || !this.jobSelections || command.job.id === undefined || command.job.attempt === undefined) {
+    if (!modelId || !this.jobSelections || command.job.id === undefined || command.job.attempt === undefined || !command.job.leaseId) {
       throw new Error('Processing job has no model selection');
     }
     const persisted = await this.jobSelections.ensureDefaultPlatformModel({
       attempt: command.job.attempt,
       jobId: command.job.id,
+      leaseId: command.job.leaseId,
       modelId,
       ownerId: command.job.ownerId,
     });
@@ -253,9 +258,9 @@ export class QuizGenerationService implements QuizGenerator {
     command: GenerateQuizCommand,
     estimatedCredits: number,
     platform: boolean,
-  ): { readonly attempt: number; readonly estimatedCredits: number; readonly jobId: string; readonly ownerId: string; readonly platform: boolean } | null {
-    if (command.job.attempt === undefined || command.job.id === undefined) return null;
-    return { attempt: command.job.attempt, estimatedCredits, jobId: command.job.id, ownerId: command.job.ownerId, platform };
+  ): { readonly attempt: number; readonly estimatedCredits: number; readonly jobId: string; readonly leaseId: string; readonly ownerId: string; readonly platform: boolean } | null {
+    if (command.job.attempt === undefined || command.job.id === undefined || !command.job.leaseId) return null;
+    return { attempt: command.job.attempt, estimatedCredits, jobId: command.job.id, leaseId: command.job.leaseId, ownerId: command.job.ownerId, platform };
   }
 
   private resolveUsageRecord(
@@ -271,7 +276,7 @@ export class QuizGenerationService implements QuizGenerator {
   }
 
   private async settleBudget(
-    budget: { readonly attempt: number; readonly estimatedCredits: number; readonly jobId: string; readonly ownerId: string; readonly platform: boolean } | null,
+    budget: { readonly attempt: number; readonly estimatedCredits: number; readonly jobId: string; readonly leaseId: string; readonly ownerId: string; readonly platform: boolean } | null,
     job: GenerateQuizCommand['job'],
   ): Promise<void> {
     if (!budget || !budget.platform || !this.usage || !this.budgetReservations) return;
@@ -288,13 +293,15 @@ export class QuizGenerationService implements QuizGenerator {
       knownActualCredits: summary.knownActualCredits,
       ownerId: budget.ownerId,
     });
-    await this.jobBudget?.record({
+    const recorded = await this.jobBudget?.record({
       attempt: budget.attempt,
       budgetStatus: summary.hasUncertainDispatch ? 'HELD' : 'SETTLED',
       estimatedCredits: budget.estimatedCredits,
       jobId: budget.jobId,
+      leaseId: budget.leaseId,
       settledCredits: summary.knownActualCredits,
     });
+    if (recorded === false) throw new StaleLeaseError('Processing job budget record could not be fenced');
     this.logStage(job, 'budget_settle', settleStartedAt, {
       hasUncertainDispatch: summary.hasUncertainDispatch,
     });

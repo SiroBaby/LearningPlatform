@@ -18,7 +18,10 @@ import type { ProcessingJobBudget } from '../contracts/processing-job-budget.por
 export interface ProcessingJobAttempt {
   readonly attempts: number;
   readonly id: string;
+  readonly leaseId: string;
 }
+
+const TECHNICAL_RETRY_DELAYS = ['5 seconds', '30 seconds', '5 minutes'] as const;
 
 @Injectable()
 export class ProcessingJobRepository extends BaseRepository<ProcessingJob> implements ProcessingJobBudget, ProcessingJobModelSelection {
@@ -36,6 +39,7 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
       ON CONFLICT ("document_id", "job_type") DO UPDATE
         SET "status"     = 'PENDING',
             "attempts"   = "processing_jobs"."attempts" + 1,
+            "technical_retry_count" = 0,
             "updated_at" = now()
         WHERE "processing_jobs"."status" = 'FAILED'
       `,
@@ -57,7 +61,8 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
       const rows = await manager.query(
         `
         SELECT "id" FROM "ai"."processing_jobs"
-        WHERE "status" = 'PENDING'
+        WHERE ("status" = 'PENDING' AND "next_visible_at" <= now())
+           OR ("status" = 'RUNNING' AND "lease_until" <= now())
         ORDER BY "created_at" ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -72,19 +77,28 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
       const claimed: Array<ProcessingJobAttempt> = await manager.query(
         `
         UPDATE "ai"."processing_jobs"
-        SET "attempts" = "attempts" + 1, "status" = 'RUNNING', "updated_at" = now()
-        WHERE "id" = $1 AND "status" = 'PENDING'
-        RETURNING "id", "attempts"
+        SET "attempts" = "attempts" + 1,
+            "lease_id" = gen_random_uuid(),
+            "lease_until" = now() + interval '15 minutes',
+            "status" = 'RUNNING', "updated_at" = now()
+        WHERE "id" = $1
+          AND (
+            ("status" = 'PENDING' AND "next_visible_at" <= now())
+            OR ("status" = 'RUNNING' AND "lease_until" <= now())
+          )
+        RETURNING "id", "attempts", "lease_id" AS "leaseId"
         `,
         [id],
       );
       const attempt = claimed[0];
       if (!attempt) return null;
-      return manager.findOneByOrFail(ProcessingJob, {
+      const job = await manager.findOneByOrFail(ProcessingJob, {
         attempts: attempt.attempts,
         id: attempt.id,
+        leaseId: attempt.leaseId,
         status: JobStatus.RUNNING,
       });
+      return job;
     });
   }
 
@@ -100,19 +114,22 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
   async ensureDefaultPlatformModel(input: {
     readonly attempt: number;
     readonly jobId: string;
+    readonly leaseId: string;
     readonly modelId: string;
     readonly ownerId: string;
   }): Promise<boolean> {
-    const result = await this.query(
+    const [rows]: [Array<{ readonly id: string }>, number] = await this.query(
       `
       UPDATE "ai"."processing_jobs"
-      SET "model_selection_kind" = 'PLAN', "platform_model_id" = $4, "updated_at" = now()
-      WHERE "id" = $1 AND "attempts" = $2 AND "owner_id" = $3 AND "status" = 'RUNNING'
+      SET "model_selection_kind" = 'PLAN', "platform_model_id" = $5, "updated_at" = now()
+      WHERE "id" = $1 AND "attempts" = $2 AND "owner_id" = $3 AND "lease_id" = $4 AND "status" = 'RUNNING'
+        AND "lease_until" > now()
         AND "model_selection_kind" IS NULL AND "platform_model_id" IS NULL AND "custom_model_config_id" IS NULL
+      RETURNING "id"
       `,
-      [input.jobId, input.attempt, input.ownerId, input.modelId],
+      [input.jobId, input.attempt, input.ownerId, input.leaseId, input.modelId],
     );
-    return result.affected === 1;
+    return rows.length === 1;
   }
 
   async record(input: {
@@ -120,14 +137,18 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     readonly budgetStatus: string;
     readonly estimatedCredits: number;
     readonly jobId: string;
+    readonly leaseId: string;
     readonly settledCredits: number;
-  }): Promise<void> {
-    await this.query(
+  }): Promise<boolean> {
+    const [rows]: [Array<{ readonly id: string }>, number] = await this.query(
       `UPDATE "ai"."processing_jobs"
-       SET "estimated_credits" = $3, "settled_credits" = $4, "budget_status" = $5, "updated_at" = now()
-       WHERE "id" = $1 AND "attempts" = $2 AND "status" = 'RUNNING'`,
-      [input.jobId, input.attempt, input.estimatedCredits, input.settledCredits, input.budgetStatus],
+       SET "estimated_credits" = $4, "settled_credits" = $5, "budget_status" = $6, "updated_at" = now()
+       WHERE "id" = $1 AND "attempts" = $2 AND "lease_id" = $3 AND "status" = 'RUNNING'
+         AND "lease_until" > now()
+       RETURNING "id"`,
+      [input.jobId, input.attempt, input.leaseId, input.estimatedCredits, input.settledCredits, input.budgetStatus],
     );
+    return rows.length === 1;
   }
 
   async fail(
@@ -142,18 +163,83 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     );
   }
 
-  async findStuckRunning(timeoutMs: number, limit: number): Promise<ProcessingJobAttempt[]> {
-    const rows = await this.query(
-      `
-      SELECT "id", "attempts" FROM "ai"."processing_jobs"
-      WHERE "status" = 'RUNNING'
-        AND "updated_at" < now() - ($1 * interval '1 millisecond')
-      ORDER BY "updated_at" ASC
-      LIMIT $2
-      `,
-      [timeoutMs, limit],
+  async retryTechnical(
+    attempt: ProcessingJobAttempt,
+    reasonCode: DocumentProcessingFailureCode,
+  ): Promise<boolean> {
+    return this.dataSource.transaction(async (manager) => {
+      const rows: Array<{ readonly technical_retry_count: number }> = await manager.query(
+        `SELECT "technical_retry_count" FROM "ai"."processing_jobs"
+         WHERE "id" = $1 AND "attempts" = $2 AND "lease_id" = $3 AND "status" = 'RUNNING'
+           AND "lease_until" > now()
+         FOR UPDATE`,
+        [attempt.id, attempt.attempts, attempt.leaseId],
+      );
+      const job = rows[0];
+      if (!job) return false;
+      if (job.technical_retry_count >= TECHNICAL_RETRY_DELAYS.length) {
+        const [finalized]: [Array<{ readonly id: string }>, number] = await manager.query(
+          `UPDATE "ai"."processing_jobs"
+           SET "status" = 'FAILED', "failure_code" = $4, "error_message" = $5,
+               "lease_id" = NULL, "lease_until" = NULL, "completed_at" = now(), "updated_at" = now()
+           WHERE "id" = $1 AND "attempts" = $2 AND "lease_id" = $3 AND "status" = 'RUNNING'
+             AND "lease_until" > now()
+           RETURNING "id"`,
+          [attempt.id, attempt.attempts, attempt.leaseId, reasonCode, this.failureMessage(reasonCode)],
+        );
+        if (finalized.length !== 1) return false;
+        await manager.query(
+          `INSERT INTO "ai"."processing_job_dlq" ("job_id", "document_id", "owner_id", "correlation_id", "idempotency_key", "last_attempt", "reason_code")
+           SELECT "id", "document_id", "owner_id", "correlation_id", "idempotency_key", "attempts", $2
+           FROM "ai"."processing_jobs" WHERE "id" = $1
+           ON CONFLICT ("job_id") DO NOTHING`,
+          [attempt.id, reasonCode],
+        );
+        const processingJob = await manager.findOneByOrFail(ProcessingJob, { id: attempt.id });
+        await manager.save(AiOutboxEvent, this.createResultEvent(
+          processingJob,
+          DocumentProcessingResultStatus.FAILED,
+          reasonCode,
+        ));
+        return true;
+      }
+      const [requeued]: [Array<{ readonly id: string }>, number] = await manager.query(
+        `UPDATE "ai"."processing_jobs"
+         SET "status" = 'PENDING', "technical_retry_count" = "technical_retry_count" + 1,
+             "failure_code" = $4, "lease_id" = NULL, "lease_until" = NULL,
+             "next_visible_at" = now() + $5::interval, "updated_at" = now()
+         WHERE "id" = $1 AND "attempts" = $2 AND "lease_id" = $3 AND "status" = 'RUNNING'
+           AND "lease_until" > now()
+         RETURNING "id"`,
+        [attempt.id, attempt.attempts, attempt.leaseId, reasonCode, TECHNICAL_RETRY_DELAYS[job.technical_retry_count]],
+      );
+      return requeued.length === 1;
+    });
+  }
+
+  async requeueExpiredLeases(limit: number): Promise<number> {
+    const [released]: [Array<{ readonly id: string }>, number] = await this.dataSource.transaction(
+      (manager) => manager.query(
+        `
+        WITH "expired" AS (
+          SELECT "id" FROM "ai"."processing_jobs"
+          WHERE "status" = 'RUNNING' AND "lease_until" <= now()
+          ORDER BY "updated_at" ASC
+          LIMIT $1
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE "ai"."processing_jobs" AS "job"
+        SET "status" = 'PENDING', "lease_id" = NULL, "lease_until" = NULL,
+            "next_visible_at" = now(), "updated_at" = now()
+        FROM "expired"
+        WHERE "job"."id" = "expired"."id"
+          AND "job"."status" = 'RUNNING' AND "job"."lease_until" <= now()
+        RETURNING "job"."id"
+        `,
+        [limit],
+      ),
     );
-    return rows.map((row: ProcessingJobAttempt) => ({ attempts: row.attempts, id: row.id }));
+    return released.length;
   }
 
   private async finalize(
@@ -164,39 +250,52 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
   ): Promise<boolean> {
     return this.dataSource.transaction(async (manager) => {
       const job = await manager.findOne(ProcessingJob, {
-        where: { attempts: attempt.attempts, id: attempt.id, status: JobStatus.RUNNING },
+        where: { attempts: attempt.attempts, id: attempt.id, leaseId: attempt.leaseId, status: JobStatus.RUNNING },
         lock: { mode: 'pessimistic_write' },
       });
       if (!job) {
         return false;
       }
 
-      await manager.query(
+      const [finalized]: [Array<{ readonly id: string }>, number] = await manager.query(
         `
         UPDATE "ai"."processing_jobs"
-        SET "status" = $2, "error_message" = $3, "updated_at" = now()
-        WHERE "id" = $1 AND "attempts" = $4 AND "status" = 'RUNNING'
+        SET "status" = $2, "failure_code" = $3, "error_message" = $4,
+            "lease_id" = NULL, "lease_until" = NULL, "completed_at" = now(), "updated_at" = now()
+        WHERE "id" = $1 AND "attempts" = $5 AND "lease_id" = $6 AND "status" = 'RUNNING'
+          AND "lease_until" > now()
+        RETURNING "id"
         `,
-        [attempt.id, jobStatus, this.failureMessage(errorCode), attempt.attempts],
+        [attempt.id, jobStatus, errorCode, this.failureMessage(errorCode), attempt.attempts, attempt.leaseId],
       );
-      const event = manager.create(AiOutboxEvent, {
-        aggregateId: job.id,
-        eventType: DOCUMENT_PROCESSING_RESULT_EVENT,
-        payload: {
-          documentId: job.documentId,
-          budgetStatus: job.budgetStatus ?? (errorCode === DocumentProcessingFailureCode.BUDGET_EXHAUSTED ? 'EXHAUSTED' : null),
-          estimatedCredits: job.estimatedCredits === null ? null : Number(job.estimatedCredits),
-          estimateStatus: job.estimatedCredits === null ? null : 'AUTHORITATIVE',
-          errorCode,
-          errorMessage: this.failureMessage(errorCode),
-          ownerId: job.ownerId,
-          settledCredits: job.settledCredits === null ? null : Number(job.settledCredits),
-          status: documentStatus,
-          version: DOCUMENT_PROCESSING_RESULT_VERSION,
-        },
-      });
-      await manager.save(AiOutboxEvent, event);
+      if (finalized.length !== 1) {
+        return false;
+      }
+      await manager.save(AiOutboxEvent, this.createResultEvent(job, documentStatus, errorCode));
       return true;
+    });
+  }
+
+  private createResultEvent(
+    job: ProcessingJob,
+    documentStatus: DocumentProcessingResultStatus,
+    errorCode: DocumentProcessingFailureCode | null,
+  ): AiOutboxEvent {
+    return this.dataSource.manager.create(AiOutboxEvent, {
+      aggregateId: job.id,
+      eventType: DOCUMENT_PROCESSING_RESULT_EVENT,
+      payload: {
+        documentId: job.documentId,
+        budgetStatus: job.budgetStatus ?? (errorCode === DocumentProcessingFailureCode.BUDGET_EXHAUSTED ? 'EXHAUSTED' : null),
+        estimatedCredits: job.estimatedCredits === null ? null : Number(job.estimatedCredits),
+        estimateStatus: job.estimatedCredits === null ? null : 'AUTHORITATIVE',
+        errorCode,
+        errorMessage: this.failureMessage(errorCode),
+        ownerId: job.ownerId,
+        settledCredits: job.settledCredits === null ? null : Number(job.settledCredits),
+        status: documentStatus,
+        version: DOCUMENT_PROCESSING_RESULT_VERSION,
+      },
     });
   }
 

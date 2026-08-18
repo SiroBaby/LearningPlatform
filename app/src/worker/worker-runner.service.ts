@@ -55,10 +55,7 @@ export class WorkerRunner
         for (let index = 0; index < worker.jobBatchSize; index += 1) {
           if (!(await this.poller.tick())) break;
         }
-        await this.stuckJobs.detectAndFail(
-          worker.stuckJobTimeoutMs,
-          worker.stuckJobBatchSize,
-        );
+        await this.stuckJobs.requeueExpiredLeases(worker.stuckJobBatchSize);
         await this.returnRelay.pump(worker.outboxBatchSize);
       } catch {
         delayMs = worker.errorBackoffMs;
