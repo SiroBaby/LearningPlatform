@@ -303,7 +303,14 @@ spec:
               value: 0.0.0.0:3404
             - name: AI_WORKER_MIGRATIONS_DIR
               value: /app/migrations
-{% for key in ['AI_WORKER_DATABASE_URL', 'AI_WORKER_MIGRATION_DATABASE_URL', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'OPENAI_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_MODEL'] %}
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-api-runtime
+                  key: {{ key }}
+{% endfor %}
+{% for key in ['OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'OPENAI_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_MODEL'] %}
             - name: {{ key }}
               valueFrom:
                 secretKeyRef:

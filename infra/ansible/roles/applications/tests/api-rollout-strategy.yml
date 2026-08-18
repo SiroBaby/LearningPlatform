@@ -107,6 +107,8 @@
           - applications_rendered_worker_deployments[0].spec.template.spec.containers[0].volumeMounts | selectattr('name', 'equalto', 'go-worker-tls') | selectattr('readOnly', 'equalto', true) | list | length == 1
           - applications_rendered_worker_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'go-worker-tls') | map(attribute='secret.secretName') | list == ['go-worker-tls']
           - applications_rendered_worker_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'go-worker-tls') | map(attribute='secret.defaultMode') | list == [288]
+          - applications_rendered_worker_deployments[0].spec.template.spec.containers[1].env | selectattr('name', 'equalto', 'DB_HOST') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
+          - applications_rendered_worker_deployments[0].spec.template.spec.containers[1].env | selectattr('name', 'equalto', 'DB_PASSWORD') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_public_ingresses | length == 1
           - applications_public_ingresses[0].spec.ingressClassName == 'traefik'
           - applications_public_ingresses[0].spec.rules[0].http.paths | selectattr('path', 'equalto', '/api/v1') | selectattr('backend.service.name', 'equalto', 'api') | list | length == 1

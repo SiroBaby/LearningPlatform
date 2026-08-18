@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -13,7 +12,6 @@ import (
 	"github.com/SiroBaby/LearningPlatform/worker/internal/migrations"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
@@ -26,7 +24,6 @@ type postgresIntegration struct {
 	admin     *pgxpool.Pool
 	container testcontainers.Container
 	store     *PostgresStore
-	workerURL string
 }
 
 func TestPostgresStoreIntegration(t *testing.T) {
@@ -40,8 +37,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("enforces descriptor least privilege through the ai_worker role", func(t *testing.T) {
-		documentID, ownerID := database.insertDocumentAndJob(t, ctx)
+	t.Run("reads the source descriptor for a claimed job", func(t *testing.T) {
+		database.insertDocumentAndJob(t, ctx)
 		job := database.claim(t, ctx)
 
 		source, err := database.store.Source(ctx, *job)
@@ -51,22 +48,6 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		if source.StorageRef != "owners/source.txt" || source.Type != "TEXT" {
 			t.Fatalf("source = %#v", source)
 		}
-
-		worker, err := pgx.Connect(ctx, database.workerURL)
-		if err != nil {
-			t.Fatalf("connect as worker role member: %v", err)
-		}
-		defer worker.Close(ctx)
-		var currentUser string
-		if err := worker.QueryRow(ctx, "SELECT current_user").Scan(&currentUser); err != nil {
-			t.Fatalf("identify worker database role: %v", err)
-		}
-		if currentUser != "ai_worker_login" {
-			t.Fatalf("current_user = %q, want ai_worker_login", currentUser)
-		}
-		assertInsufficientPrivilege(t, worker.QueryRow(ctx, `SELECT original_name FROM course.documents WHERE id=$1`, documentID).Scan(new(string)))
-		_, err = worker.Exec(ctx, `UPDATE course.documents SET status='READY' WHERE id=$1 AND owner_id=$2`, documentID, ownerID)
-		assertInsufficientPrivilege(t, err)
 	})
 
 	t.Run("classifies only missing descriptors as final failures", func(t *testing.T) {
@@ -78,17 +59,6 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		_, err := database.store.Source(ctx, *job)
 		assertFailure(t, err, ObjectNotFound, false)
 
-		if _, err := database.admin.Exec(ctx, "REVOKE SELECT ON course.documents FROM ai_worker"); err != nil {
-			t.Fatalf("revoke descriptor select: %v", err)
-		}
-		t.Cleanup(func() {
-			if _, err := database.admin.Exec(ctx, "GRANT SELECT (id, owner_id, type, storage_ref, size_bytes, status) ON course.documents TO ai_worker"); err != nil {
-				t.Errorf("restore descriptor select: %v", err)
-			}
-		})
-		database.insertDocumentAndJob(t, ctx)
-		_, err = database.store.Source(ctx, *database.claim(t, ctx))
-		assertFailure(t, err, ProcessingFailed, true)
 	})
 
 	t.Run("reclaims expired leases and rejects stale attempt fences", func(t *testing.T) {
@@ -152,12 +122,12 @@ func TestPostgresStoreIntegration(t *testing.T) {
 	t.Run("rolls back chunks and finalization when the outbox write fails", func(t *testing.T) {
 		documentID, _ := database.insertDocumentAndJob(t, ctx)
 		job := database.claim(t, ctx)
-		if _, err := database.admin.Exec(ctx, "REVOKE INSERT ON ai.outbox FROM ai_worker"); err != nil {
-			t.Fatalf("revoke outbox insert: %v", err)
+		if _, err := database.admin.Exec(ctx, `CREATE FUNCTION ai.fail_outbox_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced outbox failure'; END; $$; CREATE TRIGGER fail_outbox_insert BEFORE INSERT ON ai.outbox FOR EACH ROW EXECUTE FUNCTION ai.fail_outbox_insert()`); err != nil {
+			t.Fatalf("create outbox failure trigger: %v", err)
 		}
 		t.Cleanup(func() {
-			if _, err := database.admin.Exec(ctx, "GRANT INSERT ON ai.outbox TO ai_worker"); err != nil {
-				t.Errorf("restore outbox insert: %v", err)
+			if _, err := database.admin.Exec(ctx, "DROP TRIGGER IF EXISTS fail_outbox_insert ON ai.outbox; DROP FUNCTION IF EXISTS ai.fail_outbox_insert()"); err != nil {
+				t.Errorf("drop outbox failure trigger: %v", err)
 			}
 		})
 		chunks := []Chunk{{ID: "11111111-1111-4111-8111-111111111111", Index: 0, Text: "verified chunk", ContentHash: "a", Locator: Locator{Kind: "text-range", End: 14}}}
@@ -175,8 +145,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		if status != "RUNNING" {
 			t.Fatalf("status after rollback = %q, want RUNNING", status)
 		}
-		if _, err := database.admin.Exec(ctx, "GRANT INSERT ON ai.outbox TO ai_worker"); err != nil {
-			t.Fatalf("restore outbox insert: %v", err)
+		if _, err := database.admin.Exec(ctx, "DROP TRIGGER fail_outbox_insert ON ai.outbox; DROP FUNCTION ai.fail_outbox_insert()"); err != nil {
+			t.Fatalf("drop outbox failure trigger: %v", err)
 		}
 		persisted, err = database.store.PersistAndComplete(ctx, *job, chunks, nil)
 		if err != nil || !persisted {
@@ -230,22 +200,11 @@ func startPostgresIntegration(t *testing.T, ctx context.Context) *postgresIntegr
 		t.Fatalf("run tracked migrations: %v", err)
 	}
 	connection.Close(ctx)
-	var canInsertDLQ bool
-	if err := admin.QueryRow(ctx, `SELECT has_table_privilege('ai_worker', 'ai.processing_job_dlq', 'INSERT')`).Scan(&canInsertDLQ); err != nil {
-		t.Fatalf("read DLQ role grant: %v", err)
-	}
-	if !canInsertDLQ {
-		t.Fatal("tracked migration must grant ai_worker INSERT on the DLQ")
-	}
-	if _, err := admin.Exec(ctx, "CREATE ROLE ai_worker_login LOGIN PASSWORD 'worker-password' IN ROLE ai_worker"); err != nil {
-		t.Fatalf("create worker login role: %v", err)
-	}
-	workerURL := fmt.Sprintf("postgres://ai_worker_login:%s@%s:%s/learning?sslmode=disable", url.QueryEscape("worker-password"), host, port.Port())
-	store, err := NewPostgresStore(ctx, workerURL)
+	store, err := NewPostgresStore(ctx, adminURL)
 	if err != nil {
-		t.Fatalf("connect PostgreSQL store as ai_worker: %v", err)
+		t.Fatalf("connect PostgreSQL store: %v", err)
 	}
-	return &postgresIntegration{admin: admin, container: container, store: store, workerURL: workerURL}
+	return &postgresIntegration{admin: admin, container: container, store: store}
 }
 
 func migrationDirectory(t *testing.T) string {
@@ -279,14 +238,6 @@ func (database *postgresIntegration) claim(t *testing.T, ctx context.Context) *J
 		t.Fatalf("claim job = (%#v, %v)", job, err)
 	}
 	return job
-}
-
-func assertInsufficientPrivilege(t *testing.T, err error) {
-	t.Helper()
-	var databaseError *pgconn.PgError
-	if !errors.As(err, &databaseError) || databaseError.Code != "42501" {
-		t.Fatalf("error = %v, want PostgreSQL insufficient privilege", err)
-	}
 }
 
 func assertFailure(t *testing.T, err error, code FailureCode, technical bool) {

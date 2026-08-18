@@ -35,8 +35,6 @@ ssm_parameter_keys:
   db_name: /learning-platform/dev/db-name
   db_ssl_mode: /learning-platform/dev/db-ssl-mode
   db_ssl_ca: /learning-platform/dev/db-ssl-ca
-  ai_worker_database_url: /learning-platform/dev/ai-worker-database-url
-  ai_worker_migration_database_url: /learning-platform/dev/ai-worker-migration-database-url
   object_storage_endpoint: /learning-platform/dev/object-storage-endpoint
   object_storage_port: /learning-platform/dev/object-storage-port
   object_storage_region: /learning-platform/dev/object-storage-region

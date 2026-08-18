@@ -4,6 +4,7 @@ set -euo pipefail
 INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly INFRA_DIR
 readonly ANSIBLE_DIR="${INFRA_DIR}/ansible"
+readonly WORKSPACE_DIR="$(cd "${INFRA_DIR}/.." && pwd)"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -318,6 +319,16 @@ check_application_edge_contract() {
     fail 'Ingress must route only web and API, with image pull secrets on every pod.'
   fi
 
+  if grep -R -Eq 'AI_WORKER_(DATABASE|MIGRATION)_URL|ai_worker_(database|migration)_url' \
+    "${INFRA_DIR}" "${WORKSPACE_DIR}/worker" "${WORKSPACE_DIR}/app"; then
+    fail 'Go worker must reuse the existing backend database Secret without separate SSM database URLs.'
+  fi
+
+  if ! grep -Fq "{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'] %}" "${app_template}" \
+    || ! grep -Fqx '                  name: learning-platform-api-runtime' "${app_template}"; then
+    fail 'Go worker must source its shared PostgreSQL configuration from the backend runtime Secret.'
+  fi
+
   if ! grep -q 'kubernetes.io/dockerconfigjson' "${app_tasks}" \
     || ! grep -q 'deployment_targets' "${app_tasks}" \
     || ! grep -q 'Require complete target selection for the first application deployment' "${app_tasks}" \
@@ -457,7 +468,7 @@ check_application_edge_contract() {
   workload_apply_line="$(grep -nF -- '- name: Apply selected stateless Learning Platform workloads' "${app_tasks}" | cut -d: -f1)"
   if [ -z "${api_runtime_wait_line}" ] || [ -z "${worker_runtime_wait_line}" ] || [ -z "${workload_apply_line}" ] \
     || [ "${api_runtime_wait_line}" -ge "${workload_apply_line}" ] || [ "${worker_runtime_wait_line}" -ge "${workload_apply_line}" ] \
-    || ! grep -Fq "when: \"'api' in deployment_targets\"" "${app_tasks}" \
+    || ! grep -Fq "when: \"'api' in deployment_targets or 'worker' in deployment_targets\"" "${app_tasks}" \
     || ! grep -Fq "when: \"'worker' in deployment_targets\"" "${app_tasks}"; then
     fail 'API and worker runtime ExternalSecret readiness must precede selected workload application.'
   fi

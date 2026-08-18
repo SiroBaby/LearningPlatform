@@ -31,7 +31,7 @@ func run() error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	migrationConnection, err := pgx.Connect(ctx, workerConfig.MigrationDatabaseURL)
+	migrationConnection, err := pgx.Connect(ctx, workerConfig.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connect migration runner: %w", err)
 	}

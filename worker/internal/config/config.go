@@ -10,8 +10,6 @@ import (
 
 const (
 	healthAddressEnvironment          = "AI_WORKER_HEALTH_ADDRESS"
-	databaseURLEnvironment            = "AI_WORKER_DATABASE_URL"
-	migrationDatabaseURLEnvironment   = "AI_WORKER_MIGRATION_DATABASE_URL"
 	databaseHostEnvironment           = "DB_HOST"
 	databasePortEnvironment           = "DB_PORT"
 	databaseUserEnvironment           = "DB_USER"
@@ -34,12 +32,11 @@ const (
 type LookupEnv func(string) (string, bool)
 
 type Config struct {
-	HealthAddress        string
-	DatabaseURL          string
-	MigrationDatabaseURL string
-	MigrationsDir        string
-	Storage              Storage
-	LLM                  LLM
+	HealthAddress string
+	DatabaseURL   string
+	MigrationsDir string
+	Storage       Storage
+	LLM           LLM
 }
 
 type Storage struct{ Endpoint, AccessKey, SecretKey, Bucket string }
@@ -55,7 +52,6 @@ func Load(lookup LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	migrationDatabaseURL := value(lookup, migrationDatabaseURLEnvironment, databaseURL)
 	endpoint, err := required(lookup, storageEndpointEnvironment)
 	if err != nil {
 		return Config{}, err
@@ -99,7 +95,7 @@ func Load(lookup LookupEnv) (Config, error) {
 		}
 	}
 	migrationsDir := value(lookup, migrationsDirectoryEnvironment, "/app/migrations")
-	return Config{HealthAddress: healthAddress, DatabaseURL: databaseURL, MigrationDatabaseURL: migrationDatabaseURL, MigrationsDir: migrationsDir, Storage: Storage{endpoint, accessKey, secretKey, bucket}, LLM: llm}, nil
+	return Config{HealthAddress: healthAddress, DatabaseURL: databaseURL, MigrationsDir: migrationsDir, Storage: Storage{endpoint, accessKey, secretKey, bucket}, LLM: llm}, nil
 }
 
 func normalizeStorageEndpoint(lookup LookupEnv, endpoint string) string {
@@ -117,9 +113,6 @@ func normalizeStorageEndpoint(lookup LookupEnv, endpoint string) string {
 }
 
 func buildDatabaseURL(lookup LookupEnv) (string, error) {
-	if raw := value(lookup, databaseURLEnvironment, ""); raw != "" {
-		return raw, nil
-	}
 	host, err := required(lookup, databaseHostEnvironment)
 	if err != nil {
 		return "", err

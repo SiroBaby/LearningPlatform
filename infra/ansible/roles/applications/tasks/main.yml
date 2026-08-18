@@ -126,7 +126,7 @@
       | selectattr('type', 'equalto', 'Ready')
       | selectattr('status', 'equalto', 'True')
       | list | length) == 1
-  when: "'api' in deployment_targets"
+  when: "'api' in deployment_targets or 'worker' in deployment_targets"
 
 - name: Wait for API runtime ExternalSecret readiness
   kubernetes.core.k8s_info:
