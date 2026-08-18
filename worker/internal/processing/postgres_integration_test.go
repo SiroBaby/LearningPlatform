@@ -76,9 +76,9 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		if err != nil || completed {
 			t.Fatalf("stale finalize = (%t, %v), want (false, nil)", completed, err)
 		}
-		retried, err := database.store.Retry(ctx, *first, ProviderUnavailable)
-		if err != nil || retried {
-			t.Fatalf("stale retry = (%t, %v), want (false, nil)", retried, err)
+		retryResult, err := database.store.Retry(ctx, *first, ProviderUnavailable)
+		if err != nil || retryResult.Scheduled || retryResult.Finalized {
+			t.Fatalf("stale retry = (%#v, %v), want ({}, nil)", retryResult, err)
 		}
 		completed, err = database.store.Fail(ctx, *second, Failure{Code: ProcessingFailed})
 		if err != nil || !completed {
@@ -94,9 +94,15 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		var job *Job
 		for retry := 0; retry < 4; retry++ {
 			job = database.claim(t, ctx)
-			requeued, err := database.store.Retry(ctx, *job, ProviderUnavailable)
-			if err != nil || !requeued {
-				t.Fatalf("technical retry %d = (%t, %v)", retry+1, requeued, err)
+			retryResult, err := database.store.Retry(ctx, *job, ProviderUnavailable)
+			if err != nil || (!retryResult.Scheduled && !retryResult.Finalized) {
+				t.Fatalf("technical retry %d = (%#v, %v)", retry+1, retryResult, err)
+			}
+			if retry < 3 && !retryResult.Scheduled {
+				t.Fatalf("technical retry %d should schedule, got %#v", retry+1, retryResult)
+			}
+			if retry == 3 && !retryResult.Finalized {
+				t.Fatalf("technical retry %d should finalize, got %#v", retry+1, retryResult)
 			}
 			if retry < 3 {
 				if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET next_visible_at=now() WHERE id=$1`, job.ID); err != nil {

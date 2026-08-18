@@ -1,8 +1,12 @@
 package consumer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/SiroBaby/LearningPlatform/worker/internal/processing"
@@ -51,9 +55,128 @@ func TestProcessOneRequeuesTechnicalFailure(t *testing.T) {
 	}
 }
 
+func TestProcessOneHandlesPersistenceFailureWithSafeRetryLog(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
+		source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		persistErr:  errors.New("raw provider/database failure"),
+		retryResult: processing.RetryResult{Scheduled: true},
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	if !store.retried || store.completed {
+		t.Fatalf("store state = %#v", store)
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "WARN" || entry["event"] != "worker.processing.retry.scheduled" || entry["phase"] != "retry" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProcessingFailed) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	assertLogDoesNotExposeJobData(t, output.String())
+	if strings.Contains(output.String(), "raw provider/database failure") {
+		t.Fatalf("log exposed persistence error: %s", output.String())
+	}
+}
+
+func TestProcessOneDoesNotRetryAmbiguousPersistenceFailure(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:        &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 3},
+		source:     processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		persisted:  true,
+		persistErr: errors.New("commit outcome unavailable"),
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err == nil {
+		t.Fatal("processOne() error = nil, want persistence error")
+	}
+	if store.retried {
+		t.Fatal("ambiguous persistence failure must not be retried")
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "persist" || entry["attempt"] != float64(3) || entry["category"] != string(processing.ProcessingFailed) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	assertLogDoesNotExposeJobData(t, output.String())
+	if strings.Contains(output.String(), "commit outcome unavailable") {
+		t.Fatalf("log exposed persistence error: %s", output.String())
+	}
+}
+
+func TestProcessOneLogsSafeProviderRetry(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
+		source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		retryResult: processing.RetryResult{Scheduled: true},
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Technical: true}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "WARN" || entry["event"] != "worker.processing.retry.scheduled" || entry["phase"] != "retry" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProviderUnavailable) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	assertLogDoesNotExposeJobData(t, output.String())
+}
+
+func TestProcessOneLogsSafeDLQFailure(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 4},
+		source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		retryResult: processing.RetryResult{Finalized: true},
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Technical: true}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.failed" || entry["phase"] != "dlq" || entry["attempt"] != float64(4) || entry["category"] != string(processing.ProviderUnavailable) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	assertLogDoesNotExposeJobData(t, output.String())
+}
+
+func decodeLogEntry(t *testing.T, output string) map[string]any {
+	t.Helper()
+	var entry map[string]any
+	if err := json.Unmarshal([]byte(output), &entry); err != nil {
+		t.Fatalf("decode structured log %q: %v", output, err)
+	}
+	return entry
+}
+
+func assertLogDoesNotExposeJobData(t *testing.T, output string) {
+	t.Helper()
+	for _, forbidden := range []string{"job-secret", "document-secret", "owner-secret", "lease-secret", "owners/secret-document.txt", "document text"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("log leaked %q: %s", forbidden, output)
+		}
+	}
+}
+
 type storeMock struct {
 	job                          *processing.Job
 	source                       processing.Source
+	retryResult                  processing.RetryResult
+	persistErr                   error
+	persisted                    bool
 	replaced, completed, retried bool
 }
 
@@ -63,15 +186,18 @@ func (store *storeMock) Source(context.Context, processing.Job) (processing.Sour
 }
 func (store *storeMock) PersistAndComplete(_ context.Context, _ processing.Job, chunks []processing.Chunk, _ []processing.Question) (bool, error) {
 	store.replaced = len(chunks) > 0
-	store.completed = true
-	return true, nil
+	store.completed = store.persistErr == nil
+	if store.persisted || store.persistErr == nil {
+		return true, store.persistErr
+	}
+	return false, store.persistErr
 }
 func (store *storeMock) Fail(context.Context, processing.Job, processing.Failure) (bool, error) {
 	return true, nil
 }
-func (store *storeMock) Retry(context.Context, processing.Job, processing.FailureCode) (bool, error) {
+func (store *storeMock) Retry(context.Context, processing.Job, processing.FailureCode) (processing.RetryResult, error) {
 	store.retried = true
-	return true, nil
+	return store.retryResult, nil
 }
 
 type objectMock struct{ bytes []byte }
