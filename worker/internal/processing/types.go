@@ -42,15 +42,16 @@ type FailureCode string
 type ParserReason string
 
 const (
-	ObjectNotFound      FailureCode = "EXTRACTION_OBJECT_NOT_FOUND"
-	ObjectTooLarge      FailureCode = "EXTRACTION_OBJECT_TOO_LARGE"
-	PDFInvalid          FailureCode = "PDF_INVALID"
-	PDFTextNotFound     FailureCode = "PDF_TEXT_NOT_FOUND"
-	ChunkLimit          FailureCode = "CHUNK_RESOURCE_LIMIT_EXCEEDED"
-	OutputInvalid       FailureCode = "GENERATION_OUTPUT_INVALID"
-	OutputTruncated     FailureCode = "GENERATION_OUTPUT_TRUNCATED"
-	ProviderUnavailable FailureCode = "PROVIDER_UNAVAILABLE"
-	ProcessingFailed    FailureCode = "PROCESSING_FAILED"
+	ObjectNotFound       FailureCode = "EXTRACTION_OBJECT_NOT_FOUND"
+	ObjectTooLarge       FailureCode = "EXTRACTION_OBJECT_TOO_LARGE"
+	PDFInvalid           FailureCode = "PDF_INVALID"
+	PDFTextNotFound      FailureCode = "PDF_TEXT_NOT_FOUND"
+	ChunkLimit           FailureCode = "CHUNK_RESOURCE_LIMIT_EXCEEDED"
+	OutputInvalid        FailureCode = "GENERATION_OUTPUT_INVALID"
+	OutputTruncated      FailureCode = "GENERATION_OUTPUT_TRUNCATED"
+	ProviderIncompatible FailureCode = "PROVIDER_INCOMPATIBLE"
+	ProviderUnavailable  FailureCode = "PROVIDER_UNAVAILABLE"
+	ProcessingFailed     FailureCode = "PROCESSING_FAILED"
 )
 
 const (

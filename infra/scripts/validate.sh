@@ -285,6 +285,69 @@ check_k3s_edge_contract() {
   fi
 }
 
+go_worker_container_block() {
+  local app_template="$1"
+
+  awk '
+    $0 == "        - name: go-worker" { capture=1 }
+    capture {
+      if (printed && $0 ~ /^        - name: /) exit
+      print
+      printed=1
+    }
+  ' "${app_template}"
+}
+
+has_go_worker_env_literal() {
+  local go_worker_block="$1"
+  local name="$2"
+  local value="$3"
+
+  awk -v expected_name="${name}" -v expected_value="${value}" '
+    $0 == "            - name: " expected_name {
+      expect_value = 1
+      next
+    }
+    expect_value {
+      found = $0 == "              value: " expected_value
+      exit
+    }
+    END { exit found ? 0 : 1 }
+  ' <<<"${go_worker_block}"
+}
+
+has_go_worker_provider_profile() {
+  local app_template="$1"
+  local go_worker_block
+  go_worker_block="$(go_worker_container_block "${app_template}")"
+
+  has_go_worker_env_literal "${go_worker_block}" 'AI_LLM_PROVIDER' 'openai-compatible' \
+    && has_go_worker_env_literal "${go_worker_block}" 'OPENAI_CAPABILITY_VERSION' 'chat-completions-json-v1' \
+    && has_go_worker_env_literal "${go_worker_block}" 'OPENAI_STRUCTURED_OUTPUT_MODE' 'json-object' \
+    && has_go_worker_env_literal "${go_worker_block}" 'OPENAI_TRANSPORT' 'chat-completions' \
+    && has_go_worker_env_literal "${go_worker_block}" 'OPENAI_REQUEST_TIMEOUT_MS' '"60000"'
+}
+
+has_go_worker_migrations_directory() {
+  local app_template="$1"
+  local go_worker_block
+  go_worker_block="$(go_worker_container_block "${app_template}")"
+
+  awk '
+    $0 == "            - name: AI_WORKER_MIGRATIONS_DIR" {
+      expecting_value = 1
+      next
+    }
+    expecting_value {
+      if ($0 == "              value: /app/migrations") {
+        found = 1
+      }
+      exit
+    }
+    END { exit found ? 0 : 1 }
+  ' <<<"${go_worker_block}"
+}
+
 check_application_edge_contract() {
   local app_tasks="${ANSIBLE_DIR}/roles/applications/tasks/main.yml"
   local eso_template="${ANSIBLE_DIR}/roles/external_secrets/templates/external-secrets.yaml.j2"
@@ -362,9 +425,8 @@ check_application_edge_contract() {
     fail 'Each workload container env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
   fi
 
-  if ! grep -A 90 'name: go-worker' "${app_template}" \
-    | grep -Fq 'name: AI_WORKER_MIGRATIONS_DIR'; then
-    fail 'Go worker must run the tracked migration runner before readiness.'
+  if ! has_go_worker_migrations_directory "${app_template}"; then
+    fail 'Go worker must set AI_WORKER_MIGRATIONS_DIR to /app/migrations before readiness.'
   fi
 
   if ! grep -A 50 'name: worker' "${app_template}" \
@@ -373,15 +435,9 @@ check_application_edge_contract() {
     fail 'Worker quiz generation concurrency must be an explicit bounded manifest literal.'
   fi
 
-  for required_worker_literal in \
-    '            - name: AI_LLM_PROVIDER' \
-    '              value: openai-compatible' \
-    '            - name: AI_WORKER_MIGRATIONS_DIR' \
-    '              value: /app/migrations'; do
-    if ! grep -Fqx "${required_worker_literal}" "${app_template}"; then
-      fail "Worker manifest must include explicit runtime literal: ${required_worker_literal}."
-    fi
-  done
+  if ! has_go_worker_provider_profile "${app_template}"; then
+    fail 'Go worker container must include the explicit coherent provider profile and bounded request timeout literals.'
+  fi
 
   for forbidden_secret_contract in \
     'AI_LLM_PROVIDER' \
@@ -515,6 +571,10 @@ check_ansible_when_installed() {
   printf 'SKIP: ansible-playbook is not installed.\n'
 }
 
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 check_application_workloads_are_stateless
 check_observability_workloads
 ruby "${INFRA_DIR}/scripts/tests/test-alloy-log-level-normalization.rb"
@@ -527,6 +587,7 @@ check_artifact_integrity_contract
 check_monitoring_jobs
 check_k3s_edge_contract
 check_application_edge_contract
+bash "${INFRA_DIR}/scripts/tests/test-go-worker-provider-profile-contract.sh"
 check_yaml_when_supported
 check_ansible_when_installed
 printf 'Infrastructure static validation passed.\n'

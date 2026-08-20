@@ -299,6 +299,14 @@ spec:
               value: production
             - name: AI_LLM_PROVIDER
               value: openai-compatible
+            - name: OPENAI_CAPABILITY_VERSION
+              value: chat-completions-json-v1
+            - name: OPENAI_STRUCTURED_OUTPUT_MODE
+              value: json-object
+            - name: OPENAI_TRANSPORT
+              value: chat-completions
+            - name: OPENAI_REQUEST_TIMEOUT_MS
+              value: "60000"
             - name: AI_WORKER_HEALTH_ADDRESS
               value: 0.0.0.0:3404
             - name: AI_WORKER_MIGRATIONS_DIR
