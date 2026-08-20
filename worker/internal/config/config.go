@@ -6,27 +6,34 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/SiroBaby/LearningPlatform/worker/internal/processing"
 )
 
 const (
-	healthAddressEnvironment          = "AI_WORKER_HEALTH_ADDRESS"
-	databaseHostEnvironment           = "DB_HOST"
-	databasePortEnvironment           = "DB_PORT"
-	databaseUserEnvironment           = "DB_USER"
-	databasePasswordEnvironment       = "DB_PASSWORD"
-	databaseNameEnvironment           = "DB_NAME"
-	storageEndpointEnvironment        = "OBJECT_STORAGE_ENDPOINT"
-	storageAccessKeyEnvironment       = "OBJECT_STORAGE_ACCESS_KEY"
-	storageSecretKeyEnvironment       = "OBJECT_STORAGE_SECRET_KEY"
-	storageBucketEnvironment          = "OBJECT_STORAGE_BUCKET"
-	storagePortEnvironment            = "OBJECT_STORAGE_PORT"
-	storageUseSSLEnvironment          = "OBJECT_STORAGE_USE_SSL"
-	llmProviderEnvironment            = "AI_LLM_PROVIDER"
-	openAIKeyEnvironment              = "OPENAI_API_KEY"
-	openAIBaseURLEnvironment          = "OPENAI_BASE_URL"
-	openAIModelEnvironment            = "OPENAI_MODEL"
-	allowInsecureEndpointsEnvironment = "AI_WORKER_ALLOW_INSECURE_LOCAL_ENDPOINTS"
-	migrationsDirectoryEnvironment    = "AI_WORKER_MIGRATIONS_DIR"
+	healthAddressEnvironment              = "AI_WORKER_HEALTH_ADDRESS"
+	databaseHostEnvironment               = "DB_HOST"
+	databasePortEnvironment               = "DB_PORT"
+	databaseUserEnvironment               = "DB_USER"
+	databasePasswordEnvironment           = "DB_PASSWORD"
+	databaseNameEnvironment               = "DB_NAME"
+	storageEndpointEnvironment            = "OBJECT_STORAGE_ENDPOINT"
+	storageAccessKeyEnvironment           = "OBJECT_STORAGE_ACCESS_KEY"
+	storageSecretKeyEnvironment           = "OBJECT_STORAGE_SECRET_KEY"
+	storageBucketEnvironment              = "OBJECT_STORAGE_BUCKET"
+	storagePortEnvironment                = "OBJECT_STORAGE_PORT"
+	storageUseSSLEnvironment              = "OBJECT_STORAGE_USE_SSL"
+	llmProviderEnvironment                = "AI_LLM_PROVIDER"
+	openAIKeyEnvironment                  = "OPENAI_API_KEY"
+	openAIBaseURLEnvironment              = "OPENAI_BASE_URL"
+	openAIModelEnvironment                = "OPENAI_MODEL"
+	openAICapabilityVersionEnvironment    = "OPENAI_CAPABILITY_VERSION"
+	openAIStructuredOutputModeEnvironment = "OPENAI_STRUCTURED_OUTPUT_MODE"
+	openAITransportEnvironment            = "OPENAI_TRANSPORT"
+	openAIRequestTimeoutEnvironment       = "OPENAI_REQUEST_TIMEOUT_MS"
+	allowInsecureEndpointsEnvironment     = "AI_WORKER_ALLOW_INSECURE_LOCAL_ENDPOINTS"
+	migrationsDirectoryEnvironment        = "AI_WORKER_MIGRATIONS_DIR"
 )
 
 type LookupEnv func(string) (string, bool)
@@ -40,7 +47,11 @@ type Config struct {
 }
 
 type Storage struct{ Endpoint, AccessKey, SecretKey, Bucket string }
-type LLM struct{ Provider, APIKey, BaseURL, Model string }
+type LLM struct {
+	Provider, APIKey, BaseURL, Model string
+	Profile                          processing.ProviderProfile
+	RequestTimeout                   time.Duration
+}
 
 func Load(lookup LookupEnv) (Config, error) {
 	healthAddress, err := requiredAddress(lookup)
@@ -93,9 +104,41 @@ func Load(lookup LookupEnv) (Config, error) {
 		if err != nil {
 			return Config{}, err
 		}
+		capabilityVersion, err := required(lookup, openAICapabilityVersionEnvironment)
+		if err != nil {
+			return Config{}, err
+		}
+		structuredOutputMode, err := required(lookup, openAIStructuredOutputModeEnvironment)
+		if err != nil {
+			return Config{}, err
+		}
+		transport, err := required(lookup, openAITransportEnvironment)
+		if err != nil {
+			return Config{}, err
+		}
+		llm.Profile, err = processing.NewProviderProfile(capabilityVersion, transport, structuredOutputMode)
+		if err != nil {
+			return Config{}, err
+		}
+		llm.RequestTimeout, err = requiredProviderTimeout(lookup)
+		if err != nil {
+			return Config{}, err
+		}
 	}
 	migrationsDir := value(lookup, migrationsDirectoryEnvironment, "/app/migrations")
 	return Config{HealthAddress: healthAddress, DatabaseURL: databaseURL, MigrationsDir: migrationsDir, Storage: Storage{endpoint, accessKey, secretKey, bucket}, LLM: llm}, nil
+}
+
+func requiredProviderTimeout(lookup LookupEnv) (time.Duration, error) {
+	raw, err := required(lookup, openAIRequestTimeoutEnvironment)
+	if err != nil {
+		return 0, err
+	}
+	milliseconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || milliseconds < 1 || milliseconds > 120_000 {
+		return 0, fmt.Errorf("%s must be a positive integer no greater than 120000", openAIRequestTimeoutEnvironment)
+	}
+	return time.Duration(milliseconds) * time.Millisecond, nil
 }
 
 func normalizeStorageEndpoint(lookup LookupEnv, endpoint string) string {

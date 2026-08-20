@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 )
@@ -81,8 +82,8 @@ func TestOpenAIGenerateClassifiesInvalidOutputReasons(t *testing.T) {
 		{name: "multiple choices", response: providerResponse(t, validQuestion, validQuestion), reason: ChoiceCount, choiceCount: 2},
 		{name: "invalid JSON", response: providerResponse(t, `{`), reason: InvalidJSON},
 		{name: "question count", response: providerResponse(t, `{"questions":[]}`), reason: QuestionCount},
-		{name: "empty stem", response: providerResponse(t, strings.Replace(validQuestion, `"stem"`, `""`, 1)), reason: EmptyStem},
-		{name: "empty explanation", response: providerResponse(t, strings.Replace(validQuestion, `"explanation"`, `""`, 1)), reason: EmptyExplanation},
+		{name: "empty stem", response: providerResponse(t, strings.Replace(validQuestion, `"stem":"stem"`, `"stem":" "`, 1)), reason: EmptyStem},
+		{name: "empty explanation", response: providerResponse(t, strings.Replace(validQuestion, `"explanation":"explanation"`, `"explanation":" "`, 1)), reason: EmptyExplanation},
 		{name: "option count", response: providerResponse(t, `{"questions":[{"stem":"stem","explanation":"explanation","options":[]}]}`), reason: OptionCount},
 		{name: "empty option", response: providerResponse(t, strings.Replace(validQuestion, `"content":"A"`, `"content":" "`, 1)), reason: EmptyOption},
 		{name: "answer count", response: providerResponse(t, strings.Replace(validQuestion, `"isCorrect":true`, `"isCorrect":false`, 1)), reason: AnswerCount},
@@ -95,7 +96,7 @@ func TestOpenAIGenerateClassifiesInvalidOutputReasons(t *testing.T) {
 			}))
 			defer server.Close()
 
-			_, err := NewOpenAI("test-key", server.URL, "test-model").Generate(context.Background(), "source content")
+			_, err := NewOpenAI("test-key", server.URL, "test-model", chatCompletionsJSONProfile(), time.Second).Generate(context.Background(), "source content")
 			assertParserFailure(t, err, test.reason, test.choiceCount)
 		})
 	}
@@ -105,24 +106,86 @@ func TestOpenAIGenerateRequestsOneChoice(t *testing.T) {
 	response := providerResponse(t, `{"questions":[{"stem":"stem","explanation":"explanation","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var payload struct {
-			N              int `json:"n"`
-			ResponseFormat struct {
-				Type string `json:"type"`
-			} `json:"response_format"`
+			N              int            `json:"n"`
+			ResponseFormat map[string]any `json:"response_format"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode provider request: %v", err)
 		}
-		if payload.N != 1 || payload.ResponseFormat.Type != "json_object" {
+		if payload.N != 1 || payload.ResponseFormat["type"] != "json_object" {
 			t.Fatalf("provider request = %#v", payload)
+		}
+		if _, hasSchema := payload.ResponseFormat["json_schema"]; hasSchema {
+			t.Fatalf("json-object request unexpectedly includes a schema: %#v", payload.ResponseFormat)
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(response))
 	}))
 	defer server.Close()
 
-	if _, err := NewOpenAI("test-key", server.URL, "test-model").Generate(context.Background(), "source content"); err != nil {
+	if _, err := NewOpenAI("test-key", server.URL, "test-model", chatCompletionsJSONProfile(), time.Second).Generate(context.Background(), "source content"); err != nil {
 		t.Fatalf("Generate() error = %v", err)
+	}
+}
+
+func TestOpenAIGenerateSendsStrictSchemaMatchingQuizDecoder(t *testing.T) {
+	validQuestion := `{"questions":[{"stem":"stem","explanation":"explanation","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			ResponseFormat struct {
+				Type       string `json:"type"`
+				JSONSchema struct {
+					Name   string         `json:"name"`
+					Schema map[string]any `json:"schema"`
+					Strict bool           `json:"strict"`
+				} `json:"json_schema"`
+			} `json:"response_format"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode provider request: %v", err)
+		}
+		if payload.ResponseFormat.Type != "json_schema" || payload.ResponseFormat.JSONSchema.Name != "quiz_question" || !payload.ResponseFormat.JSONSchema.Strict {
+			t.Fatalf("response format = %#v", payload.ResponseFormat)
+		}
+		assertQuizSchema(t, payload.ResponseFormat.JSONSchema.Schema)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(providerResponse(t, validQuestion)))
+	}))
+	defer server.Close()
+
+	profile := ProviderProfile{CapabilityVersion: ChatCompletionsJSONV1, StructuredOutputMode: JSONSchemaStrict, Transport: ChatCompletions}
+	if _, err := NewOpenAI("test-key", server.URL, "test-model", profile, time.Second).Generate(context.Background(), "source content"); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+}
+
+func TestOpenAIGenerateHonorsStructuredOutputModeForUnknownFields(t *testing.T) {
+	outputWithUnknownField := `{"questions":[{"stem":"stem","explanation":"explanation","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}],"extra":"accepted only in JSON-object mode"}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(providerResponse(t, outputWithUnknownField)))
+	}))
+	defer server.Close()
+
+	tests := []struct {
+		name    string
+		profile ProviderProfile
+		wantErr bool
+	}{
+		{name: "JSON object accepts unknown fields", profile: chatCompletionsJSONProfile()},
+		{name: "strict JSON schema rejects unknown fields", profile: ProviderProfile{CapabilityVersion: ChatCompletionsJSONV1, StructuredOutputMode: JSONSchemaStrict, Transport: ChatCompletions}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewOpenAI("test-key", server.URL, "test-model", test.profile, time.Second).Generate(context.Background(), "source content")
+			if test.wantErr {
+				assertParserFailure(t, err, InvalidJSON, 0)
+				return
+			}
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -134,7 +197,7 @@ func TestOpenAIGenerateReturnsValidQuestionFromHTTPResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	actual, err := NewOpenAI("test-key", server.URL, "test-model").Generate(context.Background(), "source content")
+	actual, err := NewOpenAI("test-key", server.URL, "test-model", chatCompletionsJSONProfile(), time.Second).Generate(context.Background(), "source content")
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -151,6 +214,182 @@ func TestOpenAIGenerateReturnsValidQuestionFromHTTPResponse(t *testing.T) {
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("Generate() = %#v, want %#v", actual, expected)
+	}
+}
+
+func TestDecodeQuizAcceptsOnlyPlainOrOuterJSONFencedOutput(t *testing.T) {
+	validQuestion := `{"questions":[{"stem":"stem","explanation":"explanation","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`
+	tests := []struct {
+		name       string
+		raw        string
+		wantReason ParserReason
+	}{
+		{name: "plain JSON", raw: validQuestion},
+		{name: "outer JSON fence", raw: "```json\n" + validQuestion + "\n```"},
+		{name: "invalid JSON", raw: `{`, wantReason: InvalidJSON},
+		{name: "wrong shape", raw: `{"questions":[]}`, wantReason: QuestionCount},
+		{name: "non JSON fence", raw: "```\n" + validQuestion + "\n```", wantReason: InvalidJSON},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := decodeQuiz(test.raw, JSONSchemaStrict)
+			if test.wantReason == "" {
+				if err != nil {
+					t.Fatalf("decodeQuiz() error = %v", err)
+				}
+				return
+			}
+			assertParserFailure(t, err, test.wantReason, 0)
+		})
+	}
+}
+
+func TestQuizSchemaRejectsWhitespaceOnlyRequiredTextLikeDecoder(t *testing.T) {
+	for property, schema := range quizSchemaTextProperties(t) {
+		if schema["pattern"] != "\\S" {
+			t.Fatalf("%s schema pattern = %#v, want \\S", property, schema["pattern"])
+		}
+	}
+
+	tests := []struct {
+		name       string
+		raw        string
+		wantReason ParserReason
+	}{
+		{name: "whitespace stem", raw: `{"questions":[{"stem":" \t ","explanation":"explanation","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`, wantReason: EmptyStem},
+		{name: "whitespace explanation", raw: `{"questions":[{"stem":"stem","explanation":" \n ","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`, wantReason: EmptyExplanation},
+		{name: "whitespace option", raw: `{"questions":[{"stem":"stem","explanation":"explanation","options":[{"content":" \r ","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`, wantReason: EmptyOption},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := decodeQuiz(test.raw, JSONSchemaStrict)
+			assertParserFailure(t, err, test.wantReason, 0)
+		})
+	}
+}
+
+func quizSchemaTextProperties(t *testing.T) map[string]map[string]any {
+	t.Helper()
+	root := quizSchema()
+	questions := schemaProperty(t, root["properties"].(map[string]any), "questions")
+	question := questions["items"].(map[string]any)
+	questionProperties := question["properties"].(map[string]any)
+	options := schemaProperty(t, questionProperties, "options")
+	option := options["items"].(map[string]any)
+	optionProperties := option["properties"].(map[string]any)
+	return map[string]map[string]any{
+		"stem":        schemaProperty(t, questionProperties, "stem"),
+		"explanation": schemaProperty(t, questionProperties, "explanation"),
+		"content":     schemaProperty(t, optionProperties, "content"),
+	}
+}
+
+func TestOpenAIPreflightRejectsAnInvalidProbeResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(providerResponse(t, `{"ready":false}`)))
+	}))
+	defer server.Close()
+
+	err := NewOpenAI("test-key", server.URL, "gateway-alias", chatCompletionsJSONProfile(), time.Second).Preflight(context.Background())
+	assertProviderFailure(t, err, ProviderIncompatible)
+}
+
+func TestOpenAIPreflightUsesConfiguredAliasAndProfile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %q", request.URL.Path)
+		}
+		var payload struct {
+			Model          string `json:"model"`
+			N              int    `json:"n"`
+			ResponseFormat struct {
+				Type string `json:"type"`
+			} `json:"response_format"`
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode provider request: %v", err)
+		}
+		if payload.Model != "gateway-alias" || payload.N != 1 || payload.ResponseFormat.Type != "json_object" || len(payload.Messages) != 2 || payload.Messages[1].Content != "{}" {
+			t.Fatalf("preflight request = %#v", payload)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(providerResponse(t, `{"ready":true}`)))
+	}))
+	defer server.Close()
+
+	if err := NewOpenAI("test-key", server.URL, "gateway-alias", chatCompletionsJSONProfile(), time.Second).Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+}
+
+func TestOpenAIPreflightSupportsResponsesJSONSchemaProfile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/responses" {
+			t.Fatalf("request path = %q", request.URL.Path)
+		}
+		var payload struct {
+			Input string `json:"input"`
+			Text  struct {
+				Format struct {
+					Type   string `json:"type"`
+					Strict bool   `json:"strict"`
+				} `json:"format"`
+			} `json:"text"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode provider request: %v", err)
+		}
+		if payload.Input != "{}" || payload.Text.Format.Type != "json_schema" || !payload.Text.Format.Strict {
+			t.Fatalf("preflight request = %#v", payload)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{\"ready\":true}"}]}]}`))
+	}))
+	defer server.Close()
+
+	profile := ProviderProfile{CapabilityVersion: ResponsesJSONV1, StructuredOutputMode: JSONSchemaStrict, Transport: Responses}
+	if err := NewOpenAI("test-key", server.URL, "gateway-alias", profile, time.Second).Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+}
+
+func TestDecodeResponsesEnvelopeSelectsFinalUsableOutputText(t *testing.T) {
+	response := `{"status":"completed","output":[{"type":"reasoning","content":[{"type":"output_text","text":"ignore reasoning"}]},{"type":"message","content":[{"type":"output_text","text":"first output"},{"type":"refusal","text":"ignore refusal"}]},{"type":"message","content":[{"type":"output_text","text":" \t "},{"type":"output_text","text":"final output"}]}]}`
+
+	actual, err := decodeResponsesEnvelope(strings.NewReader(response))
+	if err != nil {
+		t.Fatalf("decodeResponsesEnvelope() error = %v", err)
+	}
+	if actual != "final output" {
+		t.Fatalf("decodeResponsesEnvelope() = %q, want final usable output text", actual)
+	}
+}
+
+func TestOpenAIPreflightTimesOutWithoutExposingProviderPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"content":"raw-provider-response`))
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	started := time.Now()
+	err := NewOpenAI("test-key", server.URL, "gateway-alias", chatCompletionsJSONProfile(), 40*time.Millisecond).Preflight(context.Background())
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Preflight() took %s, want bounded termination", elapsed)
+	}
+	assertProviderFailure(t, err, ProviderUnavailable)
+	for _, forbidden := range []string{"test-key", server.URL, "raw-provider-response"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("Preflight() exposed %q in %q", forbidden, err)
+		}
 	}
 }
 
@@ -182,6 +421,85 @@ func assertParserFailure(t *testing.T, err error, reason ParserReason, choiceCou
 	var failure Failure
 	if !errors.As(err, &failure) || failure.Code != OutputInvalid || failure.Reason != reason || failure.ChoiceCount != choiceCount {
 		t.Fatalf("error = %#v, want output-invalid failure with reason %q", err, reason)
+	}
+}
+
+func assertProviderFailure(t *testing.T, err error, code FailureCode) {
+	t.Helper()
+	var failure Failure
+	if !errors.As(err, &failure) || failure.Code != code {
+		t.Fatalf("error = %#v, want provider failure %q", err, code)
+	}
+}
+
+func assertQuizSchema(t *testing.T, schema map[string]any) {
+	t.Helper()
+	rootProperties := assertSchemaObject(t, schema, []string{"questions"})
+	questions := assertSchemaArray(t, schemaProperty(t, rootProperties, "questions"), 1, 1)
+	questionProperties := assertSchemaObject(t, questions, []string{"stem", "explanation", "options"})
+	assertSchemaString(t, schemaProperty(t, questionProperties, "stem"))
+	assertSchemaString(t, schemaProperty(t, questionProperties, "explanation"))
+	options := assertSchemaArray(t, schemaProperty(t, questionProperties, "options"), 4, 4)
+	optionProperties := assertSchemaObject(t, options, []string{"content", "isCorrect"})
+	assertSchemaString(t, schemaProperty(t, optionProperties, "content"))
+	if schemaProperty(t, optionProperties, "isCorrect")["type"] != "boolean" {
+		t.Fatalf("isCorrect schema = %#v", schemaProperty(t, optionProperties, "isCorrect"))
+	}
+}
+
+func assertSchemaArray(t *testing.T, schema map[string]any, minItems, maxItems float64) map[string]any {
+	t.Helper()
+	if schema["type"] != "array" || schema["minItems"] != minItems || schema["maxItems"] != maxItems {
+		t.Fatalf("array schema = %#v", schema)
+	}
+	items, ok := schema["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("array items = %#v", schema["items"])
+	}
+	return items
+}
+
+func assertSchemaObject(t *testing.T, schema map[string]any, required []string) map[string]any {
+	t.Helper()
+	if schema["type"] != "object" || schema["additionalProperties"] != false || !reflect.DeepEqual(schema["required"], stringsToAny(required)) {
+		t.Fatalf("object schema = %#v", schema)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("object properties = %#v", schema["properties"])
+	}
+	return properties
+}
+
+func assertSchemaString(t *testing.T, schema map[string]any) {
+	t.Helper()
+	if schema["type"] != "string" || schema["minLength"] != float64(1) || schema["pattern"] != "\\S" {
+		t.Fatalf("string schema = %#v", schema)
+	}
+}
+
+func schemaProperty(t *testing.T, properties map[string]any, name string) map[string]any {
+	t.Helper()
+	property, ok := properties[name].(map[string]any)
+	if !ok {
+		t.Fatalf("property %q = %#v", name, properties[name])
+	}
+	return property
+}
+
+func stringsToAny(values []string) []any {
+	output := make([]any, len(values))
+	for index, value := range values {
+		output[index] = value
+	}
+	return output
+}
+
+func chatCompletionsJSONProfile() ProviderProfile {
+	return ProviderProfile{
+		CapabilityVersion:    ChatCompletionsJSONV1,
+		StructuredOutputMode: JSONObject,
+		Transport:            ChatCompletions,
 	}
 }
 func TestFakeGeneratorIsSafeForLocalWorker(t *testing.T) {

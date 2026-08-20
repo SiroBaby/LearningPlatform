@@ -17,4 +17,24 @@ Required configuration: the existing backend database keys `DB_HOST`,
 development. Production reuses `learning-platform-api-runtime` for the shared
 database and does not require separate SSM parameters, a Secret, or a
 PostgreSQL role. It sets `AI_LLM_PROVIDER` to `openai-compatible` with
-`OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
+`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`,
+`OPENAI_CAPABILITY_VERSION`, `OPENAI_TRANSPORT`, and
+`OPENAI_STRUCTURED_OUTPUT_MODE`, and a bounded `OPENAI_REQUEST_TIMEOUT_MS`
+(1 through 120000). The capability and transport must be either
+`chat-completions-json-v1` / `chat-completions` or `responses-json-v1` /
+`responses`; a model alias does not determine either.
+
+An external or local invocation that supplies only the legacy API key, base
+URL, and model variables is intentionally rejected. It must also declare the
+capability, transport, structured-output mode, and timeout above; the worker
+does not infer unsafe defaults for a real provider.
+
+For an explicit configuration or deployment gate, run `ai-worker preflight`.
+It sends one bounded non-document request using the configured alias,
+transport, and structured-output mode, then exits non-zero unless the response
+contains exactly one valid probe output. A normal `ai-worker` startup runs the
+same gate before migrations, storage checks, or job consumption. Neither path
+logs the provider URL, prompt, response, or credentials.
+
+For a normal worker start, `/healthz` is available before the provider gate;
+`/readyz` remains unavailable until the gate and consumer bootstrap complete.

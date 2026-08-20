@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 type S3Reader struct {
@@ -149,30 +150,85 @@ func pageText(reader *pdf.Reader, page int) (string, error) {
 type OpenAI struct {
 	client                 *http.Client
 	apiKey, baseURL, model string
+	profile                ProviderProfile
+	timeout                time.Duration
 }
 
-func NewOpenAI(apiKey, baseURL, model string) *OpenAI {
-	return &OpenAI{client: &http.Client{}, apiKey: apiKey, baseURL: strings.TrimRight(baseURL, "/"), model: model}
+func NewOpenAI(apiKey, baseURL, model string, profile ProviderProfile, timeout time.Duration) *OpenAI {
+	if timeout <= 0 {
+		timeout = time.Minute
+	}
+	return &OpenAI{client: &http.Client{Timeout: timeout}, apiKey: apiKey, baseURL: strings.TrimRight(baseURL, "/"), model: model, profile: profile, timeout: timeout}
 }
+
 func (provider *OpenAI) Generate(ctx context.Context, source string) (Question, error) {
-	payload := map[string]any{"model": provider.model, "max_tokens": 8000, "n": 1, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": "Return JSON {questions:[{stem,explanation,options:[{content,isCorrect}]}]}. Generate one Vietnamese grounded MCQ."}, {"role": "user", "content": source}}}
+	output, err := provider.request(ctx, "Return JSON {questions:[{stem,explanation,options:[{content,isCorrect}]}]}. Generate one Vietnamese grounded MCQ.", source, 8000, "quiz_question", quizSchema())
+	if err != nil {
+		return Question{}, err
+	}
+	return decodeQuiz(output, provider.profile.StructuredOutputMode)
+}
+
+// Preflight verifies the configured alias and profile with one bounded, non-document request.
+func (provider *OpenAI) Preflight(ctx context.Context) error {
+	output, err := provider.request(ctx, "Return only JSON with exactly one boolean field ready set to true.", "{}", 32, "provider_preflight", preflightSchema())
+	if err != nil {
+		return preflightFailure(err)
+	}
+	if !decodePreflight(output) {
+		return Failure{Code: ProviderIncompatible}
+	}
+	return nil
+}
+
+func (provider *OpenAI) request(ctx context.Context, instructions, input string, maxOutputTokens int, schemaName string, schema map[string]any) (string, error) {
+	payload, endpoint := provider.requestPayload(instructions, input, maxOutputTokens, schemaName, schema)
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return Question{}, fmt.Errorf("encode provider request: %w", err)
+		return "", fmt.Errorf("encode provider request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.baseURL+"/chat/completions", bytes.NewReader(body))
+	requestContext, cancel := context.WithTimeout(ctx, provider.timeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, provider.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
-		return Question{}, fmt.Errorf("create provider request: %w", err)
+		return "", fmt.Errorf("create provider request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+provider.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := provider.client.Do(request)
 	if err != nil {
-		return Question{}, Failure{Code: ProviderUnavailable, Technical: true}
+		return "", Failure{Code: ProviderUnavailable, Technical: true}
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return Question{}, Failure{Code: ProviderUnavailable, Technical: true}
+		return "", Failure{Code: ProviderUnavailable, Technical: true}
+	}
+	output, err := provider.decodeResponse(response.Body)
+	if err != nil && requestContext.Err() != nil {
+		return "", Failure{Code: ProviderUnavailable, Technical: true}
+	}
+	return output, err
+}
+
+func (provider *OpenAI) requestPayload(instructions, input string, maxOutputTokens int, schemaName string, schema map[string]any) (map[string]any, string) {
+	switch provider.profile.Transport {
+	case Responses:
+		return map[string]any{
+			"model": provider.model, "max_output_tokens": maxOutputTokens, "instructions": instructions, "input": input, "store": false,
+			"text": map[string]any{"format": responseFormat(provider.profile.StructuredOutputMode, schemaName, schema)},
+		}, "/responses"
+	default:
+		return map[string]any{
+			"model": provider.model, "max_tokens": maxOutputTokens, "n": 1,
+			"response_format": chatResponseFormat(provider.profile.StructuredOutputMode, schemaName, schema),
+			"messages":        []map[string]string{{"role": "system", "content": instructions}, {"role": "user", "content": input}},
+		}, "/chat/completions"
+	}
+}
+
+func (provider *OpenAI) decodeResponse(body io.Reader) (string, error) {
+	if provider.profile.Transport == Responses {
+		return decodeResponsesEnvelope(body)
 	}
 	var decoded struct {
 		Choices []struct {
@@ -182,21 +238,57 @@ func (provider *OpenAI) Generate(ctx context.Context, source string) (Question, 
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&decoded); err != nil {
-		return Question{}, Failure{Code: OutputInvalid, Reason: InvalidEnvelope}
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&decoded); err != nil {
+		return "", Failure{Code: OutputInvalid, Reason: InvalidEnvelope}
 	}
 	if len(decoded.Choices) != 1 {
-		return Question{}, Failure{Code: OutputInvalid, Reason: ChoiceCount, ChoiceCount: len(decoded.Choices)}
+		return "", Failure{Code: OutputInvalid, Reason: ChoiceCount, ChoiceCount: len(decoded.Choices)}
 	}
 	if decoded.Choices[0].FinishReason == "length" {
-		return Question{}, Failure{Code: OutputTruncated, Technical: true}
+		return "", Failure{Code: OutputTruncated, Technical: true}
 	}
-	return decodeQuiz(decoded.Choices[0].Message.Content)
+	if strings.TrimSpace(decoded.Choices[0].Message.Content) == "" {
+		return "", Failure{Code: OutputInvalid, Reason: InvalidJSON}
+	}
+	return decoded.Choices[0].Message.Content, nil
 }
-func decodeQuiz(raw string) (Question, error) {
-	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "```json\n")
-	raw = strings.TrimSuffix(raw, "\n```")
+
+func decodeResponsesEnvelope(body io.Reader) (string, error) {
+	var decoded struct {
+		Status string `json:"status"`
+		Output []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&decoded); err != nil {
+		return "", Failure{Code: OutputInvalid, Reason: InvalidEnvelope}
+	}
+	if decoded.Status != "completed" {
+		return "", Failure{Code: OutputInvalid, Reason: InvalidEnvelope}
+	}
+	var output string
+	for _, item := range decoded.Output {
+		if item.Type != "message" {
+			continue
+		}
+		for _, content := range item.Content {
+			if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
+				output = content.Text
+			}
+		}
+	}
+	if output == "" {
+		return "", Failure{Code: OutputInvalid, Reason: InvalidEnvelope}
+	}
+	return output, nil
+}
+
+func decodeQuiz(raw string, mode StructuredOutputMode) (Question, error) {
+	raw = normalizeGeneratedJSON(raw)
 	var output struct {
 		Questions []struct {
 			Stem        string `json:"stem"`
@@ -207,7 +299,7 @@ func decodeQuiz(raw string) (Question, error) {
 			} `json:"options"`
 		} `json:"questions"`
 	}
-	if json.Unmarshal([]byte(raw), &output) != nil {
+	if !decodeJSON(raw, &output, mode == JSONSchemaStrict) {
 		return Question{}, Failure{Code: OutputInvalid, Reason: InvalidJSON}
 	}
 	if len(output.Questions) != 1 {
@@ -240,6 +332,103 @@ func decodeQuiz(raw string) (Question, error) {
 		options[index] = Option{Content: option.Content, IsCorrect: option.Correct}
 	}
 	return Question{Stem: question.Stem, Explanation: question.Explanation, Options: options}, nil
+}
+
+func normalizeGeneratedJSON(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "```") {
+		return trimmed
+	}
+	if !strings.HasPrefix(trimmed, "```json\n") || !strings.HasSuffix(trimmed, "\n```") {
+		return ""
+	}
+	return strings.TrimSpace(trimmed[len("```json\n") : len(trimmed)-len("\n```")])
+}
+
+func strictDecodeJSON(raw string, output any) bool {
+	return decodeJSON(raw, output, true)
+}
+
+func decodeJSON(raw string, output any, rejectUnknownFields bool) bool {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	if rejectUnknownFields {
+		decoder.DisallowUnknownFields()
+	}
+	if err := decoder.Decode(output); err != nil {
+		return false
+	}
+	return decoder.Decode(&struct{}{}) == io.EOF
+}
+
+func decodePreflight(raw string) bool {
+	var output struct {
+		Ready bool `json:"ready"`
+	}
+	return strictDecodeJSON(normalizeGeneratedJSON(raw), &output) && output.Ready
+}
+
+func preflightFailure(err error) error {
+	var failure Failure
+	if errors.As(err, &failure) && failure.Code == ProviderUnavailable {
+		return failure
+	}
+	return Failure{Code: ProviderIncompatible}
+}
+
+func chatResponseFormat(mode StructuredOutputMode, schemaName string, schema map[string]any) map[string]any {
+	if mode == JSONObject {
+		return map[string]any{"type": "json_object"}
+	}
+	return map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": schemaName, "strict": true, "schema": schema}}
+}
+
+func responseFormat(mode StructuredOutputMode, schemaName string, schema map[string]any) map[string]any {
+	if mode == JSONObject {
+		return map[string]any{"type": "json_object"}
+	}
+	return map[string]any{"type": "json_schema", "name": schemaName, "strict": true, "schema": schema}
+}
+
+func preflightSchema() map[string]any {
+	return map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"ready": map[string]any{"type": "boolean"}}, "required": []string{"ready"}}
+}
+
+func quizSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"questions": map[string]any{
+				"type":     "array",
+				"minItems": 1,
+				"maxItems": 1,
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"stem":        map[string]any{"type": "string", "minLength": 1, "pattern": "\\S"},
+						"explanation": map[string]any{"type": "string", "minLength": 1, "pattern": "\\S"},
+						"options": map[string]any{
+							"type":     "array",
+							"minItems": 4,
+							"maxItems": 4,
+							"items": map[string]any{
+								"type":                 "object",
+								"additionalProperties": false,
+								"properties": map[string]any{
+									"content":   map[string]any{"type": "string", "minLength": 1, "pattern": "\\S"},
+									"isCorrect": map[string]any{"type": "boolean"},
+								},
+								"required": []string{"content", "isCorrect"},
+							},
+						},
+					},
+					"required": []string{"stem", "explanation", "options"},
+				},
+			},
+		},
+		"required": []string{"questions"},
+	}
 }
 
 type FakeGenerator struct{}
