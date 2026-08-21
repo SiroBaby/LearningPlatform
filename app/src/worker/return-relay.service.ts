@@ -12,6 +12,10 @@ import {
   type QuizGenerationHandoffPort,
 } from '../modules/assessment/contracts/quiz-generation-handoff.contract';
 import {
+  AssessmentError,
+  AssessmentErrorCode,
+} from '../modules/assessment/domain/assessment.error';
+import {
   DOCUMENT_STATUS_PROJECTION,
   DocumentStatusProjection,
 } from '../modules/content/contracts/document-status-projection.port';
@@ -49,11 +53,12 @@ export class ReturnRelay {
 
     for (const row of pending) {
       let stage: ReturnRelayFailureStage = 'parse';
+      let payload: DocumentProcessingResult | undefined;
 
       try {
         const startedAt = performance.now();
         const queueWaitMs = Math.max(0, Date.now() - row.createdAt.getTime());
-        const payload = this.parseResult(row.payload);
+        payload = this.parseResult(row.payload);
         if (payload.status === DocumentProcessingResultStatus.READY && payload.questions) {
           stage = 'quiz-persist';
           await this.quizHandoff.persist({
@@ -95,6 +100,46 @@ export class ReturnRelay {
           runtime: 'worker',
         });
       } catch (error) {
+        if (
+          stage === 'quiz-persist' &&
+          payload !== undefined &&
+          error instanceof AssessmentError &&
+          error.code === AssessmentErrorCode.INSUFFICIENT_VALID_QUESTIONS
+        ) {
+          // Invalid generated questions are terminal for this result. Persist the
+          // failure and acknowledge the outbox row so a deterministic payload
+          // cannot block every later return event forever.
+          try {
+            await this.projection.project({
+              documentId: payload.documentId,
+              estimatedCredits: payload.estimatedCredits,
+              estimateStatus: payload.estimateStatus,
+              budgetStatus: payload.budgetStatus,
+              errorCode: DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS,
+              errorMessage: 'Not enough valid questions were generated',
+              ownerId: payload.ownerId,
+              settledCredits: payload.settledCredits,
+              status: DocumentStatus.FAILED,
+            });
+            await this.outbox.markPublished(row.id);
+            this.logger.error({
+              event: 'ai.job.return.terminal_failed',
+              errorCode: DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS,
+              jobId: row.aggregateId,
+              runtime: 'worker',
+              stage,
+            });
+            continue;
+          } catch (terminalizationError) {
+            this.logger.error({
+              event: 'ai.job.return.failed',
+              jobId: row.aggregateId,
+              runtime: 'worker',
+              stage,
+            });
+            throw terminalizationError;
+          }
+        }
         this.logger.error({
           event: 'ai.job.return.failed',
           jobId: row.aggregateId,
