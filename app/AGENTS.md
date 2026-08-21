@@ -49,6 +49,7 @@
 ## TypeScript Entity And Test Conventions
 
 - Non-runtime TypeScript interfaces and external module shapes must use explicit Nest provider tokens/factories, with module-compilation coverage for the provider graph.
+- Runtime entrypoints that load `@automapper/classes` decorated models must import `reflect-metadata` before application modules; tests importing metadata do not prove the `main.ts` runtime order.
 - Tên class, interface, type, function, method, biến, constant, provider token, file và module phải mô tả trách nhiệm nghiệp vụ hoặc kỹ thuật ổn định; không gắn tiền tố/hậu tố theo giai đoạn triển khai như `Phase0`, `Mvp`, `Temporary`, `New` hoặc `Legacy` nếu thành phần dự kiến tiếp tục tồn tại. Chỉ dùng tên mang tính tạm thời khi thành phần có kế hoạch loại bỏ rõ ràng; nếu trách nhiệm là lâu dài, chọn một tên thống nhất ngay từ đầu và dùng xuyên suốt mọi lớp.
 
 - Với TypeORM entity được hydrate bởi ORM, mapped property bắt buộc dùng definite-assignment assertion (`property!: Type`) khi không được khởi tạo trong constructor; không dùng `?` hoặc giá trị mặc định giả chỉ để qua strict initialization.
@@ -81,6 +82,7 @@
 ## Verification
 
 - Sau backend change, chạy `npm run build`.
+- Mọi non-TS asset được runtime sử dụng phải được canonical build emit vào đúng runtime path; Docker chỉ copy canonical build output và dev watch phải kiểm tra cùng contract đó.
 - Chạy test hẹp nhất liên quan. Testcontainers cần Docker; nếu không có Docker, ghi rõ đây là blocker môi trường.
 - Với route/shared symbol, chạy impact analysis trước edit.
 - Trong môi trường development cục bộ, AI được chủ động chạy app, worker, build, test và thao tác dữ liệu/database phục vụ phát triển hoặc xác minh mà không cần xin phép trước, miễn là không tác động staging, production hay hạ tầng dùng chung.
@@ -91,11 +93,13 @@
 
 ## Production Quality
 
+- API/worker bootstrap failure handlers phải giữ và log metadata bounded, đã sanitize gồm stage/error/cause; không swallow exception bằng empty catch hoặc log raw stack/payload.
 - mTLS Secret mounts for the Node runtime UID `1000` must set pod-level `fsGroup: 1000` and `defaultMode: 0440`; this keeps private keys group-readable by the non-root runtime without making them world-readable.
 - Object-storage bucket production phải được provision ngoài application. Startup chỉ kiểm tra quyền truy cập bucket và fail-fast; không tự tạo bucket hoặc yêu cầu `CreateBucket`.
 - Trước khi gọi một flow là production-ready, phải xác minh end-to-end behavior, failure handling, bounded resource usage, graceful shutdown và configuration validation; không dựa vào happy path hoặc hard-code interval/batch/credential.
 - Background processing phải chạy trong worker entrypoint/deployment role riêng, có typed configuration cho throughput/backoff, không overlap một worker loop, và không làm HTTP API process chạy worker ngầm.
 - LLM provider và credentials chỉ được khởi tạo trong worker composition root; API process không giữ API key. Production worker phải fail-fast nếu provider thật hoặc credentials/model bị thiếu, và SDK logging phải tắt để không lộ source chunk/prompt.
+- Khi `WORKER_EXECUTION_MODE=relay-only`, Node worker composition/module chỉ được khởi tạo forward/return relay; tuyệt đối không import hoặc khởi tạo `LlmProviderModule`, provider SDK, hay require provider credentials. Go AI worker là owner duy nhất của provider startup/execution.
 - Entitlement, credit wallet và credit ledger thuộc schema `course`; schema `ai` chỉ giữ execution snapshot và provider usage. Không được gom billing transaction vào AI repository hoặc query chéo schema để tiện settlement.
 - Provider dispatch phải có usage record idempotent trước call và cập nhật usage thật sau response. Khi dispatch không xác định được usage, giữ phần reservation chưa rõ bằng trạng thái hold; không được mặc định usage bằng 0 hoặc hoàn toàn bộ credit.
 - Mọi worker write/finalize phải mang attempt fence đã claim, dùng budget + batch hữu hạn, và chỉ log mã/lời nhắn an toàn thay vì payload hoặc lỗi thô.

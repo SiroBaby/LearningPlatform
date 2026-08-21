@@ -127,14 +127,24 @@ describe('ReturnRelay', () => {
   it('idempotently projects FAILED after a projection failure retry', async () => {
     const document = await seedProcessingDocument();
     const event = await seedResult(document, DocumentStatus.FAILED);
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
     const failingProjection: DocumentStatusProjection = {
       project: async (_command: DocumentStatusProjectionCommand) => {
-        throw new Error('content unavailable');
+        throw new Error('content unavailable: raw document storage reference');
       },
     };
     const failingRelay = new ReturnRelay(new AiOutboxRepository(ds), failingProjection, quizHandoff);
 
-    await expect(failingRelay.pump(10)).rejects.toThrow('content unavailable');
+    await expect(failingRelay.pump(10)).rejects.toThrow('content unavailable: raw document storage reference');
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(logger).toHaveBeenCalledWith({
+      event: 'ai.job.return.failed',
+      jobId: event.aggregateId,
+      runtime: 'worker',
+      stage: 'document-project',
+    });
+    expect(JSON.stringify(logger.mock.calls)).not.toContain('raw document storage reference');
+    logger.mockRestore();
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();
 
     await relay.pump(10);
@@ -144,6 +154,85 @@ describe('ReturnRelay', () => {
     expect(projected.status).toBe(DocumentStatus.FAILED);
     expect(projected.errorMessage).toBe('Processing failed');
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+  });
+
+  it('logs a safe failure event when quiz handoff persistence fails', async () => {
+    const document = await seedProcessingDocument();
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        documentId: document.id,
+        errorCode: null,
+        errorMessage: null,
+        ownerId: document.ownerId,
+        questions: [{
+          chunkId: randomUUID(),
+          chunkIndex: 0,
+          citation: { chunkId: randomUUID(), locator: { page: 1 }, snippet: 'safe snippet' },
+          explanation: 'safe explanation',
+          options: [
+            { content: 'first option', isCorrect: true },
+            { content: 'second option', isCorrect: false },
+          ],
+          ordinal: 0,
+          stem: 'safe question',
+        }],
+        status: DocumentStatus.READY,
+        version: 1,
+      },
+    }));
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
+    const failingQuizHandoff = {
+      persist: async () => {
+        throw new Error('quiz persistence failed: raw question text');
+      },
+    };
+    const failingRelay = new ReturnRelay(
+      new AiOutboxRepository(ds),
+      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      failingQuizHandoff,
+    );
+
+    await expect(failingRelay.pump(10)).rejects.toThrow('quiz persistence failed: raw question text');
+
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(logger).toHaveBeenCalledWith({
+      event: 'ai.job.return.failed',
+      jobId: event.aggregateId,
+      runtime: 'worker',
+      stage: 'quiz-persist',
+    });
+    expect(JSON.stringify(logger.mock.calls)).not.toContain('raw question text');
+    logger.mockRestore();
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();
+  });
+
+  it('logs one safe outbox-read failure when pending results cannot be read', async () => {
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
+    const rawError = 'outbox read failed: raw database connection details';
+    const failingOutbox = {
+      findUnpublishedProcessingResults: async () => {
+        throw new Error(rawError);
+      },
+    } as unknown as AiOutboxRepository;
+    const failingRelay = new ReturnRelay(
+      failingOutbox,
+      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      quizHandoff,
+    );
+
+    await expect(failingRelay.pump(10)).rejects.toThrow(rawError);
+
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(logger).toHaveBeenCalledWith({
+      event: 'ai.job.return.failed',
+      jobId: null,
+      runtime: 'worker',
+      stage: 'outbox-read',
+    });
+    expect(JSON.stringify(logger.mock.calls)).not.toContain(rawError);
+    logger.mockRestore();
   });
 
   it('publishes and idempotently projects a failed PDF extraction result', async () => {

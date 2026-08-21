@@ -34,49 +34,75 @@ export class ReturnRelay {
   ) {}
 
   async pump(limit: number): Promise<void> {
-    const pending = await this.outbox.findUnpublishedProcessingResults(limit);
+    let pending: Awaited<ReturnType<AiOutboxRepository['findUnpublishedProcessingResults']>>;
+    try {
+      pending = await this.outbox.findUnpublishedProcessingResults(limit);
+    } catch (error) {
+      this.logger.error({
+        event: 'ai.job.return.failed',
+        jobId: null,
+        runtime: 'worker',
+        stage: 'outbox-read',
+      });
+      throw error;
+    }
 
     for (const row of pending) {
-      const startedAt = performance.now();
-      const queueWaitMs = Math.max(0, Date.now() - row.createdAt.getTime());
-      const payload = this.parseResult(row.payload);
-      if (payload.status === DocumentProcessingResultStatus.READY && payload.questions) {
-        await this.quizHandoff.persist({
+      let stage: ReturnRelayFailureStage = 'parse';
+
+      try {
+        const startedAt = performance.now();
+        const queueWaitMs = Math.max(0, Date.now() - row.createdAt.getTime());
+        const payload = this.parseResult(row.payload);
+        if (payload.status === DocumentProcessingResultStatus.READY && payload.questions) {
+          stage = 'quiz-persist';
+          await this.quizHandoff.persist({
+            documentId: payload.documentId,
+            minimumQuestionCount: 1,
+            ownerId: payload.ownerId,
+            promptVersion: 'phase0-v1',
+            questions: payload.questions,
+          });
+        }
+        const projectionStartedAt = performance.now();
+        stage = 'document-project';
+        await this.projection.project({
           documentId: payload.documentId,
-          minimumQuestionCount: 1,
+          estimatedCredits: payload.estimatedCredits,
+          estimateStatus: payload.estimateStatus,
+          budgetStatus: payload.budgetStatus,
+          errorCode: payload.errorCode,
+          errorMessage: payload.errorMessage,
           ownerId: payload.ownerId,
-          promptVersion: 'phase0-v1',
-          questions: payload.questions,
+          settledCredits: payload.settledCredits,
+          status:
+            payload.status === DocumentProcessingResultStatus.READY
+              ? DocumentStatus.READY
+              : DocumentStatus.FAILED,
         });
+        const projectionDurationMs = elapsedMilliseconds(projectionStartedAt);
+        const publishStartedAt = performance.now();
+        stage = 'outbox-publish';
+        await this.outbox.markPublished(row.id);
+        this.logger.log({
+          documentId: payload.documentId,
+          durationMs: elapsedMilliseconds(startedAt),
+          event: 'ai.job.return.projected',
+          jobId: row.aggregateId,
+          publishDurationMs: elapsedMilliseconds(publishStartedAt),
+          queueWaitMs,
+          projectionDurationMs,
+          runtime: 'worker',
+        });
+      } catch (error) {
+        this.logger.error({
+          event: 'ai.job.return.failed',
+          jobId: row.aggregateId,
+          runtime: 'worker',
+          stage,
+        });
+        throw error;
       }
-      const projectionStartedAt = performance.now();
-      await this.projection.project({
-        documentId: payload.documentId,
-        estimatedCredits: payload.estimatedCredits,
-        estimateStatus: payload.estimateStatus,
-        budgetStatus: payload.budgetStatus,
-        errorCode: payload.errorCode,
-        errorMessage: payload.errorMessage,
-        ownerId: payload.ownerId,
-        settledCredits: payload.settledCredits,
-        status:
-          payload.status === DocumentProcessingResultStatus.READY
-            ? DocumentStatus.READY
-            : DocumentStatus.FAILED,
-      });
-      const projectionDurationMs = elapsedMilliseconds(projectionStartedAt);
-      const publishStartedAt = performance.now();
-      await this.outbox.markPublished(row.id);
-      this.logger.log({
-        documentId: payload.documentId,
-        durationMs: elapsedMilliseconds(startedAt),
-        event: 'ai.job.return.projected',
-        jobId: row.aggregateId,
-        publishDurationMs: elapsedMilliseconds(publishStartedAt),
-        queueWaitMs,
-        projectionDurationMs,
-        runtime: 'worker',
-      });
     }
   }
 
@@ -157,6 +183,13 @@ export class ReturnRelay {
     return undefined;
   }
 }
+
+type ReturnRelayFailureStage =
+  | 'outbox-read'
+  | 'parse'
+  | 'quiz-persist'
+  | 'document-project'
+  | 'outbox-publish';
 
 function elapsedMilliseconds(startedAt: number): number {
   return Math.max(0, Math.round(performance.now() - startedAt));

@@ -608,6 +608,7 @@ function workerSettings(quizGenerationConcurrency: number): Record<string, numbe
     chunkOverlapChars: 150,
     chunkTargetChars: 1_200,
     errorBackoffMs: 5_000,
+    executionMode: 'legacy-processing',
     healthHost: '0.0.0.0',
     healthPort: 3_403,
     jobBatchSize: 10,

@@ -154,6 +154,11 @@ type OpenAI struct {
 	timeout                time.Duration
 }
 
+const (
+	preflightInstructions = "Return JSON {questions:[{stem,explanation,options:[{content,isCorrect}]}]}. Generate one Vietnamese MCQ using only the synthetic input."
+	preflightInput        = "Synthetic contract probe: the reference token is mau-kiem-tra. This is not a document."
+)
+
 func NewOpenAI(apiKey, baseURL, model string, profile ProviderProfile, timeout time.Duration) *OpenAI {
 	if timeout <= 0 {
 		timeout = time.Minute
@@ -171,11 +176,11 @@ func (provider *OpenAI) Generate(ctx context.Context, source string) (Question, 
 
 // Preflight verifies the configured alias and profile with one bounded, non-document request.
 func (provider *OpenAI) Preflight(ctx context.Context) error {
-	output, err := provider.request(ctx, "Return only JSON with exactly one boolean field ready set to true.", "{}", 32, "provider_preflight", preflightSchema())
+	output, err := provider.request(ctx, preflightInstructions, preflightInput, 512, "quiz_question", quizSchema())
 	if err != nil {
 		return preflightFailure(err)
 	}
-	if !decodePreflight(output) {
+	if _, err := decodeQuiz(output, provider.profile.StructuredOutputMode); err != nil {
 		return Failure{Code: ProviderIncompatible}
 	}
 	return nil
@@ -316,10 +321,16 @@ func decodeQuiz(raw string, mode StructuredOutputMode) (Question, error) {
 		return Question{}, Failure{Code: OutputInvalid, Reason: OptionCount}
 	}
 	correct := 0
+	seenOptions := make(map[string]struct{}, len(question.Options))
 	for _, option := range question.Options {
 		if strings.TrimSpace(option.Content) == "" {
 			return Question{}, Failure{Code: OutputInvalid, Reason: EmptyOption}
 		}
+		normalizedContent := normalizeOptionContent(option.Content)
+		if _, exists := seenOptions[normalizedContent]; exists {
+			return Question{}, Failure{Code: OutputInvalid, Reason: DuplicateOption}
+		}
+		seenOptions[normalizedContent] = struct{}{}
 		if option.Correct {
 			correct++
 		}
@@ -332,6 +343,10 @@ func decodeQuiz(raw string, mode StructuredOutputMode) (Question, error) {
 		options[index] = Option{Content: option.Content, IsCorrect: option.Correct}
 	}
 	return Question{Stem: question.Stem, Explanation: question.Explanation, Options: options}, nil
+}
+
+func normalizeOptionContent(content string) string {
+	return strings.ToLower(strings.Join(strings.Fields(content), " "))
 }
 
 func normalizeGeneratedJSON(raw string) string {
@@ -360,13 +375,6 @@ func decodeJSON(raw string, output any, rejectUnknownFields bool) bool {
 	return decoder.Decode(&struct{}{}) == io.EOF
 }
 
-func decodePreflight(raw string) bool {
-	var output struct {
-		Ready bool `json:"ready"`
-	}
-	return strictDecodeJSON(normalizeGeneratedJSON(raw), &output) && output.Ready
-}
-
 func preflightFailure(err error) error {
 	var failure Failure
 	if errors.As(err, &failure) && failure.Code == ProviderUnavailable {
@@ -387,10 +395,6 @@ func responseFormat(mode StructuredOutputMode, schemaName string, schema map[str
 		return map[string]any{"type": "json_object"}
 	}
 	return map[string]any{"type": "json_schema", "name": schemaName, "strict": true, "schema": schema}
-}
-
-func preflightSchema() map[string]any {
-	return map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"ready": map[string]any{"type": "boolean"}}, "required": []string{"ready"}}
 }
 
 func quizSchema() map[string]any {

@@ -35,11 +35,19 @@ export class ContentMappingProfile {
         (destination) => destination.documentId,
         mapFrom((source) => source.id),
       ),
+      forMember(
+        (destination) => destination.status,
+        mapFrom((source) => source.status),
+      ),
     );
     createMap(
       mapper,
       Document,
       DocumentResponseDto,
+      forMember(
+        (destination) => destination.status,
+        mapFrom((source) => source.status),
+      ),
       forMember(
         (destination) => destination.language,
         mapFrom((source) => source.language ?? null),

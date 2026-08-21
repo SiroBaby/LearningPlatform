@@ -4,7 +4,7 @@
   "description": "AI Learning Platform - Phase 0 monolith slice",
   "private": true,
   "scripts": {
-    "build": "nest build",
+    "build": "nest build && npm run test:migration-assets",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -12,6 +12,7 @@
     "start:worker": "node dist/worker.js",
     "start:worker:dev": "ts-node src/worker.ts",
     "migration:new": "node scripts/new-migration.js",
+    "test:migration-assets": "node scripts/assert-migration-assets.js",
     "migration:run": "ts-node -T src/database/migrate.ts up",
     "migration:run:prod": "node dist/database/migrate.js up",
     "migration:revert": "ts-node -T src/database/migrate.ts down",
