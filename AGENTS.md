@@ -21,6 +21,13 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Khi hoàn thành task, đăng comment `HOÀN THÀNH` kèm thay đổi, PR hoặc commit nếu có, lệnh kiểm tra và kết quả, bằng chứng manual/visual/operational liên quan cùng giới hạn còn lại. Chỉ chuyển `Status` sang `Done` khi hoạt động của ticket đã có kết luận và bằng chứng; ticket `HITL` vẫn cần human xác nhận trước khi đóng.
 - Nội dung ticket và comment phải dùng tiếng Việt cụ thể, nhất quán với ubiquitous language trong `CONTEXT.md`. Khi một English technical term xuất hiện lần đầu, giải thích ngắn bằng tiếng Việt ngay sau thuật ngữ; tránh từ mơ hồ, diễn đạt trừu tượng hoặc kết luận không có bằng chứng khiến human có thể hiểu sai.
 
+## Chuẩn hóa Pull Request
+
+- Mô tả Pull Request (PR) phải là Markdown hợp lệ, không chứa chuỗi escape literal như `\\n`, heading hỏng, hoặc nội dung lẫn ngôn ngữ/encoding khó đọc.
+- PR phải dùng đúng sáu mục theo thứ tự: `Mục tiêu`, `Nguyên nhân`, `Thay đổi`, `Kiểm tra`, `Giới hạn/Rủi ro`, `Rollout/Verification`.
+- Mỗi mục phải ghi thông tin cụ thể và có bằng chứng; mục không áp dụng ghi `Không có` thay vì bỏ trống. Chỉ nêu lệnh kiểm tra đã chạy và kết quả thực tế, không biến kế hoạch thành kết quả.
+- `Rollout/Verification` phải nêu rõ phạm vi runtime/target, bước rollout tiếp theo, trạng thái đã thực hiện hay chưa, và cách xác nhận sau rollout. Không ghi secret, token, credential, raw log nhạy cảm hoặc dữ liệu người dùng.
+
 ## Cải tiến quy tắc sau khi sửa lỗi
 
 - Sau khi sửa một lỗi có nguyên nhân lặp lại được, AI phải cập nhật `AGENTS.md` của service liên quan với quy tắc ngắn gọn, có thể áp dụng lại để ngăn lỗi tái diễn.
