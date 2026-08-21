@@ -53,6 +53,7 @@ classify_changes() {
               ;;
             app/src/worker/*|app/src/worker.ts)
               worker=true
+              go_worker=true
               ;;
             app/src/main.ts|app/src/app.module.ts|app/src/modules/health/*)
               api=true
