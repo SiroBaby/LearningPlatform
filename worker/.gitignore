@@ -1,0 +1,5 @@
+# Local worker environment; keep worker/.env.example tracked.
+.env
+
+# Local Go build output; E2E builds into a temporary directory instead.
+ai-worker

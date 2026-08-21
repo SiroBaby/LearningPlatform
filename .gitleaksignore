@@ -1,0 +1,6 @@
+# Reviewed false positives: SHA-256 manifest digests and test-only placeholder keys.
+6ca587b29a9490b67923a53a407e34c9a3c388fe:infra/ansible/vars/dev.yml:generic-api-key:17
+d6b5039fc83b798bcc50841072ece11edca1980a:infra/ansible/vars/dev.yml:generic-api-key:17
+84b86f7f76b84f974f330d95ca58651360636dfb:infra/ansible/inventory/group_vars/k3s_nodes.yml.example:generic-api-key:22
+b96261cbb2b4f151057c3b8085540c3f9f630c9c:app/src/config/application-config.service.spec.ts:generic-api-key:136
+b96261cbb2b4f151057c3b8085540c3f9f630c9c:app/src/config/application-config.service.spec.ts:generic-api-key:159

@@ -2,61 +2,42 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { ConsoleLogger } from '@nestjs/common';
 
 import type { ApplicationConfigService } from '../config/application-config.service';
-import type { JobPoller } from '../modules/ai/job-poller.service';
-import type { StuckJobDetector } from '../modules/ai/stuck-job-detector.service';
 import type { ForwardRelay } from '../modules/content/forward-relay.service';
 import type { ReturnRelay } from './return-relay.service';
 import { WorkerRunner } from './worker-runner.service';
+
+const workerConfig = (): ApplicationConfigService => ({
+  worker: {
+    errorBackoffMs: 1,
+    outboxBatchSize: 5,
+    pollIntervalMs: 1_000,
+  },
+} as ApplicationConfigService);
 
 describe('WorkerRunner', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  it('runs the bounded production cycle in relay, processor, recovery, return order without successful cycle logs', async () => {
+  it('runs forward and return relays in order without successful cycle logs', async () => {
     const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
     const relay = { pump: jest.fn<ForwardRelay['pump']>().mockResolvedValue(undefined) };
-    const poller = {
-      tick: jest
-        .fn<JobPoller['tick']>()
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false),
-    };
-    const stuckJobs = {
-      requeueExpiredLeases: jest.fn<StuckJobDetector['requeueExpiredLeases']>().mockResolvedValue(0),
-    };
     const returnRelay = {
       pump: jest.fn<ReturnRelay['pump']>().mockResolvedValue(undefined),
     };
-    const config = {
-      worker: {
-        errorBackoffMs: 1,
-        jobBatchSize: 3,
-        outboxBatchSize: 5,
-        pollIntervalMs: 1_000,
-        stuckJobBatchSize: 7,
-        stuckJobTimeoutMs: 8_000,
-      },
-    } as ApplicationConfigService;
+    const config = workerConfig();
     const runner = new WorkerRunner(
       config,
       relay as unknown as ForwardRelay,
-      poller as unknown as JobPoller,
       returnRelay as unknown as ReturnRelay,
-      stuckJobs as unknown as StuckJobDetector,
     );
 
     await runner.onApplicationBootstrap();
     await runner.onApplicationShutdown();
 
     expect(relay.pump).toHaveBeenCalledWith(5);
-    expect(poller.tick).toHaveBeenCalledTimes(2);
-    expect(stuckJobs.requeueExpiredLeases).toHaveBeenCalledWith(7);
     expect(returnRelay.pump).toHaveBeenCalledWith(5);
     expect(relay.pump.mock.invocationCallOrder[0]).toBeLessThan(
-      poller.tick.mock.invocationCallOrder[0],
-    );
-    expect(stuckJobs.requeueExpiredLeases.mock.invocationCallOrder[0]).toBeLessThan(
       returnRelay.pump.mock.invocationCallOrder[0],
     );
     expect(logger).toHaveBeenCalledWith({ event: 'worker.started', runtime: 'worker' });
@@ -72,22 +53,11 @@ describe('WorkerRunner', () => {
 
   it('keeps an idle polling cycle quiet', async () => {
     const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
-    const config = {
-      worker: {
-        errorBackoffMs: 1,
-        jobBatchSize: 3,
-        outboxBatchSize: 5,
-        pollIntervalMs: 1_000,
-        stuckJobBatchSize: 7,
-        stuckJobTimeoutMs: 8_000,
-      },
-    } as ApplicationConfigService;
+    const config = workerConfig();
     const runner = new WorkerRunner(
       config,
       { pump: async () => undefined } as unknown as ForwardRelay,
-      { tick: async () => false } as unknown as JobPoller,
       { pump: async () => undefined } as unknown as ReturnRelay,
-      { requeueExpiredLeases: async () => 0 } as unknown as StuckJobDetector,
     );
 
     await runner.onApplicationBootstrap();
@@ -104,22 +74,11 @@ describe('WorkerRunner', () => {
     const logLogger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
     const errorLogger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
     const warnLogger = jest.spyOn(ConsoleLogger.prototype, 'warn').mockImplementation(() => undefined);
-    const config = {
-      worker: {
-        errorBackoffMs: 1,
-        jobBatchSize: 1,
-        outboxBatchSize: 1,
-        pollIntervalMs: 1_000,
-        stuckJobBatchSize: 1,
-        stuckJobTimeoutMs: 1,
-      },
-    } as ApplicationConfigService;
+    const config = workerConfig();
     const runner = new WorkerRunner(
       config,
       { pump: async () => { throw new Error('raw document: secret lecture text'); } } as unknown as ForwardRelay,
-      { tick: async () => false } as unknown as JobPoller,
       { pump: async () => undefined } as unknown as ReturnRelay,
-      { requeueExpiredLeases: async () => 0 } as unknown as StuckJobDetector,
     );
 
     await runner.onApplicationBootstrap();

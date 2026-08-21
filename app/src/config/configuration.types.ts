@@ -25,6 +25,7 @@ export type LlmCapabilityVersion = 'chat-completions-json-v1' | 'responses-json-
 export type LlmStructuredOutputMode = 'json-object' | 'json-schema-strict';
 export type LlmTransport = 'chat-completions' | 'responses';
 export type DatabaseSslMode = 'disabled' | 'verify-ca';
+export type WorkerExecutionMode = 'legacy-processing' | 'relay-only';
 
 export interface OpenAiGeneralSettings {
   apiKey: string | undefined;
@@ -109,6 +110,7 @@ export interface WorkerSettings {
   chunkOverlapChars: number;
   chunkTargetChars: number;
   errorBackoffMs: number;
+  executionMode: WorkerExecutionMode;
   healthHost: string;
   healthPort: number;
   maxExtractableObjectBytes: number;
@@ -179,6 +181,7 @@ export const CONFIG_PATH = {
     chunkOverlapChars: 'worker.chunkOverlapChars',
     chunkTargetChars: 'worker.chunkTargetChars',
     errorBackoffMs: 'worker.errorBackoffMs',
+    executionMode: 'worker.executionMode',
     healthHost: 'worker.healthHost',
     healthPort: 'worker.healthPort',
     maxExtractableObjectBytes: 'worker.maxExtractableObjectBytes',

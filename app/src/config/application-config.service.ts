@@ -13,6 +13,7 @@ import {
   LlmTransport,
   OpenAiGeneralSettings,
   StorageSettings,
+  WorkerExecutionMode,
   WorkerSettings,
 } from './configuration.types';
 
@@ -178,6 +179,7 @@ export class ApplicationConfigService {
       chunkOverlapChars: this.positiveInteger(CONFIG_PATH.worker.chunkOverlapChars),
       chunkTargetChars: this.positiveInteger(CONFIG_PATH.worker.chunkTargetChars),
       errorBackoffMs: this.positiveInteger(CONFIG_PATH.worker.errorBackoffMs),
+      executionMode: this.workerExecutionMode(),
       healthHost: this.nonBlankString(CONFIG_PATH.worker.healthHost),
       healthPort: this.networkPort(CONFIG_PATH.worker.healthPort),
       maxExtractableObjectBytes: this.positiveInteger(
@@ -224,6 +226,14 @@ export class ApplicationConfigService {
       throw new Error('DB_SSL_MODE must be disabled or verify-ca');
     }
     return mode;
+  }
+
+  private workerExecutionMode(): WorkerExecutionMode {
+    const executionMode = this.required<string>(CONFIG_PATH.worker.executionMode);
+    if (executionMode !== 'legacy-processing' && executionMode !== 'relay-only') {
+      throw new Error('WORKER_EXECUTION_MODE must be relay-only or legacy-processing');
+    }
+    return executionMode;
   }
 
   private openAiGeneral(): OpenAiGeneralSettings {

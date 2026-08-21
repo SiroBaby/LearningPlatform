@@ -5,6 +5,13 @@ const mockStartupEvents: string[] = [];
 const mockRunStartupMigrations = jest.fn<() => Promise<void>>();
 const mockInternalMtlsClose = jest.fn<() => Promise<void>>();
 const mockApiClose = jest.fn<() => Promise<void>>();
+const mockAppUse = jest.fn();
+const mockLoggerError = jest.fn();
+const mockLoggerLog = jest.fn();
+const mockApplicationLogger = {
+  error: mockLoggerError,
+  log: mockLoggerLog,
+};
 let httpCloseListener: (() => void) | undefined;
 const mockHttpServer = {
   once: jest.fn((event: string, listener: () => void) => {
@@ -54,7 +61,7 @@ jest.mock('@nestjs/core', () => ({
           mockStartupEvents.push('api.listen');
         },
         setGlobalPrefix: () => undefined,
-        use: () => undefined,
+        use: mockAppUse,
         useGlobalPipes: () => undefined,
       };
     },
@@ -68,13 +75,15 @@ jest.mock('@nestjs/core', () => ({
 }));
 
 jest.mock('./common/logging/application-logger.factory', () => ({
-  createApplicationLogger: () => ({
-    error: () => undefined,
-    log: () => undefined,
-  }),
+  createApplicationLogger: () => mockApplicationLogger,
 }));
 
-import { bootstrapApi } from './main';
+import {
+  ApiBootstrapError,
+  bootstrapApi,
+  formatApiBootstrapFailure,
+  logApiBootstrapFailure,
+} from './main';
 import { runStartupMigrations } from './database/migrate';
 import { bootstrapWorker } from './worker';
 
@@ -84,6 +93,9 @@ describe('backend-owned startup migrations', () => {
     mockRunStartupMigrations.mockReset();
     mockInternalMtlsClose.mockReset();
     mockApiClose.mockReset();
+    mockAppUse.mockReset();
+    mockLoggerError.mockReset();
+    mockLoggerLog.mockReset();
     mockApiClose.mockImplementation(async () => {
       mockHttpServer.emit('close');
     });
@@ -125,6 +137,58 @@ describe('backend-owned startup migrations', () => {
     // Then
     await expect(startup).rejects.toThrow('migration failed');
     expect(mockStartupEvents).toEqual([]);
+  });
+
+  it('records the failed API bootstrap stage and preserves the original cause', async () => {
+    const cause = new Error('module setup failed');
+    mockAppUse.mockImplementationOnce(() => {
+      throw cause;
+    });
+
+    await expect(bootstrapApi()).rejects.toMatchObject({
+      cause,
+      stage: 'module-setup',
+    });
+  });
+
+  it('logs safe API bootstrap failure metadata without raw secrets or URLs', () => {
+    const cause = Object.assign(
+      new Error(
+        'provider failed apiKey=sk-secret Authorization: Bearer token-value https://provider.test/v1?token=secret',
+      ),
+      { code: 'PROVIDER_FAILED' },
+    );
+    const failure = new ApiBootstrapError('api-listen', cause);
+
+    logApiBootstrapFailure(mockApplicationLogger, failure);
+
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        causeCode: 'PROVIDER_FAILED',
+        causeMessage: expect.stringContaining('provider failed'),
+        causeType: 'Error',
+        code: 'API_BOOTSTRAP_FAILED',
+        errorMessage: expect.stringContaining('provider failed'),
+        errorType: 'ApiBootstrapError',
+        event: 'api.bootstrap.failed',
+        runtime: 'api',
+        stage: 'api-listen',
+      }),
+    );
+    const loggedEvent = mockLoggerError.mock.calls.at(-1)?.[0];
+    expect(JSON.stringify(loggedEvent)).not.toContain('sk-secret');
+    expect(JSON.stringify(loggedEvent)).not.toContain('token-value');
+    expect(JSON.stringify(loggedEvent)).not.toContain('provider.test');
+    expect(JSON.stringify(loggedEvent)).not.toContain('?token=secret');
+  });
+
+  it('formats unknown non-Error rejections safely', () => {
+    expect(() => formatApiBootstrapFailure({ payload: 'secret' })).not.toThrow();
+    expect(formatApiBootstrapFailure('bootstrap failed')).toMatchObject({
+      errorMessage: 'bootstrap failed',
+      errorType: 'string',
+      stage: 'unknown',
+    });
   });
 
   it('runs worker migrations before creating the Nest application context', async () => {
@@ -184,4 +248,34 @@ describe('backend-owned startup migrations', () => {
       expect(result.status).not.toBe(0);
     },
   );
+
+  it('loads reflect metadata before AppModule from the API runtime entrypoint', () => {
+    const loadOrderGuard = `
+      const Module = require('module');
+      let reflectMetadataLoaded = false;
+      const originalLoad = Module._load;
+      Module._load = function(request, parent, isMain) {
+        if (request === 'reflect-metadata') reflectMetadataLoaded = true;
+        if (
+          request === './app.module' &&
+          parent?.filename.endsWith('/src/main.ts') &&
+          !reflectMetadataLoaded
+        ) {
+          throw new Error('reflect-metadata must load before AppModule');
+        }
+        return originalLoad.call(this, request, parent, isMain);
+      };
+      require('ts-node/register');
+      require('./src/main');
+    `;
+
+    const result = spawnSync(process.execPath, ['-e', loadOrderGuard], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('reflect-metadata must load before AppModule');
+  });
 });

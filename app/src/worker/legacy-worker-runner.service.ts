@@ -8,14 +8,16 @@ import {
 
 import { createApplicationLogger } from '../common/logging/application-logger.factory';
 import { ApplicationConfigService } from '../config/application-config.service';
+import { JobPoller } from '../modules/ai/job-poller.service';
+import { StuckJobDetector } from '../modules/ai/stuck-job-detector.service';
 import { ForwardRelay } from '../modules/content/forward-relay.service';
 import { ReturnRelay } from './return-relay.service';
 
 @Injectable()
-export class WorkerRunner
+export class LegacyWorkerRunner
   implements OnApplicationBootstrap, OnApplicationShutdown
 {
-  private readonly logger = createApplicationLogger({ context: WorkerRunner.name });
+  private readonly logger = createApplicationLogger({ context: LegacyWorkerRunner.name });
   private activeRun: Promise<void> | undefined;
   private timer: NodeJS.Timeout | undefined;
   private stopping = false;
@@ -23,7 +25,9 @@ export class WorkerRunner
   constructor(
     private readonly config: ApplicationConfigService,
     private readonly relay: ForwardRelay,
+    private readonly poller: JobPoller,
     private readonly returnRelay: ReturnRelay,
+    private readonly stuckJobs: StuckJobDetector,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -48,6 +52,10 @@ export class WorkerRunner
     this.activeRun = (async (): Promise<void> => {
       try {
         await this.relay.pump(worker.outboxBatchSize);
+        for (let index = 0; index < worker.jobBatchSize; index += 1) {
+          if (!(await this.poller.tick())) break;
+        }
+        await this.stuckJobs.requeueExpiredLeases(worker.stuckJobBatchSize);
         await this.returnRelay.pump(worker.outboxBatchSize);
       } catch {
         delayMs = worker.errorBackoffMs;

@@ -47,6 +47,7 @@ describe('ContentMappingProfile', () => {
       id: document.id,
       originalName: document.originalName,
       sizeBytes: 248320,
+      status: DocumentStatus.READY,
       updatedAt: '2026-06-21T12:35:56.789Z',
     });
     expect(actual).not.toHaveProperty('ownerId');
@@ -161,6 +162,7 @@ describe('ContentMappingProfile', () => {
       documentId: document.id,
       status: DocumentStatus.PROCESSING,
     });
+    expect(Object.prototype.hasOwnProperty.call(actual, 'status')).toBe(true);
   });
 
   it('maps the narrow Document Quiz discovery summary', () => {

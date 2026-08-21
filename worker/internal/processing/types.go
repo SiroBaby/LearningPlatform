@@ -1,6 +1,9 @@
 package processing
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 type Job struct {
 	ID, DocumentID, OwnerID, CorrelationID, LeaseID string
@@ -13,6 +16,33 @@ type Locator struct {
 	Start int    `json:"start,omitempty"`
 	End   int    `json:"end,omitempty"`
 }
+
+func (locator Locator) MarshalJSON() ([]byte, error) {
+	switch locator.Kind {
+	case "page":
+		return json.Marshal(struct {
+			Kind string `json:"kind"`
+			Page int    `json:"page"`
+		}{
+			Kind: locator.Kind,
+			Page: locator.Page,
+		})
+	case "text-range":
+		return json.Marshal(struct {
+			Kind  string `json:"kind"`
+			Start int    `json:"start"`
+			End   int    `json:"end"`
+		}{
+			Kind:  locator.Kind,
+			Start: locator.Start,
+			End:   locator.End,
+		})
+	default:
+		type locatorJSON Locator
+		return json.Marshal(locatorJSON(locator))
+	}
+}
+
 type Chunk struct {
 	ID, Text, ContentHash string
 	Index                 int
@@ -64,11 +94,12 @@ const (
 	OptionCount      ParserReason = "option_count"
 	EmptyOption      ParserReason = "empty_option"
 	AnswerCount      ParserReason = "answer_count"
+	DuplicateOption  ParserReason = "duplicate_option"
 )
 
 func (reason ParserReason) Valid() bool {
 	switch reason {
-	case InvalidEnvelope, ChoiceCount, InvalidJSON, QuestionCount, EmptyStem, EmptyExplanation, OptionCount, EmptyOption, AnswerCount:
+	case InvalidEnvelope, ChoiceCount, InvalidJSON, QuestionCount, EmptyStem, EmptyExplanation, OptionCount, EmptyOption, AnswerCount, DuplicateOption:
 		return true
 	default:
 		return false

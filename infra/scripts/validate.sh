@@ -435,6 +435,12 @@ check_application_edge_contract() {
     fail 'Worker quiz generation concurrency must be an explicit bounded manifest literal.'
   fi
 
+  if ! grep -A 50 'name: worker' "${app_template}" \
+    | grep -A 1 'name: WORKER_EXECUTION_MODE' \
+    | grep -Fqx '              value: relay-only'; then
+    fail 'Node worker must set WORKER_EXECUTION_MODE to the relay-only manifest literal.'
+  fi
+
   if ! has_go_worker_provider_profile "${app_template}"; then
     fail 'Go worker container must include the explicit coherent provider profile and bounded request timeout literals.'
   fi
@@ -443,7 +449,8 @@ check_application_edge_contract() {
     'AI_LLM_PROVIDER' \
     'OPENAI_CAPABILITY_VERSION' \
     'OPENAI_STRUCTURED_OUTPUT_MODE' \
-    'OPENAI_TRANSPORT'; do
+    'OPENAI_TRANSPORT' \
+    'WORKER_EXECUTION_MODE'; do
     local forbidden_secret_contract_lower
     forbidden_secret_contract_lower="$(printf '%s' "${forbidden_secret_contract}" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
     if grep -Fq "'${forbidden_secret_contract}':" "${eso_template}" \

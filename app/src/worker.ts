@@ -6,7 +6,10 @@ import { WorkerModule } from './worker/worker.module';
 
 export async function bootstrapWorker(): Promise<void> {
   await runStartupMigrations();
-  const app = await NestFactory.createApplicationContext(WorkerModule, {
+  const workerModule = process.env.WORKER_EXECUTION_MODE === 'relay-only'
+    ? WorkerModule
+    : (await import('./worker/legacy-worker.module')).LegacyWorkerModule;
+  const app = await NestFactory.createApplicationContext(workerModule, {
     logger: createApplicationLogger({ environment: process.env.NODE_ENV }),
   });
   app.enableShutdownHooks();

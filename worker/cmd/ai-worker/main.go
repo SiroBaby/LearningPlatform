@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,10 +17,68 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type bootstrapFailureCode string
+
+const (
+	bootstrapConfiguration bootstrapFailureCode = "configuration"
+	bootstrapProvider      bootstrapFailureCode = "provider"
+	bootstrapMigration     bootstrapFailureCode = "migration"
+	bootstrapDatabase      bootstrapFailureCode = "database"
+	bootstrapStorage       bootstrapFailureCode = "storage"
+	bootstrapConsumer      bootstrapFailureCode = "consumer"
+	bootstrapHealth        bootstrapFailureCode = "health"
+	bootstrapUnknown       bootstrapFailureCode = "unknown"
+)
+
+type bootstrapFailure struct {
+	code bootstrapFailureCode
+}
+
+func (failure bootstrapFailure) Error() string {
+	return "worker bootstrap failed: " + string(safeBootstrapFailureCode(failure.code))
+}
+
+func newBootstrapFailure(code bootstrapFailureCode) error {
+	return bootstrapFailure{code: safeBootstrapFailureCode(code)}
+}
+
+func bootstrapFailureCodeOf(err error) bootstrapFailureCode {
+	var failure bootstrapFailure
+	if errors.As(err, &failure) {
+		return safeBootstrapFailureCode(failure.code)
+	}
+	return bootstrapUnknown
+}
+
+func safeBootstrapFailureCode(code bootstrapFailureCode) bootstrapFailureCode {
+	switch code {
+	case bootstrapConfiguration, bootstrapProvider, bootstrapMigration, bootstrapDatabase, bootstrapStorage, bootstrapConsumer, bootstrapHealth, bootstrapUnknown:
+		return code
+	default:
+		return bootstrapUnknown
+	}
+}
+
+func providerPreflightBootstrapCode(err error) bootstrapFailureCode {
+	var failure processing.Failure
+	if errors.As(err, &failure) {
+		return bootstrapProvider
+	}
+	return bootstrapUnknown
+}
+
+func providerPreflightFailureCode(err error) string {
+	var failure processing.Failure
+	if errors.As(err, &failure) {
+		return string(failure.Code)
+	}
+	return "PROVIDER_PREFLIGHT_FAILED"
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
-		slog.Error("worker.bootstrap.failed", "code", "WORKER_BOOTSTRAP_FAILED")
+		slog.Error("worker.bootstrap.failed", "code", "WORKER_BOOTSTRAP_FAILED", "bootstrap_code", bootstrapFailureCodeOf(err))
 		os.Exit(1)
 	}
 }
@@ -29,10 +86,10 @@ func main() {
 func run() error {
 	workerConfig, err := config.Load(os.LookupEnv)
 	if err != nil {
-		return err
+		return newBootstrapFailure(bootstrapConfiguration)
 	}
 	if len(os.Args) > 2 || (len(os.Args) == 2 && os.Args[1] != "preflight") {
-		return fmt.Errorf("usage: ai-worker [preflight]")
+		return newBootstrapFailure(bootstrapConfiguration)
 	}
 	preflightOnly := len(os.Args) == 2
 
@@ -42,7 +99,7 @@ func run() error {
 	if !preflightOnly {
 		server, readiness, err := startUnreadyHealthServer(workerConfig.HealthAddress)
 		if err != nil {
-			return err
+			return newBootstrapFailure(bootstrapHealth)
 		}
 		ready = readiness
 		defer func() {
@@ -56,13 +113,8 @@ func run() error {
 		provider := processing.NewOpenAI(workerConfig.LLM.APIKey, workerConfig.LLM.BaseURL, workerConfig.LLM.Model, workerConfig.LLM.Profile, workerConfig.LLM.RequestTimeout)
 		generator = provider
 		if err := provider.Preflight(ctx); err != nil {
-			var failure processing.Failure
-			code := "PROVIDER_PREFLIGHT_FAILED"
-			if errors.As(err, &failure) {
-				code = string(failure.Code)
-			}
-			slog.Error("worker.provider.preflight.failed", "event", "worker.provider.preflight.failed", "code", code)
-			return fmt.Errorf("provider preflight: %w", err)
+			slog.Error("worker.provider.preflight.failed", "event", "worker.provider.preflight.failed", "code", providerPreflightFailureCode(err))
+			return newBootstrapFailure(providerPreflightBootstrapCode(err))
 		}
 		slog.Info("worker.provider.preflight.succeeded", "event", "worker.provider.preflight.succeeded", "capability", workerConfig.LLM.Profile.CapabilityVersion, "transport", workerConfig.LLM.Profile.Transport, "structured_output_mode", workerConfig.LLM.Profile.StructuredOutputMode)
 	}
@@ -72,28 +124,28 @@ func run() error {
 
 	migrationConnection, err := pgx.Connect(ctx, workerConfig.DatabaseURL)
 	if err != nil {
-		return fmt.Errorf("connect migration runner: %w", err)
+		return newBootstrapFailure(bootstrapDatabase)
 	}
 	if err := migrations.Run(ctx, migrationConnection, workerConfig.MigrationsDir); err != nil {
 		migrationConnection.Close(ctx)
-		return fmt.Errorf("run startup migrations: %w", err)
+		return newBootstrapFailure(bootstrapMigration)
 	}
 	migrationConnection.Close(ctx)
 	store, err := processing.NewPostgresStore(ctx, workerConfig.DatabaseURL)
 	if err != nil {
-		return err
+		return newBootstrapFailure(bootstrapDatabase)
 	}
 	defer store.Close()
 	objects, err := processing.NewS3Reader(workerConfig.Storage.Endpoint, workerConfig.Storage.AccessKey, workerConfig.Storage.SecretKey, workerConfig.Storage.Bucket)
 	if err != nil {
-		return err
+		return newBootstrapFailure(bootstrapStorage)
 	}
 	if err := objects.Check(ctx); err != nil {
-		return err
+		return newBootstrapFailure(bootstrapStorage)
 	}
 	bootstrap := consumer.New(store, objects, generator)
 	if err := bootstrap.Start(ctx); err != nil {
-		return fmt.Errorf("start consumer bootstrap: %w", err)
+		return newBootstrapFailure(bootstrapConsumer)
 	}
 	defer bootstrap.Close()
 	ready.Store(true)

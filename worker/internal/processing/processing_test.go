@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,52 @@ func TestChunkTextKeepsDeterministicIDsAndTextRanges(t *testing.T) {
 	}
 	if len(first) != 1 || first[0].ID != second[0].ID || first[0].Locator.Start != 12 {
 		t.Fatalf("unexpected chunks: %#v", first)
+	}
+}
+
+func TestLocatorMarshalJSONUsesKindSpecificFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		locator  Locator
+		expected map[string]string
+	}{
+		{
+			name:    "text range preserves zero start",
+			locator: Locator{Kind: "text-range", Start: 0, End: 14, Page: 3},
+			expected: map[string]string{
+				"kind":  `"text-range"`,
+				"start": "0",
+				"end":   "14",
+			},
+		},
+		{
+			name:    "page emits page only",
+			locator: Locator{Kind: "page", Page: 3, Start: 1, End: 14},
+			expected: map[string]string{
+				"kind": `"page"`,
+				"page": "3",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.locator)
+			if err != nil {
+				t.Fatalf("marshal locator: %v", err)
+			}
+			var actual map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &actual); err != nil {
+				t.Fatalf("decode locator JSON: %v", err)
+			}
+			if len(actual) != len(test.expected) {
+				t.Fatalf("locator JSON fields = %s, want %#v", encoded, test.expected)
+			}
+			for field, expected := range test.expected {
+				if string(actual[field]) != expected {
+					t.Fatalf("locator JSON field %q = %s, want %s", field, actual[field], expected)
+				}
+			}
+		})
 	}
 }
 
@@ -86,6 +133,7 @@ func TestOpenAIGenerateClassifiesInvalidOutputReasons(t *testing.T) {
 		{name: "empty explanation", response: providerResponse(t, strings.Replace(validQuestion, `"explanation":"explanation"`, `"explanation":" "`, 1)), reason: EmptyExplanation},
 		{name: "option count", response: providerResponse(t, `{"questions":[{"stem":"stem","explanation":"explanation","options":[]}]}`), reason: OptionCount},
 		{name: "empty option", response: providerResponse(t, strings.Replace(validQuestion, `"content":"A"`, `"content":" "`, 1)), reason: EmptyOption},
+		{name: "normalized duplicate option", response: providerResponse(t, strings.Replace(validQuestion, `"content":"B"`, `"content":"  a\t  "`, 1)), reason: DuplicateOption},
 		{name: "answer count", response: providerResponse(t, strings.Replace(validQuestion, `"isCorrect":true`, `"isCorrect":false`, 1)), reason: AnswerCount},
 	}
 	for _, test := range tests {
@@ -284,19 +332,52 @@ func quizSchemaTextProperties(t *testing.T) map[string]map[string]any {
 	}
 }
 
-func TestOpenAIPreflightRejectsAnInvalidProbeResponse(t *testing.T) {
+func TestOpenAIPreflightRejectsInvalidQuizOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{name: "shallow JSON", output: `{"ready":true}`},
+		{name: "malformed JSON", output: `{`},
+		{name: "wrong question cardinality", output: `{"questions":[]}`},
+		{name: "wrong option cardinality", output: `{"questions":[{"stem":"stem","explanation":"explanation","options":[]}]}`},
+		{name: "blank required text", output: strings.Replace(validQuizOutput(), `"stem":"Cau hoi kiem tra"`, `"stem":" "`, 1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				calls++
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(providerResponse(t, test.output)))
+			}))
+			defer server.Close()
+
+			err := NewOpenAI("test-key", server.URL, "gateway-alias", chatCompletionsJSONProfile(), time.Second).Preflight(context.Background())
+			assertProviderFailure(t, err, ProviderIncompatible)
+			if calls != 1 {
+				t.Fatalf("preflight calls = %d, want 1", calls)
+			}
+		})
+	}
+}
+
+func TestOpenAIPreflightAcceptsOuterFencedQuizJSONForJSONObjectProfile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(providerResponse(t, `{"ready":false}`)))
+		_, _ = writer.Write([]byte(providerResponse(t, "```json\n"+validQuizOutput()+"\n```")))
 	}))
 	defer server.Close()
 
-	err := NewOpenAI("test-key", server.URL, "gateway-alias", chatCompletionsJSONProfile(), time.Second).Preflight(context.Background())
-	assertProviderFailure(t, err, ProviderIncompatible)
+	if err := NewOpenAI("test-key", server.URL, "gateway-alias", chatCompletionsJSONProfile(), time.Second).Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight() error = %v", err)
+	}
 }
 
 func TestOpenAIPreflightUsesConfiguredAliasAndProfile(t *testing.T) {
+	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls++
 		if request.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %q", request.URL.Path)
 		}
@@ -313,16 +394,19 @@ func TestOpenAIPreflightUsesConfiguredAliasAndProfile(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode provider request: %v", err)
 		}
-		if payload.Model != "gateway-alias" || payload.N != 1 || payload.ResponseFormat.Type != "json_object" || len(payload.Messages) != 2 || payload.Messages[1].Content != "{}" {
+		if payload.Model != "gateway-alias" || payload.N != 1 || payload.ResponseFormat.Type != "json_object" || len(payload.Messages) != 2 || payload.Messages[0].Content != preflightInstructions || payload.Messages[1].Content != preflightInput {
 			t.Fatalf("preflight request = %#v", payload)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(providerResponse(t, `{"ready":true}`)))
+		_, _ = writer.Write([]byte(providerResponse(t, validQuizOutput())))
 	}))
 	defer server.Close()
 
 	if err := NewOpenAI("test-key", server.URL, "gateway-alias", chatCompletionsJSONProfile(), time.Second).Preflight(context.Background()); err != nil {
 		t.Fatalf("Preflight() error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("preflight calls = %d, want 1", calls)
 	}
 }
 
@@ -335,19 +419,22 @@ func TestOpenAIPreflightSupportsResponsesJSONSchemaProfile(t *testing.T) {
 			Input string `json:"input"`
 			Text  struct {
 				Format struct {
-					Type   string `json:"type"`
-					Strict bool   `json:"strict"`
+					Type   string         `json:"type"`
+					Strict bool           `json:"strict"`
+					Name   string         `json:"name"`
+					Schema map[string]any `json:"schema"`
 				} `json:"format"`
 			} `json:"text"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode provider request: %v", err)
 		}
-		if payload.Input != "{}" || payload.Text.Format.Type != "json_schema" || !payload.Text.Format.Strict {
+		if payload.Input != preflightInput || payload.Text.Format.Type != "json_schema" || !payload.Text.Format.Strict || payload.Text.Format.Name != "quiz_question" {
 			t.Fatalf("preflight request = %#v", payload)
 		}
+		assertQuizSchema(t, payload.Text.Format.Schema)
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{\"ready\":true}"}]}]}`))
+		_, _ = writer.Write([]byte(`{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":` + strconv.Quote(validQuizOutput()) + `}]}]}`))
 	}))
 	defer server.Close()
 
@@ -414,6 +501,10 @@ func providerResponse(t *testing.T, contents ...string) string {
 		t.Fatalf("marshal provider response: %v", err)
 	}
 	return string(encoded)
+}
+
+func validQuizOutput() string {
+	return `{"questions":[{"stem":"Cau hoi kiem tra","explanation":"Giai thich kiem tra","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`
 }
 
 func assertParserFailure(t *testing.T, err error, reason ParserReason, choiceCount int) {

@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ApplicationConfigService } from './application-config.service';
 
 const workerConfig = (overrides?: Partial<{
+  readonly executionMode: string;
   readonly healthHost: string;
   readonly healthPort: number;
   readonly quizGenerationConcurrency: number;
@@ -14,6 +15,7 @@ const workerConfig = (overrides?: Partial<{
     chunkOverlapChars: 150,
     chunkTargetChars: 1_200,
     errorBackoffMs: 5_000,
+    executionMode: overrides?.executionMode ?? 'legacy-processing',
     healthHost: overrides?.healthHost ?? '0.0.0.0',
     healthPort: overrides?.healthPort ?? 3_403,
     jobBatchSize: 10,
@@ -347,15 +349,43 @@ describe('ApplicationConfigService', () => {
     );
   });
 
-  it('returns typed worker health host and port settings', () => {
+  it('returns typed worker execution and health settings', () => {
     const config = new ApplicationConfigService(new ConfigService(workerConfig({
       healthHost: '127.0.0.1',
       healthPort: 3403,
     })));
 
+    expect(config.worker.executionMode).toBe('legacy-processing');
     expect(config.worker.healthHost).toBe('127.0.0.1');
     expect(config.worker.healthPort).toBe(3403);
     expect(config.worker.quizGenerationConcurrency).toBe(8);
+  });
+
+  it('accepts relay-only worker execution mode and rejects invalid values', () => {
+    const relayOnly = new ApplicationConfigService(new ConfigService(workerConfig({
+      executionMode: 'relay-only',
+    })));
+    const invalid = new ApplicationConfigService(new ConfigService(workerConfig({
+      executionMode: 'all-processing',
+    })));
+
+    expect(relayOnly.worker.executionMode).toBe('relay-only');
+    expect(() => invalid.worker).toThrow(
+      'WORKER_EXECUTION_MODE must be relay-only or legacy-processing',
+    );
+  });
+
+  it('fails fast when worker execution mode is missing', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      worker: {
+        ...(workerConfig().worker as Record<string, unknown>),
+        executionMode: undefined,
+      },
+    }));
+
+    expect(() => config.worker).toThrow(
+      'Missing required configuration: worker.executionMode',
+    );
   });
 
   it('rejects an invalid worker health port', () => {
