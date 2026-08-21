@@ -90,6 +90,7 @@ classify_changes() {
       ;;
     worker)
       worker=true
+      go_worker=true
       ;;
     all)
       web=true

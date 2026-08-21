@@ -57,6 +57,15 @@ assert_go_worker_output() {
   grep -Fxq 'go_worker=true' <<<"${actual}" || fail "worker/** must enable Go worker CI: ${actual}"
 }
 
+assert_manual_worker_go_worker_output() {
+  local before_sha="$1"
+  local after_sha="$2"
+  local actual
+
+  actual="$("${CLASSIFIER}" worker "${before_sha}" "${after_sha}")"
+  grep -Fxq 'go_worker=true' <<<"${actual}" || fail "manual worker rollout must enable Go worker CI: ${actual}"
+}
+
 assert_observability_output() {
   local target="$1"
   local before_sha="$2"
@@ -196,6 +205,7 @@ main() {
   (cd "${repository}" && assert_output api "${before_sha}" "${after_sha}" "${expected}")
   expected=$'web=false\napi=false\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output worker "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_manual_worker_go_worker_output "${before_sha}" "${after_sha}")
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output all "${before_sha}" "${after_sha}" "${expected}")
   expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
