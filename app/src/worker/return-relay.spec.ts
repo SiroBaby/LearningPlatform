@@ -16,6 +16,10 @@ import { AiOutboxEvent } from '../modules/ai/entities/ai-outbox-event.entity';
 import { DocumentProcessingFailureCode } from '../modules/ai/contracts/document-processing-result';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
 import {
+  AssessmentError,
+  AssessmentErrorCode,
+} from '../modules/assessment/domain/assessment.error';
+import {
   DocumentStatusProjection,
   DocumentStatusProjectionCommand,
 } from '../modules/content/contracts/document-status-projection.port';
@@ -206,6 +210,63 @@ describe('ReturnRelay', () => {
     expect(JSON.stringify(logger.mock.calls)).not.toContain('raw question text');
     logger.mockRestore();
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();
+  });
+
+  it('terminalizes deterministic quiz validation failures and continues with later rows', async () => {
+    const document = await seedProcessingDocument();
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        documentId: document.id,
+        errorCode: null,
+        errorMessage: null,
+        ownerId: document.ownerId,
+        questions: [{
+          chunkId: randomUUID(),
+          chunkIndex: 0,
+          citation: { chunkId: randomUUID(), locator: { kind: 'page', page: 1 }, snippet: 'safe snippet' },
+          explanation: 'safe explanation',
+          options: [
+            { content: 'first option', isCorrect: true },
+            { content: 'second option', isCorrect: false },
+          ],
+          ordinal: 0,
+          stem: 'safe question',
+        }],
+        status: DocumentStatus.READY,
+        version: 1,
+      },
+    }));
+    const laterDocument = await seedProcessingDocument();
+    const laterEvent = await seedResult(laterDocument, DocumentStatus.READY);
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
+    const terminalRelay = new ReturnRelay(
+      new AiOutboxRepository(ds),
+      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      {
+        persist: async () => {
+          throw new AssessmentError(AssessmentErrorCode.INSUFFICIENT_VALID_QUESTIONS, 0, 1);
+        },
+      },
+    );
+
+    await terminalRelay.pump(10);
+
+    const projected = await documents.findOneByOrFail({ id: document.id });
+    expect(projected.status).toBe(DocumentStatus.FAILED);
+    expect(projected.errorCode).toBe(DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS);
+    expect(projected.errorMessage).toBe('Not enough valid questions were generated');
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+    expect((await outbox.findOneByOrFail({ id: laterEvent.id })).publishedAt).not.toBeNull();
+    expect(logger).toHaveBeenCalledWith({
+      errorCode: DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS,
+      event: 'ai.job.return.terminal_failed',
+      jobId: event.aggregateId,
+      runtime: 'worker',
+      stage: 'quiz-persist',
+    });
+    logger.mockRestore();
   });
 
   it('logs one safe outbox-read failure when pending results cannot be read', async () => {
