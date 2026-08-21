@@ -80,6 +80,43 @@ func TestLocatorMarshalJSONUsesKindSpecificFields(t *testing.T) {
 	}
 }
 
+func TestQuestionMarshalJSONPreservesTextRangeStartZeroForReturnSeam(t *testing.T) {
+	question := Question{
+		ChunkID:     "11111111-1111-4111-8111-111111111111",
+		ChunkIndex:  0,
+		Ordinal:     0,
+		Stem:        "Question",
+		Explanation: "Explanation",
+		Options: []Option{
+			{Content: "Correct", IsCorrect: true},
+			{Content: "Incorrect"},
+		},
+		Citation: Citation{
+			ChunkID: "11111111-1111-4111-8111-111111111111",
+			Locator: Locator{Kind: "text-range", Start: 0, End: 14},
+			Snippet: "Source snippet",
+		},
+	}
+
+	encoded, err := json.Marshal(question)
+	if err != nil {
+		t.Fatalf("marshal return-seam question: %v", err)
+	}
+	var payload struct {
+		Citation struct {
+			Locator map[string]json.RawMessage `json:"locator"`
+		} `json:"citation"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("decode return-seam question: %v", err)
+	}
+	if string(payload.Citation.Locator["kind"]) != `"text-range"` ||
+		string(payload.Citation.Locator["start"]) != "0" ||
+		string(payload.Citation.Locator["end"]) != "14" {
+		t.Fatalf("citation locator JSON = %s, want text-range with start 0 and end 14", encoded)
+	}
+}
+
 func TestChunkTextUsesMaxCharsWhenNoBoundaryFollowsTarget(t *testing.T) {
 	segments := []struct {
 		Text    string

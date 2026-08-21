@@ -57,6 +57,33 @@ describe('Quiz', () => {
     }
   });
 
+  it('accepts the Go return-seam text-range locator when its valid start is zero', () => {
+    const chunkId = randomUUID();
+    const quiz = Quiz.create(validHandoff({
+      questions: [{
+        chunkId,
+        chunkIndex: 0,
+        ordinal: 0,
+        stem: 'What does the source establish?',
+        explanation: 'The source establishes the stated fact.',
+        options: [
+          { content: 'The stated fact', isCorrect: true },
+          { content: 'A different fact', isCorrect: false },
+        ],
+        citation: {
+          chunkId,
+          locator: { kind: 'text-range', start: 0, end: 14 },
+          snippet: 'Source snippet',
+        },
+      }],
+    }));
+
+    expect(quiz.questions).toHaveLength(1);
+    expect(quiz.questions[0]?.citation.locator).toEqual({
+      kind: 'text-range', start: 0, end: 14,
+    });
+  });
+
   function validHandoff(change: Partial<QuizGenerationHandoff> = {}): QuizGenerationHandoff {
     return {
       documentId: randomUUID(),
