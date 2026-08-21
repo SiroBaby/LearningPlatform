@@ -99,6 +99,7 @@ main() {
   after_sha="$(cd "${repository}" && commit_file app/src/worker/job.ts)"
   expected=$'web=false\napi=false\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_go_worker_output "${before_sha}" "${after_sha}")
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file app/src/modules/health/health.controller.ts)"
