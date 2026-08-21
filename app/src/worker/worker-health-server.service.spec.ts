@@ -13,6 +13,7 @@ const workerConfig = (port: number): ApplicationConfigService =>
       chunkOverlapChars: 150,
       chunkTargetChars: 1_200,
       errorBackoffMs: 5_000,
+      executionMode: 'legacy-processing',
       healthHost: '127.0.0.1',
       healthPort: port,
       jobBatchSize: 10,
