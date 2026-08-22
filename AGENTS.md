@@ -19,6 +19,7 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Trước khi bắt đầu task, bảo đảm ticket đã nằm trong Project, chuyển `Status` sang `In progress` và đăng comment `ĐANG THỰC HIỆN` nêu rõ phạm vi, cách kiểm tra và giới hạn môi trường.
 - Không đăng comment tiến độ thông thường trong khi task đang chạy để tránh làm loãng ticket. Chỉ đăng comment chốt khi task hoàn tất; nếu bị chặn và chưa thể hoàn tất, đăng một comment kết luận blocker nêu rõ điều đang thiếu, ảnh hưởng và hành động tiếp theo. Trạng thái Project phải luôn phản ánh đúng tình trạng thực tế.
 - Khi hoàn thành task, đăng comment `HOÀN THÀNH` kèm thay đổi, PR hoặc commit nếu có, lệnh kiểm tra và kết quả, bằng chứng manual/visual/operational liên quan cùng giới hạn còn lại. Chỉ chuyển `Status` sang `Done` khi hoạt động của ticket đã có kết luận và bằng chứng; ticket `HITL` vẫn cần human xác nhận trước khi đóng.
+- Chỉ được coi ticket là hoàn thành và đóng issue sau khi thay đổi đã commit/push, GitHub Actions sau push đã thành công, và trạng thái sau push đã được kiểm tra lại; thay đổi mới chỉ ở working tree không đủ điều kiện đóng ticket.
 - Nội dung ticket và comment phải dùng tiếng Việt cụ thể, nhất quán với ubiquitous language trong `CONTEXT.md`. Khi một English technical term xuất hiện lần đầu, giải thích ngắn bằng tiếng Việt ngay sau thuật ngữ; tránh từ mơ hồ, diễn đạt trừu tượng hoặc kết luận không có bằng chứng khiến human có thể hiểu sai.
 
 ## Chuẩn hóa Pull Request
