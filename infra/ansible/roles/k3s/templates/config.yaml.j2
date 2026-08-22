@@ -1,0 +1,6 @@
+# This file is managed by Ansible. K3s packaged Traefik and ServiceLB remain
+# enabled because neither component appears in the disable list.
+write-kubeconfig-mode: "{{ k3s_write_kubeconfig_mode }}"
+disable: []
+kube-proxy-arg:
+  - nodeport-addresses=127.0.0.0/8

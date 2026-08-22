@@ -1,0 +1,66 @@
+---
+observability_helm_timeout: 10m
+observability_helm_history_max: 10
+observability_recover_pending_install: false
+observability_pending_install_recovery_release_name: learning-platform-monitoring
+observability_pending_install_recovery_namespace: observability
+observability_pending_install_recovery_revision: 1
+observability_pending_install_recovery_status: pending-install
+observability_pending_install_recovery_pvc_name: storage-learning-platform-monitoring-grafana-0
+observability_pending_install_recovery_pvc_storage_class: local-path
+observability_pending_install_recovery_pvc_storage: 1Gi
+observability_pending_install_recovery_pv_name: pvc-212e92f3-8ab7-43f5-b959-1575e3140f19
+observability_pending_install_recovery_statefulset_name: learning-platform-monitoring-grafana
+observability_pending_install_recovery_pv_reclaim_policy: Delete
+observability_minimum_free_disk_gib: 11
+observability_minimum_free_memory_mib: 2048
+observability_kubeconfig: /etc/rancher/k3s/k3s.yaml
+observability_values_source_directory: '{{ role_path }}/../../../observability'
+observability_values_staging_directory: /opt/learning-platform/observability-values
+observability_values_staging_owner: root
+observability_values_staging_group: root
+observability_values_staging_directory_mode: '0750'
+observability_values_staging_file_mode: '0640'
+observability_grafana_external_secret_template: >-
+  {{ role_path }}/templates/grafana-external-secret.yaml.j2
+observability_alertmanager_external_secret_template: >-
+  {{ role_path }}/templates/alertmanager-external-secret.yaml.j2
+observability_helm_archives:
+  x86_64:
+    architecture: amd64
+    url: https://get.helm.sh/helm-v3.21.3-linux-amd64.tar.gz
+    sha256: 15e041a93a590dce8100f39385cd98c84a765c9e36aeeb9e2dc6ff9e4769e2e0
+  aarch64:
+    architecture: arm64
+    url: https://get.helm.sh/helm-v3.21.3-linux-arm64.tar.gz
+    sha256: 67f58155079ff9ffab98ba5c88daff0ed9b542f3a4732f5dd426dde7dd0f5244
+observability_releases_ordered:
+  - key: monitoring
+    repository: prometheus-community
+    values_file: kube-prometheus-stack-values.yml
+  - key: loki
+    repository: grafana-community
+    values_file: loki-values.yml
+  - key: alloy
+    repository: grafana
+    values_file: alloy-values.yml
+observability_legacy_ksm_objects:
+  - api_version: v1
+    kind: ServiceAccount
+    namespace: kube-system
+    name: kube-state-metrics
+  - api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    name: kube-state-metrics
+  - api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    name: kube-state-metrics
+  - api_version: apps/v1
+    kind: Deployment
+    namespace: kube-system
+    name: kube-state-metrics
+  - api_version: v1
+    kind: Service
+    namespace: kube-system
+    name: kube-state-metrics
+observability_legacy_ksm_port_forward_unit: kube-state-metrics-port-forward.service

@@ -1,0 +1,18 @@
+# Agent-specific files — không đẩy lên remote
+docs/agents/
+.scratch/
+.cursor/
+.gitnexus/
+.omo/
+data/
+key/
+web/MODIFIED_FILES.txt
+
+# Local deployment inventory and non-runtime host configuration
+infra/ansible/inventory/hosts.yml
+infra/ansible/inventory/group_vars/k3s_nodes.yml
+
+# Keep local Draw.io sources and editor recovery files out of Git; published SVGs remain tracked.
+docs/diagrams/*.drawio
+docs/diagrams/*.drawio.bkp
+docs/diagrams/.*.drawio.bkp

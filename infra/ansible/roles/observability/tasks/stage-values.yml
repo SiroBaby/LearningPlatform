@@ -1,0 +1,107 @@
+---
+- name: Require the exact ordered canonical observability values allowlist
+  ansible.builtin.assert:
+    that:
+      - observability_releases_ordered | map(attribute='values_file') | list == [
+          'kube-prometheus-stack-values.yml',
+          'loki-values.yml',
+          'alloy-values.yml'
+        ]
+      - observability_releases_ordered | map(attribute='values_file') | unique | length == 3
+    fail_msg: >-
+      Observability may stage only kube-prometheus-stack-values.yml,
+      loki-values.yml, and alloy-values.yml in their canonical release order.
+
+- name: Build the bounded remote values path map from release definitions
+  ansible.builtin.set_fact:
+    observability_staged_values_files: >-
+      {{ observability_staged_values_files | default({})
+         | combine({item.values_file: observability_values_staging_directory ~ '/' ~ item.values_file}) }}
+  loop: '{{ observability_releases_ordered }}'
+
+- name: Inspect all canonical observability values files on the controller
+  ansible.builtin.stat:
+    path: '{{ observability_values_source_directory }}/{{ item.values_file }}'
+    checksum_algorithm: sha256
+  loop: '{{ observability_releases_ordered }}'
+  register: observability_release_values_source_stats
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Require readable regular canonical observability values sources
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - item.stat.readable
+      - item.stat.checksum is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      {{ observability_values_source_directory }}/{{ item.item.values_file }} must be
+      a readable regular canonical values source with a SHA-256 checksum before
+      any observability Helm release state is inspected.
+  loop: '{{ observability_release_values_source_stats.results }}'
+
+- name: Read all canonical observability values content from the controller
+  ansible.builtin.slurp:
+    src: '{{ observability_values_source_directory }}/{{ item.values_file }}'
+  loop: '{{ observability_releases_ordered }}'
+  register: observability_release_values_source_content
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Require non-empty canonical observability values content
+  ansible.builtin.assert:
+    that:
+      - item.content | b64decode | length > 0
+    fail_msg: >-
+      {{ observability_values_source_directory }}/{{ item.item.values_file }} must
+      contain chart configuration before any observability Helm release state is inspected.
+  loop: '{{ observability_release_values_source_content.results }}'
+
+- name: Remove stale files from the role-owned observability values directory
+  ansible.builtin.file:
+    path: '{{ observability_values_staging_directory }}'
+    state: absent
+
+- name: Create bounded remote directory for observability values
+  ansible.builtin.file:
+    path: '{{ observability_values_staging_directory }}'
+    state: directory
+    owner: '{{ observability_values_staging_owner }}'
+    group: '{{ observability_values_staging_group }}'
+    mode: '{{ observability_values_staging_directory_mode }}'
+
+- name: Stage all canonical observability values files on the remote host
+  ansible.builtin.copy:
+    src: '{{ observability_values_source_directory }}/{{ item.values_file }}'
+    dest: '{{ observability_staged_values_files[item.values_file] }}'
+    owner: '{{ observability_values_staging_owner }}'
+    group: '{{ observability_values_staging_group }}'
+    mode: '{{ observability_values_staging_file_mode }}'
+  loop: '{{ observability_releases_ordered }}'
+
+- name: Verify staged canonical observability values file integrity on the remote host
+  ansible.builtin.stat:
+    path: '{{ observability_staged_values_files[item.values_file] }}'
+    checksum_algorithm: sha256
+  loop: '{{ observability_releases_ordered }}'
+  register: observability_release_values_staged_stats
+
+- name: Require staged canonical observability values metadata and checksums
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - item.stat.pw_name == observability_values_staging_owner
+      - item.stat.gr_name == observability_values_staging_group
+      - item.stat.mode == observability_values_staging_file_mode
+      - item.stat.checksum == observability_release_values_source_stats.results[observability_values_file_index].stat.checksum
+    fail_msg: >-
+      {{ item.item.values_file }} must be staged as the verified controller content
+      with root ownership and mode 0640 before any observability Helm release state
+      is inspected.
+  loop: '{{ observability_release_values_staged_stats.results }}'
+  loop_control:
+    index_var: observability_values_file_index

@@ -1,0 +1,389 @@
+---
+- name: Verify observability release action plans without a cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    releases:
+      - key: monitoring
+        name: learning-platform-monitoring
+        stateful: true
+        chart: prometheus-community/kube-prometheus-stack
+        version: 87.21.0
+        values: kube-prometheus-stack-values.yml
+      - key: loki
+        name: learning-platform-loki
+        stateful: true
+        chart: grafana-community/loki
+        version: 18.7.0
+        values: loki-values.yml
+      - key: alloy
+        name: learning-platform-alloy
+        stateful: false
+        chart: grafana/alloy
+        version: 1.11.0
+        values: alloy-values.yml
+    cases:
+      - {name: absent, records: [], pvcs: [], retention: true, expected_state: absent, expected_action: install}
+      - {name: orphan-pvc, records: [], pvcs: [owned], retention: true, expected_state: orphan, expected_action: fail}
+      - {name: wrong-owner, records: [deployed], pvcs: [wrong-owner], retention: true, expected_state: mismatch, expected_action: fail}
+      - name: missing-retain
+        records: [deployed]
+        pvcs: [owned]
+        stateless_pvcs: []
+        retention: false
+        expected_state: mismatch
+        expected_action: fail
+        expected_stateless_state: healthy
+        expected_stateless_action: upgrade
+      - {name: pending-install, records: [pending-install], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
+      - {name: pending-upgrade, records: [pending-upgrade], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
+      - {name: failed, records: [failed], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
+      - {name: deployed-unhealthy, records: [deployed-unhealthy], pvcs: [owned], retention: true, expected_state: partial, expected_action: fail}
+      - {name: healthy, records: [deployed], pvcs: [owned], stateless_pvcs: [], retention: true, expected_state: healthy, expected_action: upgrade}
+      - {name: initial-install-failure, records: [], pvcs: [], retention: true, expected_state: absent, expected_action: preserve-failure}
+      - {name: failed-upgrade, records: [deployed], pvcs: [owned], stateless_pvcs: [], retention: true, expected_state: healthy, expected_action: rollback}
+  tasks:
+    - name: Load canonical development observability contract
+      ansible.builtin.include_vars:
+        file: '{{ playbook_dir }}/../../../vars/dev.yml'
+        name: observability_dev_contract
+
+    - name: Require exact Helm repository aliases for every release chart prefix
+      ansible.builtin.assert:
+        that:
+          - observability_chart_prefixes | difference(observability_repository_aliases) | length == 0
+          - observability_repository_aliases | sort == ['grafana', 'grafana-community', 'prometheus-community']
+        fail_msg: >-
+          Every observability chart prefix must exactly match a configured Helm
+          repository alias before a release command can run.
+      vars:
+        observability_chart_prefixes: >-
+          {{ observability_dev_contract.observability_releases.values()
+             | map(attribute='chart') | map('split', '/') | map('first') | list }}
+        observability_repository_aliases: >-
+          {{ observability_dev_contract.helm_repositories.keys() | list }}
+
+    - name: Require canonical PVC owner allowlists
+      ansible.builtin.assert:
+        that:
+          - >-
+            observability_dev_contract.observability_releases.monitoring.pvc_owner_instances ==
+            ['learning-platform-monitoring', 'learning-platform-monitori-prometheus']
+          - >-
+            observability_dev_contract.observability_releases.loki.pvc_owner_instances ==
+            ['learning-platform-loki']
+          - observability_dev_contract.observability_releases.alloy.pvc_owner_instances == []
+        fail_msg: Observability PVC owner allowlists must remain exact and canonical.
+
+    - name: Execute production failed-install PVC evidence classification
+      ansible.builtin.include_tasks: production-failed-install-evidence-case.yml
+
+    - name: Build action plans for every release and transition
+      ansible.builtin.include_tasks: state-machine-case.yml
+      loop: '{{ releases | product(cases) | list }}'
+      loop_control:
+        loop_var: observability_case_pair
+
+    - name: Execute production state machine against realistic PVC owner labels
+      ansible.builtin.include_tasks: production-state-machine-case.yml
+      loop: >-
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/pvc-owner-state-machine.yml')
+           | from_yaml }}
+      loop_control:
+        loop_var: observability_production_case
+        label: '{{ observability_production_case.name }}'
+
+    - name: Verify low capacity and aggregate overflow produce no Helm action
+      ansible.builtin.assert:
+        that:
+          - item.action_plan | length == 0
+          - item.blocked
+      loop:
+        - {name: low-capacity, blocked: true, action_plan: []}
+        - {name: aggregate-overflow, blocked: true, action_plan: []}
+        - {name: ksm-deletion-failure, blocked: true, action_plan: []}
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Verify MemAvailable capacity fixtures block Helm state transitions
+      ansible.builtin.assert:
+        that:
+          - >-
+            ((item.memavailable_kib is match('^[0-9]+$')) and
+             ((item.memavailable_kib | int // 1024) >= 2048) and
+             (item.disk_available_bytes | int >= 11 * 1024 * 1024 * 1024)) ==
+            (item.expected_capacity == 'pass')
+          - item.expected_capacity == 'pass' or observability_capacity_action_plan | length == 0
+        fail_msg: >-
+          MemAvailable capacity failures must block before an observability Helm
+          state transition is planned.
+      vars:
+        observability_capacity_action_plan: []
+      loop: >-
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/capacity-memavailable.yml')
+           | from_yaml }}
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Verify Grafana ESO missing-template fixture fails before apply planning
+      ansible.builtin.assert:
+        that:
+          - not observability_eso_fixture.template_exists
+          - observability_eso_fixture.apply_actions | length == 0
+          - observability_eso_fixture.iam_paths | select('search', '\*') | list | length == 0
+        fail_msg: Missing Grafana SSM/template contract must block apply before Helm.
+      vars:
+        observability_eso_fixture:
+          template_exists: false
+          apply_actions: []
+          iam_paths:
+            - /learning-platform/dev/grafana-admin-user
+            - /learning-platform/dev/grafana-admin-password
+
+    - name: Verify reviewed pending-install recovery fixture is strictly opt-in
+      ansible.builtin.assert:
+        that:
+          - >-
+            (item.enabled | bool and
+             item.release_name == 'learning-platform-monitoring' and
+             item.namespace == 'observability' and
+             item.revision | int == 1 and
+             item.status == 'pending-install' and
+             item.pvc_name == 'storage-learning-platform-monitoring-grafana-0' and
+             item.pvc_phase == 'Bound' and
+             item.storage_class == 'local-path' and
+             item.storage == '1Gi' and
+             item.statefulset_retention == 'Retain/Retain' and
+             item.pv_name == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19' and
+             item.pv_phase == 'Bound' and
+             item.claim_ref == 'observability/storage-learning-platform-monitoring-grafana-0' and
+             item.reclaim_policy == 'Delete' and
+             not (item.unexpected_pvc | default(false) | bool) and
+             (item.residual_resource | default('') | length == 0) and
+             (item.residual_release_label | default('learning-platform-monitoring') == 'learning-platform-monitoring')) ==
+            (item.expected_action == 'uninstall-once')
+          - >-
+            observability_pending_install_recovery_command ==
+            '/usr/local/bin/helm uninstall learning-platform-monitoring --namespace observability' ~
+            ' --kubeconfig /etc/rancher/k3s/k3s.yaml --wait --timeout 10m --cascade foreground'
+        fail_msg: >-
+          Pending-install recovery must be default-disabled and permit exactly one
+          reviewed monitoring uninstall only when every storage invariant matches.
+      vars:
+        observability_pending_install_recovery_command: >-
+          /usr/local/bin/helm uninstall learning-platform-monitoring --namespace observability
+          --kubeconfig /etc/rancher/k3s/k3s.yaml --wait --timeout 10m --cascade foreground
+      loop: >-
+        {{ lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/pending-install-recovery.yml')
+           | from_yaml }}
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Verify Traefik NodePort dataplane contract does not require an ss listener
+      ansible.builtin.assert:
+        that:
+          - >-
+            (not item.ss_listener_present and
+             item.kube_proxy_loopback_configured and
+             item.traefik_ready_endpoint_present and
+             item.netfilter_nodeport_rule_present and
+             item.loopback_web_returns_404 and
+             item.node_address_request_fails) == item.accepted
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search("nodeport-addresses=127.0.0.0/8")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('kind: Endpoints')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('iptables-save -t nat')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('url: http://127.0.0.1:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('url:\\s+http://127\\.0\\.0\\.1:.*\\/')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('status_code: 404')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is search('observability_traefik_node_address_request.status | int == -1')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/main.yml')
+            is not search('Require shared Traefik NodePort listener outside check mode')
+        fail_msg: >-
+          An absent ss listener is acceptable only when the exact loopback
+          kube-proxy, Traefik readiness, netfilter, loopback reachability, and
+          non-loopback rejection dataplane checks all pass.
+      loop:
+        - name: ss-absent-all-real-checks-pass
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: true
+          node_address_request_fails: true
+          accepted: true
+        - name: missing-kube-proxy-loopback-config
+          ss_listener_present: false
+          kube_proxy_loopback_configured: false
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: true
+          node_address_request_fails: true
+          accepted: false
+        - name: missing-ready-endpoint
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: false
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: true
+          node_address_request_fails: true
+          accepted: false
+        - name: missing-netfilter-rule
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: false
+          loopback_web_returns_404: true
+          node_address_request_fails: true
+          accepted: false
+        - name: unexpected-loopback-web-status
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: false
+          node_address_request_fails: true
+          accepted: false
+        - name: reachable-node-address
+          ss_listener_present: false
+          kube_proxy_loopback_configured: true
+          traefik_ready_endpoint_present: true
+          netfilter_nodeport_rule_present: true
+          loopback_web_returns_404: true
+          node_address_request_fails: false
+          accepted: false
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Scan action-plan source for forbidden destructive operations
+      ansible.builtin.assert:
+        that:
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search("observability_release_definition.key == 'monitoring'\s+- observability_release_records \| length == 1")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/state-machine.yml')
+            is search("observability_release_definition.key == 'alloy' or")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('helm list --namespace \{\{ observability_namespace \}\}\s+--kubeconfig \{\{ observability_kubeconfig \}\}')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search('hel' ~ 'm un' ~ 'install|cleanup' ~ '-on-fail')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('helm list --all --namespace observability\s+--kubeconfig \{\{ observability_kubeconfig \}\}')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('helm uninstall learning-platform-monitoring --namespace observability\s+--kubeconfig \{\{ observability_kubeconfig \}\} --wait\s+--timeout \{\{ observability_helm_timeout \}\} --cascade foreground')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is not search('--keep-history|--replace|ignore-not-found|helm rollback|PersistentVolumeClaim[\s\S]*state: absent|PersistentVolume[\s\S]*state: absent')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('observability_pending_install_recovery_pvc_uid')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('observability_pending_install_recovery_pv_uid')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('spec.claimRef.uid ==\s+observability_pending_install_recovery_pvc_uid')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('label_selectors:\s+          - app.kubernetes.io/instance=learning-platform-monitoring')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('ConfigMap, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('Secret, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('PrometheusRule, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('ServiceMonitor, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('RoleBinding, namespaced: true')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('ClusterRole, namespaced: false')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('ClusterRoleBinding, namespaced: false')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is not search('name: learning-platform-monitoring-operator|name: learning-platform-monitoring-prometheus|name: learning-platform-monitoring-node-exporter')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('observability_pending_install_recovery_post_release_records \| length == 0')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search("post_resources.results \| map\(attribute='resources'\) \| map\('length'\) \| sum == 0")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('rescue:\s+    - name: Reinspect exact Helm metadata after recovery failure')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('Record sanitized pending-install recovery failure evidence')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('error_fingerprint:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/recovery-pending-install.yml')
+            is search('residual_resource_names:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('observability_pending_install_recovery_absence_verified \| default\(false\) \| bool')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('error_fingerprint:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('failed_when: false[\s\S]+release_reinspection_rc:')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('include_tasks: classify-failed-install-pvc-evidence\.yml')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/classify-failed-install-pvc-evidence.yml')
+            is search('observability_failed_install_namespace_pvcs\.resources \| default\(\[\]\)')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/classify-failed-install-pvc-evidence.yml')
+            is search('observability_failed_install_unknown_owner_pvc_names')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search("metadata\.name', 'search', observability_release\.name")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is search('include_tasks: classify-release-resources\.yml')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/classify-release-resources.yml')
+            is search("get\('app\.kubernetes\.io/instance'\) in observability_release\.pvc_owner_instances")
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search('observability_failed_install_release_list\.stdout \| from_json')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search('(?m)^\s+(stderr|stdout):\s+.*observability_initial_install')
+          - >-
+            lookup('file', playbook_dir ~ '/../tasks/release.yml')
+            is not search("msg:\s*['\"]?\{\{ observability_initial_install\.(stderr|stdout)")
+        fail_msg: >-
+          First-install discovery, stateless Alloy classification, explicit
+          kubeconfig, or non-destructive release safeguards are incomplete.

@@ -1,0 +1,17 @@
+- job_name: node-exporter
+  file_sd_configs:
+    - files:
+        - {{ prometheus_file_sd_target_path }}
+  relabel_configs:
+    - source_labels: [metrics_source]
+      regex: node-exporter
+      action: keep
+- job_name: kube-state-metrics
+  honor_labels: true
+  file_sd_configs:
+    - files:
+        - {{ prometheus_file_sd_target_path }}
+  relabel_configs:
+    - source_labels: [metrics_source]
+      regex: kube-state-metrics
+      action: keep

@@ -1,0 +1,22 @@
+---
+- name: Derive release retention contract
+  ansible.builtin.set_fact:
+    observability_release_retention_valid: >-
+      {{ observability_release_definition.key == 'alloy' or
+         (observability_release_retention_policies | default([]) | length > 0 and
+         (observability_release_retention_policies | selectattr('whenDeleted', 'equalto', 'Retain')
+         | selectattr('whenScaled', 'equalto', 'Retain') | list | length) ==
+         (observability_release_retention_policies | length)) }}
+
+- name: Derive the exact four-state Helm release machine
+  ansible.builtin.set_fact:
+    observability_release_state: >-
+      {% if observability_release_records | length == 0 and observability_release_pvcs | length == 0 %}absent
+      {% elif observability_release_records | length == 0 %}orphan
+      {% elif observability_release_records | length != 1 %}mismatch
+      {% elif observability_release_records[0].status | lower != 'deployed' %}partial
+      {% elif observability_unknown_owner_pvcs | default([]) | length > 0 %}mismatch
+      {% elif observability_release_definition.key == 'alloy' and observability_release_pvcs | length > 0 %}mismatch
+      {% elif not observability_release_retention_valid %}mismatch
+      {% elif observability_release_records[0].healthy | default(true) | bool %}healthy
+      {% else %}partial{% endif %}

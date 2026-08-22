@@ -1,0 +1,240 @@
+---
+- name: Fail on unsupported operating systems
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution in ['Debian', 'Ubuntu']
+      - ansible_facts.os_family == 'Debian'
+    fail_msg: >-
+      This baseline supports Debian and Ubuntu only. Found
+      {{ ansible_facts.distribution }} ({{ ansible_facts.os_family }}).
+
+- name: Validate required K3s configuration
+  ansible.builtin.assert:
+    that:
+      - k3s_version is string
+      - k3s_version | length > 0
+      - k3s_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$')
+      - k3s_installer_sha256 is match('^[a-f0-9]{64}$')
+      - k3s_write_kubeconfig_mode is match('^[0-7]{4}$')
+      - k3s_port_preflight_enabled is boolean
+      - k3s_ingress_ports is sequence
+      - k3s_ingress_ports | length > 0
+      - k3s_ingress_ports | map('int') | select('ge', 1) | select('le', 65535) | list | length == k3s_ingress_ports | length
+      - k3s_traefik_http_node_port | int >= 30000
+      - k3s_traefik_http_node_port | int <= 32767
+      - k3s_traefik_http_node_port in k3s_ingress_ports
+      - nginx_service_name is string
+      - nginx_learning_platform_config_path is string
+      - nginx_tls_certificate_path is string
+      - nginx_tls_certificate_key_path is string
+      - grafana_public_host is string
+      - grafana_public_host == 'grafana.sirobabycloud.io.vn'
+      - grafana_ingress_host is string
+      - grafana_ingress_host == grafana_public_host
+      - learning_platform_namespace is string
+      - learning_platform_namespace | length > 0
+    fail_msg: k3s_version and learning_platform_namespace must be explicitly configured.
+
+- name: Gather package facts before K3s bootstrap
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Ensure K3s source directory exists
+  ansible.builtin.file:
+    path: /usr/local/src
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install K3s bootstrap prerequisites
+  ansible.builtin.package:
+    name:
+      - ca-certificates
+      - curl
+      - python3-kubernetes
+    state: present
+
+- name: Read installed K3s version
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s --version
+  register: k3s_installed_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Record whether requested K3s installation is required
+  ansible.builtin.set_fact:
+    k3s_install_required: >-
+      {{ (k3s_version | default('')) not in
+      (k3s_installed_version.stdout | default('')) }}
+
+- name: Check host edge ports before first K3s bootstrap
+  ansible.builtin.command:
+    cmd: "ss -ltnH '( sport = :{{ item }} )'"
+  loop: '{{ k3s_ingress_ports }}'
+  register: k3s_ingress_port_listeners
+  changed_when: false
+  failed_when: false
+  when:
+    - k3s_port_preflight_enabled | bool
+    - k3s_install_required | bool
+    - not ansible_check_mode
+
+- name: Fail when another host process owns a K3s ingress port
+  ansible.builtin.assert:
+    that:
+      - item.stdout | trim | length == 0
+    fail_msg: >-
+      Port {{ item.item }} already has a TCP listener. This baseline never
+      stops or reconfigures existing host edge listeners; transfer ownership
+      manually before the first K3s bootstrap or disable the preflight only
+      after approving the host edge design.
+  loop: '{{ k3s_ingress_port_listeners.results | default([]) }}'
+  when:
+    - k3s_port_preflight_enabled | bool
+    - k3s_install_required | bool
+    - not ansible_check_mode
+
+- name: Ensure K3s configuration directory exists
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ensure K3s auto-deploy manifest directory exists
+  ansible.builtin.file:
+    path: /var/lib/rancher/k3s/server/manifests
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Configure packaged Traefik as a loopback-only NodePort upstream
+  ansible.builtin.template:
+    src: traefik-config.yaml.j2
+    dest: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart K3s after configuration change
+
+- name: Render declarative K3s server configuration
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: Restart K3s after configuration change
+
+- name: Explain first-bootstrap check mode limitation
+  ansible.builtin.debug:
+    msg: >-
+      K3s {{ k3s_version }} is absent or differs from the installed version.
+      Check mode will not download or run the installer and will skip
+      post-bootstrap service assertions.
+  when:
+    - ansible_check_mode
+    - k3s_install_required | bool
+
+- name: Download the official K3s installer only for bootstrap or version change
+  ansible.builtin.get_url:
+    url: '{{ k3s_installer_url }}'
+    dest: /usr/local/src/k3s-install.sh
+    mode: '0755'
+    checksum: sha256:{{ k3s_installer_sha256 }}
+  when:
+    - k3s_install_required | bool
+    - not ansible_check_mode
+
+- name: Bootstrap the requested K3s version only when absent or different
+  ansible.builtin.command:
+    cmd: /usr/local/src/k3s-install.sh
+  environment:
+    INSTALL_K3S_VERSION: '{{ k3s_version }}'
+    INSTALL_K3S_EXEC: server
+  when:
+    - k3s_install_required | bool
+    - not ansible_check_mode
+  changed_when: true
+  # Network installation occurs only for a real first bootstrap or a requested
+  # version change. Reruns at the requested version do not invoke this command.
+
+- name: Gather service facts after K3s bootstrap
+  ansible.builtin.service_facts:
+
+- name: Require K3s systemd service after bootstrap
+  ansible.builtin.assert:
+    that:
+      - "'k3s.service' in ansible_facts.services"
+    fail_msg: K3s installer completed but k3s.service was not discovered.
+  when: not (ansible_check_mode and k3s_install_required | bool)
+
+- name: Enable and start K3s
+  ansible.builtin.systemd:
+    name: k3s.service
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and k3s_install_required | bool)
+
+- name: Create application namespace after K3s is available
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: '{{ learning_platform_namespace }}'
+  when: not (ansible_check_mode and k3s_install_required | bool)
+
+- name: Wait for packaged Traefik deployment
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: kube-system
+    name: traefik
+    wait: true
+    wait_condition:
+      type: Available
+      status: 'True'
+    wait_timeout: 180
+  when: not (ansible_check_mode and k3s_install_required | bool)
+
+- name: Verify existing Nginx and TLS files
+  ansible.builtin.stat:
+    path: '{{ item }}'
+  loop:
+    - '{{ nginx_tls_certificate_path }}'
+    - '{{ nginx_tls_certificate_key_path }}'
+  register: k3s_nginx_tls_files
+
+- name: Require existing Nginx TLS files
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+    fail_msg: Existing Nginx TLS file {{ item.item }} is missing.
+  loop: '{{ k3s_nginx_tls_files.results }}'
+
+- name: Restrict existing Nginx TLS private key permissions
+  ansible.builtin.file:
+    path: '{{ nginx_tls_certificate_key_path }}'
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Configure Nginx edge routes for Learning Platform
+  ansible.builtin.template:
+    src: nginx-learning-platform.conf.j2
+    dest: '{{ nginx_learning_platform_config_path }}'
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Validate Nginx configuration
+    - Reload Nginx edge

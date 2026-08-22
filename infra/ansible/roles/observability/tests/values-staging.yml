@@ -1,0 +1,151 @@
+---
+- name: Verify observability values staging without a remote repository checkout
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  vars:
+    observability_values_staging_test_root: /tmp/learning-platform-observability-values-staging-test
+    observability_values_source_directory: '{{ observability_values_staging_test_root }}/controller/observability'
+    observability_values_staging_directory: '{{ observability_values_staging_test_root }}/remote/observability-values'
+    observability_remote_repo_source_path: '{{ observability_values_staging_test_root }}/remote/repository/infra/observability'
+    observability_values_staging_owner: "{{ lookup('ansible.builtin.pipe', 'id -un') }}"
+    observability_values_staging_group: "{{ lookup('ansible.builtin.pipe', 'id -gn') }}"
+    observability_values_staging_directory_mode: '0750'
+    observability_values_staging_file_mode: '0640'
+    observability_releases_ordered:
+      - key: monitoring
+        values_file: kube-prometheus-stack-values.yml
+      - key: loki
+        values_file: loki-values.yml
+      - key: alloy
+        values_file: alloy-values.yml
+  tasks:
+    - name: Create controller-only source fixture directory
+      ansible.builtin.file:
+        path: '{{ observability_values_source_directory }}'
+        state: directory
+        mode: '0755'
+
+    - name: Write canonical controller values fixtures
+      ansible.builtin.copy:
+        content: 'fixture={{ item }}\n'
+        dest: '{{ observability_values_source_directory }}/{{ item }}'
+        mode: '0644'
+      loop:
+        - kube-prometheus-stack-values.yml
+        - loki-values.yml
+        - alloy-values.yml
+
+    - name: Require the simulated remote checkout to be absent
+      ansible.builtin.stat:
+        path: '{{ observability_remote_repo_source_path }}'
+      register: observability_remote_repo_source
+
+    - name: Prove staging does not depend on a remote repository checkout
+      ansible.builtin.assert:
+        that:
+          - not observability_remote_repo_source.stat.exists
+
+    - name: Stage exactly the canonical controller values files
+      ansible.builtin.include_tasks: ../tasks/stage-values.yml
+
+    - name: Require exactly three regular staged values files with controller checksums
+      ansible.builtin.stat:
+        path: '{{ observability_values_staging_directory }}/{{ item }}'
+        checksum_algorithm: sha256
+      loop:
+        - kube-prometheus-stack-values.yml
+        - loki-values.yml
+        - alloy-values.yml
+      register: observability_staged_values_stats
+
+    - name: Discover all staged values filenames
+      ansible.builtin.find:
+        paths: '{{ observability_values_staging_directory }}'
+        file_type: file
+        recurse: false
+      register: observability_staged_values_files_found
+
+    - name: Verify staged values mode integrity and release mapping
+      ansible.builtin.assert:
+        that:
+          - observability_staged_values_stats.results | length == 3
+          - >-
+            observability_staged_values_files_found.files | map(attribute='path')
+            | map('basename') | sort | list == [
+              'alloy-values.yml',
+              'kube-prometheus-stack-values.yml',
+              'loki-values.yml'
+            ]
+          - item.stat.exists
+          - item.stat.isreg
+          - item.stat.mode == '0640'
+          - item.stat.pw_name == observability_values_staging_owner
+          - item.stat.gr_name == observability_values_staging_group
+          - item.stat.checksum == observability_release_values_source_stats.results[observability_values_file_index].stat.checksum
+          - observability_staged_values_files[item.item] == item.stat.path
+        fail_msg: Canonical values must be copied from the controller with exact checksum and bounded metadata.
+      loop: '{{ observability_staged_values_stats.results }}'
+      loop_control:
+        index_var: observability_values_file_index
+
+    - name: Verify release state inspection cannot precede complete values staging
+      ansible.builtin.assert:
+        that:
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
+              'Stage all canonical observability values files on the remote host'
+            ) < lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml').find(
+              'Process each observability Helm release through its state machine'
+            )
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/release.yml')
+            is search('observability_staged_values_files')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/release.yml')
+            is not search('role_path.*observability.*values_file')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/stage-values.yml')
+            is search('observability_values_staging_owner')
+          - >-
+            lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/stage-values.yml')
+            is search('observability_values_staging_group')
+
+    - name: Verify invalid values plans fail before release inspection
+      ansible.builtin.include_tasks: values-staging-invalid-case.yml
+      loop:
+        - name: missing-controller-source
+          source_directory: '{{ observability_values_staging_test_root }}/controller/missing-observability'
+          releases:
+            - {key: monitoring, values_file: kube-prometheus-stack-values.yml}
+            - {key: loki, values_file: loki-values.yml}
+            - {key: alloy, values_file: alloy-values.yml}
+          expected_failed_task: Require readable regular canonical observability values sources
+        - name: extra-unallowlisted-filename
+          releases:
+            - {key: monitoring, values_file: kube-prometheus-stack-values.yml}
+            - {key: loki, values_file: loki-values.yml}
+            - {key: alloy, values_file: extra-values.yml}
+          expected_failed_task: Require the exact ordered canonical observability values allowlist
+        - name: path-traversal-filename
+          releases:
+            - {key: monitoring, values_file: kube-prometheus-stack-values.yml}
+            - {key: loki, values_file: loki-values.yml}
+            - {key: alloy, values_file: ../alloy-values.yml}
+          expected_failed_task: Require the exact ordered canonical observability values allowlist
+      loop_control:
+        loop_var: observability_invalid_values_case
+
+    - name: Require invalid values plans to block release inspection and Helm mutation
+      ansible.builtin.assert:
+        that:
+          - observability_invalid_values_failures | length == 3
+          - observability_invalid_values_failures | map(attribute='release_inspection_count') | unique | list == [0]
+          - observability_invalid_values_failures | map(attribute='helm_mutation_count') | unique | list == [0]
+        fail_msg: Invalid values filename plans must fail before release state inspection or Helm mutation.
+
+    - name: Remove values staging test fixture
+      ansible.builtin.file:
+        path: '{{ observability_values_staging_test_root }}'
+        state: absent

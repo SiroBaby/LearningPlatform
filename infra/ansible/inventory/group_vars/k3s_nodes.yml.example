@@ -1,0 +1,124 @@
+---
+# Do not put AWS credentials or application secret values in this file.
+
+k3s_version: v1.31.8+k3s1
+k3s_installer_url: https://raw.githubusercontent.com/k3s-io/k3s/v1.31.8%2Bk3s1/install.sh
+k3s_installer_sha256: f60c3d8940dfc896f7d83aaf57726c91cf21afc4bca40036472df108d9700b4b
+# `/etc/rancher/k3s/config.yaml` is rendered before installation and on every
+# rerun. Do not add Traefik or ServiceLB to a disable list: packaged Traefik
+# owns the application edge and packaged ServiceLB advertises its LoadBalancer.
+k3s_write_kubeconfig_mode: '0640'
+k3s_port_preflight_enabled: true
+k3s_ingress_ports: [32080]
+k3s_traefik_http_node_port: 32080
+nginx_service_name: nginx.service
+nginx_learning_platform_config_path: /etc/nginx/sites-enabled/learning-platform-dev
+nginx_tls_certificate_path: REPLACE_WITH_EXISTING_TLS_CERTIFICATE_PATH
+nginx_tls_certificate_key_path: REPLACE_WITH_EXISTING_TLS_CERTIFICATE_KEY_PATH
+
+learning_platform_namespace: learning-platform-dev
+external_secrets_version: v0.15.1
+external_secrets_manifest_url: https://github.com/external-secrets/external-secrets/releases/download/v0.15.1/external-secrets.yaml
+external_secrets_manifest_sha256: 3e88bee2008ca2700c0511fe02573033d4cc7c1e05a994e7f1affca779785106
+external_secrets_operator_namespace: default
+
+# cert-manager creates namespace-scoped internal PKI identities; never commit private keys.
+cert_manager_version: v1.16.2
+cert_manager_manifest_url: https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+cert_manager_manifest_sha256: 1d51cdecd442f1f5f89783e9e0169b95d372724da203cc75dd7a5c4e50a10ce6
+cert_manager_namespace: cert-manager
+cert_manager_resources:
+  requests: {cpu: 250m, memory: 256Mi}
+  limits: {cpu: 500m, memory: 512Mi}
+kube_state_metrics_version: v2.15.0
+kube_state_metrics_manifest_url: REPLACE_WITH_VERIFIED_HTTPS_MANIFEST_URL
+kube_state_metrics_manifest_sha256: REPLACE_WITH_OFFICIAL_64_HEX_SHA256
+
+# This Secret is manually provisioned in learning-platform-dev before the first
+# ESO reconciliation. It must contain access-key-id and secret-access-key.
+aws_credentials_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_AWS_CREDENTIAL_SECRET
+aws_region: REPLACE_WITH_AWS_REGION
+
+# Each remoteRef below is an exact AWS SSM Parameter Store key. Do not use an
+# ESO find/path selector because it would import every parameter under a prefix.
+ssm_parameter_keys:
+  db_host: /REPLACE/WITH/EXACT/db-host
+  db_port: /REPLACE/WITH/EXACT/db-port
+  db_user: /REPLACE/WITH/EXACT/db-user
+  db_password: /REPLACE/WITH/EXACT/db-password
+  db_name: /REPLACE/WITH/EXACT/db-name
+  db_ssl_mode: /REPLACE/WITH/EXACT/db-ssl-mode
+  db_ssl_ca: /REPLACE/WITH/EXACT/db-ssl-ca
+  object_storage_endpoint: /REPLACE/WITH/EXACT/object-storage-endpoint
+  object_storage_port: /REPLACE/WITH/EXACT/object-storage-port
+  object_storage_region: /REPLACE/WITH/EXACT/object-storage-region
+  object_storage_use_ssl: /REPLACE/WITH/EXACT/object-storage-use-ssl
+  object_storage_access_key: /REPLACE/WITH/EXACT/object-storage-access-key
+  object_storage_secret_key: /REPLACE/WITH/EXACT/object-storage-secret-key
+  object_storage_bucket: /REPLACE/WITH/EXACT/object-storage-bucket
+  ai_credential_encryption_key: /REPLACE/WITH/EXACT/ai-credential-encryption-key
+  openai_base_url: /REPLACE/WITH/EXACT/openai-base-url
+  openai_api_key: /REPLACE/WITH/EXACT/openai-api-key
+  openai_model: /REPLACE/WITH/EXACT/openai-model
+  swagger_username: /REPLACE/WITH/EXACT/swagger-username
+  swagger_password: /REPLACE/WITH/EXACT/swagger-password
+  grafana_admin_user: /REPLACE/WITH/EXACT/grafana-admin-user
+  grafana_admin_password: /REPLACE/WITH/EXACT/grafana-admin-password
+
+observability_namespace: observability
+observability_aws_credentials_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_OBSERVABILITY_AWS_CREDENTIAL_SECRET
+grafana_admin_secret_name: grafana-admin
+# Nginx terminates TLS for this public name, then forwards the same Host header
+# over the loopback-only Traefik NodePort.
+grafana_public_host: grafana.sirobabycloud.io.vn
+grafana_ingress_host: grafana.sirobabycloud.io.vn
+
+# Immutable image digests are required. Replace every placeholder with an
+# image reference ending in @sha256:<64 hexadecimal characters>.
+web_image: ghcr.io/sirobaby/learningplatform-web@sha256:REPLACE_WITH_64_HEX_DIGEST
+api_image: ghcr.io/sirobaby/learningplatform-api@sha256:REPLACE_WITH_64_HEX_DIGEST
+worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:REPLACE_WITH_64_HEX_DIGEST
+
+ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET
+web_public_host: REPLACE_WITH_WEB_PUBLIC_HOST
+api_public_host: REPLACE_WITH_API_PUBLIC_HOST
+phase0_api_base_url: http://api:3000/api/v1
+phase0_dev_owner_id: REPLACE_WITH_DEV_OWNER_UUID
+ingress_tls_secret_name: ''
+deployment_targets: [web, api, worker]
+
+web_resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 256Mi}
+api_resources:
+  requests: {cpu: 200m, memory: 256Mi}
+  limits: {cpu: "1", memory: 512Mi}
+worker_resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {cpu: "1", memory: 1Gi}
+
+# Existing host Prometheus/Grafana are external to this automation. All values
+# below must be explicit because their paths and service name are host-specific.
+monitoring_enabled: true
+monitoring_install_node_exporter: true
+node_exporter_service_name: prometheus-node-exporter.service
+node_exporter_config_path: /etc/default/prometheus-node-exporter
+node_exporter_listen_address: 127.0.0.1
+node_exporter_listen_port: 9100
+node_exporter_target_address: 127.0.0.1
+prometheus_runtime: REPLACE_WITH_SYSTEMD_OR_DOCKER
+prometheus_container_name: ''
+prometheus_config_path: /REPLACE/WITH/existing/prometheus.yml
+prometheus_data_path: ''
+prometheus_service_name: ''
+prometheus_scrape_config_path: /REPLACE/WITH/existing/prometheus.d/kube-state-metrics.yml
+prometheus_file_sd_target_path: /REPLACE/WITH/existing/prometheus.d/kube-state-metrics-targets.json
+prometheus_port: 9090
+prometheus_promtool_path: /usr/bin/promtool
+prometheus_validate_with_promtool: true
+prometheus_manage_target_directories: false
+prometheus_target_file_owner: root
+prometheus_target_file_group: root
+prometheus_target_directory_mode: '0755'
+kube_state_metrics_port_forward_address: 127.0.0.1
+kube_state_metrics_port_forward_port: 18080

@@ -1,0 +1,18 @@
+---
+- name: Configure the Learning Platform single-node K3s host
+  hosts: k3s_nodes
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../vars/dev.yml
+  roles:
+    - role: k3s
+      tags: [k3s]
+    - role: external_secrets
+      tags: [external_secrets]
+    - role: cert_manager
+      tags: [cert_manager]
+    - role: observability
+      tags: [observability]
+    - role: applications
+      tags: [applications]

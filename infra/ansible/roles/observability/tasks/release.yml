@@ -1,0 +1,206 @@
+---
+- name: Select canonical release metadata
+  ansible.builtin.set_fact:
+    observability_release: '{{ observability_releases[observability_release_definition.key] }}'
+    observability_release_values_file: >-
+      {{ observability_staged_values_files[observability_release_definition.values_file] }}
+
+- name: Inspect Helm release state without mutating it
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/bin/helm list --namespace {{ observability_namespace }}
+      --kubeconfig {{ observability_kubeconfig }}
+      --filter '^{{ observability_release.name }}$' --output json
+  register: observability_release_list
+  changed_when: false
+
+- name: Decode Helm release state
+  ansible.builtin.set_fact:
+    observability_release_records: '{{ observability_release_list.stdout | from_json }}'
+
+- name: Inspect namespace PVCs for exact release owner labels
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: v1
+    kind: PersistentVolumeClaim
+    namespace: '{{ observability_namespace }}'
+  register: observability_namespace_pvcs
+
+- name: Inspect retention policies for exact release resources
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: apps/v1
+    kind: StatefulSet
+    namespace: '{{ observability_namespace }}'
+  register: observability_namespace_statefulsets
+
+- name: Inspect Prometheus retention policies for the monitoring release
+  kubernetes.core.k8s_info:
+    kubeconfig: '{{ observability_kubeconfig }}'
+    api_version: monitoring.coreos.com/v1
+    kind: Prometheus
+    namespace: '{{ observability_namespace }}'
+  register: observability_namespace_prometheuses
+  when:
+    - observability_release_definition.key == 'monitoring'
+    - observability_release_records | length == 1
+
+- name: Classify exact release PVC and retention resources
+  ansible.builtin.include_tasks: classify-release-resources.yml
+
+- name: Classify the exact four-state Helm release machine
+  ansible.builtin.include_tasks: state-machine.yml
+
+- name: Permit only the verified recovery PVC to precede the immediate monitoring reinstall
+  ansible.builtin.set_fact:
+    observability_release_state: absent
+  when:
+    - observability_pending_install_recovery_completed | default(false) | bool
+    - observability_pending_install_recovery_absence_verified | default(false) | bool
+    - observability_release_definition.key == 'monitoring'
+    - observability_release_records | length == 0
+    - observability_release_pvcs | length == 1
+    - observability_release_pvcs[0].metadata.name == 'storage-learning-platform-monitoring-grafana-0'
+    - observability_release_pvcs[0].status.phase == 'Bound'
+    - observability_release_pvcs[0].spec.storageClassName == 'local-path'
+    - observability_release_pvcs[0].spec.resources.requests.storage == '1Gi'
+    - observability_release_pvcs[0].spec.volumeName == 'pvc-212e92f3-8ab7-43f5-b959-1575e3140f19'
+
+- name: Record sanitized release evidence before a non-mutating failure
+  ansible.builtin.debug:
+    msg:
+      release: '{{ observability_release.name }}'
+      state: '{{ observability_release_state | trim }}'
+      helm_status: '{{ observability_release_records | map(attribute="status") | list }}'
+      pvc_names: '{{ observability_release_pvcs | map(attribute="metadata.name") | list }}'
+      unknown_owner_pvc_names: '{{ observability_unknown_owner_pvcs | map(attribute="metadata.name") | list }}'
+  when: observability_release_state | trim in ['orphan', 'mismatch', 'partial']
+
+- name: Fail closed for failed pending partial orphan or mismatched releases
+  ansible.builtin.assert:
+    that:
+      - observability_release_state | trim in ['absent', 'healthy']
+    fail_msg: >-
+      {{ observability_release.name }} is {{ observability_release_state | trim }}.
+      Evidence was recorded without secret output; inspect it manually before
+      any reviewed recovery. This role does not mutate this state.
+
+- name: Require exact owner labels on existing release PVCs
+  ansible.builtin.assert:
+    that:
+      - item.metadata.labels['app.kubernetes.io/instance'] in observability_release.pvc_owner_instances
+    fail_msg: >-
+      PVC {{ item.metadata.name }} is not exactly owned by
+      one of {{ observability_release.pvc_owner_instances | join(', ') }};
+      Helm will not change this release.
+  loop: '{{ observability_release_pvcs }}'
+  when: observability_release_state | trim == 'healthy'
+
+- name: Record healthy release revision before guarded upgrade
+  ansible.builtin.set_fact:
+    observability_healthy_revision: '{{ observability_release_records[0].revision | int }}'
+  when: observability_release_state | trim == 'healthy'
+
+- name: Install an absent release without atomic cleanup
+  when: observability_release_state | trim == 'absent'
+  block:
+    - name: Install absent release with bounded wait and retained failure state
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/helm upgrade --install {{ observability_release.name }}
+          {{ observability_release.chart }} --namespace {{ observability_namespace }}
+          --kubeconfig {{ observability_kubeconfig }}
+          --version {{ observability_release.chart_version }}
+          --values {{ observability_release_values_file }} --wait
+          --timeout {{ observability_helm_timeout }}
+          --history-max {{ observability_helm_history_max }} --atomic=false
+      register: observability_initial_install
+      changed_when: observability_initial_install.rc == 0
+      failed_when: false
+
+    - name: Reinspect failed initial Helm release without mutating it
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/helm list --namespace {{ observability_namespace }}
+          --kubeconfig {{ observability_kubeconfig }}
+          --filter '^{{ observability_release.name }}$' --output json
+      register: observability_failed_install_release_list
+      changed_when: false
+      failed_when: false
+      when: observability_initial_install.rc != 0
+
+    - name: Reinspect namespace PVCs after failed initial install
+      kubernetes.core.k8s_info:
+        kubeconfig: '{{ observability_kubeconfig }}'
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: '{{ observability_namespace }}'
+      register: observability_failed_install_namespace_pvcs
+      failed_when: false
+      when: observability_initial_install.rc != 0
+
+    - name: Classify failed-install PVC evidence by exact owner labels
+      ansible.builtin.include_tasks: classify-failed-install-pvc-evidence.yml
+      when: observability_initial_install.rc != 0
+
+    - name: Record sanitized failed initial install evidence
+      ansible.builtin.debug:
+        msg:
+          release: '{{ observability_release.name }}'
+          chart: '{{ observability_release.chart }}'
+          rc: '{{ observability_initial_install.rc }}'
+          error_category: >-
+            {{ 'repository-alias-not-found'
+               if observability_initial_install.stderr is search('repo.*not found|no repository definition')
+               else 'helm-command-failed' }}
+          error_fingerprint: '{{ observability_initial_install.stderr | hash("sha256") }}'
+          stderr_bytes: '{{ observability_initial_install.stderr | length }}'
+          release_reinspection_rc: '{{ observability_failed_install_release_list.rc | default(-1) }}'
+          helm_status: >-
+            {{ observability_failed_install_release_list.stdout
+               | default('')
+               | regex_findall('"status"\s*:\s*"(deployed|failed|pending-install|pending-upgrade|pending-rollback|uninstalling|superseded)"') }}
+          pvc_reinspection_failed: '{{ observability_failed_install_namespace_pvcs is failed }}'
+          pvc_names: '{{ observability_failed_install_release_pvc_names }}'
+          unknown_owner_pvc_names: '{{ observability_failed_install_unknown_owner_pvc_names }}'
+      when: observability_initial_install.rc != 0
+
+    - name: Preserve failed initial release and require HITL
+      ansible.builtin.assert:
+        that:
+          - observability_initial_install.rc == 0
+        fail_msg: >-
+          Initial install of {{ observability_release.name }} failed. Its release
+          and PVC state were intentionally preserved. Review the sanitized
+          release/PVC evidence and obtain human approval before any rerun.
+
+- name: Upgrade a healthy release with guarded rollback
+  when: observability_release_state | trim == 'healthy'
+  block:
+    - name: Upgrade healthy release with Helm atomic guard
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/helm upgrade {{ observability_release.name }}
+          {{ observability_release.chart }} --namespace {{ observability_namespace }}
+          --kubeconfig {{ observability_kubeconfig }}
+          --version {{ observability_release.chart_version }}
+          --values {{ observability_release_values_file }} --wait
+          --timeout {{ observability_helm_timeout }}
+          --history-max {{ observability_helm_history_max }} --atomic
+      register: observability_healthy_upgrade
+      changed_when: observability_healthy_upgrade.rc == 0
+      failed_when: observability_healthy_upgrade.rc != 0
+  rescue:
+    - name: Roll back failed healthy upgrade to the recorded revision
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/helm rollback {{ observability_release.name }}
+          {{ observability_healthy_revision }} --namespace {{ observability_namespace }}
+          --kubeconfig {{ observability_kubeconfig }}
+          --wait --timeout {{ observability_helm_timeout }}
+      changed_when: true
+    - name: Fail after recorded-revision rollback
+      ansible.builtin.fail:
+        msg: >-
+          Upgrade of {{ observability_release.name }} failed and rollback to
+          revision {{ observability_healthy_revision }} was requested.

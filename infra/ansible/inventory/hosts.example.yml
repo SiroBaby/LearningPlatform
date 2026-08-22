@@ -1,0 +1,8 @@
+---
+all:
+  children:
+    k3s_nodes:
+      hosts:
+        learning-platform-dev:
+          ansible_host: REPLACE_WITH_VPS_ADDRESS
+          ansible_user: REPLACE_WITH_SSH_USER

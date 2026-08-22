@@ -4,6 +4,7 @@ services:
     container_name: lp_postgres
     restart: unless-stopped
     environment:
+      # Local fixture credentials only; never reuse them outside development.
       POSTGRES_USER: learning
       POSTGRES_PASSWORD: learning
       POSTGRES_DB: learning
@@ -23,6 +24,7 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
+      # Local fixture credentials only; never reuse them outside development.
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:

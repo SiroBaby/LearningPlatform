@@ -1,0 +1,217 @@
+---
+alertmanager:
+  enabled: true
+  forceDeployDashboards: false
+  alertmanagerSpec:
+    replicas: 1
+    useExistingSecret: true
+    configSecret: alertmanager-telegram-config
+    resources:
+      requests:
+        cpu: 35m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+windowsMonitoring:
+  enabled: false
+
+defaultRules:
+  rules:
+    windows: false
+
+kubeApiServer:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+
+kubeEtcd:
+  enabled: false
+
+kubeProxy:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+prometheusOperator:
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  resources:
+    requests:
+      cpu: 35m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  prometheusConfigReloader:
+    resources:
+      requests:
+        cpu: 15m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    retentionSize: 2500MB
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 3Gi
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 35m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 15m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+grafana:
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  resources:
+    requests:
+      cpu: 75m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    type: sts
+    enabled: true
+    storageClassName: local-path
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+  initChownData:
+    enabled: false
+  sidecar:
+    dashboards:
+      enabled: false
+    datasources:
+      enabled: false
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus-operated.observability.svc.cluster.local:9090
+          isDefault: true
+          editable: false
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://learning-platform-loki.observability.svc.cluster.local:3100
+          editable: false
+        - name: Alertmanager
+          type: alertmanager
+          access: proxy
+          url: http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093
+          jsonData:
+            implementation: prometheus
+            handleGrafanaManagedAlerts: false
+          editable: false
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: k8s-resources-cluster
+          orgId: 1
+          folder: Kubernetes
+          type: file
+          disableDeletion: true
+          editable: false
+          options:
+            path: /var/lib/grafana/dashboards/k8s-resources-cluster
+        - name: k8s-resources-node
+          orgId: 1
+          folder: Kubernetes
+          type: file
+          disableDeletion: true
+          editable: false
+          options:
+            path: /var/lib/grafana/dashboards/k8s-resources-node
+        - name: k8s-resources-namespace
+          orgId: 1
+          folder: Kubernetes
+          type: file
+          disableDeletion: true
+          editable: false
+          options:
+            path: /var/lib/grafana/dashboards/k8s-resources-namespace
+        - name: nodes
+          orgId: 1
+          folder: Kubernetes
+          type: file
+          disableDeletion: true
+          editable: false
+          options:
+            path: /var/lib/grafana/dashboards/nodes
+  dashboardsConfigMaps:
+    k8s-resources-cluster: learning-platform-monitori-k8s-resources-cluster
+    k8s-resources-node: learning-platform-monitori-k8s-resources-node
+    k8s-resources-namespace: learning-platform-monitori-k8s-resources-namespace
+    nodes: learning-platform-monitori-nodes
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: true
+    hosts:
+      - grafana.sirobabycloud.io.vn
+    path: /
+    pathType: Prefix
+    tls: []
+  grafana.ini:
+    server:
+      root_url: https://grafana.sirobabycloud.io.vn/
+      domain: grafana.sirobabycloud.io.vn
+      serve_from_sub_path: false
+      enforce_domain: true
+    auth.anonymous:
+      enabled: false
+    feature_toggles:
+      kubernetesLogsDrilldown: false
+    security:
+      cookie_secure: true
+      cookie_samesite: lax

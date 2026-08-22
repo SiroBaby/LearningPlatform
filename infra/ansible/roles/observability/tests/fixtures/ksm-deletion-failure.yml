@@ -1,0 +1,4 @@
+---
+legacy_ksm_inspection_succeeded: false
+legacy_port_forward_succeeded: true
+expected_helm_allowed: false

@@ -1,0 +1,51 @@
+server {
+    listen 80;
+    server_name {{ web_public_host }} {{ api_public_host }};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 80;
+    server_name {{ grafana_public_host }};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name {{ grafana_public_host }};
+
+    ssl_certificate {{ nginx_tls_certificate_path }};
+    ssl_certificate_key {{ nginx_tls_certificate_key_path }};
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ k3s_traefik_http_node_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name {{ web_public_host }} {{ api_public_host }};
+
+    ssl_certificate {{ nginx_tls_certificate_path }};
+    ssl_certificate_key {{ nginx_tls_certificate_key_path }};
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ k3s_traefik_http_node_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}

@@ -1,0 +1,35 @@
+---
+- name: Load mixed failed-install namespace PVC evidence
+  ansible.builtin.set_fact:
+    observability_release: '{{ observability_dev_contract.observability_releases.monitoring }}'
+    observability_releases: '{{ observability_dev_contract.observability_releases }}'
+    observability_failed_install_namespace_pvcs:
+      resources:
+        - metadata:
+            name: storage-learning-platform-monitoring-grafana-0
+            labels:
+              app.kubernetes.io/instance: learning-platform-monitoring
+        - metadata:
+            name: data-learning-platform-loki-0
+            labels:
+              app.kubernetes.io/instance: learning-platform-loki
+        - metadata:
+            name: storage-unknown-owner-0
+            labels:
+              app.kubernetes.io/instance: learning-platform-unknown
+        - metadata:
+            name: storage-missing-owner-0
+
+- name: Execute production failed-install PVC evidence classification
+  ansible.builtin.include_tasks: '{{ playbook_dir }}/../tasks/classify-failed-install-pvc-evidence.yml'
+
+- name: Require failed-install evidence to retain unknown PVC residue
+  ansible.builtin.assert:
+    that:
+      - observability_failed_install_release_pvc_names == ['storage-learning-platform-monitoring-grafana-0']
+      - >-
+        observability_failed_install_unknown_owner_pvc_names ==
+        ['storage-unknown-owner-0', 'storage-missing-owner-0']
+    fail_msg: >-
+      Failed-install PVC evidence must report exact release ownership separately
+      from unknown or missing owner residue.

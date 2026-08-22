@@ -1,0 +1,9 @@
+---
+release_records:
+  - name: learning-platform-monitoring
+    status: failed
+    revision: "3"
+pvcs:
+  - metadata:
+      name: prometheus-learning-platform-monitoring-kube-prometheus-prometheus-db-prometheus-learning-platform-monitoring-kube-prometheus-prometheus-0
+expected_state: partial

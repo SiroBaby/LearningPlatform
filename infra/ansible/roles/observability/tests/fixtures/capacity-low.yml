@@ -1,0 +1,4 @@
+---
+disk_available_bytes: 10737418239
+memory_free_mib: 2048
+expected_capacity: fail

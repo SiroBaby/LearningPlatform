@@ -1,0 +1,21 @@
+---
+- name: low-memfree-high-memavailable
+  disk_available_bytes: 11811160064
+  memory_free_mib: 64
+  memavailable_kib: '2097152'
+  expected_capacity: pass
+- name: below-required-memavailable
+  disk_available_bytes: 11811160064
+  memory_free_mib: 4096
+  memavailable_kib: '2096128'
+  expected_capacity: fail
+- name: malformed-memavailable
+  disk_available_bytes: 11811160064
+  memory_free_mib: 4096
+  memavailable_kib: unavailable
+  expected_capacity: fail
+- name: missing-memavailable
+  disk_available_bytes: 11811160064
+  memory_free_mib: 4096
+  memavailable_kib: ''
+  expected_capacity: fail
