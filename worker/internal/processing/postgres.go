@@ -39,7 +39,7 @@ func (store *PostgresStore) Claim(ctx context.Context) (*Job, error) {
 		return nil, err
 	}
 	var job Job
-	err = tx.QueryRow(ctx, `UPDATE ai.processing_jobs SET attempts=attempts+1,lease_id=gen_random_uuid(),lease_until=now()+interval '15 minutes',status='RUNNING',updated_at=now() WHERE id=$1 RETURNING id,document_id,owner_id,correlation_id,attempts,lease_id`, id).Scan(&job.ID, &job.DocumentID, &job.OwnerID, &job.CorrelationID, &job.Attempt, &job.LeaseID)
+	err = tx.QueryRow(ctx, `UPDATE ai.processing_jobs SET attempts=attempts+1,lease_id=gen_random_uuid(),lease_until=now()+interval '15 minutes',status='RUNNING',updated_at=now() WHERE id=$1 RETURNING id,document_id,owner_id,correlation_id,attempts,lease_id,created_at`, id).Scan(&job.ID, &job.DocumentID, &job.OwnerID, &job.CorrelationID, &job.Attempt, &job.LeaseID, &job.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

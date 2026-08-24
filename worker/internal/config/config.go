@@ -34,16 +34,24 @@ const (
 	openAIRequestTimeoutEnvironment       = "OPENAI_REQUEST_TIMEOUT_MS"
 	allowInsecureEndpointsEnvironment     = "AI_WORKER_ALLOW_INSECURE_LOCAL_ENDPOINTS"
 	migrationsDirectoryEnvironment        = "AI_WORKER_MIGRATIONS_DIR"
+	concurrencyEnvironment                = "AI_WORKER_CONCURRENCY"
+	jobTimeoutEnvironment                 = "AI_WORKER_JOB_TIMEOUT_MS"
+	pollIntervalEnvironment               = "AI_WORKER_POLL_INTERVAL_MS"
+	shutdownTimeoutEnvironment            = "AI_WORKER_SHUTDOWN_TIMEOUT_MS"
 )
 
 type LookupEnv func(string) (string, bool)
 
 type Config struct {
-	HealthAddress string
-	DatabaseURL   string
-	MigrationsDir string
-	Storage       Storage
-	LLM           LLM
+	HealthAddress   string
+	DatabaseURL     string
+	MigrationsDir   string
+	Concurrency     int
+	JobTimeout      time.Duration
+	PollInterval    time.Duration
+	ShutdownTimeout time.Duration
+	Storage         Storage
+	LLM             LLM
 }
 
 type Storage struct{ Endpoint, AccessKey, SecretKey, Bucket string }
@@ -126,7 +134,45 @@ func Load(lookup LookupEnv) (Config, error) {
 		}
 	}
 	migrationsDir := value(lookup, migrationsDirectoryEnvironment, "/app/migrations")
-	return Config{HealthAddress: healthAddress, DatabaseURL: databaseURL, MigrationsDir: migrationsDir, Storage: Storage{endpoint, accessKey, secretKey, bucket}, LLM: llm}, nil
+	concurrency, err := boundedInt(lookup, concurrencyEnvironment, 2, 1, 32)
+	if err != nil {
+		return Config{}, err
+	}
+	jobTimeout, err := boundedDuration(lookup, jobTimeoutEnvironment, 10*time.Minute, time.Millisecond, 14*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	pollInterval, err := boundedDuration(lookup, pollIntervalEnvironment, time.Second, 100*time.Millisecond, time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	shutdownTimeout, err := boundedDuration(lookup, shutdownTimeoutEnvironment, 30*time.Second, time.Second, 2*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{HealthAddress: healthAddress, DatabaseURL: databaseURL, MigrationsDir: migrationsDir, Concurrency: concurrency, JobTimeout: jobTimeout, PollInterval: pollInterval, ShutdownTimeout: shutdownTimeout, Storage: Storage{endpoint, accessKey, secretKey, bucket}, LLM: llm}, nil
+}
+
+func boundedInt(lookup LookupEnv, key string, fallback, minimum, maximum int) (int, error) {
+	raw := value(lookup, key, strconv.Itoa(fallback))
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < minimum || parsed > maximum {
+		return 0, fmt.Errorf("%s must be an integer between %d and %d", key, minimum, maximum)
+	}
+	return parsed, nil
+}
+
+func boundedDuration(lookup LookupEnv, key string, fallback, minimum, maximum time.Duration) (time.Duration, error) {
+	raw := value(lookup, key, strconv.FormatInt(fallback.Milliseconds(), 10))
+	milliseconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a positive integer duration in milliseconds", key)
+	}
+	duration := time.Duration(milliseconds) * time.Millisecond
+	if duration < minimum || duration > maximum {
+		return 0, fmt.Errorf("%s must be between %d and %d milliseconds", key, minimum.Milliseconds(), maximum.Milliseconds())
+	}
+	return duration, nil
 }
 
 func requiredProviderTimeout(lookup LookupEnv) (time.Duration, error) {

@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoad(t *testing.T) {
@@ -37,6 +38,9 @@ func TestLoad(t *testing.T) {
 			if config.HealthAddress != "127.0.0.1:3403" {
 				t.Fatalf("Load() config = %#v", config)
 			}
+			if config.Concurrency != 2 || config.JobTimeout != 10*time.Minute || config.PollInterval != time.Second || config.ShutdownTimeout != 30*time.Second {
+				t.Fatalf("Load() lifecycle config = %#v", config)
+			}
 		})
 	}
 }
@@ -66,6 +70,31 @@ func TestLoadRequiresCoherentOpenAIProviderProfile(t *testing.T) {
 			}
 			if config.LLM.Profile.CapabilityVersion != "chat-completions-json-v1" || config.LLM.Profile.Transport != "chat-completions" || config.LLM.Profile.StructuredOutputMode != "json-object" {
 				t.Fatalf("Load() profile = %#v", config.LLM.Profile)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsUnboundedWorkerLifecycleSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     string
+		value   string
+		wantErr string
+	}{
+		{name: "zero concurrency", key: concurrencyEnvironment, value: "0", wantErr: "AI_WORKER_CONCURRENCY must be an integer between 1 and 32"},
+		{name: "excessive concurrency", key: concurrencyEnvironment, value: "33", wantErr: "AI_WORKER_CONCURRENCY must be an integer between 1 and 32"},
+		{name: "excessive job timeout", key: jobTimeoutEnvironment, value: "840001", wantErr: "AI_WORKER_JOB_TIMEOUT_MS must be between"},
+		{name: "too-short poll interval", key: pollIntervalEnvironment, value: "99", wantErr: "AI_WORKER_POLL_INTERVAL_MS must be between"},
+		{name: "excessive shutdown timeout", key: shutdownTimeoutEnvironment, value: "120001", wantErr: "AI_WORKER_SHUTDOWN_TIMEOUT_MS must be between"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			env := validEnvironment()
+			env[test.key] = test.value
+			_, err := Load(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("Load() error = %v, want %q", err, test.wantErr)
 			}
 		})
 	}

@@ -3,11 +3,13 @@ package processing
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 type Job struct {
 	ID, DocumentID, OwnerID, CorrelationID, LeaseID string
 	Attempt                                         int
+	CreatedAt                                       time.Time
 }
 type Source struct{ StorageRef, Type string }
 type Locator struct {
