@@ -93,8 +93,11 @@ func run() error {
 	}
 	preflightOnly := len(os.Args) == 2
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signals)
 	var ready *atomic.Bool
 	if !preflightOnly {
 		server, readiness, err := startUnreadyHealthServer(workerConfig.HealthAddress)
@@ -143,7 +146,12 @@ func run() error {
 	if err := objects.Check(ctx); err != nil {
 		return newBootstrapFailure(bootstrapStorage)
 	}
-	bootstrap := consumer.New(store, objects, generator)
+	bootstrap := consumer.NewWithOptions(store, objects, generator, consumer.Options{
+		Concurrency:     workerConfig.Concurrency,
+		JobTimeout:      workerConfig.JobTimeout,
+		PollInterval:    workerConfig.PollInterval,
+		ShutdownTimeout: workerConfig.ShutdownTimeout,
+	})
 	if err := bootstrap.Start(ctx); err != nil {
 		return newBootstrapFailure(bootstrapConsumer)
 	}
@@ -151,9 +159,16 @@ func run() error {
 	ready.Store(true)
 
 	slog.Info("worker.started", "event", "worker.started", "runtime", "go-worker")
-	<-ctx.Done()
+	<-signals
+	shutdownWorker(ready, cancel, bootstrap.Close)
 	slog.Info("worker.shutdown.completed", "event", "worker.shutdown.completed", "runtime", "go-worker")
 	return nil
+}
+
+func shutdownWorker(ready *atomic.Bool, cancel context.CancelFunc, closeWorker func()) {
+	ready.Store(false)
+	cancel()
+	closeWorker()
 }
 
 func startUnreadyHealthServer(address string) (*health.Server, *atomic.Bool, error) {

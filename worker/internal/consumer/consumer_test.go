@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/SiroBaby/LearningPlatform/worker/internal/processing"
 )
@@ -210,6 +214,22 @@ func TestProcessOneLogsSafeDLQFailure(t *testing.T) {
 	assertLogDoesNotExposeJobData(t, output.String())
 }
 
+func TestLifecycleLogIncludesQueueAgeAndProcessingLatency(t *testing.T) {
+	var output bytes.Buffer
+	worker := &Bootstrap{
+		logger:  slog.New(slog.NewJSONHandler(&output, nil)),
+		options: normalizeOptions(Options{Concurrency: 2}),
+	}
+	worker.logLifecycle("worker.processing.completed", processing.Job{ID: "job", Attempt: 1, CreatedAt: time.Now().Add(-time.Second)}, 1, 25*time.Millisecond)
+	entry := decodeLogEntry(t, output.String())
+	if _, ok := entry["queue_age_ms"]; !ok {
+		t.Fatalf("lifecycle log missing queue age: %#v", entry)
+	}
+	if got := entry["duration_ms"]; got != float64(25) {
+		t.Fatalf("lifecycle duration = %#v, want 25", got)
+	}
+}
+
 func decodeLogEntry(t *testing.T, output string) map[string]any {
 	t.Helper()
 	var entry map[string]any
@@ -269,6 +289,87 @@ func (generator generatorMock) Generate(context.Context, string) (processing.Que
 	return processing.Question{}, generator.err
 }
 
+type poolStore struct {
+	job                  atomic.Int64
+	claims               atomic.Int64
+	retries              atomic.Int64
+	retryContextCanceled atomic.Bool
+	persists             atomic.Int64
+	fails                atomic.Int64
+	maxJobs              int64
+	retryResult          processing.RetryResult
+}
+
+func (store *poolStore) Claim(context.Context) (*processing.Job, error) {
+	claim := store.claims.Add(1)
+	if claim > store.maxJobs {
+		return nil, nil
+	}
+	jobID := store.job.Add(1)
+	return &processing.Job{ID: "job-" + strconv.FormatInt(jobID, 10), DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1}, nil
+}
+
+func (store *poolStore) Source(context.Context, processing.Job) (processing.Source, error) {
+	return processing.Source{StorageRef: "document.txt", Type: "TEXT"}, nil
+}
+
+func (store *poolStore) PersistAndComplete(context.Context, processing.Job, []processing.Chunk, []processing.Question) (bool, error) {
+	store.persists.Add(1)
+	return true, nil
+}
+
+func (store *poolStore) Fail(context.Context, processing.Job, processing.Failure) (bool, error) {
+	store.fails.Add(1)
+	return true, nil
+}
+
+func (store *poolStore) Retry(ctx context.Context, _ processing.Job, _ processing.FailureCode) (processing.RetryResult, error) {
+	store.retries.Add(1)
+	store.retryContextCanceled.Store(ctx.Err() != nil)
+	return store.retryResult, nil
+}
+
+type blockingGenerator struct {
+	release     chan struct{}
+	started     atomic.Int64
+	active      atomic.Int64
+	maxActive   atomic.Int64
+	cancelled   atomic.Bool
+	maxActiveMu sync.Mutex
+}
+
+func (generator *blockingGenerator) Generate(ctx context.Context, _ string) (processing.Question, error) {
+	generator.started.Add(1)
+	active := generator.active.Add(1)
+	generator.maxActiveMu.Lock()
+	if active > generator.maxActive.Load() {
+		generator.maxActive.Store(active)
+	}
+	generator.maxActiveMu.Unlock()
+	defer generator.active.Add(-1)
+	select {
+	case <-generator.release:
+		return validQuestion(), nil
+	case <-ctx.Done():
+		generator.cancelled.Store(true)
+		return processing.Question{}, ctx.Err()
+	}
+}
+
+type deadlineGenerator struct{ sawDeadline atomic.Bool }
+
+func (generator *deadlineGenerator) Generate(ctx context.Context, _ string) (processing.Question, error) {
+	if _, ok := ctx.Deadline(); ok {
+		generator.sawDeadline.Store(true)
+	}
+	<-ctx.Done()
+	return processing.Question{}, ctx.Err()
+}
+
+func validQuestion() processing.Question {
+	return processing.Question{Stem: "stem", Explanation: "explanation", Options: []processing.Option{{Content: "a", IsCorrect: true}, {Content: "b"}, {Content: "c"}, {Content: "d"}}}
+}
+
 func TestBootstrapDoesNotStartWithCanceledContext(t *testing.T) {
 	t.Parallel()
 
@@ -281,4 +382,129 @@ func TestBootstrapDoesNotStartWithCanceledContext(t *testing.T) {
 	if bootstrap.Ready() {
 		t.Fatal("Bootstrap should remain not ready after failed Start")
 	}
+}
+
+func TestNewWithOptionsClampsLifecycleBounds(t *testing.T) {
+	worker := NewWithOptions(nil, nil, nil, Options{
+		Concurrency:     100,
+		JobTimeout:      time.Nanosecond,
+		PollInterval:    time.Nanosecond,
+		ShutdownTimeout: time.Nanosecond,
+	})
+	if worker.options.Concurrency != maxConcurrency {
+		t.Fatalf("concurrency = %d, want %d", worker.options.Concurrency, maxConcurrency)
+	}
+	if worker.options.JobTimeout != minJobTimeout {
+		t.Fatalf("job timeout = %s, want %s", worker.options.JobTimeout, minJobTimeout)
+	}
+	if worker.options.PollInterval != minPollInterval {
+		t.Fatalf("poll interval = %s, want %s", worker.options.PollInterval, minPollInterval)
+	}
+	if worker.options.ShutdownTimeout != minShutdownTimeout {
+		t.Fatalf("shutdown timeout = %s, want %s", worker.options.ShutdownTimeout, minShutdownTimeout)
+	}
+}
+
+func TestBootstrapCanRestartAfterClosedNilStore(t *testing.T) {
+	bootstrap := NewBootstrap()
+	if err := bootstrap.Start(context.Background()); err != nil {
+		t.Fatalf("first Start() error = %v", err)
+	}
+	bootstrap.Close()
+	if err := bootstrap.Start(context.Background()); err != nil {
+		t.Fatalf("second Start() error = %v", err)
+	}
+	bootstrap.Close()
+}
+
+func TestWorkerPoolNeverExceedsConfiguredConcurrency(t *testing.T) {
+	store := &poolStore{maxJobs: 6}
+	generator := &blockingGenerator{release: make(chan struct{})}
+	worker := NewWithOptions(store, objectMock{bytes: []byte("document text")}, generator, Options{
+		Concurrency:     2,
+		PollInterval:    5 * time.Millisecond,
+		JobTimeout:      time.Second,
+		ShutdownTimeout: time.Second,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !waitUntil(time.Second, func() bool { return generator.started.Load() == 2 }) {
+		t.Fatalf("worker did not start two jobs: started=%d", generator.started.Load())
+	}
+	if got := generator.maxActive.Load(); got > 2 {
+		t.Fatalf("max concurrent generators = %d, want <= 2", got)
+	}
+	if got := store.claims.Load(); got != 2 {
+		t.Fatalf("claims while both slots are occupied = %d, want 2", got)
+	}
+	close(generator.release)
+	worker.Close()
+}
+
+func TestWorkerJobTimeoutCancelsPipelineAndRetriesWithFreshContext(t *testing.T) {
+	store := &poolStore{maxJobs: 1, retryResult: processing.RetryResult{Scheduled: true}}
+	generator := &deadlineGenerator{}
+	worker := NewWithOptions(store, objectMock{bytes: []byte("document text")}, generator, Options{
+		Concurrency:     1,
+		PollInterval:    5 * time.Millisecond,
+		JobTimeout:      25 * time.Millisecond,
+		PersistTimeout:  time.Second,
+		ShutdownTimeout: time.Second,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := worker.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !waitUntil(time.Second, func() bool { return store.retries.Load() == 1 }) {
+		t.Fatalf("timeout was not retried: retries=%d", store.retries.Load())
+	}
+	if !generator.sawDeadline.Load() {
+		t.Fatal("generator context did not carry the per-job deadline")
+	}
+	if store.retryContextCanceled.Load() {
+		t.Fatal("timeout retry used the canceled job context")
+	}
+	worker.Close()
+}
+
+func TestWorkerCloseCancelsInFlightJobsBeforeReturning(t *testing.T) {
+	store := &poolStore{maxJobs: 1}
+	generator := &blockingGenerator{release: make(chan struct{})}
+	worker := NewWithOptions(store, objectMock{bytes: []byte("document text")}, generator, Options{
+		Concurrency:     1,
+		PollInterval:    5 * time.Millisecond,
+		JobTimeout:      time.Minute,
+		ShutdownTimeout: time.Second,
+	})
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !waitUntil(time.Second, func() bool { return generator.started.Load() == 1 }) {
+		t.Fatal("worker did not start an in-flight job")
+	}
+	worker.Close()
+	if worker.Ready() {
+		t.Fatal("worker remained ready after Close")
+	}
+	if !generator.cancelled.Load() {
+		t.Fatal("Close() did not cancel the in-flight job")
+	}
+	if store.persists.Load() != 0 || store.fails.Load() != 0 || store.retries.Load() != 0 {
+		t.Fatalf("shutdown mutated durable job state: persists=%d fails=%d retries=%d", store.persists.Load(), store.fails.Load(), store.retries.Load())
+	}
+}
+
+func waitUntil(timeout time.Duration, condition func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return condition()
 }

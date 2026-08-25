@@ -46,6 +46,12 @@ set -a
 set +a
 ```
 
+The durable consumer uses a bounded pool configured by `AI_WORKER_CONCURRENCY`.
+Each claimed job receives its own `AI_WORKER_JOB_TIMEOUT_MS`; cancellation leaves
+the PostgreSQL lease fenced for safe replay after expiry. Polling and shutdown
+drain are bounded by `AI_WORKER_POLL_INTERVAL_MS` and
+`AI_WORKER_SHUTDOWN_TIMEOUT_MS` respectively.
+
 The provider contract accepts `fake` or `openai-compatible`. For a real
 provider, set `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `OPENAI_MODEL`, then use
 one coherent pair: `chat-completions-json-v1` with `chat-completions`, or

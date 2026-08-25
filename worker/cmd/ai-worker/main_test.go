@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 )
 
@@ -69,6 +70,23 @@ func TestStartUnreadyHealthServerKeepsLivenessAvailable(t *testing.T) {
 		_ = response.Body.Close()
 	}
 
+}
+
+func TestShutdownWorkerMarksReadinessBeforeCancellationAndClose(t *testing.T) {
+	var ready atomic.Bool
+	ready.Store(true)
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var observedReadyDuringCancel, observedReadyDuringClose bool
+	shutdownWorker(&ready, func() {
+		observedReadyDuringCancel = ready.Load()
+		cancel()
+	}, func() {
+		observedReadyDuringClose = ready.Load()
+	})
+	if observedReadyDuringCancel || observedReadyDuringClose || ready.Load() {
+		t.Fatalf("shutdown ordering = cancel:%t close:%t final:%t", observedReadyDuringCancel, observedReadyDuringClose, ready.Load())
+	}
 }
 
 func TestRunKeepsReadinessFalseUntilQuizPreflightCompletes(t *testing.T) {
