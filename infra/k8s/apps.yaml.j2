@@ -37,6 +37,8 @@ spec:
               value: 0.0.0.0
             - name: PHASE0_API_BASE_URL
               value: {{ phase0_api_base_url }}
+            - name: AUTH_INTERNAL_API_BASE_URL
+              value: http://api:3000
             - name: PHASE0_DEV_OWNER_ID
               value: {{ phase0_dev_owner_id }}
           readinessProbe:

@@ -40,6 +40,16 @@ Dir.mktmpdir('learning-platform-nginx') do |directory|
   ].each do |contract|
     assert(route.match?(/^\s*#{contract}$/), "Grafana HTTPS route must preserve #{contract}")
   end
+
+  application_blocks = blocks.select do |block|
+    block.match?(/^\s*server_name learningplatform-dev\.sirobabycloud\.io\.vn learningplatform-dev-api\.sirobabycloud\.io\.vn;$/)
+  end
+  assert(application_blocks.length == 2, 'managed Nginx must own the public application hosts on exactly port 80 and 443')
+
+  application_http, application_https = application_blocks.partition { |block| block.match?(/^\s*listen 80;$/) }
+  assert(application_http.length == 1 && application_http.first.include?('return 301 https://$host$request_uri;'), 'Application HTTP route must redirect to HTTPS')
+  assert(application_https.length == 1 && application_https.first.match?(/^\s*listen 443 ssl;$/), 'Application HTTPS route must be present')
+  assert(application_https.first.match?(/^\s*proxy_set_header X-Forwarded-Host \$host;$/), 'Application HTTPS route must preserve the public host')
 end
 
-puts 'PASS rendered Nginx owns the public Grafana host and preserves proxy headers'
+puts 'PASS rendered Nginx owns public Grafana/application hosts and preserves proxy headers'
