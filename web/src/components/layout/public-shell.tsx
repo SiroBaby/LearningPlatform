@@ -114,6 +114,8 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
             <p className="text-sm font-semibold text-ink-900">Niềm tin & trợ giúp</p>
             <ul className="mt-3 space-y-2 text-sm text-ink-600">
               <li><Link href={routes.faq}>FAQ</Link></li>
+              <li><Link href={routes.privacy}>Privacy Policy</Link></li>
+              <li><Link href={routes.terms}>Terms</Link></li>
               <li><Link href={routes.billing}>Usage transparency</Link></li>
               <li>Uploaded documents are private by default.</li>
             </ul>
