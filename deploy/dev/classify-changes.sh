@@ -39,6 +39,7 @@ classify_changes() {
         web=true
         api=true
         worker=true
+        go_worker=true
       else
         while IFS= read -r changed_file; do
           case "${changed_file}" in
@@ -98,6 +99,7 @@ classify_changes() {
       web=true
       api=true
       worker=true
+      go_worker=true
       ;;
     observability)
       observability=true

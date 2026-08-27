@@ -76,6 +76,15 @@ assert_manual_worker_go_worker_output() {
   grep -Fxq 'go_worker=true' <<<"${actual}" || fail "manual worker rollout must enable Go worker CI: ${actual}"
 }
 
+assert_manual_all_go_worker_output() {
+  local before_sha="$1"
+  local after_sha="$2"
+  local actual
+
+  actual="$(${CLASSIFIER} all "${before_sha}" "${after_sha}")"
+  grep -Fxq 'go_worker=true' <<<"${actual}" || fail "manual all rollout must enable Go worker CI: ${actual}"
+}
+
 assert_observability_output() {
   local target="$1"
   local before_sha="$2"
@@ -229,6 +238,7 @@ main() {
   (cd "${repository}" && assert_manual_worker_go_worker_output "${before_sha}" "${after_sha}")
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output all "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_manual_all_go_worker_output "${before_sha}" "${after_sha}")
   expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
   (cd "${repository}" && assert_output observability "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output observability "${before_sha}" "${after_sha}" true)
@@ -238,6 +248,7 @@ main() {
   (cd "${repository}" && assert_observability_output observability-health "${before_sha}" "${after_sha}" true)
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "0000000000000000000000000000000000000000" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_go_worker_output "0000000000000000000000000000000000000000" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "0000000000000000000000000000000000000000" "${after_sha}" false)
   printf '%s\n' 'change classification tests passed'
 }
