@@ -358,6 +358,10 @@ check_application_edge_contract() {
   for required_pattern in \
     '^  db_ssl_mode: /REPLACE/WITH/EXACT/db-ssl-mode$' \
     '^  db_ssl_ca: /REPLACE/WITH/EXACT/db-ssl-ca$' \
+    '^  google_client_id: /REPLACE/WITH/EXACT/google-client-id$' \
+    '^  google_client_secret: /REPLACE/WITH/EXACT/google-client-secret$' \
+    '^  google_redirect_uri: /REPLACE/WITH/EXACT/google-redirect-uri$' \
+    '^  auth_oauth_encryption_key: /REPLACE/WITH/EXACT/auth-oauth-encryption-key$' \
     '^  swagger_username: /REPLACE/WITH/EXACT/swagger-username$' \
     '^  swagger_password: /REPLACE/WITH/EXACT/swagger-password$' \
     '^ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET$' \
@@ -373,6 +377,10 @@ check_application_edge_contract() {
 
   if [ "$(grep -c "'DB_SSL_MODE': ssm_parameter_keys.db_ssl_mode" "${eso_template}")" -ne 2 ] \
     || [ "$(grep -c "'DB_SSL_CA': ssm_parameter_keys.db_ssl_ca" "${eso_template}")" -ne 2 ] \
+    || [ "$(grep -c "'GOOGLE_CLIENT_ID': ssm_parameter_keys.google_client_id" "${eso_template}")" -ne 1 ] \
+    || [ "$(grep -c "'GOOGLE_CLIENT_SECRET': ssm_parameter_keys.google_client_secret" "${eso_template}")" -ne 1 ] \
+    || [ "$(grep -c "'GOOGLE_REDIRECT_URI': ssm_parameter_keys.google_redirect_uri" "${eso_template}")" -ne 1 ] \
+    || [ "$(grep -c "'AUTH_OAUTH_ENCRYPTION_KEY': ssm_parameter_keys.auth_oauth_encryption_key" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c 'imagePullSecrets:' "${app_template}")" -ne 3 ] \
     || ! grep -q 'kind: Ingress' "${app_template}" \
     || ! grep -q 'ingressClassName: traefik' "${app_template}" \
@@ -391,6 +399,13 @@ check_application_edge_contract() {
     || ! grep -Fqx '                  name: learning-platform-api-runtime' "${app_template}"; then
     fail 'Go worker must source its shared PostgreSQL configuration from the backend runtime Secret.'
   fi
+
+  for api_oauth_env in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REDIRECT_URI AUTH_OAUTH_ENCRYPTION_KEY; do
+    if ! grep -Fq "'${api_oauth_env}'" "${app_template}" \
+      || ! grep -Fq '                  name: learning-platform-api-runtime' "${app_template}"; then
+      fail "API must source ${api_oauth_env} from the shared runtime Secret."
+    fi
+  done
 
   if ! grep -q 'kubernetes.io/dockerconfigjson' "${app_tasks}" \
     || ! grep -q 'deployment_targets' "${app_tasks}" \
