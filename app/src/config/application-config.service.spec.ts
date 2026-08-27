@@ -47,6 +47,39 @@ const databaseConfig = (
 
 describe('ApplicationConfigService', () => {
 
+  it('validates Google OAuth configuration only when the auth boundary is read', () => {
+    const key = Buffer.alloc(32, 7).toString('base64');
+    const config = new ApplicationConfigService(new ConfigService({
+      app: {
+        env: 'development',
+        googleOAuth: {
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          encryptionKey: key,
+          redirectUri: 'http://localhost:3000/auth/google/callback',
+        },
+      },
+    }));
+
+    expect(config.googleOAuth).toEqual({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      encryptionKey: key,
+      redirectUri: 'http://localhost:3000/auth/google/callback',
+    });
+    expect(() => new ApplicationConfigService(new ConfigService({
+      app: {
+        env: 'development',
+        googleOAuth: {
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          encryptionKey: Buffer.alloc(16).toString('base64'),
+          redirectUri: 'http://localhost:3000/auth/google/callback',
+        },
+      },
+    })).googleOAuth).toThrow('AUTH_OAUTH_ENCRYPTION_KEY must decode to 32 bytes');
+  });
+
   it('requires a strict Go worker SPIFFE URI when internal mTLS is enabled', () => {
     const application = (expectedClientSpiffeUri: string | undefined): ApplicationConfigService => new ApplicationConfigService(new ConfigService({
       app: {

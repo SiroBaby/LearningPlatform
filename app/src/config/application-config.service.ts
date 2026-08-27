@@ -7,6 +7,7 @@ import {
   CONFIG_PATH,
   DatabaseSslMode,
   DatabaseSettings,
+  GoogleOAuthSettings,
   LlmProviderSettings,
   LlmCapabilityVersion,
   LlmStructuredOutputMode,
@@ -20,6 +21,26 @@ import {
 @Injectable()
 export class ApplicationConfigService {
   constructor(private readonly config: ConfigService) {}
+
+  get googleOAuth(): GoogleOAuthSettings {
+    const googleOAuth = {
+      clientId: this.required<string>(CONFIG_PATH.app.googleOAuth.clientId),
+      clientSecret: this.required<string>(CONFIG_PATH.app.googleOAuth.clientSecret),
+      redirectUri: this.required<string>(CONFIG_PATH.app.googleOAuth.redirectUri),
+      encryptionKey: this.required<string>(CONFIG_PATH.app.googleOAuth.encryptionKey),
+    };
+    if (!/^https?:\/\//u.test(googleOAuth.redirectUri)) {
+      throw new Error('GOOGLE_REDIRECT_URI must be an absolute HTTP(S) URL');
+    }
+    if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(googleOAuth.encryptionKey)) {
+      throw new Error('AUTH_OAUTH_ENCRYPTION_KEY must be base64 encoded');
+    }
+    const encryptionKeyBytes = Buffer.from(googleOAuth.encryptionKey, 'base64');
+    if (encryptionKeyBytes.length !== 32) {
+      throw new Error('AUTH_OAUTH_ENCRYPTION_KEY must decode to 32 bytes');
+    }
+    return googleOAuth;
+  }
 
   get ai(): AiSettings {
     const provider = this.provider();
