@@ -7,6 +7,7 @@ import { TypeOrmConfigService } from './database/typeorm-config.service';
 import { HealthModule } from './modules/health/health.module';
 import { StorageModule } from './storage/storage.module';
 import { ContentModule } from './modules/content/content.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { ContentModule } from './modules/content/content.module';
     HealthModule,
     StorageModule,
     ContentModule,
+    AuthModule,
   ],
 })
 export class AppModule {}

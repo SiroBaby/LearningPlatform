@@ -11,6 +11,13 @@ export interface ApplicationSettings {
   swagger: SwaggerSettings;
 }
 
+export interface GoogleOAuthSettings {
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly redirectUri: string;
+  readonly encryptionKey: string;
+}
+
 export interface InternalMtlsSettings {
   readonly caPath: string | undefined;
   readonly certPath: string | undefined;
@@ -138,6 +145,12 @@ export const CONFIG_PATH = {
   },
   app: {
     environment: 'app.env',
+    googleOAuth: {
+      clientId: 'app.googleOAuth.clientId',
+      clientSecret: 'app.googleOAuth.clientSecret',
+      redirectUri: 'app.googleOAuth.redirectUri',
+      encryptionKey: 'app.googleOAuth.encryptionKey',
+    },
     port: 'app.port',
     internalMtls: {
       caPath: 'app.internalMtls.caPath',

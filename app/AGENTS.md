@@ -16,6 +16,7 @@
 - Service sở hữu flow nghiệp vụ, authorization decision, orchestration và business exception. Không inject `Repository`, `DataSource`, `EntityManager`; không raw SQL hoặc query builder.
 - Repository là lớp duy nhất truy cập PostgreSQL/TypeORM. Concrete repository phải extend `BaseRepository<T>` và nhận `DataSource` qua constructor.
 - Repository chỉ chứa persistence/query/transaction; không chứa DTO, HTTP concern, response mapping hoặc business policy.
+- Mọi kết quả raw từ `DataSource.query`/`EntityManager.query` phải được chuẩn hóa theo đúng shape driver thực tế (array, `rows` hoặc tuple) trước khi hydrate entity hoặc tính affected rows; bắt buộc có regression test cho shape đã gặp.
 - Service không nhận DTO; controller chuyển DTO thành command/value raw. Response DTO không lộ `ownerId`, `storageRef`, khóa nội bộ hay dữ liệu nhạy cảm.
 - Response mapping dùng AutoMapper (`@AutoMap()` + profile theo module). Controller gọi mapper; không dùng constructor/static mapper thủ công. Mapping khác tên, datetime hoặc dữ liệu cần che giấu phải khai báo tường minh trong profile.
 - Nullable field trong response contract phải được map tường minh và có test xác nhận key vẫn tồn tại với giá trị `null`; không để AutoMapper biến `null` thành field bị omit.

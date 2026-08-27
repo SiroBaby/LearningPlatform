@@ -3,6 +3,12 @@ import { registerAs } from '@nestjs/config';
 export default registerAs('app', () => ({
   env: process.env.NODE_ENV ?? 'development',
   port: parseInt(process.env.PORT ?? '3000', 10),
+  googleOAuth: {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri: process.env.GOOGLE_REDIRECT_URI,
+    encryptionKey: process.env.AUTH_OAUTH_ENCRYPTION_KEY,
+  },
   internalMtls: {
     caPath: process.env.INTERNAL_MTLS_CA_PATH,
     certPath: process.env.INTERNAL_MTLS_CERT_PATH,
