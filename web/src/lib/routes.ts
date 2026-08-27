@@ -7,6 +7,8 @@ export const routes = {
   pricing: "/pricing",
   examples: "/examples",
   faq: "/faq",
+  privacy: "/privacy",
+  terms: "/terms",
 
   // Auth
   login: "/login",
