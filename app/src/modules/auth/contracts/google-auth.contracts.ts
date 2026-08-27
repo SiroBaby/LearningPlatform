@@ -12,3 +12,11 @@ export interface AuthSessionPair {
   readonly refreshToken: string;
   readonly refreshExpiresAt: string;
 }
+
+export interface AuthUser {
+  readonly id: string;
+  readonly email: string;
+  readonly displayName: string | null;
+  readonly role: string;
+  readonly status: string;
+}

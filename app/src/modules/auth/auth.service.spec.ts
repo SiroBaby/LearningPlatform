@@ -56,7 +56,11 @@ function repository(overrides: Record<string, unknown> = {}) {
     createOAuthTransaction: jest.fn(async () => undefined),
     createSessionPair: jest.fn(async () => session),
     markOAuthTransactionConsumed: jest.fn(async () => undefined),
+    promoteUserIfAllowlisted: jest.fn(async () => undefined),
     releaseOAuthTransaction: jest.fn(async () => 1),
+    rotateRefreshSession: jest.fn(async () => session),
+    revokeSessionFamily: jest.fn(async () => undefined),
+    getUserByAccessToken: jest.fn(async () => ({ id: 'user-id', email: 'owner@example.com', displayName: null, role: 'USER', status: 'ACTIVE' })),
     upsertUser: jest.fn(async (_identity: GoogleIdentity) => ({ id: 'user-id' })),
     ...overrides,
   };
@@ -110,7 +114,31 @@ describe('AuthService', () => {
     expect(repo.upsertUser as unknown as jest.Mock).toHaveBeenCalledWith(expect.objectContaining({ googleSub: 'google-sub', email: 'owner@example.com' }));
     expect(repo.markOAuthTransactionConsumed as unknown as jest.Mock).toHaveBeenCalledWith('transaction-id');
     expect(repo.createSessionPair as unknown as jest.Mock).toHaveBeenCalledWith('user-id');
+    expect(repo.promoteUserIfAllowlisted as unknown as jest.Mock).toHaveBeenCalledWith('user-id', 'google-sub', []);
     expect(repo.releaseOAuthTransaction as unknown as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes and revokes sessions through the repository lifecycle', async () => {
+    const repo = repository();
+    const service = new AuthService(config, repo as never, provider(undefined));
+
+    await expect(service.refresh('refresh-token')).resolves.toEqual(session);
+    await expect(service.me('access-token')).resolves.toMatchObject({ id: 'user-id', status: 'ACTIVE' });
+    await expect(service.logout('access-token')).resolves.toBeUndefined();
+    expect(repo.rotateRefreshSession as unknown as jest.Mock).toHaveBeenCalledWith('refresh-token');
+    expect(repo.getUserByAccessToken as unknown as jest.Mock).toHaveBeenCalledWith('access-token');
+    expect(repo.revokeSessionFamily as unknown as jest.Mock).toHaveBeenCalledWith('access-token', 'LOGOUT');
+  });
+
+  it('returns a generic unauthorized error when refresh or me has no valid session', async () => {
+    const repo = repository({
+      rotateRefreshSession: jest.fn(async () => null),
+      getUserByAccessToken: jest.fn(async () => null),
+    });
+    const service = new AuthService(config, repo as never, provider(undefined));
+
+    await expect(service.refresh('expired')).rejects.toThrow('Invalid session');
+    await expect(service.me('expired')).rejects.toThrow('Invalid session');
   });
 
   it.each([

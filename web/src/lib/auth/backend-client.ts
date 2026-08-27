@@ -4,6 +4,7 @@ interface AuthBackendRequest {
   readonly method: "GET" | "POST";
   readonly path: string;
   readonly body?: unknown;
+  readonly authorization?: string;
 }
 
 function getAuthBackendUrl(): string {
@@ -18,6 +19,7 @@ function getAuthBackendUrl(): string {
 
 export async function requestAuthBackend(request: AuthBackendRequest): Promise<Response> {
   const headers = new Headers();
+  if (request.authorization) headers.set("Authorization", request.authorization);
   if (request.body !== undefined) headers.set("Content-Type", "application/json");
   try {
     return await fetch(`${getAuthBackendUrl()}${request.path}`, {

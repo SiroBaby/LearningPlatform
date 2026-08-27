@@ -142,6 +142,7 @@ export class ApplicationConfigService {
       throw new Error('INTERNAL_MTLS_PORT must be a valid TCP port');
     }
     return {
+      authAdminGoogleSubs: this.authAdminGoogleSubs,
       environment: this.required<string>(CONFIG_PATH.app.environment),
       internalMtls: { ...internalMtls, enabled: configuredPaths.length === 3 },
       port: this.required<number>(CONFIG_PATH.app.port),
@@ -151,6 +152,16 @@ export class ApplicationConfigService {
         username: this.config.get<string>(CONFIG_PATH.app.swagger.username),
       },
     };
+  }
+
+  get authAdminGoogleSubs(): readonly string[] {
+    const raw = this.config.get<string | undefined>(CONFIG_PATH.app.authAdminGoogleSubs);
+    if (!raw?.trim()) return [];
+    const values = raw.split(',').map((value) => value.trim()).filter(Boolean);
+    if (values.some((value) => !/^[A-Za-z0-9._-]{1,255}$/u.test(value))) {
+      throw new Error('AUTH_ADMIN_GOOGLE_SUBS must be a comma-separated Google subject allowlist');
+    }
+    return [...new Set(values)];
   }
 
   get database(): DatabaseSettings {

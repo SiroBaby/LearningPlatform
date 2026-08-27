@@ -8,6 +8,7 @@ import type { AuthSessionPair, GoogleIdentity } from './contracts/google-auth.co
 import { AuthRepository } from './repositories/auth.repository';
 import { createPkcePair, decryptPkceVerifier, encryptPkceVerifier, hashOAuthValue } from './oauth-crypto';
 import { GOOGLE_OAUTH_PROVIDER, type GoogleOAuthProvider } from './google-oauth.provider';
+import { AccountStatus } from './enums/account-status.enum';
 
 type ProviderErrorCategory = 'invalid_grant' | 'unauthorized_client' | 'invalid_client' | 'network' | 'timeout' | 'unknown';
 
@@ -85,6 +86,12 @@ export class AuthService {
       if (hashOAuthValue(identity.nonce) !== transaction.nonceHash) throw new Error('OAuth nonce mismatch');
       phase = 'user_upsert';
       const user = await this.repository.upsertUser(identity);
+      await this.repository.promoteUserIfAllowlisted(
+        user.id,
+        identity.googleSub,
+        this.config.authAdminGoogleSubs ?? [],
+      );
+      if (user.status && user.status !== AccountStatus.ACTIVE) throw new UnauthorizedException('OAuth login failed');
       phase = 'transaction_consume';
       await this.repository.markOAuthTransactionConsumed(transaction.id);
       phase = 'session_create';
@@ -115,6 +122,30 @@ export class AuthService {
       }
       throw new UnauthorizedException('OAuth login failed');
     }
+  }
+
+  async refresh(refreshToken: string): Promise<AuthSessionPair> {
+    const session = await this.repository.rotateRefreshSession(refreshToken);
+    if (!session) throw new UnauthorizedException('Invalid session');
+    return session;
+  }
+
+  async logout(token: string): Promise<void> {
+    await this.repository.revokeSessionFamily(token, 'LOGOUT');
+  }
+
+  async me(accessToken: string) {
+    const user = await this.repository.getUserByAccessToken(accessToken);
+    if (!user) throw new UnauthorizedException('Invalid session');
+    return user;
+  }
+
+  async suspend(userId: string): Promise<void> {
+    await this.repository.updateAccountStatus(userId, AccountStatus.SUSPENDED, 'ACCOUNT_SUSPENDED');
+  }
+
+  async delete(userId: string): Promise<void> {
+    await this.repository.updateAccountStatus(userId, AccountStatus.DELETED, 'ACCOUNT_DELETED');
   }
 
   private readIdentity(payload: TokenPayload | undefined): GoogleIdentity {
