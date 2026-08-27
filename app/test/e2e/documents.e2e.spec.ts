@@ -24,6 +24,12 @@ describe('Document HTTP flow', () => {
   const otherOwnerId = randomUUID();
 
   beforeAll(async () => {
+    // AppModule eagerly constructs the OAuth provider; e2e uses the legacy
+    // owner-header seam, so provide non-secret fixture values for bootstrap.
+    process.env.GOOGLE_CLIENT_ID ??= 'e2e-google-client-id';
+    process.env.GOOGLE_CLIENT_SECRET ??= 'e2e-google-client-secret';
+    process.env.GOOGLE_REDIRECT_URI ??= 'http://localhost:3000/auth/google/callback';
+    process.env.AUTH_OAUTH_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
     db = await startTestDb();
     storage = await TestStorageServer.start();
     const module = await Test.createTestingModule({ imports: [AppModule] })
