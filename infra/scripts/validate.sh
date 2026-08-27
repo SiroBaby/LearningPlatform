@@ -390,6 +390,11 @@ check_application_edge_contract() {
     fail 'Ingress must route only web and API, with image pull secrets on every pod.'
   fi
 
+  if [ "$(grep -Fc '            - name: WEB_PUBLIC_ORIGIN' "${app_template}")" -ne 1 ] \
+    || ! grep -Fq '              value: https://{{ web_public_host }}' "${app_template}"; then
+    fail 'Web OAuth redirects must use the configured public origin, not the request host.'
+  fi
+
   if grep -R -Eq 'AI_WORKER_(DATABASE|MIGRATION)_URL|ai_worker_(database|migration)_url' \
     "${INFRA_DIR}" "${WORKSPACE_DIR}/worker" "${WORKSPACE_DIR}/app"; then
     fail 'Go worker must reuse the existing backend database Secret without separate SSM database URLs.'
