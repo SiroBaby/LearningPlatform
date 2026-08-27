@@ -35,6 +35,10 @@ ssm_parameter_keys:
   db_name: /learning-platform/dev/db-name
   db_ssl_mode: /learning-platform/dev/db-ssl-mode
   db_ssl_ca: /learning-platform/dev/db-ssl-ca
+  google_client_id: /learning-platform/dev/google-client-id
+  google_client_secret: /learning-platform/dev/google-client-secret
+  google_redirect_uri: /learning-platform/dev/google-redirect-uri
+  auth_oauth_encryption_key: /learning-platform/dev/auth-oauth-encryption-key
   object_storage_endpoint: /learning-platform/dev/object-storage-endpoint
   object_storage_port: /learning-platform/dev/object-storage-port
   object_storage_region: /learning-platform/dev/object-storage-region
