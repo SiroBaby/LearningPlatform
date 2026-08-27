@@ -57,6 +57,16 @@ assert_go_worker_output() {
   grep -Fxq 'go_worker=true' <<<"${actual}" || fail "worker/** must enable Go worker CI: ${actual}"
 }
 
+assert_infra_go_worker_output() {
+  local before_sha="$1"
+  local after_sha="$2"
+  local actual
+
+  actual="$("${CLASSIFIER}" auto "${before_sha}" "${after_sha}")"
+  grep -Fxq 'worker=true' <<<"${actual}" || fail "infrastructure application changes must enable worker CI: ${actual}"
+  grep -Fxq 'go_worker=true' <<<"${actual}" || fail "infrastructure application changes must enable Go worker CI: ${actual}"
+}
+
 assert_manual_worker_go_worker_output() {
   local before_sha="$1"
   local after_sha="$2"
@@ -134,16 +144,19 @@ main() {
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/applications/tasks/main.yml)"
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/k8s/apps.yaml.j2)"
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/cert_manager/tasks/main.yml)"
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
 
   before_sha="${after_sha}"
@@ -180,6 +193,14 @@ main() {
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/external_secrets/tasks/main.yml)"
   expected=$'web=false\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file infra/ansible/vars/dev.yml)"
+  expected=$'web=false\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
 
   before_sha="${after_sha}"

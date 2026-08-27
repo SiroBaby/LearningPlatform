@@ -70,10 +70,12 @@ classify_changes() {
               web=true
               api=true
               worker=true
+              go_worker=true
               ;;
             infra/ansible/roles/external_secrets/*|infra/ansible/vars/dev.yml)
               api=true
               worker=true
+              go_worker=true
               ;;
             .github/workflows/deploy-dev.yml|deploy/dev/classify-changes.sh|deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/k3s/*|infra/scripts/*)
               observability=true
