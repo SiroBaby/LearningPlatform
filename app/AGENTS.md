@@ -84,6 +84,7 @@
 ## Verification
 
 - Sau backend change, chạy `npm run build`.
+- Với mọi runtime environment mới, phải kiểm tra wiring end-to-end từ typed config reader -> local env contract -> infra variable/SSM key -> ExternalSecret -> Deployment env -> static/regression validation; không hướng dẫn tạo SSM parameter hoặc đánh dấu cấu hình hoàn tất trước khi toàn bộ chuỗi wiring đã tồn tại và được kiểm tra.
 - Mọi non-TS asset được runtime sử dụng phải được canonical build emit vào đúng runtime path; Docker chỉ copy canonical build output và dev watch phải kiểm tra cùng contract đó.
 - Chạy test hẹp nhất liên quan. Testcontainers cần Docker; nếu không có Docker, ghi rõ đây là blocker môi trường.
 - Với route/shared symbol, chạy impact analysis trước edit.

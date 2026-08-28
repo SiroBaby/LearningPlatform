@@ -9,6 +9,7 @@ export default registerAs('app', () => ({
     redirectUri: process.env.GOOGLE_REDIRECT_URI,
     encryptionKey: process.env.AUTH_OAUTH_ENCRYPTION_KEY,
   },
+  authAdminGoogleSubs: process.env.AUTH_ADMIN_GOOGLE_SUBS,
   internalMtls: {
     caPath: process.env.INTERNAL_MTLS_CA_PATH,
     certPath: process.env.INTERNAL_MTLS_CERT_PATH,

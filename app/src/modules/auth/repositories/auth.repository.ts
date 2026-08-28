@@ -3,7 +3,7 @@ import { DataSource, IsNull } from 'typeorm';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { BaseRepository } from '../../../database/base.repository';
-import type { AuthSessionPair, GoogleIdentity } from '../contracts/google-auth.contracts';
+import type { AuthSessionPair, AuthUser, GoogleIdentity } from '../contracts/google-auth.contracts';
 import { OAuthTransaction } from '../entities/oauth-transaction.entity';
 import { Session } from '../entities/session.entity';
 import { UserProfile } from '../entities/user-profile.entity';
@@ -157,6 +157,11 @@ export class AuthRepository extends BaseRepository<User> {
     });
   }
 
+  async promoteUserIfAllowlisted(userId: string, googleSub: string, allowlist: readonly string[]): Promise<void> {
+    if (!allowlist.includes(googleSub)) return;
+    await this.update({ id: userId, role: AccountRole.USER }, { role: AccountRole.ADMIN });
+  }
+
   async createSessionPair(userId: string): Promise<AuthSessionPair> {
     const accessToken = cryptoRandomToken();
     const refreshToken = cryptoRandomToken();
@@ -175,6 +180,106 @@ export class AuthRepository extends BaseRepository<User> {
       refreshExpiresAt: refreshExpiresAt.toISOString(),
       refreshToken,
     };
+  }
+
+  async rotateRefreshSession(refreshToken: string): Promise<AuthSessionPair | null> {
+    const tokenHash = hashOAuthValue(refreshToken);
+    return this.dataSource.transaction(async (manager) => {
+      const current = await manager.findOne(Session, { where: { tokenHash, tokenType: SessionTokenType.REFRESH } });
+      if (!current) return null;
+      const now = new Date();
+      if (current.revokedAt) {
+        await manager.update(Session, { sessionFamilyId: current.sessionFamilyId, revokedAt: IsNull() }, {
+          revokedAt: now,
+          revokedReason: 'REUSE_DETECTED',
+        });
+        return null;
+      }
+      const user = await manager.findOne(User, { where: { id: current.userId } });
+      if (!user || user.status !== AccountStatus.ACTIVE || current.expiresAt <= now) {
+        await manager.update(Session, { sessionFamilyId: current.sessionFamilyId, revokedAt: IsNull() }, {
+          revokedAt: now,
+          revokedReason: user?.status === AccountStatus.SUSPENDED ? 'ACCOUNT_SUSPENDED' : 'SESSION_INVALID',
+        });
+        return null;
+      }
+      const revoked = await manager.update(Session, { id: current.id, revokedAt: IsNull() }, {
+        lastUsedAt: now,
+        revokedAt: now,
+        revokedReason: 'ROTATED',
+      });
+      if (revoked.affected !== 1) return null;
+      const accessToken = cryptoRandomToken();
+      const nextRefreshToken = cryptoRandomToken();
+      const accessExpiresAt = new Date(now.getTime() + 15 * 60_000);
+      const refreshExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+      await manager.insert(Session, [
+        sessionRecord(user.id, current.sessionFamilyId, SessionTokenType.ACCESS, accessToken, accessExpiresAt),
+        {
+          ...sessionRecord(user.id, current.sessionFamilyId, SessionTokenType.REFRESH, nextRefreshToken, refreshExpiresAt),
+          previousTokenHash: current.tokenHash,
+          rotationCounter: current.rotationCounter + 1,
+        },
+      ]);
+      return {
+        accessExpiresAt: accessExpiresAt.toISOString(),
+        accessToken,
+        refreshExpiresAt: refreshExpiresAt.toISOString(),
+        refreshToken: nextRefreshToken,
+      };
+    });
+  }
+
+  async revokeSessionFamily(token: string, reason: string): Promise<void> {
+    const tokenHash = hashOAuthValue(token);
+    await this.dataSource.transaction(async (manager) => {
+      const session = await manager.findOne(Session, { where: { tokenHash } });
+      if (!session) return;
+      await manager.update(Session, { sessionFamilyId: session.sessionFamilyId, revokedAt: IsNull() }, {
+        revokedAt: new Date(),
+        revokedReason: reason,
+      });
+    });
+  }
+
+  async getUserByAccessToken(accessToken: string): Promise<AuthUser | null> {
+    const session = await this.dataSource.getRepository(Session).findOne({ where: {
+      tokenHash: hashOAuthValue(accessToken),
+      tokenType: SessionTokenType.ACCESS,
+      revokedAt: IsNull(),
+    } });
+    if (!session || session.expiresAt <= new Date()) return null;
+    const user = await this.dataSource.getRepository(User).findOne({ where: { id: session.userId } });
+    if (!user || user.status !== AccountStatus.ACTIVE) return null;
+    const profile = await this.dataSource.getRepository(UserProfile).findOne({ where: { userId: user.id } });
+    await this.dataSource.getRepository(Session).update({ id: session.id, revokedAt: IsNull() }, { lastUsedAt: new Date() });
+    return {
+      displayName: profile?.displayName ?? null,
+      email: user.normalizedEmail,
+      id: user.id,
+      role: user.role,
+      status: user.status,
+    };
+  }
+
+  async revokeUserSessions(userId: string, reason: string): Promise<void> {
+    await this.dataSource.getRepository(Session).update({ userId, revokedAt: IsNull() }, {
+      revokedAt: new Date(),
+      revokedReason: reason,
+    });
+  }
+
+  async updateAccountStatus(userId: string, status: AccountStatus, reason: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(User, { id: userId }, {
+        status,
+        deletedAt: status === AccountStatus.DELETED ? new Date() : null,
+      });
+      await manager.update(Session, { userId, revokedAt: IsNull() }, {
+        revokedAt: new Date(),
+        revokedReason: reason,
+      });
+    });
   }
 }
 

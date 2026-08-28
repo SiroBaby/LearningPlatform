@@ -114,6 +114,7 @@
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'GOOGLE_CLIENT_SECRET') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'GOOGLE_REDIRECT_URI') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_OAUTH_ENCRYPTION_KEY') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
+          - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_ADMIN_GOOGLE_SUBS') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_INTERNAL_API_BASE_URL') | map(attribute='value') | list == ['http://api:3000']
           - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'WEB_PUBLIC_ORIGIN') | map(attribute='value') | list == ['https://' ~ web_public_host]
           - applications_public_ingresses | length == 1

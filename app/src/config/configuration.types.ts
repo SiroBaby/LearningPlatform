@@ -5,6 +5,7 @@ export interface SwaggerSettings {
 }
 
 export interface ApplicationSettings {
+  authAdminGoogleSubs: readonly string[];
   environment: string;
   internalMtls: InternalMtlsSettings;
   port: number;
@@ -144,6 +145,7 @@ export const CONFIG_PATH = {
     provider: 'ai.provider',
   },
   app: {
+    authAdminGoogleSubs: 'app.authAdminGoogleSubs',
     environment: 'app.env',
     googleOAuth: {
       clientId: 'app.googleOAuth.clientId',

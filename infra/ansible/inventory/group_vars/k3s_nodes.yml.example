@@ -53,6 +53,7 @@ ssm_parameter_keys:
   google_client_secret: /REPLACE/WITH/EXACT/google-client-secret
   google_redirect_uri: /REPLACE/WITH/EXACT/google-redirect-uri
   auth_oauth_encryption_key: /REPLACE/WITH/EXACT/auth-oauth-encryption-key
+  auth_admin_google_subs: /REPLACE/WITH/EXACT/auth-admin-google-subs
   object_storage_endpoint: /REPLACE/WITH/EXACT/object-storage-endpoint
   object_storage_port: /REPLACE/WITH/EXACT/object-storage-port
   object_storage_region: /REPLACE/WITH/EXACT/object-storage-region
