@@ -352,6 +352,7 @@ check_application_edge_contract() {
   local app_tasks="${ANSIBLE_DIR}/roles/applications/tasks/main.yml"
   local eso_template="${ANSIBLE_DIR}/roles/external_secrets/templates/external-secrets.yaml.j2"
   local app_template="${INFRA_DIR}/k8s/apps.yaml.j2"
+  local app_env_example="${WORKSPACE_DIR}/app/.env.example"
   local swagger_external_secret_template="${INFRA_DIR}/k8s/swagger-external-secret.yaml.j2"
   local app_vars="${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"
 
@@ -362,6 +363,7 @@ check_application_edge_contract() {
     '^  google_client_secret: /REPLACE/WITH/EXACT/google-client-secret$' \
     '^  google_redirect_uri: /REPLACE/WITH/EXACT/google-redirect-uri$' \
     '^  auth_oauth_encryption_key: /REPLACE/WITH/EXACT/auth-oauth-encryption-key$' \
+    '^  auth_admin_google_subs: /REPLACE/WITH/EXACT/auth-admin-google-subs$' \
     '^  swagger_username: /REPLACE/WITH/EXACT/swagger-username$' \
     '^  swagger_password: /REPLACE/WITH/EXACT/swagger-password$' \
     '^ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET$' \
@@ -381,6 +383,8 @@ check_application_edge_contract() {
     || [ "$(grep -c "'GOOGLE_CLIENT_SECRET': ssm_parameter_keys.google_client_secret" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c "'GOOGLE_REDIRECT_URI': ssm_parameter_keys.google_redirect_uri" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c "'AUTH_OAUTH_ENCRYPTION_KEY': ssm_parameter_keys.auth_oauth_encryption_key" "${eso_template}")" -ne 1 ] \
+    || [ "$(grep -c "'AUTH_ADMIN_GOOGLE_SUBS': ssm_parameter_keys.auth_admin_google_subs" "${eso_template}")" -ne 1 ] \
+    || ! grep -Eq '^AUTH_ADMIN_GOOGLE_SUBS=' "${app_env_example}" \
     || [ "$(grep -c 'imagePullSecrets:' "${app_template}")" -ne 3 ] \
     || ! grep -q 'kind: Ingress' "${app_template}" \
     || ! grep -q 'ingressClassName: traefik' "${app_template}" \
@@ -405,7 +409,7 @@ check_application_edge_contract() {
     fail 'Go worker must source its shared PostgreSQL configuration from the backend runtime Secret.'
   fi
 
-  for api_oauth_env in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REDIRECT_URI AUTH_OAUTH_ENCRYPTION_KEY; do
+  for api_oauth_env in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REDIRECT_URI AUTH_OAUTH_ENCRYPTION_KEY AUTH_ADMIN_GOOGLE_SUBS; do
     if ! grep -Fq "'${api_oauth_env}'" "${app_template}" \
       || ! grep -Fq '                  name: learning-platform-api-runtime' "${app_template}"; then
       fail "API must source ${api_oauth_env} from the shared runtime Secret."
