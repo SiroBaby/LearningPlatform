@@ -1,11 +1,14 @@
 import { HomeActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
+import { hasAuthenticatedSession } from "@/lib/auth/session";
 
 export const metadata = buildSystemMetadata(
   "Maintenance",
   "Một phần hệ thống đang được bảo trì tạm thời để ổn định xử lý tài liệu, quiz hoặc Tutor.",
 );
 
-export default function MaintenancePage() {
+export default async function MaintenancePage(): Promise<React.JSX.Element> {
+  const isAuthenticated = await hasAuthenticatedSession();
+
   return (
     <SystemStatePage
       badge="Maintenance"
@@ -15,6 +18,7 @@ export default function MaintenancePage() {
       icon="warning"
       tone="brand"
       primaryAction={<HomeActions />}
+      isAuthenticated={isAuthenticated}
     />
   );
 }

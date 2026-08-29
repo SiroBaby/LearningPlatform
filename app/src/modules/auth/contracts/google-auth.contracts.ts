@@ -19,4 +19,17 @@ export interface AuthUser {
   readonly displayName: string | null;
   readonly role: string;
   readonly status: string;
+  readonly learningGoal?: string | null;
+  readonly preferredLanguage?: string | null;
+  readonly proficiencyLevel?: string | null;
+  readonly onboardingCompletedAt?: string | null;
+  readonly onboardingSkippedAt?: string | null;
+}
+
+export interface AuthProfileUpdate {
+  readonly displayName?: string | null;
+  readonly learningGoal?: string | null;
+  readonly preferredLanguage?: 'vi' | 'en' | null;
+  readonly proficiencyLevel?: 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED' | null;
+  readonly onboardingAction?: 'complete' | 'skip' | 'reset';
 }

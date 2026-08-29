@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Accessibility, Bell, Eye, Globe2, Lock, Shield, Sparkles, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Accessibility, Bell, Eye, Globe2, Shield, Sparkles, Trash2 } from "lucide-react";
 import { courses, usage } from "@/lib/mock-data";
 import { Button, Card, CardBody, CardHeader, CardTitle, SelectField, Tabs, TextField, useToast } from "@/components/ui";
 
@@ -42,8 +42,9 @@ function ToggleField({ id, label, description, checked, onChange }: ToggleFieldP
 
 export function SettingsScreen() {
   const { notify } = useToast();
-  const [fullName, setFullName] = useState("Ngọc Phát");
-  const [email] = useState("phat@example.com");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<string | null>(null);
   const [language, setLanguage] = useState("Tiếng Việt");
   const [explanationStyle, setExplanationStyle] = useState("Ngắn gọn + có ví dụ");
   const [difficulty, setDifficulty] = useState("Adaptive");
@@ -59,9 +60,39 @@ export function SettingsScreen() {
   const [isLargeText, setIsLargeText] = useState(false);
   const [isHighContrast, setIsHighContrast] = useState(false);
   const [isCaptionsByDefault, setIsCaptionsByDefault] = useState(true);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
-  function saveSettings(): void {
-    notify("Đã lưu mock settings. UI này mô phỏng luồng cấu hình mà chưa ghi backend thật.", "success");
+  useEffect(() => {
+    let active = true;
+    void fetch("/auth/me", { cache: "no-store" })
+      .then(async (response) => (response.ok ? (await response.json()) as { displayName?: string | null; email?: string; role?: string } : null))
+      .then((user) => {
+        if (!active || !user) return;
+        setFullName(user.displayName ?? "");
+        setEmail(user.email ?? "");
+        setRole(user.role ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function saveSettings(): Promise<void> {
+    setIsSavingProfile(true);
+    try {
+      const response = await fetch("/auth/profile", {
+        body: JSON.stringify({ displayName: fullName }),
+        headers: { "Content-Type": "application/json" },
+        method: "PATCH",
+      });
+      if (!response.ok) throw new Error("profile update failed");
+      notify("Đã lưu thông tin tài khoản.", "success");
+    } catch {
+      notify("Không thể lưu thông tin tài khoản. Vui lòng thử lại.", "error");
+    } finally {
+      setIsSavingProfile(false);
+    }
   }
 
   return (
@@ -134,14 +165,12 @@ export function SettingsScreen() {
                       <TextField id="email" label="Email" value={email} readOnly />
                     </div>
                     <div className="grid gap-4 md:grid-cols-2">
-                      <TextField id="password" label="Password" type="password" value="password" readOnly />
                       <TextField id="connected-accounts" label="Connected accounts" value="Google" readOnly />
+                      <TextField id="account-role" label="Role" value={role ?? "Đang tải"} readOnly />
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Button onClick={saveSettings}>Save account changes</Button>
-                      <Button variant="outline">
-                        <Lock className="h-4 w-4" />
-                        Change password
+                      <Button onClick={() => void saveSettings()} disabled={isSavingProfile}>
+                        {isSavingProfile ? "Đang lưu…" : "Save account changes"}
                       </Button>
                     </div>
                   </CardBody>

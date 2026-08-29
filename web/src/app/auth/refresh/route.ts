@@ -2,10 +2,13 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { requestAuthBackend } from "@/lib/auth/backend-client";
+import { validateBrowserMutation } from "@/lib/auth/request-security";
 
 const isProduction = process.env.NODE_ENV === "production";
 
-export async function POST(): Promise<Response> {
+export async function POST(request: Request): Promise<Response> {
+  const rejected = validateBrowserMutation(request);
+  if (rejected) return rejected;
   const refreshToken = (await cookies()).get("lp_refresh")?.value;
   if (!refreshToken) return NextResponse.json({ code: "SESSION_INVALID", message: "Phiên đăng nhập không còn hiệu lực" }, { status: 401 });
   const response = await requestAuthBackend({ authorization: `Bearer ${refreshToken}`, method: "POST", path: "/api/v1/auth/refresh" });

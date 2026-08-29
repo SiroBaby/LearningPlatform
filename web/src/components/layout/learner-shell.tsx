@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, CircleAlert, Sparkles } from "lucide-react";
+import { LogoutButton } from "@/components/auth/logout-button";
 import { learnerBottomNav, learnerPrimaryNav, learnerSecondaryNav } from "@/lib/nav";
 import { routes } from "@/lib/routes";
 import { cn } from "@/lib/cn";
@@ -135,6 +136,7 @@ export function LearnerShell({
                   <Bell className="h-4 w-4" />
                 </Link>
                 <Button variant="outline">Cần hỗ trợ</Button>
+                <LogoutButton />
               </div>
             </div>
           </header>

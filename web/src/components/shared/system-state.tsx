@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AlertTriangle, ArrowRight, RefreshCw, ShieldAlert, WifiOff } from "lucide-react";
-import { PublicShell } from "@/components/layout";
+import { PublicShellContent } from "@/components/layout/public-shell-content";
 import { Card, CardBody, LinkButton } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { ReloadButton } from "./reload-button";
@@ -28,6 +28,7 @@ export function SystemStatePage({
   tone = "brand",
   primaryAction,
   secondaryAction,
+  isAuthenticated = false,
 }: {
   badge: string;
   title: string;
@@ -37,6 +38,7 @@ export function SystemStatePage({
   tone?: "brand" | "warning" | "error" | "neutral";
   primaryAction?: React.ReactNode;
   secondaryAction?: React.ReactNode;
+  isAuthenticated?: boolean;
 }) {
   const Icon = {
     warning: AlertTriangle,
@@ -53,7 +55,7 @@ export function SystemStatePage({
   }[tone];
 
   return (
-    <PublicShell>
+    <PublicShellContent isAuthenticated={isAuthenticated}>
       <div className="mx-auto flex min-h-[calc(100vh-180px)] max-w-4xl items-center px-4 py-12 sm:px-6 lg:px-8">
         <Card className="w-full overflow-hidden">
           <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
@@ -101,7 +103,7 @@ export function SystemStatePage({
           </div>
         </Card>
       </div>
-    </PublicShell>
+    </PublicShellContent>
   );
 }
 

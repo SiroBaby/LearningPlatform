@@ -1,7 +1,7 @@
 import "server-only";
 
 interface AuthBackendRequest {
-  readonly method: "GET" | "POST";
+  readonly method: "GET" | "POST" | "PATCH";
   readonly path: string;
   readonly body?: unknown;
   readonly authorization?: string;

@@ -1,4 +1,4 @@
-import { OnboardingFlow } from "@/components/auth/mock-onboarding-flow";
+import { OnboardingFlow } from "@/components/auth/onboarding-flow";
 import { AuthShell } from "@/components/layout";
 
 export default function OnboardingPage() {

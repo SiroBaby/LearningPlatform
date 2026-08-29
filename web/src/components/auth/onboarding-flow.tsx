@@ -2,7 +2,7 @@
 
 import type { FormEvent, ReactNode } from "react";
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, BookOpenCheck, Loader2, Upload } from "lucide-react";
 import {
   Badge,
@@ -20,10 +20,7 @@ import {
   AuthHelperPanel,
   AuthOptionCard,
   AuthStatusMessage,
-  MockModeNote,
 } from "./auth-primitives";
-
-const SIMULATED_SUBMIT_MS = 700;
 
 const onboardingSteps = [
   {
@@ -59,7 +56,7 @@ const onboardingSteps = [
 ] as const;
 
 type LearningGoal = "exam-prep" | "course-study" | "self-learning" | "teaching";
-type PreferredLanguage = "vietnamese" | "english" | "mixed";
+type PreferredLanguage = "vietnamese" | "english";
 type LearnerLevel = "high-school" | "university" | "professional" | "other";
 type FirstAction = "upload" | "sample";
 
@@ -135,12 +132,6 @@ const languageOptions: readonly {
     title: "English",
     description: "Giữ thuật ngữ và lời giải nghiêng nhiều hơn về tiếng Anh học thuật.",
     detail: "Hợp với paper, tài liệu kỹ thuật hoặc khóa học quốc tế.",
-  },
-  {
-    value: "mixed",
-    title: "Mixed Việt / Anh",
-    description: "Giữ technical terms bằng English nhưng giải thích chính bằng tiếng Việt rõ ràng.",
-    detail: "Lựa chọn cân bằng cho người học ở Việt Nam dùng nhiều tài liệu song ngữ.",
   },
 ];
 
@@ -259,10 +250,12 @@ const stepContentMap: Record<number, StepContent> = {
   },
 };
 
-function waitForMockSubmit(): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, SIMULATED_SUBMIT_MS);
-  });
+function profileValues(values: OnboardingValues): Record<string, string> {
+  return {
+    learningGoal: values.goal,
+    preferredLanguage: values.language === "vietnamese" ? "vi" : "en",
+    proficiencyLevel: values.level === "high-school" ? "BEGINNER" : values.level === "professional" ? "ADVANCED" : "INTERMEDIATE",
+  };
 }
 
 function hasStepErrors(errors: Partial<Record<OnboardingField, string>>): boolean {
@@ -335,6 +328,7 @@ function getStepProgress(currentStep: number): number {
 }
 
 export function OnboardingFlow(): ReactNode {
+  const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
   const [values, setValues] = useState<OnboardingValues>({
     goal: "",
@@ -346,6 +340,7 @@ export function OnboardingFlow(): ReactNode {
   const [errors, setErrors] = useState<Partial<Record<OnboardingField, string>>>({});
   const [isPending, setIsPending] = useState(false);
   const [hasCompleted, setHasCompleted] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
 
   const stepContent = stepContentMap[currentStep];
   const progressValue = getStepProgress(currentStep);
@@ -406,9 +401,39 @@ export function OnboardingFlow(): ReactNode {
     }
 
     setIsPending(true);
-    await waitForMockSubmit();
-    setIsPending(false);
-    setHasCompleted(true);
+    try {
+      const response = await fetch("/auth/profile", {
+        body: JSON.stringify({ ...profileValues(values), onboardingAction: "complete" }),
+        headers: { "Content-Type": "application/json" },
+        method: "PATCH",
+      });
+      if (!response.ok) throw new Error("profile update failed");
+      setHasCompleted(true);
+      setSubmitError(false);
+    } catch {
+      setSubmitError(true);
+    } finally {
+      setIsPending(false);
+    }
+  }
+
+  async function skipOnboarding(): Promise<void> {
+    if (isPending) return;
+    setIsPending(true);
+    setSubmitError(false);
+    try {
+      const response = await fetch("/auth/profile", {
+        body: JSON.stringify({ onboardingAction: "skip" }),
+        headers: { "Content-Type": "application/json" },
+        method: "PATCH",
+      });
+      if (!response.ok) throw new Error("profile update failed");
+      router.replace(routes.home);
+      router.refresh();
+    } catch {
+      setSubmitError(true);
+      setIsPending(false);
+    }
   }
 
   const stepErrorField = getStepErrorField(currentStep);
@@ -429,17 +454,15 @@ export function OnboardingFlow(): ReactNode {
           <LinkButton href={routes.settings} variant="ghost" size="sm">
             Mở lại sau từ Settings
           </LinkButton>
-          <LinkButton href={routes.home} variant="outline" size="sm">
+          <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => void skipOnboarding()}>
             Bỏ qua lúc này
-          </LinkButton>
+          </Button>
         </div>
       </div>
 
-      <MockModeNote />
-
       {hasCompleted ? (
         <AuthStatusMessage
-          title="Onboarding mock đã hoàn tất"
+          title="Onboarding đã hoàn tất"
           description="Bạn đã có đủ thiết lập để hệ thống chọn tông giải thích, kiểu quiz và đường tới first value hợp lý hơn ngay từ đầu."
           tone="success"
         >
@@ -456,7 +479,7 @@ export function OnboardingFlow(): ReactNode {
                 href={values.firstAction === "sample" ? routes.home : routes.upload}
                 className="w-full sm:w-auto"
               >
-                {values.firstAction === "sample" ? "Mở sample / Home mock" : "Đi tới upload mock"}
+                {values.firstAction === "sample" ? "Mở sample / Home" : "Đi tới upload"}
                 <ArrowRight className="h-4 w-4" />
               </LinkButton>
               <LinkButton href={routes.settings} variant="outline" className="w-full sm:w-auto">
@@ -626,6 +649,11 @@ export function OnboardingFlow(): ReactNode {
               {stepErrorMessage}
             </p>
           ) : null}
+          {submitError ? (
+            <p className="text-sm text-error-600" role="alert">
+              Không thể lưu thiết lập. Vui lòng thử lại.
+            </p>
+          ) : null}
 
           <div className="flex flex-col gap-3 border-t border-ink-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex gap-2">
@@ -633,9 +661,9 @@ export function OnboardingFlow(): ReactNode {
                 <ArrowLeft className="h-4 w-4" />
                 Quay lại
               </Button>
-              <Link href={routes.home} className="inline-flex items-center text-sm font-medium text-ink-500 hover:text-ink-700">
+              <Button type="button" variant="ghost" disabled={isPending} onClick={() => void skipOnboarding()}>
                 Bỏ qua onboarding
-              </Link>
+              </Button>
             </div>
             <div className="flex gap-2">
               {currentStep < onboardingSteps.length - 1 ? (
@@ -648,7 +676,7 @@ export function OnboardingFlow(): ReactNode {
                   {isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Đang lưu preference mock…
+                      Đang lưu thiết lập…
                     </>
                   ) : (
                     <>

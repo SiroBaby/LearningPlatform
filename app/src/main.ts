@@ -193,6 +193,7 @@ export async function bootstrapApi(): Promise<void> {
           { in: 'header', name: 'X-User-Id', type: 'apiKey' },
           'ownerId',
         )
+        .addBearerAuth(undefined, 'bearer')
         .addTag('Documents', 'Document upload and processing lifecycle.')
         .build();
       const document = SwaggerModule.createDocument(app, swaggerConfig);
