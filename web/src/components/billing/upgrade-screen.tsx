@@ -24,7 +24,7 @@ interface PlanCard {
 const planCards: readonly PlanCard[] = [
   {
     id: "free",
-    name: "Free",
+    name: "Miễn phí",
     monthlyPrice: "0₫",
     yearlyPrice: "0₫",
     credits: "100 / tháng",
@@ -32,11 +32,11 @@ const planCards: readonly PlanCard[] = [
     maxFile: "Tài liệu ngắn",
     tutor: "Giới hạn mỗi ngày",
     analytics: "Cơ bản",
-    video: "Sample ngắn",
+    video: "Video ngắn",
     features: [
-      "Phù hợp để thử luồng upload → quiz → result",
-      "Cảnh báo rõ khi chạm credit hoặc file size limit",
-      "Không phù hợp cho video dài hoặc regenerate nhiều lần",
+      "Phù hợp để thử tải tài liệu, tạo bài kiểm tra và xem kết quả",
+      "Cảnh báo khi chạm giới hạn lượt dùng hoặc dung lượng tệp",
+      "Không phù hợp với video dài hoặc tạo lại nội dung nhiều lần",
     ],
   },
   {
@@ -45,16 +45,16 @@ const planCards: readonly PlanCard[] = [
     monthlyPrice: "129.000₫",
     yearlyPrice: "1.290.000₫",
     credits: "450 / tháng",
-    uploads: "50 tài liệu / tháng",
-    maxFile: "PDF/audio/video vừa",
+    uploads: "50 tài liệu mỗi tháng",
+    maxFile: "PDF, audio và video cỡ vừa",
     tutor: "Không giới hạn theo ngày",
-    analytics: "Đầy đủ learner analytics",
-    video: "Checkpoint + transcript",
+    analytics: "Theo dõi tiến độ đầy đủ",
+    video: "Điểm dừng và bản chép lời",
     highlight: true,
     features: [
-      "Tăng credit đủ cho giai đoạn ôn thi cường độ cao",
-      "Mở video checkpoint và exam prep đầy đủ",
-      "Phù hợp nhất cho sinh viên có nhiều tài liệu theo course",
+      "Tăng lượt dùng cho giai đoạn ôn thi cường độ cao",
+      "Mở điểm dừng trong video và công cụ ôn thi đầy đủ",
+      "Phù hợp với sinh viên có nhiều tài liệu theo môn học",
     ],
   },
   {
@@ -66,40 +66,40 @@ const planCards: readonly PlanCard[] = [
     uploads: "Không giới hạn mềm",
     maxFile: "Video dài / khóa học lớn",
     tutor: "Ưu tiên cao",
-    analytics: "Advanced trends + exam planning",
-    video: "Batch processing",
+    analytics: "Xu hướng nâng cao và kế hoạch ôn thi",
+    video: "Xử lý nhiều tài liệu cùng lúc",
     features: [
-      "Dành cho power learner ôn nhiều môn cùng lúc",
-      "Thêm headroom cho regenerate, tutor sâu và đề thi thử lặp lại",
-      "Tối ưu hơn nếu bạn dùng sản phẩm hằng ngày",
+      "Dành cho người học nhiều môn cùng lúc",
+      "Nhiều lượt dùng hơn để tạo lại nội dung, hỏi trợ giảng và luyện đề",
+      "Phù hợp khi bạn học với ứng dụng hằng ngày",
     ],
   },
 ] as const;
 
 const featureRows = [
   {
-    label: "AI credits",
+    label: "Lượt dùng AI",
     values: ["100 / tháng", "450 / tháng", "1.000 / tháng"],
   },
   {
-    label: "Uploads / pages / minutes",
+    label: "Tải lên, trang và thời lượng",
     values: ["10 tài liệu · giới hạn nhỏ", "50 tài liệu · mức vừa", "Fair use mềm · mức cao"],
   },
   {
-    label: "Video processing",
-    values: ["Sample ngắn", "Có", "Có + batch"],
+    label: "Xử lý video",
+    values: ["Video ngắn", "Có", "Có, xử lý nhiều tài liệu"],
   },
   {
-    label: "Tutor availability",
+    label: "Trợ giảng",
     values: ["Giới hạn ngày", "Không giới hạn", "Không giới hạn + ưu tiên"],
   },
   {
-    label: "Analytics",
-    values: ["Cơ bản", "Đầy đủ learner view", "Advanced planning"],
+    label: "Theo dõi tiến độ",
+    values: ["Cơ bản", "Đầy đủ", "Lập kế hoạch nâng cao"],
   },
   {
-    label: "Overage / top-up",
-    values: ["Nâng cấp khi chạm trần", "Top-up hoặc upgrade", "Top-up linh hoạt"],
+    label: "Khi dùng hết lượt",
+    values: ["Nâng cấp gói", "Mua thêm lượt hoặc nâng cấp", "Mua thêm lượt linh hoạt"],
   },
 ] as const;
 
@@ -115,7 +115,7 @@ export function UpgradeScreen() {
       return;
     }
 
-    notify(`Đã chọn mock upgrade sang ${plan.name}. Luồng thanh toán thật chưa được nối backend.`, "success");
+    notify(`Bạn đã chọn gói ${plan.name}. Thanh toán chưa được mở trong phiên bản này.`, "success");
   }
 
   return (
@@ -124,14 +124,14 @@ export function UpgradeScreen() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="brand">Recommended upgrade</Badge>
-              <Badge tone="warning">Current plan: {usage.planLabel}</Badge>
+              <Badge tone="brand">Gợi ý phù hợp</Badge>
+              <Badge tone="warning">Gói hiện tại: {usage.planLabel === "Free" ? "Miễn phí" : usage.planLabel}</Badge>
             </div>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-ink-900">
-              Upgrade before your next heavy study session
+              Chọn gói trước khi bắt đầu buổi học dài
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-600">
-              Bạn đang ở giai đoạn chuẩn bị thi, credits còn thấp và có ít nhất một video lecture trong course hiện tại. Student Plus là điểm cân bằng tốt nhất giữa chi phí và headroom cho quiz, tutor, analytics và checkpoint.
+              Bạn đang chuẩn bị thi, lượt dùng còn thấp và có video trong môn học hiện tại. Student Plus cân bằng giữa chi phí, số lượt dùng, trợ giảng và theo dõi tiến độ.
             </p>
           </div>
           <div className="inline-flex rounded-xl border border-ink-200 bg-ink-50 p-1">
@@ -144,7 +144,7 @@ export function UpgradeScreen() {
                   : "text-ink-500 hover:text-ink-900"
               }`}
             >
-              Monthly
+              Theo tháng
             </button>
             <button
               type="button"
@@ -155,7 +155,7 @@ export function UpgradeScreen() {
                   : "text-ink-500 hover:text-ink-900"
               }`}
             >
-              Yearly
+              Theo năm
             </button>
           </div>
         </div>
@@ -173,19 +173,19 @@ export function UpgradeScreen() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <CardTitle>{plan.name}</CardTitle>
-                      {plan.highlight ? <Badge tone="brand">Best for exam prep</Badge> : null}
+                      {plan.highlight ? <Badge tone="brand">Phù hợp để ôn thi</Badge> : null}
                     </div>
                     <p className="mt-2 text-3xl font-semibold tracking-tight text-ink-900">{price}</p>
                     <p className="mt-1 text-sm text-ink-500">{billingCycle === "yearly" ? "Tính theo năm" : "Tính theo tháng"}</p>
                   </div>
-                  {plan.id === usage.planTier ? <Badge tone="warning">Current</Badge> : null}
+                  {plan.id === usage.planTier ? <Badge tone="warning">Đang dùng</Badge> : null}
                 </div>
                 <div className="space-y-2 text-sm text-ink-600">
-                  <p><span className="font-medium text-ink-900">Credits:</span> {plan.credits}</p>
-                  <p><span className="font-medium text-ink-900">Uploads:</span> {plan.uploads}</p>
-                  <p><span className="font-medium text-ink-900">Max file:</span> {plan.maxFile}</p>
-                  <p><span className="font-medium text-ink-900">Tutor:</span> {plan.tutor}</p>
-                  <p><span className="font-medium text-ink-900">Analytics:</span> {plan.analytics}</p>
+                  <p><span className="font-medium text-ink-900">Lượt dùng:</span> {plan.credits}</p>
+                  <p><span className="font-medium text-ink-900">Tài liệu:</span> {plan.uploads}</p>
+                  <p><span className="font-medium text-ink-900">Tệp hỗ trợ:</span> {plan.maxFile}</p>
+                  <p><span className="font-medium text-ink-900">Trợ giảng:</span> {plan.tutor}</p>
+                  <p><span className="font-medium text-ink-900">Theo dõi tiến độ:</span> {plan.analytics}</p>
                   <p><span className="font-medium text-ink-900">Video:</span> {plan.video}</p>
                 </div>
               </CardHeader>
@@ -203,7 +203,7 @@ export function UpgradeScreen() {
                   className="w-full"
                   onClick={() => setSelectedPlanId(plan.id)}
                 >
-                  {isSelected ? "Selected" : "Choose this plan"}
+                  {isSelected ? "Đã chọn" : "Chọn gói này"}
                 </Button>
               </CardBody>
             </Card>
@@ -214,17 +214,17 @@ export function UpgradeScreen() {
       <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Plan comparison</CardTitle>
+            <CardTitle>So sánh các gói</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
-              Minh bạch về quota, tính năng và đường nâng cấp khi learner chạm giới hạn.
+              So sánh rõ giới hạn và quyền lợi trước khi bạn quyết định nâng cấp.
             </p>
           </CardHeader>
           <CardBody className="overflow-x-auto">
             <table className="min-w-full text-left text-sm text-ink-600">
               <thead>
                 <tr className="border-b border-ink-100 text-ink-900">
-                  <th className="py-3 pr-4 font-semibold">Feature</th>
-                  <th className="px-4 py-3 font-semibold">Free</th>
+                  <th className="py-3 pr-4 font-semibold">Quyền lợi</th>
+                  <th className="px-4 py-3 font-semibold">Miễn phí</th>
                   <th className="px-4 py-3 font-semibold">Student Plus</th>
                   <th className="px-4 py-3 font-semibold">Pro Learner</th>
                 </tr>
@@ -247,9 +247,9 @@ export function UpgradeScreen() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Why upgrade now</CardTitle>
+            <CardTitle>Vì sao nên nâng cấp lúc này?</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
-              Kết nối lý do nâng cấp với workflow học tập thực tế, không chỉ với bảng giá.
+              Xem lý do nâng cấp dựa trên việc học hiện tại, không chỉ dựa vào bảng giá.
             </p>
           </CardHeader>
           <CardBody className="space-y-4">
@@ -257,9 +257,9 @@ export function UpgradeScreen() {
               <div className="flex items-start gap-3">
                 <Clock3 className="mt-0.5 h-5 w-5 text-warning-700" />
                 <div>
-                  <p className="text-sm font-semibold text-warning-800">Credits are the immediate bottleneck</p>
+                  <p className="text-sm font-semibold text-warning-800">Lượt dùng sắp là giới hạn chính</p>
                   <p className="mt-1 text-sm leading-6 text-warning-800/90">
-                    Free plan còn 18 credits. Chỉ một video lecture hoặc vài lần regenerate explanation có thể tiêu hết phần còn lại ngay trong ngày.
+                    Gói Miễn phí còn 18 lượt dùng. Một video bài giảng hoặc vài lần tạo lại lời giải có thể dùng hết trong ngày.
                   </p>
                 </div>
               </div>
@@ -268,9 +268,9 @@ export function UpgradeScreen() {
               <div className="flex items-start gap-3">
                 <Video className="mt-0.5 h-5 w-5 text-brand-700" />
                 <div>
-                  <p className="text-sm font-semibold text-brand-800">Video checkpoint becomes usable</p>
+                  <p className="text-sm font-semibold text-brand-800">Học video thuận tiện hơn</p>
                   <p className="mt-1 text-sm leading-6 text-brand-800/90">
-                    Student Plus mở checkpoint đầy đủ cho video và giúp tutor giữ ngữ cảnh transcript lâu hơn — rất hợp khi ôn từ bài giảng recorded.
+                    Student Plus mở đầy đủ điểm dừng trong video và giúp trợ giảng theo sát bản chép lời lâu hơn, phù hợp khi bạn ôn từ bài giảng đã ghi hình.
                   </p>
                 </div>
               </div>
@@ -279,20 +279,20 @@ export function UpgradeScreen() {
               <div className="flex items-start gap-3">
                 <Sparkles className="mt-0.5 h-5 w-5 text-success-700" />
                 <div>
-                  <p className="text-sm font-semibold text-success-800">Analytics and study plan stay continuous</p>
+                  <p className="text-sm font-semibold text-success-800">Theo dõi tiến độ không bị gián đoạn</p>
                   <p className="mt-1 text-sm leading-6 text-success-800/90">
-                    Khi không bị ngắt bởi quota, analytics sẽ phản ánh đúng tiến bộ hơn và study plan không phải cắt bớt task chỉ vì credit limit.
+                    Khi không bị chặn bởi giới hạn lượt dùng, tiến độ phản ánh đúng hơn và kế hoạch học không cần cắt bớt việc ôn tập.
                   </p>
                 </div>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={upgradeToSelectedPlan}>
-                Upgrade to selected plan
+                Chọn gói này
                 <ArrowRight className="h-4 w-4" />
               </Button>
               <LinkButton href={routes.billing} variant="outline">
-                Back to billing
+                Quay lại gói và mức sử dụng
               </LinkButton>
             </div>
           </CardBody>

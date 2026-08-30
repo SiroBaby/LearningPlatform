@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 
 import { ApplicationConfigService } from '../../config/application-config.service';
 import { createApplicationLogger } from '../../common/logging/application-logger.factory';
-import type { AuthSessionPair, GoogleIdentity } from './contracts/google-auth.contracts';
+import type { AuthProfileUpdate, AuthSessionPair, GoogleIdentity } from './contracts/google-auth.contracts';
 import { AuthRepository } from './repositories/auth.repository';
 import { createPkcePair, decryptPkceVerifier, encryptPkceVerifier, hashOAuthValue } from './oauth-crypto';
 import { GOOGLE_OAUTH_PROVIDER, type GoogleOAuthProvider } from './google-oauth.provider';
@@ -138,6 +138,13 @@ export class AuthService {
     const user = await this.repository.getUserByAccessToken(accessToken);
     if (!user) throw new UnauthorizedException('Invalid session');
     return user;
+  }
+
+  async updateProfile(accessToken: string, input: AuthProfileUpdate) {
+    const user = await this.repository.getUserByAccessToken(accessToken);
+    if (!user) throw new UnauthorizedException('Invalid session');
+    await this.repository.updateProfile(user.id, input);
+    return this.repository.getUserByAccessToken(accessToken);
   }
 
   async suspend(userId: string): Promise<void> {

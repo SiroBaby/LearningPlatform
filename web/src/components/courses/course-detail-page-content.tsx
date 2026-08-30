@@ -15,6 +15,17 @@ import { formatDate } from "@/lib/mock-data";
 import { routes } from "@/lib/routes";
 import type { Attempt, Course, Exam, FlashcardDeck, LearningDocument, Quiz, StudyTask, WeakTopic } from "@/lib/types";
 
+const OUTPUT_LABELS = {
+  quiz: "Bài kiểm tra",
+  flashcards: "Thẻ ghi nhớ",
+  tutor: "Trợ giảng",
+  checkpoints: "Điểm dừng",
+} as const;
+
+function getOutputLabels(outputs: ReadonlyArray<keyof typeof OUTPUT_LABELS>): string {
+  return outputs.map((output) => OUTPUT_LABELS[output]).join(", ");
+}
+
 export function CourseDetailPageContent({
   course,
   documents,
@@ -48,28 +59,28 @@ export function CourseDetailPageContent({
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="brand">{course.subject}</Badge>
               <Badge tone="neutral">{course.language}</Badge>
-              {course.deadline ? <Badge tone="review">Deadline · {formatDate(course.deadline)}</Badge> : null}
+              {course.deadline ? <Badge tone="review">Hạn chót · {formatDate(course.deadline)}</Badge> : null}
             </div>
             <div>
               <h2 className="text-3xl font-semibold tracking-tight text-ink-900">{course.name}</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-600 sm:text-base">
                 {course.goal
-                  ? `${course.goal}. Course này gom tài liệu, quiz, flashcards, tutor context, và exam prep quanh cùng một mục tiêu học.`
-                  : "Course này gom tài liệu, quiz, flashcards, tutor context, và exam prep quanh cùng một mục tiêu học."}
+                  ? `${course.goal}. Khóa học này gom tài liệu, câu hỏi, thẻ ghi nhớ, trợ giảng và ôn thi quanh cùng một mục tiêu học.`
+                  : "Khóa học này gom tài liệu, câu hỏi, thẻ ghi nhớ, trợ giảng và ôn thi quanh cùng một mục tiêu học."}
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <OverviewStat label="Documents" value={String(documents.length)} icon={FileStack} />
-              <OverviewStat label="Quizzes" value={String(quizzes.length)} icon={BookOpenCheck} />
-              <OverviewStat label="Due reviews" value={String(course.dueReviews)} icon={Sparkles} />
-              <OverviewStat label="Mastery" value={`${course.masteryPct}%`} icon={Target} />
+              <OverviewStat label="Tài liệu" value={String(documents.length)} icon={FileStack} />
+              <OverviewStat label="Bài kiểm tra" value={String(quizzes.length)} icon={BookOpenCheck} />
+              <OverviewStat label="Lượt ôn đến hạn" value={String(course.dueReviews)} icon={Sparkles} />
+              <OverviewStat label="Mức ghi nhớ" value={`${course.masteryPct}%`} icon={Target} />
             </div>
             <div className="flex flex-wrap gap-3">
               <LinkButton href={`${routes.tutor}?context=${encodeURIComponent(`course:${course.id}`)}`}>
-                Open tutor context
+                Hỏi trợ giảng theo khóa học
               </LinkButton>
               <LinkButton href={routes.review} variant="outline">
-                Review due cards
+                Ôn thẻ đến hạn
               </LinkButton>
             </div>
           </CardBody>
@@ -78,22 +89,22 @@ export function CourseDetailPageContent({
         <Card>
           <CardHeader>
             <SectionHeading
-              eyebrow="Course health"
-              title="Overview nhanh trước khi bắt đầu"
-              description="Dùng snapshot này để biết nên tiếp tục quiz, flashcards, hay đi thẳng vào tutor / exam prep."
+              eyebrow="Tình hình khóa học"
+              title="Tổng quan trước khi bắt đầu"
+              description="Xem nhanh để biết nên làm bài kiểm tra, ôn thẻ ghi nhớ hay hỏi trợ giảng."
             />
           </CardHeader>
           <CardBody className="space-y-4">
-            <MetricTile label="Question coverage" value={`${totalQuestionCount} questions`} />
-            <MetricTile label="Deck due cards" value={`${totalDueCards} cards`} />
-            <MetricTile label="Average attempt score" value={`${attemptAverage}%`} />
+            <MetricTile label="Câu hỏi đã tạo" value={`${totalQuestionCount} câu`} />
+            <MetricTile label="Thẻ đến hạn" value={`${totalDueCards} thẻ`} />
+            <MetricTile label="Điểm trung bình" value={`${attemptAverage}%`} />
             <MetricTile
               label="Last studied"
               value={course.lastStudiedAt ? formatDate(course.lastStudiedAt) : "Chưa học"}
             />
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-ink-600">Overall mastery</span>
+                <span className="text-ink-600">Mức ghi nhớ chung</span>
                 <span className="font-medium text-ink-900">{course.masteryPct}%</span>
               </div>
               <ProgressBar value={course.masteryPct} tone="mastery" />
@@ -104,9 +115,9 @@ export function CourseDetailPageContent({
 
       <section id="documents" className="space-y-4">
         <SectionHeading
-          eyebrow="Documents"
-          title="Nguồn học trong course này"
-          description="Document vẫn là chủ sở hữu của quiz, flashcards, tutor evidence, và mọi citation."
+          eyebrow="Tài liệu"
+          title="Nguồn học trong khóa này"
+          description="Mỗi tài liệu là nguồn cho bài kiểm tra, thẻ ghi nhớ, trợ giảng và trích dẫn liên quan."
         />
         <div className="grid gap-4 xl:grid-cols-2">
           {documents.map((document) => (
@@ -114,17 +125,17 @@ export function CourseDetailPageContent({
               <CardBody className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone="brand">{document.type.toUpperCase()}</Badge>
-                  <Badge tone="neutral">Outputs: {document.outputs.join(", ")}</Badge>
+                  <Badge tone="neutral">Nội dung: {getOutputLabels(document.outputs)}</Badge>
                 </div>
                 <div>
                   <CardTitle>{document.title}</CardTitle>
                   <p className="mt-2 text-sm leading-6 text-ink-600">
-                    Mastery {document.masteryPct ?? 0}% · Last studied {document.lastStudiedAt ? formatDate(document.lastStudiedAt) : "Chưa học"}
+                    Ghi nhớ {document.masteryPct ?? 0}% · Học gần nhất {document.lastStudiedAt ? formatDate(document.lastStudiedAt) : "Chưa học"}
                   </p>
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="text-ink-600">Document mastery</span>
+                    <span className="text-ink-600">Mức ghi nhớ theo tài liệu</span>
                     <span className="font-medium text-ink-900">{document.masteryPct ?? 0}%</span>
                   </div>
                   <ProgressBar value={document.masteryPct ?? 0} tone="brand" />
@@ -137,16 +148,16 @@ export function CourseDetailPageContent({
 
       <section id="study-plan" className="space-y-4">
         <SectionHeading
-          eyebrow="Study plan"
-          title="Task nên làm tiếp"
-          description="Study plan gom flashcards, quiz retry, và tutor follow-up dựa trên những gì còn yếu trong course."
+          eyebrow="Kế hoạch học"
+          title="Việc nên làm tiếp"
+          description="Kế hoạch học gom thẻ ghi nhớ, câu hỏi làm lại và trợ giảng tiếp nối dựa trên những gì còn yếu trong khóa."
         />
         <div className="grid gap-4 xl:grid-cols-2">
           {studyTasks.map((task) => (
             <Card key={task.id}>
               <CardBody className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={task.done ? "success" : "review"}>{task.done ? "Done" : "Open"}</Badge>
+                  <Badge tone={task.done ? "success" : "review"}>{task.done ? "Đã xong" : "Chưa làm"}</Badge>
                   <Badge tone="neutral">{task.type}</Badge>
                 </div>
                 <div>
@@ -155,7 +166,7 @@ export function CourseDetailPageContent({
                     <p className="mt-2 text-sm leading-6 text-ink-600">{task.documentTitle}</p>
                   ) : null}
                 </div>
-                <p className="text-sm font-medium text-ink-900">Estimated time · {task.estimatedMinutes} min</p>
+                <p className="text-sm font-medium text-ink-900">Thời gian dự kiến · {task.estimatedMinutes} phút</p>
               </CardBody>
             </Card>
           ))}
@@ -164,9 +175,9 @@ export function CourseDetailPageContent({
 
       <section id="quizzes" className="space-y-4">
         <SectionHeading
-          eyebrow="Quizzes"
-          title="Quiz coverage trong course"
-          description="Mỗi quiz gắn với một document nguồn, attempt history, và breakdown theo topic."
+          eyebrow="Bài kiểm tra"
+          title="Mức bao phủ câu hỏi trong khóa"
+          description="Mỗi bài kiểm tra gắn với một tài liệu nguồn, lịch sử làm bài và các chủ đề được bao phủ."
         />
         <div className="grid gap-4 xl:grid-cols-2">
           {quizzes.map((quiz) => {
@@ -175,19 +186,19 @@ export function CourseDetailPageContent({
               <Card key={quiz.id}>
                 <CardBody className="space-y-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone="brand">{quiz.questionCount} questions</Badge>
-                    <Badge tone="neutral">{quiz.estimatedMinutes} min</Badge>
+                    <Badge tone="brand">{quiz.questionCount} câu</Badge>
+                    <Badge tone="neutral">{quiz.estimatedMinutes} phút</Badge>
                   </div>
                   <div>
                     <CardTitle>{quiz.title}</CardTitle>
                     <p className="mt-2 text-sm leading-6 text-ink-600">{quiz.documentTitle}</p>
                   </div>
-                  <p className="text-sm leading-6 text-ink-700">Topics: {quiz.coverageTopics.join(", ")}</p>
+                  <p className="text-sm leading-6 text-ink-700">Chủ đề: {quiz.coverageTopics.join(", ")}</p>
                   {latestAttempt ? (
                     <div className="rounded-2xl border border-ink-200 bg-ink-50/70 p-4">
-                      <p className="text-sm font-medium text-ink-900">Latest attempt · {latestAttempt.scorePct}%</p>
+                      <p className="text-sm font-medium text-ink-900">Lần làm gần nhất · {latestAttempt.scorePct}%</p>
                       <p className="mt-1 text-sm leading-6 text-ink-600">
-                        {latestAttempt.correctCount}/{latestAttempt.totalCount} correct · {latestAttempt.mode} mode
+                        {latestAttempt.correctCount}/{latestAttempt.totalCount} câu đúng · Chế độ {latestAttempt.mode}
                       </p>
                     </div>
                   ) : null}
@@ -200,27 +211,27 @@ export function CourseDetailPageContent({
 
       <section id="flashcards" className="space-y-4">
         <SectionHeading
-          eyebrow="Flashcards"
-          title="Decks kéo review queue của course"
-          description="Dùng deck review khi bạn cần củng cố trí nhớ trước khi quay lại quiz hoặc exam mode."
+          eyebrow="Thẻ ghi nhớ"
+          title="Bộ thẻ giúp ôn tập trong khóa"
+          description="Dùng bộ thẻ khi bạn cần củng cố trí nhớ trước khi quay lại câu hỏi hoặc luyện đề."
         />
         <div className="grid gap-4 xl:grid-cols-2">
           {decks.map((deck) => (
             <Card key={deck.id}>
               <CardBody className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="brand">Due · {deck.dueCount}</Badge>
-                  <Badge tone="neutral">New · {deck.newCount}</Badge>
-                  <Badge tone="mastery">Mastered · {deck.masteredCount}</Badge>
+                  <Badge tone="brand">Đến hạn · {deck.dueCount}</Badge>
+                  <Badge tone="neutral">Mới · {deck.newCount}</Badge>
+                  <Badge tone="mastery">Đã nhớ · {deck.masteredCount}</Badge>
                 </div>
                 <div>
                   <CardTitle>{deck.title}</CardTitle>
                   <p className="mt-2 text-sm leading-6 text-ink-600">{deck.documentTitle}</p>
                 </div>
                 <div className="flex flex-wrap gap-3">
-                  <LinkButton href={routes.deck(deck.id)}>Open deck</LinkButton>
+                  <LinkButton href={routes.deck(deck.id)}>Mở bộ thẻ</LinkButton>
                   <LinkButton href={routes.deckReview(deck.id)} variant="outline">
-                    Start review
+                    Bắt đầu ôn
                   </LinkButton>
                 </div>
               </CardBody>
@@ -231,9 +242,9 @@ export function CourseDetailPageContent({
 
       <section id="tutor" className="space-y-4">
         <SectionHeading
-          eyebrow="Tutor"
-          title="Tutor với course context"
-          description="Context này chỉ giới hạn trên các document trong course, để citation và no-evidence state luôn đáng tin."
+          eyebrow="Trợ giảng"
+          title="Trợ giảng theo ngữ cảnh khóa học"
+          description="Ngữ cảnh này chỉ giới hạn trên các tài liệu trong khóa, để trích dẫn và trạng thái thiếu nguồn luôn đáng tin."
         />
         <Card>
           <CardBody className="space-y-4">
@@ -242,18 +253,18 @@ export function CourseDetailPageContent({
                 <Bot className="h-5 w-5" />
               </div>
               <div className="space-y-2">
-                <CardTitle>Ask Tutor inside {course.name}</CardTitle>
+                <CardTitle>Hỏi trợ giảng về {course.name}</CardTitle>
                 <p className="text-sm leading-6 text-ink-600">
-                  Khi mở Tutor từ đây, assistant chỉ đọc {documents.length} document thuộc course này. Nếu câu hỏi vượt ra ngoài phạm vi đó, no-evidence state sẽ xuất hiện thay vì trả lời mơ hồ.
+                  Khi mở trợ giảng từ đây, trợ giảng chỉ đọc {documents.length} tài liệu thuộc khóa này. Nếu câu hỏi vượt ra ngoài phạm vi đó, hệ thống sẽ báo thiếu nguồn thay vì trả lời mơ hồ.
                 </p>
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
               <LinkButton href={`${routes.tutor}?context=${encodeURIComponent(`course:${course.id}`)}`}>
-                Open tutor
+                Mở trợ giảng
               </LinkButton>
               <LinkButton href={routes.review} variant="outline">
-                Return to review queue
+                Quay lại danh sách ôn tập
               </LinkButton>
             </div>
           </CardBody>
@@ -262,8 +273,8 @@ export function CourseDetailPageContent({
 
       <section id="analytics" className="space-y-4">
         <SectionHeading
-          eyebrow="Analytics"
-          title="Weak-topic signals trong course"
+          eyebrow="Tiến độ học"
+          title="Tín hiệu chủ đề cần củng cố trong khóa"
           description="Không chỉ nhìn màu sắc: luôn có summary văn bản để bạn biết điểm yếu đang nằm ở đâu."
         />
         <Card>
@@ -274,7 +285,7 @@ export function CourseDetailPageContent({
                 value: topic.masteryPct,
                 tone: topic.masteryPct < 50 ? "error" : "warning",
               }))}
-              summary={`Mastery thấp nhất hiện tại trong course là ${weakTopics
+              summary={`Mức ghi nhớ thấp nhất trong khóa học là ${weakTopics
                 .map((topic) => `${topic.name} ${topic.masteryPct}%`)
                 .join(", ")}.`}
             />
@@ -283,10 +294,10 @@ export function CourseDetailPageContent({
                 <div key={topic.id} className="rounded-[var(--radius-card)] border border-ink-200 bg-ink-50/60 p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-sm font-semibold text-ink-900">{topic.name}</p>
-                    <Badge tone="review">Mastery {topic.masteryPct}%</Badge>
+                    <Badge tone="review">Ghi nhớ {topic.masteryPct}%</Badge>
                   </div>
                   <p className="mt-2 text-sm leading-6 text-ink-600">
-                    Missed questions: {topic.missedQuestions}. Review citation gốc rồi mới retry quiz để tránh học thuộc đáp án mà không hiểu nguyên lý.
+                    Câu bỏ lỡ: {topic.missedQuestions}. Xem lại trích dẫn gốc rồi làm lại câu hỏi để tránh học thuộc đáp án mà không hiểu nguyên lý.
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {topic.citations.map((citation) => (
@@ -302,9 +313,9 @@ export function CourseDetailPageContent({
 
       <section id="exam-prep" className="space-y-4">
         <SectionHeading
-          eyebrow="Exam prep"
-          title="Kéo course vào chế độ ôn thi"
-          description="Nếu exam đã cấu hình, section này cho biết deadline, readiness, và bước ôn nên làm tiếp."
+          eyebrow="Ôn thi"
+          title="Đưa khóa học vào chế độ ôn thi"
+          description="Nếu đã có kỳ thi, mục này cho biết ngày thi, mức sẵn sàng và việc cần ôn tiếp theo."
         />
         {exam ? <ExamPrepCard exam={exam} /> : <ExamPrepEmptyState courseName={course.name} />}
       </section>
@@ -350,26 +361,26 @@ function ExamPrepCard({ exam }: { exam: Exam }) {
     <Card>
       <CardBody className="space-y-5">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="brand">Exam configured</Badge>
-          <Badge tone="review">Date · {formatDate(exam.date)}</Badge>
+          <Badge tone="brand">Đã thiết lập kỳ thi</Badge>
+          <Badge tone="review">Ngày thi · {formatDate(exam.date)}</Badge>
         </div>
         <div>
           <CardTitle>{exam.name}</CardTitle>
           <p className="mt-2 text-sm leading-6 text-ink-600">
-            Target score {exam.targetScorePct}% · Readiness hiện tại {exam.readinessPct}%.
+            Mục tiêu {exam.targetScorePct}% · Mức sẵn sàng hiện tại {exam.readinessPct}%.
           </p>
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-ink-600">Readiness</span>
+            <span className="text-ink-600">Mức sẵn sàng</span>
             <span className="font-medium text-ink-900">{exam.readinessPct}%</span>
           </div>
           <ProgressBar value={exam.readinessPct} tone="review" />
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          <MetricTile label="Documents" value={String(exam.documentIds.length)} />
-          <MetricTile label="Target score" value={`${exam.targetScorePct}%`} />
-          <MetricTile label="Suggested action" value="Review weak topics → flashcards → quiz retry" />
+          <MetricTile label="Tài liệu" value={String(exam.documentIds.length)} />
+          <MetricTile label="Điểm mục tiêu" value={`${exam.targetScorePct}%`} />
+          <MetricTile label="Việc nên làm" value="Ôn chủ đề yếu → thẻ ghi nhớ → làm lại câu hỏi" />
         </div>
       </CardBody>
     </Card>
@@ -384,9 +395,9 @@ function ExamPrepEmptyState({ courseName }: { courseName: string }) {
           <CalendarClock className="h-5 w-5" />
         </div>
         <div>
-          <CardTitle>Chưa có exam prep cho {courseName}</CardTitle>
+          <CardTitle>Chưa có kế hoạch ôn thi cho {courseName}</CardTitle>
           <p className="mt-2 text-sm leading-6 text-ink-600">
-            Khi user cấu hình exam date và target score, section này sẽ trở thành điểm vào cho readiness score, coverage map, và practice exam.
+            Khi bạn đặt ngày thi và điểm mục tiêu, mục này sẽ hiển thị mức sẵn sàng, phần kiến thức đã bao phủ và đề luyện tập.
           </p>
         </div>
       </CardBody>

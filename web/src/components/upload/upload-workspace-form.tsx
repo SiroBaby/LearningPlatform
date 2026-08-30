@@ -33,9 +33,9 @@ export function UploadWorkspaceForm({
         <div className="space-y-3">
           <Badge tone="brand">Tải tài liệu</Badge>
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-ink-900 sm:text-3xl">Tải file PDF hoặc TXT</h2>
+            <h2 className="text-2xl font-semibold tracking-tight text-ink-900 sm:text-3xl">Tải tệp PDF hoặc TXT</h2>
             <p className="mt-2 text-sm leading-6 text-ink-600 sm:text-base">
-              Chọn tài liệu của bạn để hệ thống xử lý và chuẩn bị quiz.
+              Chọn tài liệu để hệ thống xử lý và chuẩn bị bài kiểm tra.
             </p>
           </div>
         </div>
@@ -52,7 +52,7 @@ export function UploadWorkspaceForm({
 
           {selectedFile ? (
             <div className="grid gap-3 rounded-3xl border border-brand-100 bg-brand-50/60 p-4 sm:grid-cols-2">
-              <UploadSpecItem label="Tên file" value={selectedFile.file.name} />
+              <UploadSpecItem label="Tên tệp" value={selectedFile.file.name} />
               <UploadSpecItem label="Loại tài liệu" value={selectedFile.normalizedType === "TEXT" ? "TXT" : "PDF"} />
               <UploadSpecItem label="Kích thước" value={formatBytes(selectedFile.file.size)} />
               <UploadSpecItem label="Trạng thái" value={getUploadStepLabel(step)} />

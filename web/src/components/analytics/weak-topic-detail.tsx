@@ -35,7 +35,7 @@ function getTopicInsight(masteryPct: number): string {
     return "Bạn đã nhận ra thuật ngữ đúng, nhưng vẫn dễ sai ở câu hỏi yêu cầu giải thích hoặc so sánh.";
   }
 
-  return "Đây là vùng đang cải thiện, chỉ cần thêm một vòng review có dẫn chứng để ổn định.";
+  return "Đây là vùng đang cải thiện, chỉ cần thêm một lượt ôn có dẫn chứng để ổn định.";
 }
 
 export function WeakTopicDetail({ id }: { readonly id: string }) {
@@ -110,7 +110,7 @@ export function WeakTopicDetail({ id }: { readonly id: string }) {
                 variant="secondary"
                 className="w-full justify-between"
               >
-                Review source section
+                Xem lại phần nguồn
                 <BookOpen className="h-4 w-4" />
               </LinkButton>
             ) : null}
@@ -119,7 +119,7 @@ export function WeakTopicDetail({ id }: { readonly id: string }) {
               <RotateCcw className="h-4 w-4" />
             </LinkButton>
             <LinkButton href={routes.tutor} variant="outline" className="w-full justify-between">
-              Ask Tutor for simpler explanation
+              Nhờ trợ giảng giải thích dễ hiểu hơn
               <Bot className="h-4 w-4" />
             </LinkButton>
           </CardBody>
@@ -162,7 +162,7 @@ export function WeakTopicDetail({ id }: { readonly id: string }) {
               </div>
             )}
             <p className="text-sm leading-6 text-ink-600">
-              Dữ liệu hiện có cho thấy lỗi tập trung ở các câu hỏi cần suy luận cơ chế, không phải câu hỏi nhận biết nhanh. Vì vậy, việc đọc lại source với citation sẽ hiệu quả hơn mở thêm quiz mới ngay lập tức.
+              Dữ liệu hiện có cho thấy lỗi tập trung ở các câu hỏi cần suy luận cơ chế, không phải câu hỏi nhận biết nhanh. Hãy đọc lại phần nguồn liên quan trước khi mở một bài kiểm tra mới.
             </p>
           </CardBody>
         </Card>
@@ -235,7 +235,7 @@ export function WeakTopicDetail({ id }: { readonly id: string }) {
                 Mục tiêu 20 phút
               </div>
               <p className="mt-2 text-sm leading-6 text-ink-600">
-                Đọc lại citation chính, viết lại cơ chế bằng lời của bạn, rồi làm lại nhóm câu sai liên quan. Nếu accuracy lên trên 70% ở lần retry kế tiếp, chủ đề này có thể chuyển về nhóm review duy trì.
+                Đọc lại trích dẫn chính, viết lại cơ chế bằng lời của bạn, rồi làm lại nhóm câu sai liên quan. Nếu độ chính xác lên trên 70% ở lần làm lại kế tiếp, chủ đề này có thể chuyển về nhóm ôn duy trì.
               </p>
             </div>
             <div className="rounded-2xl border border-error-100 bg-error-50 p-4">

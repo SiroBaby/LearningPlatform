@@ -60,6 +60,7 @@ function repository(overrides: Record<string, unknown> = {}) {
     releaseOAuthTransaction: jest.fn(async () => 1),
     rotateRefreshSession: jest.fn(async () => session),
     revokeSessionFamily: jest.fn(async () => undefined),
+    updateProfile: jest.fn(async () => undefined),
     getUserByAccessToken: jest.fn(async () => ({ id: 'user-id', email: 'owner@example.com', displayName: null, role: 'USER', status: 'ACTIVE' })),
     upsertUser: jest.fn(async (_identity: GoogleIdentity) => ({ id: 'user-id' })),
     ...overrides,
@@ -139,6 +140,18 @@ describe('AuthService', () => {
 
     await expect(service.refresh('expired')).rejects.toThrow('Invalid session');
     await expect(service.me('expired')).rejects.toThrow('Invalid session');
+  });
+
+  it('updates profile only through a valid access session', async () => {
+    const repo = repository();
+    const service = new AuthService(config, repo as never, provider(undefined));
+
+    await expect(service.updateProfile('access-token', {
+      displayName: 'Ngoc Phat',
+      onboardingAction: 'complete',
+      preferredLanguage: 'vi',
+    })).resolves.toMatchObject({ id: 'user-id' });
+    expect(repo.updateProfile as unknown as jest.Mock).toHaveBeenCalledWith('user-id', expect.objectContaining({ onboardingAction: 'complete' }));
   });
 
   it.each([

@@ -3,7 +3,8 @@ import { DataSource, IsNull } from 'typeorm';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { BaseRepository } from '../../../database/base.repository';
-import type { AuthSessionPair, AuthUser, GoogleIdentity } from '../contracts/google-auth.contracts';
+import { DateTimeUtil } from '../../../common/datetime.util';
+import type { AuthProfileUpdate, AuthSessionPair, AuthUser, GoogleIdentity } from '../contracts/google-auth.contracts';
 import { OAuthTransaction } from '../entities/oauth-transaction.entity';
 import { Session } from '../entities/session.entity';
 import { UserProfile } from '../entities/user-profile.entity';
@@ -257,9 +258,35 @@ export class AuthRepository extends BaseRepository<User> {
       displayName: profile?.displayName ?? null,
       email: user.normalizedEmail,
       id: user.id,
+      learningGoal: profile?.learningGoal ?? null,
+      onboardingCompletedAt: profile?.onboardingCompletedAt?.toISOString() ?? null,
+      onboardingSkippedAt: profile?.onboardingSkippedAt?.toISOString() ?? null,
+      preferredLanguage: profile?.preferredLanguage ?? null,
+      proficiencyLevel: profile?.proficiencyLevel ?? null,
       role: user.role,
       status: user.status,
     };
+  }
+
+  async updateProfile(userId: string, input: AuthProfileUpdate): Promise<void> {
+    const values: Partial<UserProfile> = {};
+    if (input.displayName !== undefined) values.displayName = input.displayName;
+    if (input.learningGoal !== undefined) values.learningGoal = input.learningGoal;
+    if (input.preferredLanguage !== undefined) values.preferredLanguage = input.preferredLanguage;
+    if (input.proficiencyLevel !== undefined) values.proficiencyLevel = input.proficiencyLevel;
+    if (input.onboardingAction === 'complete') {
+      values.onboardingCompletedAt = DateTimeUtil.nowUtc();
+      values.onboardingSkippedAt = null;
+    } else if (input.onboardingAction === 'skip') {
+      values.onboardingCompletedAt = null;
+      values.onboardingSkippedAt = DateTimeUtil.nowUtc();
+    } else if (input.onboardingAction === 'reset') {
+      values.onboardingCompletedAt = null;
+      values.onboardingSkippedAt = null;
+    }
+    if (Object.keys(values).length > 0) {
+      await this.dataSource.getRepository(UserProfile).update({ userId }, values);
+    }
   }
 
   async revokeUserSessions(userId: string, reason: string): Promise<void> {

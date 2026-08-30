@@ -5,20 +5,28 @@ import { Card, CardBody, CardHeader, CardTitle, Badge, LinkButton } from "@/comp
 import { formatDateTime, notifications } from "@/lib/mock-data";
 
 export const metadata: Metadata = {
-  title: "Notifications",
+  title: "Thông báo",
   description:
-    "Theo dõi document ready, processing failed, review due, low credits và các tín hiệu quan trọng khác trong quá trình học.",
+    "Theo dõi tài liệu sẵn sàng, lần xử lý chưa thành công, lượt ôn đến hạn và các tín hiệu quan trọng khác trong quá trình học.",
 };
+
+function localizeNotificationText(value: string): string {
+  return value
+    .replace(/\bflashcards?\b/gi, "thẻ ghi nhớ")
+    .replace(/\bquiz\b/gi, "bài kiểm tra")
+    .replace(/\bcredits?\b/gi, "lượt dùng")
+    .replace(/Tín dụng/g, "Lượt dùng");
+}
 
 export default function NotificationsPage() {
   return (
     <LearnerShell
-      title="Notifications"
-      subtitle="Thông báo phải dẫn người học quay lại đúng route cần hành động thay vì chỉ báo trạng thái chung chung."
+      title="Thông báo"
+      subtitle="Mỗi thông báo đưa bạn trở lại đúng nơi cần tiếp tục học hoặc xử lý."
     >
       <Card>
         <CardHeader>
-          <CardTitle>Notification center</CardTitle>
+          <CardTitle>Tất cả thông báo</CardTitle>
         </CardHeader>
         <CardBody className="space-y-4">
           {notifications.map((item) => (
@@ -30,14 +38,14 @@ export default function NotificationsPage() {
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {!item.read ? <Badge tone="brand">Unread</Badge> : <Badge>Read</Badge>}
+                      {!item.read ? <Badge tone="brand">Chưa đọc</Badge> : <Badge>Đã đọc</Badge>}
                       <span className="text-xs text-ink-400">{formatDateTime(item.createdAt)}</span>
                     </div>
-                    <p className="mt-2 text-sm font-semibold text-ink-900">{item.title}</p>
-                    <p className="mt-1 text-sm leading-6 text-ink-600">{item.body}</p>
+                    <p className="mt-2 text-sm font-semibold text-ink-900">{localizeNotificationText(item.title)}</p>
+                    <p className="mt-1 text-sm leading-6 text-ink-600">{localizeNotificationText(item.body)}</p>
                   </div>
                 </div>
-                {item.href ? <LinkButton href={item.href} size="sm" variant="outline">Open</LinkButton> : null}
+                {item.href ? <LinkButton href={item.href} size="sm" variant="outline">Xem chi tiết</LinkButton> : null}
               </div>
             </div>
           ))}

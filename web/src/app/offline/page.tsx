@@ -1,11 +1,14 @@
 import { HomeActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
+import { hasAuthenticatedSession } from "@/lib/auth/session";
 
 export const metadata = buildSystemMetadata(
   "Offline",
   "Thiết bị của bạn đang mất kết nối. Một số màn hình mock vẫn xem được, nhưng các thao tác mạng sẽ bị trì hoãn.",
 );
 
-export default function OfflinePage() {
+export default async function OfflinePage(): Promise<React.JSX.Element> {
+  const isAuthenticated = await hasAuthenticatedSession();
+
   return (
     <SystemStatePage
       badge="Offline"
@@ -15,6 +18,7 @@ export default function OfflinePage() {
       icon="offline"
       tone="neutral"
       primaryAction={<HomeActions />}
+      isAuthenticated={isAuthenticated}
     />
   );
 }

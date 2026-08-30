@@ -2,34 +2,34 @@
 
 /* ============================================================
    LearningPlatform design tokens
-   Calm academic study cockpit: neutral canvas, indigo accent,
-   semantic learning colors (success/warning/error/mastery/review).
+   Learner-first study desk: warm paper canvas, ink typography,
+   coral action accent, and calm semantic learning colors.
    ============================================================ */
 
 @theme {
-  /* Brand / learning accent — indigo */
-  --color-brand-50: #eef2ff;
-  --color-brand-100: #e0e7ff;
-  --color-brand-200: #c7d2fe;
-  --color-brand-300: #a5b4fc;
-  --color-brand-400: #818cf8;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
-  --color-brand-800: #3730a3;
-  --color-brand-900: #312e81;
+  /* Brand accent: warm coral, reserved for action and focus */
+  --color-brand-50: #fff1ec;
+  --color-brand-100: #ffdcd0;
+  --color-brand-200: #ffc0ae;
+  --color-brand-300: #ff9e85;
+  --color-brand-400: #f77d62;
+  --color-brand-500: #e9644b;
+  --color-brand-600: #c2412d;
+  --color-brand-700: #b83d2c;
+  --color-brand-800: #983829;
+  --color-brand-900: #7c3028;
 
   /* Neutral canvas */
-  --color-ink-50: #f8fafc;
-  --color-ink-100: #f1f5f9;
-  --color-ink-200: #e2e8f0;
-  --color-ink-300: #cbd5e1;
-  --color-ink-400: #94a3b8;
-  --color-ink-500: #64748b;
-  --color-ink-600: #475569;
-  --color-ink-700: #334155;
-  --color-ink-800: #1e293b;
-  --color-ink-900: #0f172a;
+  --color-ink-50: #fbf8f3;
+  --color-ink-100: #f2ede4;
+  --color-ink-200: #e3d9ca;
+  --color-ink-300: #cdbdaa;
+  --color-ink-400: #9c8b7a;
+  --color-ink-500: #78695b;
+  --color-ink-600: #5a4d43;
+  --color-ink-700: #40372f;
+  --color-ink-800: #2a2521;
+  --color-ink-900: #1d1a18;
 
   /* Semantic learning colors */
   --color-success-50: #ecfdf5;
@@ -50,11 +50,11 @@
   --color-error-600: #dc2626;
   --color-error-700: #b91c1c;
 
-  /* Mastery = purple, Review = orange */
-  --color-mastery-50: #faf5ff;
-  --color-mastery-100: #f3e8ff;
-  --color-mastery-500: #a855f7;
-  --color-mastery-600: #9333ea;
+  /* Mastery = teal, Review = amber */
+  --color-mastery-50: #eaf8f4;
+  --color-mastery-100: #c9eee3;
+  --color-mastery-500: #229b81;
+  --color-mastery-600: #187864;
 
   --color-review-50: #fff7ed;
   --color-review-100: #ffedd5;
@@ -66,12 +66,13 @@
 
   /* Fonts */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+  /* Keep every text role on the same sans family, including utility text. */
+  --font-mono: var(--font-sans);
 }
 
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  --background: #fbf8f3;
+  --foreground: #1d1a18;
   --surface: #ffffff;
   --border: #e2e8f0;
 }
@@ -82,6 +83,16 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  background-image: radial-gradient(circle at 8% 0%, rgba(233, 100, 75, 0.08), transparent 28rem),
+    radial-gradient(circle at 92% 12%, rgba(34, 155, 129, 0.07), transparent 24rem);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-sans);
+  letter-spacing: -0.02em;
 }
 
 /* Long Vietnamese text should wrap gracefully, never overflow */

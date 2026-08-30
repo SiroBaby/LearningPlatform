@@ -59,10 +59,10 @@ const weeklyAccuracyData = [
 ] as const;
 
 const outputLabels: Record<OutputKind, string> = {
-  quiz: "Quiz",
-  flashcards: "Flashcards",
-  tutor: "Tutor",
-  checkpoints: "Checkpoints",
+  quiz: "Bài kiểm tra",
+  flashcards: "Thẻ ghi nhớ",
+  tutor: "Trợ giảng",
+  checkpoints: "Điểm dừng",
 };
 
 const taskToneMap: Record<StudyTask["type"], "brand" | "mastery" | "review"> = {
@@ -75,12 +75,12 @@ const taskToneMap: Record<StudyTask["type"], "brand" | "mastery" | "review"> = {
 };
 
 const taskLabelMap: Record<StudyTask["type"], string> = {
-  flashcards: "Flashcards",
-  retry_quiz: "Retry quiz",
-  video_checkpoint: "Checkpoint",
-  read_source: "Review source",
-  ask_tutor: "Ask tutor",
-  practice_exam: "Practice exam",
+  flashcards: "Thẻ ghi nhớ",
+  retry_quiz: "Làm lại bài kiểm tra",
+  video_checkpoint: "Điểm dừng",
+  read_source: "Xem lại tài liệu",
+  ask_tutor: "Hỏi trợ giảng",
+  practice_exam: "Luyện kiểm tra",
 };
 
 const currentStreakDays = 6;
@@ -138,8 +138,8 @@ export function LearnerDashboard() {
 
       {latestQuiz ? (
         <p className="text-sm text-ink-500">
-          Quiz gần nhất: <span className="font-medium text-ink-700">{latestQuiz.title}</span> với {latestQuiz.questionCount} câu.
-          Dashboard này dùng dữ liệu mock nên các CTA ngoài trang <span className="font-medium text-ink-700">/home</span> và <span className="font-medium text-ink-700">/upload</span> chỉ minh họa cho luồng tiếp theo.
+          Bài kiểm tra gần nhất: <span className="font-medium text-ink-700">{latestQuiz.title.replace(/^Quiz\b/i, "Bài kiểm tra")}</span> với {latestQuiz.questionCount} câu.
+          Đây là dữ liệu minh họa; các nút bên ngoài trang này chỉ mô phỏng bước học tiếp theo.
         </p>
       ) : null}
     </div>
@@ -164,13 +164,13 @@ function PrimaryActionCard({
       <CardBody className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="space-y-5">
           <div className="space-y-3">
-            <Badge tone="brand">Primary action</Badge>
+            <Badge tone="brand">Việc nên làm hôm nay</Badge>
             <div>
               <h2 className="text-2xl font-semibold tracking-tight text-ink-900 sm:text-3xl">
-                Tiếp tục vòng lặp active recall hôm nay
+                Tiếp tục ôn nhớ chủ động hôm nay
               </h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-600 sm:text-base">
-                Upload tài liệu mới hoặc quay lại phần ôn tập ưu tiên nhất. Mục tiêu hôm nay là xử lý review queue trước khi mở quiz mới.
+                Tải tài liệu mới hoặc quay lại phần ôn tập ưu tiên. Hãy hoàn thành phần cần ôn trước khi mở bài kiểm tra mới.
               </p>
             </div>
           </div>
@@ -192,7 +192,7 @@ function PrimaryActionCard({
                 </span>
                 <span className="inline-flex items-center gap-1.5">
                   <BrainCircuit className="h-4 w-4" />
-                  Course focus: {currentCourse.name}
+                  Môn học: {currentCourse.name}
                 </span>
               </div>
             </div>
@@ -200,17 +200,17 @@ function PrimaryActionCard({
 
           <div className="flex flex-wrap gap-3">
             <LinkButton href={routes.upload}>
-              Upload tài liệu mới <ArrowRight className="h-4 w-4" />
+              Tải tài liệu mới <ArrowRight className="h-4 w-4" />
             </LinkButton>
             <Button variant="secondary" type="button">
-              Tiếp tục review queue
+              Tiếp tục ôn tập
             </Button>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <MetricTile label="Due today" value={`${dueCount} mục`} tone="review" />
-            <MetricTile label="Ready documents" value={`${readyCount} tài liệu`} tone="success" />
-            <MetricTile label="Plan completion" value={`${reviewCompletionPct}%`} tone="brand" />
+            <MetricTile label="Đến hạn hôm nay" value={`${dueCount} mục`} tone="review" />
+            <MetricTile label="Tài liệu sẵn sàng" value={`${readyCount} tài liệu`} tone="success" />
+            <MetricTile label="Hoàn thành kế hoạch" value={`${reviewCompletionPct}%`} tone="brand" />
           </div>
         </div>
 
@@ -220,7 +220,7 @@ function PrimaryActionCard({
             <div className="space-y-2">
               <p className="text-sm font-semibold text-ink-900">Mức sẵn sàng hôm nay</p>
               <p className="text-sm leading-6 text-ink-600">
-                Bạn đã duy trì streak <span className="font-semibold text-ink-900">{currentStreakDays} ngày</span> và còn đúng một chủ đề yếu cần xử lý trước khi làm quiz mới.
+                Bạn đã duy trì chuỗi ngày học <span className="font-semibold text-ink-900">{currentStreakDays} ngày</span> và còn một chủ đề cần ôn trước khi làm bài kiểm tra mới.
               </p>
             </div>
           </div>
@@ -235,9 +235,9 @@ function RecommendedNextActionCard({ weakTopic }: { weakTopic?: WeakTopic }) {
     return (
       <EmptyState
         icon={Sparkles}
-        title="Chưa có next action"
-        description="Khi bạn có review due hoặc quiz sai gần đây, dashboard sẽ gợi ý hành động tiếp theo ở đây."
-        action={<LinkButton href={routes.upload}>Upload tài liệu đầu tiên</LinkButton>}
+        title="Chưa có gợi ý tiếp theo"
+        description="Khi có mục đến hạn hoặc câu sai gần đây, gợi ý ôn tập sẽ xuất hiện ở đây."
+        action={<LinkButton href={routes.upload}>Tải tài liệu đầu tiên</LinkButton>}
       />
     );
   }
@@ -247,7 +247,7 @@ function RecommendedNextActionCard({ weakTopic }: { weakTopic?: WeakTopic }) {
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-brand-700">Recommended next action</p>
+            <p className="text-sm font-semibold text-brand-700">Gợi ý tiếp theo</p>
             <CardTitle className="mt-1">Ôn lại {weakTopic.name}</CardTitle>
           </div>
           <Badge tone="warning">Ưu tiên cao</Badge>
@@ -255,7 +255,7 @@ function RecommendedNextActionCard({ weakTopic }: { weakTopic?: WeakTopic }) {
       </CardHeader>
       <CardBody className="space-y-4">
         <div className="rounded-2xl border border-warning-100 bg-warning-50/70 p-4 text-sm leading-6 text-ink-700">
-          Bạn đã bỏ lỡ <span className="font-semibold text-ink-900">{weakTopic.missedQuestions} câu</span> thuộc chủ đề này. Hành động tốt nhất là quay lại nguồn rồi retry ngay khi trí nhớ còn mới.
+          Bạn đã sai <span className="font-semibold text-ink-900">{weakTopic.missedQuestions} câu</span> thuộc chủ đề này. Hãy xem lại tài liệu rồi làm lại ngay khi kiến thức còn mới.
         </div>
 
         <CitationSnippet citation={weakTopic.citations[0]} />
@@ -263,22 +263,22 @@ function RecommendedNextActionCard({ weakTopic }: { weakTopic?: WeakTopic }) {
         <ol className="space-y-2 text-sm text-ink-600">
           <li className="flex items-start gap-3">
             <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">1</span>
-            Đọc lại snippet nguồn và nhắc lại ý chính bằng lời của bạn.
+            Đọc lại đoạn trích và nhắc lại ý chính bằng lời của bạn.
           </li>
           <li className="flex items-start gap-3">
             <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">2</span>
-            Làm lại các câu sai liên quan đến {weakTopic.name} trước khi quay lại quiz mới.
+            Làm lại các câu sai liên quan đến {weakTopic.name} trước khi mở bài kiểm tra mới.
           </li>
           <li className="flex items-start gap-3">
             <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">3</span>
-            Nếu vẫn mơ hồ, dùng Tutor để xin ví dụ và so sánh khái niệm.
+            Nếu vẫn mơ hồ, dùng trợ giảng để xin ví dụ và so sánh khái niệm.
           </li>
         </ol>
 
         <div className="flex flex-wrap gap-3">
           <Button type="button">Ôn chủ đề này ngay</Button>
           <Button variant="outline" type="button">
-            Xem lại câu sai
+            Xem câu sai
           </Button>
         </div>
       </CardBody>
@@ -293,8 +293,8 @@ function TodayReviewQueueCard({ tasks }: { tasks: StudyTask[] }) {
     return (
       <EmptyState
         icon={ListChecks}
-        title="Hôm nay chưa có review due"
-        description="Khi có flashcards, câu sai hoặc checkpoint cần xem lại, review queue sẽ xuất hiện ở đây cùng với thời lượng ước tính."
+        title="Hôm nay chưa có mục cần ôn"
+        description="Khi có thẻ ghi nhớ, câu sai hoặc điểm dừng cần xem lại, danh sách ôn tập sẽ xuất hiện ở đây cùng thời lượng ước tính."
       />
     );
   }
@@ -304,10 +304,10 @@ function TodayReviewQueueCard({ tasks }: { tasks: StudyTask[] }) {
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-brand-700">Today’s review queue</p>
+            <p className="text-sm font-semibold text-brand-700">Ôn tập hôm nay</p>
             <CardTitle className="mt-1">Những gì bạn nên xử lý trước</CardTitle>
             <p className="mt-2 text-sm leading-6 text-ink-600">
-              Queue này ưu tiên thẻ quá hạn, câu sai gần đây, rồi đến checkpoint video và follow-up với Tutor.
+              Danh sách này ưu tiên thẻ quá hạn, câu sai gần đây, điểm dừng video và nội dung cần hỏi trợ giảng.
             </p>
           </div>
           <Badge tone="review">{totalMinutes} phút</Badge>
@@ -315,7 +315,7 @@ function TodayReviewQueueCard({ tasks }: { tasks: StudyTask[] }) {
       </CardHeader>
       <CardBody className="space-y-4">
         <div className="rounded-2xl border border-review-100 bg-review-50/60 px-4 py-3 text-sm text-ink-700">
-          <span className="font-semibold text-ink-900">{dueCardsToday.length} flashcard</span> đã đến hạn hôm nay. Hoàn thành chúng trước để giữ nhịp spaced repetition.
+          <span className="font-semibold text-ink-900">{dueCardsToday.length} thẻ ghi nhớ</span> đã đến hạn hôm nay. Hoàn thành chúng trước để duy trì nhịp ôn tập.
         </div>
 
         <ul className="space-y-3">
@@ -329,7 +329,7 @@ function TodayReviewQueueCard({ tasks }: { tasks: StudyTask[] }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-sm font-semibold text-ink-900">{task.title}</p>
                     <Badge tone={task.done ? "success" : taskToneMap[task.type]}>
-                      {task.done ? "Done" : taskLabelMap[task.type]}
+                      {task.done ? "Đã xong" : taskLabelMap[task.type]}
                     </Badge>
                   </div>
                   {task.documentTitle ? (
@@ -354,9 +354,9 @@ function ContinueAttemptCard({ attempt }: { attempt?: Attempt }) {
     return (
       <EmptyState
         icon={RefreshCcw}
-        title="Chưa có attempt gần đây"
-        description="Làm một quiz đầu tiên để dashboard bắt đầu theo dõi tiến độ, điểm yếu và phần nên ôn tiếp theo."
-        action={<LinkButton href={routes.upload}>Tạo quiz từ tài liệu</LinkButton>}
+        title="Chưa có bài làm gần đây"
+        description="Làm bài kiểm tra đầu tiên để trang học tập bắt đầu theo dõi tiến độ, điểm yếu và phần nên ôn tiếp theo."
+        action={<LinkButton href={routes.upload}>Tạo bài kiểm tra từ tài liệu</LinkButton>}
       />
     );
   }
@@ -378,40 +378,40 @@ function ContinueAttemptCard({ attempt }: { attempt?: Attempt }) {
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-brand-700">Continue attempt</p>
+            <p className="text-sm font-semibold text-brand-700">Bài làm gần nhất</p>
             <CardTitle className="mt-1">Tiếp tục từ lần làm bài gần nhất</CardTitle>
             <p className="mt-2 text-sm leading-6 text-ink-600">
-              Điểm gần nhất của bạn đã đủ tốt để tiếp tục, nhưng vẫn còn một cụm lỗi nhỏ cần review trước khi tăng độ khó.
+              Điểm gần nhất của bạn đã đủ tốt để tiếp tục, nhưng vẫn còn một cụm lỗi nhỏ cần ôn trước khi tăng độ khó.
             </p>
           </div>
-          <Badge tone="mastery">{attempt.mode === "practice" ? "Practice mode" : "Test mode"}</Badge>
+          <Badge tone="mastery">{attempt.mode === "practice" ? "Luyện tập" : "Kiểm tra"}</Badge>
         </div>
       </CardHeader>
       <CardBody className="space-y-5">
         <div className="flex flex-col gap-4 rounded-3xl border border-ink-100 bg-ink-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <ProgressRing value={attempt.scorePct} label="Điểm attempt gần nhất" tone="mastery" />
+            <ProgressRing value={attempt.scorePct} label="Điểm bài làm gần nhất" tone="mastery" />
             <div>
               <p className="text-base font-semibold text-ink-900">{attempt.documentTitle}</p>
               <p className="mt-1 text-sm text-ink-600">Nộp lúc {formatDateTime(attempt.submittedAt)} · {attempt.correctCount}/{attempt.totalCount} câu đúng</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Button type="button">Review {reviewCount} câu sai</Button>
+            <Button type="button">Ôn {reviewCount} câu sai</Button>
             <Button variant="outline" type="button">
-              Làm lại quiz
+              Làm lại bài kiểm tra
             </Button>
           </div>
         </div>
 
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-ink-900">Topic breakdown</p>
+            <p className="text-sm font-semibold text-ink-900">Kết quả theo chủ đề</p>
             <span className="text-sm text-ink-500">{Math.round(attempt.timeSpentSec / 60)} phút</span>
           </div>
           <BarChart
             data={topicData}
-            summary="Topic breakdown cho lần làm bài gần nhất: Định thời CPU đạt 100%, Đồng bộ tiến trình đạt 50%."
+            summary="Kết quả theo chủ đề của bài làm gần nhất: Định thời CPU đạt 100%, Đồng bộ tiến trình đạt 50%."
           />
         </div>
       </CardBody>
@@ -434,8 +434,8 @@ function ProcessingJobsCard({
     return (
       <EmptyState
         icon={Sparkles}
-        title="Không có job nào đang chạy"
-        description="Khi bạn upload tài liệu mới, trạng thái xử lý và pipeline minh bạch sẽ xuất hiện ở đây thay vì chỉ có spinner."
+        title="Không có tài liệu đang xử lý"
+        description="Khi bạn tải tài liệu mới, tiến độ xử lý sẽ xuất hiện ở đây để bạn biết tài liệu đang ở bước nào."
       />
     );
   }
@@ -445,13 +445,13 @@ function ProcessingJobsCard({
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-brand-700">Processing jobs status</p>
+            <p className="text-sm font-semibold text-brand-700">Trạng thái xử lý tài liệu</p>
             <CardTitle className="mt-1">Biết chính xác tài liệu nào đang ở bước nào</CardTitle>
             <p className="mt-2 text-sm leading-6 text-ink-600">
-              Mọi AI job đều hiện step hiện tại, ETA và tình trạng recoverable failure để bạn không phải đoán.
+              Mỗi tài liệu đều hiển thị bước hiện tại và cách xử lý nếu có lỗi để bạn không phải đoán.
             </p>
           </div>
-          <Badge tone="brand">{runningJobs} running job</Badge>
+          <Badge tone="brand">{runningJobs} tài liệu đang xử lý</Badge>
         </div>
       </CardHeader>
       <CardBody className="space-y-4">
@@ -465,7 +465,7 @@ function ProcessingJobsCard({
                   <StatusPill status={runningDocument.status} />
                 </div>
                 <p className="text-sm text-ink-600">
-                  Upload lúc {formatDateTime(runningDocument.uploadedAt)} · ETA còn khoảng {Math.ceil((runningDocument.processing.etaSec ?? 0) / 60)} phút
+                  Tải lên lúc {formatDateTime(runningDocument.uploadedAt)} · Còn khoảng {Math.ceil((runningDocument.processing.etaSec ?? 0) / 60)} phút
                 </p>
               </div>
               <span className="text-sm font-semibold text-brand-700">{runningDocument.processing.percent}%</span>
@@ -488,7 +488,7 @@ function ProcessingJobsCard({
                 <StatusPill status={queuedDocument.status} />
               </div>
               <p className="mt-3 text-sm leading-6 text-ink-600">
-                Tệp đã upload xong và đang chờ xác minh cuối trước khi bắt đầu pipeline xử lý.
+                Tệp đã tải lên xong và đang chờ xác minh trước khi bắt đầu xử lý.
               </p>
             </div>
           ) : null}
@@ -506,14 +506,14 @@ function ProcessingJobsCard({
                 {failedDocument.processing.failureReason}
               </p>
               <p className="mt-2 text-xs text-ink-500">
-                Credits refunded: {failedDocument.processing.creditsRefunded ? "Có" : "Không"}
+                Đã hoàn lượt dùng: {failedDocument.processing.creditsRefunded ? "Có" : "Không"}
               </p>
             </div>
           ) : null}
         </div>
 
         <div className="rounded-2xl border border-brand-100 bg-white px-4 py-3 text-sm text-ink-700">
-          Processing có thể mất vài phút. Bạn có thể rời trang này; hệ thống sẽ giữ trạng thái và gửi thông báo khi tài liệu sẵn sàng.
+          Việc xử lý có thể mất vài phút. Bạn có thể rời trang này; hệ thống sẽ giữ trạng thái và báo khi tài liệu sẵn sàng.
         </div>
       </CardBody>
     </Card>
@@ -526,8 +526,8 @@ function RecentlyReadyDocumentsCard({ documents }: { documents: LearningDocument
       <EmptyState
         icon={Upload}
         title="Chưa có tài liệu sẵn sàng"
-        description="Khi một tài liệu hoàn tất pipeline, nó sẽ xuất hiện ở đây cùng output có sẵn và gợi ý bước tiếp theo."
-        action={<LinkButton href={routes.upload}>Upload tài liệu mới</LinkButton>}
+        description="Khi một tài liệu xử lý xong, tài liệu sẽ xuất hiện ở đây cùng nội dung đã tạo và gợi ý bước tiếp theo."
+        action={<LinkButton href={routes.upload}>Tải tài liệu mới</LinkButton>}
       />
     );
   }
@@ -536,10 +536,10 @@ function RecentlyReadyDocumentsCard({ documents }: { documents: LearningDocument
     <Card>
       <CardHeader>
         <div className="space-y-2">
-          <p className="text-sm font-semibold text-brand-700">Recently ready documents</p>
+          <p className="text-sm font-semibold text-brand-700">Tài liệu vừa sẵn sàng</p>
           <CardTitle>Tài liệu mới sẵn sàng để học</CardTitle>
           <p className="text-sm leading-6 text-ink-600">
-            Mỗi card cho biết loại tài liệu, output đã sinh, lần học gần nhất và bước nên làm tiếp theo.
+            Mỗi mục cho biết loại tài liệu, nội dung đã tạo, lần học gần nhất và bước nên làm tiếp theo.
           </p>
         </div>
       </CardHeader>
@@ -568,7 +568,7 @@ function RecentlyReadyDocumentsCard({ documents }: { documents: LearningDocument
               </div>
               <div className="mt-4 space-y-2">
                 <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="text-ink-600">Mastery</span>
+                  <span className="text-ink-600">Mức độ nắm vững</span>
                   <span className="font-medium text-ink-900">{document.masteryPct ?? 0}%</span>
                 </div>
                 <ProgressBar value={document.masteryPct ?? 0} tone="success" />
@@ -587,8 +587,8 @@ function WeakTopicsCard({ topics }: { topics: WeakTopic[] }) {
     return (
       <EmptyState
         icon={BrainCircuit}
-        title="Chưa có weak topic"
-        description="Sau khi có quiz results hoặc flashcard reviews, hệ thống sẽ gom bằng chứng để chỉ ra chỗ bạn còn mơ hồ."
+        title="Chưa có chủ đề cần ôn"
+        description="Sau khi có kết quả bài kiểm tra hoặc lượt ôn thẻ ghi nhớ, hệ thống sẽ chỉ ra chỗ bạn còn mơ hồ."
       />
     );
   }
@@ -603,17 +603,17 @@ function WeakTopicsCard({ topics }: { topics: WeakTopic[] }) {
     <Card>
       <CardHeader>
         <div className="space-y-2">
-          <p className="text-sm font-semibold text-brand-700">Weak topics</p>
+          <p className="text-sm font-semibold text-brand-700">Chủ đề cần ôn thêm</p>
           <CardTitle>Điểm yếu cần quay lại có bằng chứng rõ ràng</CardTitle>
           <p className="text-sm leading-6 text-ink-600">
-            Không chỉ nói bạn yếu ở đâu, dashboard còn gắn mỗi topic với số câu sai và nguồn tài liệu liên quan.
+            Không chỉ nói bạn yếu ở đâu, trang học tập còn gắn mỗi chủ đề với số câu sai và nguồn tài liệu liên quan.
           </p>
         </div>
       </CardHeader>
       <CardBody className="space-y-5">
         <BarChart
           data={chartData}
-          summary="Biểu đồ weak topics: Đồng bộ tiến trình 45%, Gradient descent 52%, UDP vs TCP 38%."
+          summary="Biểu đồ các chủ đề cần ôn: Đồng bộ tiến trình 45%, Gradient descent 52%, UDP vs TCP 38%."
         />
 
         <ul className="space-y-3">
@@ -623,14 +623,14 @@ function WeakTopicsCard({ topics }: { topics: WeakTopic[] }) {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-sm font-semibold text-ink-900">{topic.name}</p>
-                    <Badge tone={topic.masteryPct < 50 ? "error" : "warning"}>{topic.masteryPct}% mastery</Badge>
+                    <Badge tone={topic.masteryPct < 50 ? "error" : "warning"}>{topic.masteryPct}% nắm vững</Badge>
                   </div>
                   <p className="mt-1 text-sm text-ink-600">
-                    Missed {topic.missedQuestions} câu · {topic.documentTitles.join(" · ")}
+                    Sai {topic.missedQuestions} câu · {topic.documentTitles.join(" · ")}
                   </p>
                 </div>
                 <Button variant="outline" type="button">
-                  Review source
+                  Xem lại tài liệu
                 </Button>
               </div>
             </li>
@@ -647,10 +647,10 @@ function StudyProgressCard({ reviewCompletionPct }: { reviewCompletionPct: numbe
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-brand-700">Streak & progress</p>
+          <p className="text-sm font-semibold text-brand-700">Chuỗi ngày học & tiến bộ</p>
             <CardTitle>Giữ nhịp học đều và nhìn thấy tiến bộ theo tuần</CardTitle>
             <p className="mt-2 text-sm leading-6 text-ink-600">
-              Thay vì chỉ hiển thị chart đẹp, khu vực này cho biết streak, độ chính xác gần đây và mức hoàn thành review plan bằng ngôn ngữ dễ hành động.
+              Khu vực này cho biết chuỗi ngày học, độ chính xác gần đây và mức hoàn thành kế hoạch ôn tập.
             </p>
           </div>
           <Badge tone="mastery">{currentStreakDays} ngày liên tiếp</Badge>
@@ -659,17 +659,17 @@ function StudyProgressCard({ reviewCompletionPct }: { reviewCompletionPct: numbe
       <CardBody className="space-y-5">
         <TrendChart
           data={weeklyAccuracyData}
-          summary="Độ chính xác quiz tăng từ 48% đầu tuần lên 86% hôm nay."
+          summary="Độ chính xác bài kiểm tra tăng từ 48% đầu tuần lên 86% hôm nay."
         />
 
         <div className="grid gap-3 sm:grid-cols-3">
-          <MetricTile label="Streak" value={`${currentStreakDays} ngày`} tone="mastery" />
-          <MetricTile label="Active days" value={`${activeStudyDays}/7`} tone="brand" />
-          <MetricTile label="Review done" value={`${reviewCompletionPct}%`} tone="success" />
+          <MetricTile label="Chuỗi ngày học" value={`${currentStreakDays} ngày`} tone="mastery" />
+          <MetricTile label="Ngày đã học" value={`${activeStudyDays}/7`} tone="brand" />
+          <MetricTile label="Đã ôn tập" value={`${reviewCompletionPct}%`} tone="success" />
         </div>
 
         <div className="rounded-2xl border border-success-100 bg-success-50/70 p-4 text-sm leading-6 text-ink-700">
-          Tuần này bạn đã tăng độ chính xác quiz lên <span className="font-semibold text-ink-900">38 điểm</span>. Nếu hoàn thành nốt review queue hôm nay, readiness cho course hiện tại sẽ vượt 80%.
+          Tuần này bạn đã tăng độ chính xác bài kiểm tra lên <span className="font-semibold text-ink-900">38 điểm</span>. Nếu hoàn thành nốt phần ôn tập hôm nay, mức sẵn sàng cho môn học hiện tại sẽ vượt 80%.
         </div>
       </CardBody>
     </Card>
@@ -691,9 +691,9 @@ function UsageWarningCard({
         <div className="space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-warning-700">Usage warning</p>
+              <p className="text-sm font-semibold text-warning-700">Mức sử dụng</p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight text-ink-900">
-                Credits đang gần ngưỡng, nên ưu tiên PDF/text trước video dài
+                Lượt dùng sắp chạm ngưỡng, nên ưu tiên PDF hoặc văn bản trước video dài
               </h2>
             </div>
             <Badge tone="warning">{usage.planLabel}</Badge>
@@ -701,19 +701,19 @@ function UsageWarningCard({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <UsageMeter
-              label="Credits còn lại"
-              helper={`${usage.creditsRemaining}/${usage.creditsTotal} credits · reset ${formatDate(usage.resetDate)}`}
+              label="Lượt dùng còn lại"
+              helper={`${usage.creditsRemaining}/${usage.creditsTotal} lượt · đặt lại ${formatDate(usage.resetDate)}`}
               value={creditRemainingPct}
             />
             <UsageMeter
-              label="Upload quota"
-              helper={`${usage.uploadsUsed}/${usage.uploadsLimit} lượt upload`}
+              label="Lượt tải lên"
+              helper={`${usage.uploadsUsed}/${usage.uploadsLimit} lượt tải lên`}
               value={uploadUsagePct}
             />
           </div>
 
           <div className="rounded-2xl border border-warning-100 bg-white/80 p-4 text-sm leading-6 text-ink-700">
-            Với số dư hiện tại, bạn vẫn đủ để xử lý thêm một PDF trung bình hoặc tiếp tục review queue hôm nay. Video/audio dài nên để sau khi nạp thêm credits hoặc nâng cấp plan.
+            Với số dư hiện tại, bạn vẫn đủ để xử lý thêm một PDF trung bình hoặc tiếp tục ôn tập hôm nay. Video hoặc audio dài nên để sau khi có thêm lượt dùng hoặc nâng cấp gói.
           </div>
         </div>
 
@@ -722,12 +722,12 @@ function UsageWarningCard({
             <CircleAlert className="mt-0.5 h-5 w-5 text-warning-700" />
             <div className="space-y-2 text-sm text-ink-700">
               <p className="font-semibold text-ink-900">Điều nên làm ngay</p>
-              <p>Hoàn thành {reviewCompletionPct}% review plan hiện tại trước khi tiêu thêm credits cho nội dung mới.</p>
+              <p>Hoàn thành {reviewCompletionPct}% kế hoạch ôn tập hiện tại trước khi dùng thêm lượt dùng cho nội dung mới.</p>
               <div className="flex flex-wrap gap-3 pt-1">
                 <LinkButton href={routes.upload} variant="outline">
-                  Upload gọn hơn
+                  Tải tệp nhẹ hơn
                 </LinkButton>
-                <Button type="button">Xem breakdown usage</Button>
+                <Button type="button">Xem chi tiết mức sử dụng</Button>
               </div>
             </div>
           </div>
@@ -792,16 +792,16 @@ function getLatestAttempt(): Attempt | undefined {
 
 function getDocumentNextAction(document: LearningDocument): string {
   if (document.outputs.includes("quiz") && (document.masteryPct ?? 0) < 70) {
-    return "Làm lại quiz để kéo mastery vượt 70%.";
+    return "Làm lại bài kiểm tra để nâng mức nắm vững lên trên 70%.";
   }
 
   if (document.outputs.includes("flashcards")) {
-    return "Ôn flashcards đến hạn để giữ nhịp nhớ dài hạn.";
+    return "Ôn thẻ ghi nhớ đến hạn để duy trì kiến thức dài hạn.";
   }
 
   if (document.outputs.includes("checkpoints")) {
-    return "Xem lại checkpoint bị lỡ và trả lời lại ngay.";
+    return "Xem lại điểm dừng đã lỡ và trả lời lại ngay.";
   }
 
-  return "Mở Tutor để hỏi lại phần bạn còn mơ hồ.";
+  return "Mở trợ giảng để hỏi lại phần bạn còn mơ hồ.";
 }

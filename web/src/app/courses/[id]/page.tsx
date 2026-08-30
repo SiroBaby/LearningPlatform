@@ -26,9 +26,9 @@ export async function generateMetadata({ params }: CourseDetailPageProps): Promi
   const course = courses.find((item) => item.id === id);
 
   return {
-    title: course ? course.name : "Course not found",
+    title: course ? course.name : "Không tìm thấy khóa học",
     description:
-      "Overview, documents, study plan, quizzes, flashcards, tutor context, analytics và exam prep theo từng course.",
+      "Tổng quan tài liệu, kế hoạch học, câu hỏi, thẻ ghi nhớ, trợ giảng, tiến độ và ôn thi theo từng khóa học.",
   };
 }
 
@@ -56,7 +56,7 @@ export default async function CourseDetailPage({ params }: CourseDetailPageProps
   return (
     <LearnerShell
       title={course.name}
-      subtitle="Tất cả signal học tập của course này — documents, due reviews, tutor context và exam prep — được gom lại để bạn quyết định bước tiếp theo nhanh hơn."
+      subtitle="Tài liệu, lượt ôn đến hạn, trợ giảng và ôn thi được gom lại để bạn chọn bước tiếp theo."
     >
       <CourseDetailPageContent
         course={course}

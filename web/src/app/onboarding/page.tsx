@@ -1,11 +1,12 @@
-import { OnboardingFlow } from "@/components/auth/mock-onboarding-flow";
+import { OnboardingFlow } from "@/components/auth/onboarding-flow";
 import { AuthShell } from "@/components/layout";
 
 export default function OnboardingPage() {
   return (
     <AuthShell
-      title="Thiết lập nhanh để hệ thống hiểu cách bạn muốn học"
-      description="Chỉ vài bước để LearningPlatform ưu tiên đúng mục tiêu học, ngôn ngữ giải thích và đường tới first value. Bạn có thể bỏ qua bây giờ và mở lại trong Settings bất kỳ lúc nào."
+      layout="wide"
+      title="Thiết lập cách bạn muốn học"
+      description="Chọn vài điều để bài học và lời giải phù hợp hơn với bạn. Bạn có thể bỏ qua và quay lại trong Cài đặt bất cứ lúc nào."
     >
       <OnboardingFlow />
     </AuthShell>

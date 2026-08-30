@@ -15,4 +15,6 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Runtime response parser phải dùng đúng toàn bộ literal values mà backend thực sự persist hoặc phát qua API, bao gồm trạng thái trung gian; khi backend thêm một literal mới, cập nhật frontend union, parser và regression test trong cùng thay đổi.
 - BFF error sanitization phải giữ các field máy đọc an toàn như `code`, `message`, `retryable`; không rút gọn mọi lỗi thành message khiến client phải đoán nghiệp vụ từ text, và không chuyển tiếp field backend tùy ý chưa allowlist.
 - Nút retry cho async processing phải gọi command re-arm hiện hữu và chặn submit trùng; reload hoặc polling chỉ dùng để đọc trạng thái sau command, không được giả làm retry. UI chỉ hiển thị message đã qua typed client error sanitizer, còn lỗi runtime không xác định phải dùng copy fallback an toàn.
+- Mỗi route riêng tư phải có trong matcher của `src/proxy.ts`; mọi thay đổi auth navigation phải kiểm tra cả guest redirect, phiên hợp lệ và trang `not-found` để UI không hiển thị prompt đăng nhập sai trạng thái.
+- Public route dùng shared navigation phải resolve session ở Server Component và truyền boolean tường minh vào Client Component; không default sang guest trong topbar vì user đã đăng nhập sẽ nhận menu Login sai trên route như FAQ/Privacy/Pricing.
 <!-- END:nextjs-agent-rules -->

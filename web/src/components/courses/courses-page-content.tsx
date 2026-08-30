@@ -21,6 +21,17 @@ import {
   useToast,
 } from "@/components/ui";
 
+const OUTPUT_LABELS = {
+  quiz: "Bài kiểm tra",
+  flashcards: "Thẻ ghi nhớ",
+  tutor: "Trợ giảng",
+  checkpoints: "Điểm dừng",
+} as const;
+
+function getOutputLabels(outputs: ReadonlyArray<keyof typeof OUTPUT_LABELS>): string {
+  return outputs.map((output) => OUTPUT_LABELS[output]).join(", ");
+}
+
 interface CreateCourseFormState {
   readonly name: string;
   readonly subject: string;
@@ -60,35 +71,39 @@ export function CoursesPageContent({
       <Card>
         <CardBody className="space-y-5">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="brand">Course organization</Badge>
-            <Badge tone="neutral">Mock-only</Badge>
+              <Badge tone="brand">Sắp xếp việc học</Badge>
+              <Badge tone="neutral">Dữ liệu minh họa</Badge>
           </div>
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="space-y-2">
-              <h2 className="text-3xl font-semibold tracking-tight text-ink-900">Nhóm tài liệu theo course để ôn có chiến lược</h2>
+              <h2 className="text-3xl font-semibold tracking-tight text-ink-900">Gom tài liệu để ôn đúng trọng tâm</h2>
               <p className="max-w-3xl text-sm leading-6 text-ink-600 sm:text-base">
-                Course không sở hữu quiz; document vẫn là nguồn gốc của nội dung sinh ra. Course chỉ gom tài liệu, review queue, tutor context, và exam prep theo mục tiêu học.
+                Gom các tài liệu cùng mục tiêu vào một khóa học để dễ theo dõi tiến độ, chọn nội dung cần ôn và chuẩn bị cho kỳ thi.
               </p>
             </div>
             <Button onClick={() => setIsCreateDialogOpen(true)}>
-              Create course <PlusCircle className="h-4 w-4" />
+              Tạo khóa học <PlusCircle className="h-4 w-4" />
             </Button>
           </div>
         </CardBody>
       </Card>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Courses" value={String(courses.length)} />
+        <SummaryCard label="Khóa học" value={String(courses.length)} />
         <SummaryCard
-          label="Documents in courses"
+          label="Tài liệu trong khóa học"
           value={String(courses.reduce((total, course) => total + course.documentIds.length, 0))}
         />
         <SummaryCard
-          label="Avg mastery"
-          value={`${Math.round(courses.reduce((total, course) => total + course.masteryPct, 0) / courses.length)}%`}
+          label="Ghi nhớ trung bình"
+          value={
+            courses.length > 0
+              ? `${Math.round(courses.reduce((total, course) => total + course.masteryPct, 0) / courses.length)}%`
+              : "—"
+          }
         />
         <SummaryCard
-          label="Due reviews"
+          label="Lượt ôn đến hạn"
           value={String(courses.reduce((total, course) => total + course.dueReviews, 0))}
         />
       </section>
@@ -96,9 +111,9 @@ export function CoursesPageContent({
       <Card>
         <CardHeader>
           <SectionHeading
-            eyebrow="Course list"
-            title="Các course đang học"
-            description="Mỗi card cho thấy số document, mức mastery, due reviews, và thời điểm bạn học gần nhất."
+            eyebrow="Danh sách khóa học"
+            title="Khóa học của bạn"
+            description="Mỗi mục cho biết tài liệu, mức ghi nhớ, lượt ôn đến hạn và lần học gần nhất."
           />
         </CardHeader>
         <CardBody className="space-y-4">
@@ -111,9 +126,9 @@ export function CoursesPageContent({
           ) : (
             <EmptyState
               icon={GraduationCap}
-              title="Chưa có course nào"
-              description="Tạo course đầu tiên để gom document, quiz, flashcards, tutor context, và kế hoạch ôn theo môn học."
-              action={<Button onClick={() => setIsCreateDialogOpen(true)}>Create course</Button>}
+              title="Chưa có khóa học nào"
+              description="Tạo khóa học đầu tiên để gom tài liệu và lên kế hoạch ôn theo môn học."
+              action={<Button onClick={() => setIsCreateDialogOpen(true)}>Tạo khóa học</Button>}
             />
           )}
         </CardBody>
@@ -122,48 +137,48 @@ export function CoursesPageContent({
       <Dialog
         open={isCreateDialogOpen}
         onClose={() => setIsCreateDialogOpen(false)}
-        title="Create course (mock)"
+        title="Tạo khóa học"
         footer={
           <>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-              Cancel
+              Hủy
             </Button>
-            <Button onClick={handleCreateCourse}>Save mock course</Button>
+            <Button onClick={handleCreateCourse}>Lưu khóa học</Button>
           </>
         }
       >
         <div className="space-y-4">
           <TextField
             id="course-name"
-            label="Name"
+            label="Tên khóa học"
             value={formState.name}
             onChange={(event) => updateForm("name", event.target.value)}
             placeholder="Ví dụ: Ôn thi cuối kỳ Hệ điều hành"
           />
           <TextField
             id="course-subject"
-            label="Subject"
+            label="Môn học"
             value={formState.subject}
             onChange={(event) => updateForm("subject", event.target.value)}
             placeholder="Ví dụ: Hệ điều hành"
           />
           <TextField
             id="course-goal"
-            label="Goal / exam"
+            label="Mục tiêu hoặc kỳ thi"
             value={formState.goal}
             onChange={(event) => updateForm("goal", event.target.value)}
             placeholder="Ví dụ: Đạt A cuối kỳ"
           />
           <TextField
             id="course-deadline"
-            label="Deadline"
+            label="Hạn học"
             type="date"
             value={formState.deadline}
             onChange={(event) => updateForm("deadline", event.target.value)}
           />
           <SelectField
             id="course-language"
-            label="Language"
+            label="Ngôn ngữ"
             value={formState.language}
             onChange={(event) => updateForm("language", event.target.value)}
           >
@@ -172,7 +187,7 @@ export function CoursesPageContent({
             <option value="Song ngữ">Song ngữ</option>
           </SelectField>
           <fieldset className="space-y-3">
-            <legend className="text-sm font-medium text-ink-700">Add documents</legend>
+            <legend className="text-sm font-medium text-ink-700">Thêm tài liệu</legend>
             <div className="space-y-2 rounded-[var(--radius-card)] border border-ink-200 bg-ink-50/60 p-3">
               {readyDocuments.map((document) => {
                 const checked = formState.documentIds.includes(document.id);
@@ -187,7 +202,7 @@ export function CoursesPageContent({
                     <span>
                       <span className="font-medium text-ink-900">{document.title}</span>
                       <span className="mt-1 block text-xs text-ink-500">
-                        Outputs: {document.outputs.join(", ")} · Mastery {document.masteryPct ?? 0}%
+                        Nội dung: {getOutputLabels(document.outputs)} · Ghi nhớ {document.masteryPct ?? 0}%
                       </span>
                     </span>
                   </label>
@@ -223,7 +238,7 @@ export function CoursesPageContent({
 
   function handleCreateCourse() {
     const fallbackName = formState.name.trim() || "Khóa học nháp";
-    notify(`Đã tạo mock course “${fallbackName}”.`, "success");
+    notify(`Đã tạo khóa học minh họa “${fallbackName}”.`, "success");
     setIsCreateDialogOpen(false);
     setFormState(DEFAULT_CREATE_COURSE_FORM);
   }
@@ -269,26 +284,26 @@ function CourseCard({
         </div>
 
         <div className="grid gap-3 sm:grid-cols-3">
-          <MetricTile label="Documents" value={String(linkedDocuments.length)} />
-          <MetricTile label="Due reviews" value={String(course.dueReviews)} />
+          <MetricTile label="Tài liệu" value={String(linkedDocuments.length)} />
+          <MetricTile label="Lượt ôn đến hạn" value={String(course.dueReviews)} />
           <MetricTile
-            label="Last studied"
+            label="Học gần nhất"
             value={course.lastStudiedAt ? formatDate(course.lastStudiedAt) : "Chưa học"}
           />
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-ink-600">Overall mastery</span>
+            <span className="text-ink-600">Mức ghi nhớ chung</span>
             <span className="font-medium text-ink-900">{course.masteryPct}%</span>
           </div>
           <ProgressBar value={course.masteryPct} tone="mastery" />
         </div>
 
         <div className="flex flex-wrap gap-3">
-          <LinkButton href={routes.course(course.id)}>Open course</LinkButton>
+          <LinkButton href={routes.course(course.id)}>Mở khóa học</LinkButton>
           <LinkButton href={`${routes.tutor}?context=${encodeURIComponent(`course:${course.id}`)}`} variant="outline">
-            Open tutor context
+            Hỏi theo khóa học
           </LinkButton>
         </div>
       </CardBody>

@@ -15,6 +15,17 @@ import {
 } from "@/lib/mock-data";
 import { BarChart, Badge, Card, CardBody, CardHeader, CardTitle, CitationSnippet, LinkButton, ProgressBar, ProgressRing } from "@/components/ui";
 
+const OUTPUT_LABELS = {
+  quiz: "Bài kiểm tra",
+  flashcards: "Thẻ ghi nhớ",
+  tutor: "Trợ giảng",
+  checkpoints: "Điểm dừng",
+} as const;
+
+function getOutputLabels(outputs: ReadonlyArray<keyof typeof OUTPUT_LABELS>): string {
+  return outputs.map((output) => OUTPUT_LABELS[output]).join(" · ");
+}
+
 interface MetricCardProps {
   readonly label: string;
   readonly value: string;
@@ -221,6 +232,7 @@ export function AnalyticsDashboard() {
   const readinessGap = calculateReadinessDelta();
   const weeklyTasksDone = studyTasks.filter((task) => task.done).length;
   const totalStudyTasks = studyTasks.length;
+  const remainingTasks = Math.max(totalStudyTasks - weeklyTasksDone, 0);
   const streakDays = calculateStreakDays();
   const studyTimeTrend = buildStudyTimeTrend();
   const accuracyTrend = buildAccuracyTrend();
@@ -233,27 +245,27 @@ export function AnalyticsDashboard() {
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          label="Overall mastery"
+          label="Mức ghi nhớ chung"
           value={`${overallMastery}%`}
-          detail="Trung bình trên tất cả tài liệu đã có attempt hoặc review."
+          detail="Trung bình trên các tài liệu bạn đã học hoặc ôn tập."
           tone="mastery"
         />
         <MetricCard
-          label="Exam readiness"
+          label="Mức sẵn sàng thi"
           value={`${exams[0].readinessPct}%`}
           detail={`Bạn còn thiếu ${readinessGap} điểm phần trăm để chạm mục tiêu ${exams[0].targetScorePct}%.`}
           tone="brand"
         />
         <MetricCard
-          label="Review consistency"
+          label="Nhịp ôn tập"
           value={`${streakDays}/7 ngày`}
-          detail="Bạn giữ được nhịp review ổn định trong hầu hết các ngày gần đây."
+          detail="Số ngày bạn duy trì việc ôn tập trong tuần này."
           tone="review"
         />
         <MetricCard
-          label="Tasks completed"
+          label="Việc đã hoàn thành"
           value={`${weeklyTasksDone}/${totalStudyTasks}`}
-          detail="Một task đã hoàn tất, ba task còn lại đều gắn với điểm yếu hoặc review đến hạn."
+          detail={`${weeklyTasksDone} việc đã hoàn tất, còn ${remainingTasks} việc gắn với chủ đề cần củng cố hoặc lượt ôn đến hạn.`}
           tone="success"
         />
       </section>
@@ -262,15 +274,15 @@ export function AnalyticsDashboard() {
         <Card>
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <CardTitle>Mastery overview</CardTitle>
+          <CardTitle>Tổng quan mức ghi nhớ</CardTitle>
               <p className="mt-1 text-sm text-ink-600">
-                Mức tự tin hiện tại trên các course bạn đang học.
+                Mức tự tin hiện tại trên các khóa học bạn đang theo.
               </p>
             </div>
-            <ProgressRing
+              <ProgressRing
               value={overallMastery}
               tone="mastery"
-              label="Overall mastery"
+              label="Mức ghi nhớ chung"
             />
           </CardHeader>
           <CardBody className="space-y-4">
@@ -281,27 +293,27 @@ export function AnalyticsDashboard() {
                     <p className="text-sm font-semibold text-ink-900">{course.name}</p>
                     <p className="text-sm text-ink-500">{course.subject}</p>
                   </div>
-                  <Badge tone="mastery">{course.masteryPct}% mastery</Badge>
+                  <Badge tone="mastery">Ghi nhớ {course.masteryPct}%</Badge>
                 </div>
                 <ProgressBar value={course.masteryPct} tone="mastery" />
                 <div className="flex flex-wrap items-center gap-3 text-xs text-ink-500">
-                  <span>{course.dueReviews} review đến hạn</span>
-                  {course.deadline ? <span>Deadline {formatDate(course.deadline)}</span> : null}
+                  <span>{course.dueReviews} lượt ôn đến hạn</span>
+                  {course.deadline ? <span>Hạn chót {formatDate(course.deadline)}</span> : null}
                   {course.lastStudiedAt ? <span>Học gần nhất {formatDateTime(course.lastStudiedAt)}</span> : null}
                 </div>
               </div>
             ))}
             <p className="text-sm leading-6 text-ink-600">
-              Course Hệ điều hành đang là trọng tâm: deadline gần hơn, độ phủ tài liệu nhiều hơn và vẫn còn khoảng cách lớn tới mục tiêu thi.
+              Khóa Hệ điều hành đang là trọng tâm: hạn thi gần hơn, có nhiều tài liệu hơn và vẫn còn khoảng cách lớn tới mục tiêu.
             </p>
           </CardBody>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Documents needing review</CardTitle>
+          <CardTitle>Tài liệu cần ôn thêm</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
-              Những tài liệu có mastery thấp hoặc đang tạo nhiều câu sai lặp lại.
+              Những tài liệu có mức ghi nhớ thấp hoặc đang tạo nhiều câu sai lặp lại.
             </p>
           </CardHeader>
           <CardBody className="space-y-4">
@@ -315,7 +327,7 @@ export function AnalyticsDashboard() {
                   <div>
                     <p className="text-sm font-semibold text-ink-900">{documentItem.title}</p>
                     <p className="mt-1 text-sm text-ink-500">
-                      {documentItem.outputs.join(" · ") || "Chưa có output"}
+                      {getOutputLabels(documentItem.outputs) || "Chưa có nội dung"}
                     </p>
                   </div>
                   <Badge tone={documentItem.masteryPct && documentItem.masteryPct < 50 ? "error" : "warning"}>
@@ -328,7 +340,7 @@ export function AnalyticsDashboard() {
               </Link>
             ))}
             <div className="rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm text-warning-700">
-              Tài liệu đang xử lý mới nhất là “{documents[3].title}”. Khi sẵn sàng, hãy thêm nó vào plan để tăng độ phủ cho kỳ thi.
+              Tài liệu đang xử lý mới nhất là “{documents[3].title}”. Khi sẵn sàng, hãy thêm vào kế hoạch học để chuẩn bị tốt hơn cho kỳ thi.
             </div>
           </CardBody>
         </Card>
@@ -337,7 +349,7 @@ export function AnalyticsDashboard() {
       <section className="grid gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Weekly study time</CardTitle>
+          <CardTitle>Thời gian học trong tuần</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
               Thời gian học thực tế trong 7 ngày gần nhất.
             </p>
@@ -349,18 +361,18 @@ export function AnalyticsDashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Quiz accuracy trend</CardTitle>
+          <CardTitle>Độ chính xác qua các bài kiểm tra</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
-              Diễn biến độ chính xác qua các attempt gần đây.
+              Diễn biến độ chính xác qua các lần làm gần đây.
             </p>
           </CardHeader>
           <CardBody className="space-y-4">
             <BarChart
               data={accuracyTrend}
-              summary="Độ chính xác quiz đã tăng dần từ 58% lên 72% trong bốn lần luyện gần nhất."
+              summary="Độ chính xác đã tăng từ 58% lên 72% trong bốn lần luyện gần nhất."
             />
             <p className="text-sm leading-6 text-ink-600">
-              Accuracy đang cải thiện đều, tăng 14 điểm phần trăm qua bốn lần luyện. Mức tăng chủ yếu đến từ nhóm câu hỏi về định thời CPU, trong khi phần đồng bộ vẫn còn kéo điểm xuống.
+              Độ chính xác đang cải thiện đều, tăng 14 điểm phần trăm qua bốn lần luyện. Mức tăng chủ yếu đến từ nhóm câu hỏi về định thời CPU, trong khi phần đồng bộ vẫn còn kéo điểm xuống.
             </p>
           </CardBody>
         </Card>
@@ -370,13 +382,13 @@ export function AnalyticsDashboard() {
         <Card>
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <CardTitle>Weak topics</CardTitle>
+          <CardTitle>Chủ đề cần củng cố</CardTitle>
               <p className="mt-1 text-sm text-ink-600">
-                Ưu tiên các chủ đề dưới 55% mastery để kéo readiness lên nhanh nhất.
+              Ưu tiên các chủ đề dưới 55% ghi nhớ để nâng mức sẵn sàng thi nhanh hơn.
               </p>
             </div>
             <LinkButton href={routes.studyPlan} variant="outline" size="sm">
-              Open study plan
+              Mở kế hoạch học
             </LinkButton>
           </CardHeader>
           <CardBody className="space-y-4">
@@ -385,7 +397,7 @@ export function AnalyticsDashboard() {
               summary="Ba chủ đề yếu nhất hiện là UDP vs TCP, Đồng bộ tiến trình và Gradient descent."
             />
             <p className="text-sm leading-6 text-ink-600">
-              Chủ đề yếu nhất là UDP vs TCP ở mức 38% mastery. Nếu bạn sửa được hai cụm lỗi dưới 50%, readiness dự kiến sẽ tăng nhanh hơn so với việc làm thêm quiz ngẫu nhiên.
+              Chủ đề yếu nhất là UDP vs TCP ở mức 38% ghi nhớ. Nếu củng cố được hai nhóm lỗi dưới 50%, mức sẵn sàng thi sẽ tăng nhanh hơn so với làm bài kiểm tra ngẫu nhiên.
             </p>
             <div className="grid gap-3 md:grid-cols-3">
               {weakTopics.map((topic) => (
@@ -407,9 +419,9 @@ export function AnalyticsDashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Strong topics</CardTitle>
+          <CardTitle>Chủ đề đã vững</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
-              Các vùng kiến thức bạn có thể giữ nhịp bằng review ngắn thay vì học lại từ đầu.
+              Các vùng kiến thức bạn có thể duy trì bằng lượt ôn ngắn thay vì học lại từ đầu.
             </p>
           </CardHeader>
           <CardBody className="space-y-4">
@@ -418,7 +430,7 @@ export function AnalyticsDashboard() {
               summary="Định thời CPU và TCP là hai vùng đang ổn định nhất trong dữ liệu hiện có."
             />
             <p className="text-sm leading-6 text-ink-600">
-              Định thời CPU đang giữ mức ổn định cao nhất với chuỗi trả lời đúng trọn vẹn. Đây là nhóm chủ đề chỉ cần review duy trì, không cần chiếm quá nhiều thời gian trong plan hôm nay.
+              Định thời CPU đang giữ mức ổn định cao nhất với chuỗi trả lời đúng trọn vẹn. Đây là nhóm chủ đề chỉ cần ôn duy trì, không cần chiếm quá nhiều thời gian trong kế hoạch hôm nay.
             </p>
           </CardBody>
         </Card>
@@ -427,25 +439,25 @@ export function AnalyticsDashboard() {
       <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Review consistency</CardTitle>
+          <CardTitle>Nhịp ôn tập</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
-              Mức hoàn thành review mỗi ngày, tính theo tỷ lệ task đã lên lịch.
+              Mức hoàn thành ôn tập mỗi ngày, tính theo tỷ lệ việc đã lên lịch.
             </p>
           </CardHeader>
           <CardBody className="space-y-4">
             <BarChart
               data={consistencyChart}
-              summary="Bạn giữ nhịp review ở 6 trên 7 ngày, với một ngày bị đứt nhịp hoàn toàn ở giữa tuần."
+              summary="Bạn giữ nhịp ôn tập ở 6 trên 7 ngày, với một ngày bị đứt nhịp hoàn toàn ở giữa tuần."
             />
             <p className="text-sm leading-6 text-ink-600">
-              Nhịp review nhìn chung khá bền, nhưng ngày bị bỏ lỡ hoàn toàn khiến số card overdue tăng lên. Duy trì thêm một phiên review 10–15 phút vào giữa tuần sẽ giúp queue ổn định hơn.
+              Nhịp ôn nhìn chung khá bền, nhưng một ngày bỏ lỡ hoàn toàn khiến số thẻ quá hạn tăng lên. Duy trì thêm một phiên ôn 10–15 phút vào giữa tuần sẽ giúp danh sách cần ôn ổn định hơn.
             </p>
           </CardBody>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Mistake patterns</CardTitle>
+          <CardTitle>Mẫu lỗi thường gặp</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
               Bằng chứng cụ thể để tránh luyện sai chỗ.
             </p>
@@ -467,7 +479,7 @@ export function AnalyticsDashboard() {
               <div className="rounded-2xl border border-ink-100 p-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
                   <Target className="h-4 w-4 text-brand-600" />
-                  Next best action
+                  Việc nên làm tiếp theo
                 </div>
                 <p className="mt-2 text-sm leading-6 text-ink-600">
                   Ôn lại trích dẫn về semaphore rồi làm lại nhóm câu sai trước khi mở practice exam.
@@ -476,7 +488,7 @@ export function AnalyticsDashboard() {
               <div className="rounded-2xl border border-ink-100 p-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
                   <Clock3 className="h-4 w-4 text-review-600" />
-                  Estimated effort
+                  Thời gian dự kiến
                 </div>
                 <p className="mt-2 text-sm leading-6 text-ink-600">
                   Khoảng 15–20 phút để kéo nhóm Đồng bộ tiến trình từ 45% lên vùng an toàn đầu tiên.
@@ -490,9 +502,9 @@ export function AnalyticsDashboard() {
       <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Upcoming exam readiness</CardTitle>
+            <CardTitle>Mức sẵn sàng cho kỳ thi</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
-              Khung nhìn deadline để quyết định nên review hay luyện đề.
+              Khung nhìn hạn thi để quyết định nên ôn tập hay luyện đề.
             </p>
           </CardHeader>
           <CardBody className="space-y-4">
@@ -501,50 +513,50 @@ export function AnalyticsDashboard() {
                 <p className="text-sm font-semibold text-ink-900">{exams[0].name}</p>
                 <p className="mt-1 text-sm text-ink-500">Thi ngày {formatDate(exams[0].date)}</p>
               </div>
-              <ProgressRing value={exams[0].readinessPct} tone="brand" label="Exam readiness" />
+              <ProgressRing value={exams[0].readinessPct} tone="brand" label="Mức sẵn sàng thi" />
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-2xl border border-ink-100 p-4">
-                <p className="text-sm font-medium text-ink-500">Target</p>
+                <p className="text-sm font-medium text-ink-500">Mục tiêu</p>
                 <p className="mt-2 text-xl font-semibold text-ink-900">{exams[0].targetScorePct}%</p>
               </div>
               <div className="rounded-2xl border border-ink-100 p-4">
-                <p className="text-sm font-medium text-ink-500">Due reviews</p>
+                <p className="text-sm font-medium text-ink-500">Thẻ đến hạn</p>
                 <p className="mt-2 text-xl font-semibold text-ink-900">{dueCardsToday.length}</p>
               </div>
               <div className="rounded-2xl border border-ink-100 p-4">
-                <p className="text-sm font-medium text-ink-500">Priority topics</p>
+                <p className="text-sm font-medium text-ink-500">Chủ đề ưu tiên</p>
                 <p className="mt-2 text-xl font-semibold text-ink-900">{weakTopics.length}</p>
               </div>
             </div>
             <p className="text-sm leading-6 text-ink-600">
-              Với readiness hiện tại, bạn nên ưu tiên review có dẫn chứng trong 3–4 ngày tới, sau đó mới tăng tỷ trọng luyện đề timed mode để đo lại tiến bộ.
+              Với mức sẵn sàng hiện tại, bạn nên ưu tiên ôn tập có dẫn chứng trong 3–4 ngày tới, sau đó mới tăng tỷ trọng luyện đề có bấm giờ để đo lại tiến bộ.
             </p>
           </CardBody>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Quick actions</CardTitle>
+          <CardTitle>Lối tắt cho hôm nay</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
               Đi thẳng vào hành động có tác động cao nhất cho hôm nay.
             </p>
           </CardHeader>
           <CardBody className="grid gap-3 sm:grid-cols-2">
             <LinkButton href={routes.studyPlan} className="justify-between">
-              Mở study plan
+              Mở kế hoạch học
               <CalendarClock className="h-4 w-4" />
             </LinkButton>
             <LinkButton href={routes.practiceExam(exams[0].id)} variant="secondary" className="justify-between">
-              Practice exam
+              Luyện đề
               <TrendingUp className="h-4 w-4" />
             </LinkButton>
             <LinkButton href={routes.weakTopic(weakTopics[0].id)} variant="outline" className="justify-between">
-              Review weak topic
+              Ôn chủ đề cần củng cố
               <ArrowRight className="h-4 w-4" />
             </LinkButton>
             <LinkButton href={routes.billing} variant="outline" className="justify-between">
-              Check credits
+              Kiểm tra lượt dùng
               <Clock3 className="h-4 w-4" />
             </LinkButton>
           </CardBody>

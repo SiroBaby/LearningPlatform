@@ -1,18 +1,30 @@
 import { Card, CardBody, CardTitle } from "@/components/ui";
+import { cn } from "@/lib/cn";
 
 export function AuthShell({
   title,
   description,
   children,
+  layout = "default",
 }: {
   title: string;
   description: string;
   children: React.ReactNode;
+  layout?: "default" | "wide";
 }) {
+  const isWideLayout = layout === "wide";
+
   return (
-    <div className="grid min-h-screen bg-ink-50 lg:grid-cols-[minmax(0,520px)_1fr]">
-      <div className="flex items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
-        <div className="w-full max-w-md space-y-6">
+    <div
+      className={cn(
+        "grid min-h-screen bg-ink-50",
+        isWideLayout
+          ? "lg:grid-cols-[minmax(0,720px)_1fr] xl:grid-cols-[minmax(0,900px)_1fr]"
+          : "lg:grid-cols-[minmax(0,520px)_1fr]",
+      )}
+    >
+      <div className="flex items-center justify-center px-4 py-10 sm:px-6 lg:px-8">
+        <div className={cn("w-full space-y-6", isWideLayout ? "max-w-5xl" : "max-w-md")}>
           <div>
             <p className="text-sm font-semibold text-brand-600">LearningPlatform</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink-900">
@@ -30,20 +42,20 @@ export function AuthShell({
         <div className="mx-auto flex h-full max-w-2xl flex-col justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-brand-600">
-              Source-grounded learning
+              Học tập có căn cứ nguồn
             </p>
             <h2 className="mt-4 text-4xl font-semibold tracking-tight text-ink-900">
               Từ tài liệu thô đến trải nghiệm học chủ động.
             </h2>
             <p className="mt-4 max-w-xl text-base leading-7 text-ink-600">
-              Upload PDF hoặc video bài giảng. Hệ thống sinh quiz, checkpoint, flashcard và giải thích có trích dẫn nguồn để bạn kiểm tra hiểu thật, không học thụ động.
+              Tải lên PDF hoặc video bài giảng. Hệ thống tạo bài kiểm tra, điểm dừng, thẻ ghi nhớ và lời giải có trích dẫn nguồn để bạn kiểm tra mức độ hiểu bài.
             </p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardBody className="space-y-3">
-                <CardTitle>Quiz có căn cứ nguồn</CardTitle>
+                <CardTitle>Bài kiểm tra có căn cứ nguồn</CardTitle>
                 <p className="text-sm text-ink-600">
                   Mỗi lời giải đều nhảy về trang hoặc timestamp gốc để bạn tự kiểm chứng.
                 </p>
@@ -53,7 +65,7 @@ export function AuthShell({
               <CardBody className="space-y-3">
                 <CardTitle>Ưu tiên điểm yếu</CardTitle>
                 <p className="text-sm text-ink-600">
-                  Review queue gom các câu sai, flashcard đến hạn và phần video bạn hay bỏ lỡ.
+                  Danh sách ôn tập gom các câu sai, thẻ ghi nhớ đến hạn và phần video bạn hay bỏ lỡ.
                 </p>
               </CardBody>
             </Card>

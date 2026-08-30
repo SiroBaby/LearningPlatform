@@ -61,8 +61,8 @@ export const adminNav: NavItem[] = [
 ];
 
 export const publicNav = [
-  { href: routes.product, label: "Product" },
-  { href: routes.examples, label: "Examples" },
-  { href: routes.pricing, label: "Pricing" },
-  { href: routes.faq, label: "FAQ" },
+  { href: routes.product, label: "Sản phẩm" },
+  { href: routes.examples, label: "Ví dụ" },
+  { href: routes.pricing, label: "Bảng giá" },
+  { href: routes.faq, label: "Câu hỏi thường gặp" },
 ] as const;

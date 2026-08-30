@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { AlertCircle, CheckCircle2, Info, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, Info } from "lucide-react";
 import { Badge, Card, CardBody, CardTitle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 
@@ -159,19 +159,5 @@ export function AuthOptionCard({
         </div>
       </div>
     </button>
-  );
-}
-
-export function MockModeNote({ className }: { className?: string }): ReactNode {
-  return (
-    <div
-      className={cn(
-        "flex items-start gap-2 rounded-xl border border-dashed border-ink-200 bg-white px-3 py-2 text-sm text-ink-600",
-        className,
-      )}
-    >
-      <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" aria-hidden />
-      <p>Màn hình này đang mô phỏng trải nghiệm UX nên chỉ kiểm tra dữ liệu và hiển thị trạng thái mẫu, chưa gọi backend thật.</p>
-    </div>
   );
 }

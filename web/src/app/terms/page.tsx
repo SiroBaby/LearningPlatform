@@ -6,7 +6,7 @@ import { Badge, Card, CardBody, CardTitle } from "@/components/ui";
 import { routes } from "@/lib/routes";
 
 export const metadata: Metadata = {
-  title: "Terms of Use",
+  title: "Điều khoản sử dụng",
   description: "Các nguyên tắc sử dụng LearningPlatform, tài liệu người dùng, nội dung AI và giới hạn dịch vụ.",
 };
 
