@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { Mapper } from '@automapper/core';
 import {
@@ -28,10 +28,12 @@ import { UploadUrlResponseDto } from './dto/upload-url.response.dto';
 import { DocumentEstimateResponseDto } from '../ai/dto/document-estimate.response.dto';
 import { Document } from './entities/document.entity';
 import { CreateDocumentEstimateDto } from './dto/create-document-estimate.dto';
+import { SessionAuthGuard } from '../auth/session-auth.guard';
 
-@ApiSecurity('ownerId')
+@ApiSecurity('bearer')
 @ApiTags('Documents')
 @Controller('documents')
+@UseGuards(SessionAuthGuard)
 export class ContentController {
   constructor(
     private readonly content: ContentService,

@@ -17,4 +17,5 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Nút retry cho async processing phải gọi command re-arm hiện hữu và chặn submit trùng; reload hoặc polling chỉ dùng để đọc trạng thái sau command, không được giả làm retry. UI chỉ hiển thị message đã qua typed client error sanitizer, còn lỗi runtime không xác định phải dùng copy fallback an toàn.
 - Mỗi route riêng tư phải có trong matcher của `src/proxy.ts`; mọi thay đổi auth navigation phải kiểm tra cả guest redirect, phiên hợp lệ và trang `not-found` để UI không hiển thị prompt đăng nhập sai trạng thái.
 - Public route dùng shared navigation phải resolve session ở Server Component và truyền boolean tường minh vào Client Component; không default sang guest trong topbar vì user đã đăng nhập sẽ nhận menu Login sai trên route như FAQ/Privacy/Pricing.
+- Auth flow có nested responsive grid phải dùng container width đủ cho các cột ở desktop; kiểm tra breakpoint rộng để tránh cột chính bị co ngoài ý muốn.
 <!-- END:nextjs-agent-rules -->

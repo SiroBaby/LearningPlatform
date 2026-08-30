@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { BaseRepository } from '../../../database/base.repository';
+import type { AccountAccessRevocation } from '../contracts/account-access-revocation.port';
 import { EnqueueCommand } from '../contracts/ai-ingestion.port';
 import {
   DOCUMENT_PROCESSING_RESULT_EVENT,
@@ -24,7 +25,7 @@ export interface ProcessingJobAttempt {
 const TECHNICAL_RETRY_DELAYS = ['5 seconds', '30 seconds', '5 minutes'] as const;
 
 @Injectable()
-export class ProcessingJobRepository extends BaseRepository<ProcessingJob> implements ProcessingJobBudget, ProcessingJobModelSelection {
+export class ProcessingJobRepository extends BaseRepository<ProcessingJob> implements AccountAccessRevocation, ProcessingJobBudget, ProcessingJobModelSelection {
   constructor(private readonly dataSource: DataSource) {
     super(ProcessingJob, dataSource);
   }
@@ -35,13 +36,23 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
       INSERT INTO "ai"."processing_jobs"
         ("document_id", "owner_id", "job_type", "status",
          "idempotency_key", "correlation_id", "attempts", "model_selection_kind", "platform_model_id", "custom_model_config_id")
-      VALUES ($1, $2, $3, 'PENDING', $4, $5, 0, $6, $7, $8)
+      SELECT $1, $2, $3, 'PENDING', $4, $5, 0, $6, $7, $8
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM "ai"."account_access_revocations" AS "revocation"
+        WHERE "revocation"."user_id" = $2
+      )
       ON CONFLICT ("document_id", "job_type") DO UPDATE
         SET "status"     = 'PENDING',
             "attempts"   = "processing_jobs"."attempts" + 1,
             "technical_retry_count" = 0,
             "updated_at" = now()
         WHERE "processing_jobs"."status" = 'FAILED'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "ai"."account_access_revocations" AS "revocation"
+            WHERE "revocation"."user_id" = "processing_jobs"."owner_id"
+          )
       `,
       [
         command.documentId,
@@ -56,13 +67,68 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     );
   }
 
+  async apply(input: Parameters<AccountAccessRevocation['apply']>[0]): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const inserted: Array<{
+        readonly id: string;
+        readonly reason_code: string;
+        readonly user_id: string;
+      }> = await manager.query(
+        `INSERT INTO "ai"."account_access_revocations"
+           ("user_id", "reason_code", "event_idempotency_key")
+         VALUES ($1, $2, $3)
+         ON CONFLICT ("event_idempotency_key") DO NOTHING
+         RETURNING "id", "reason_code", "user_id"`,
+        [input.userId, input.reasonCode, input.eventIdempotencyKey],
+      );
+
+      const marker = inserted[0] ?? (await manager.query(
+        `SELECT "id", "reason_code", "user_id"
+         FROM "ai"."account_access_revocations"
+         WHERE "event_idempotency_key" = $1`,
+        [input.eventIdempotencyKey],
+      ))[0];
+
+      if (
+        !marker ||
+        marker.user_id !== input.userId ||
+        marker.reason_code !== input.reasonCode
+      ) {
+        throw new Error('Account access revocation idempotency conflict');
+      }
+
+      await manager.query(
+        `UPDATE "ai"."processing_jobs"
+         SET "status" = 'CANCELLED',
+             "cancellation_marker_id" = $1,
+             "cancellation_reason" = $2,
+             "cancelled_at" = COALESCE("cancelled_at", now()),
+             "lease_id" = NULL,
+             "lease_until" = NULL,
+             "updated_at" = now()
+         WHERE "owner_id" = $3
+           AND "status" IN ('PENDING', 'RUNNING')
+           AND "cancellation_marker_id" IS NULL`,
+        [marker.id, input.reasonCode, input.userId],
+      );
+    });
+  }
+
   async claimPending(): Promise<ProcessingJob | null> {
     return this.dataSource.transaction(async (manager) => {
       const rows = await manager.query(
         `
         SELECT "id" FROM "ai"."processing_jobs"
-        WHERE ("status" = 'PENDING' AND "next_visible_at" <= now())
-           OR ("status" = 'RUNNING' AND "lease_until" <= now())
+        WHERE (
+          (("status" = 'PENDING' AND "next_visible_at" <= now())
+            OR ("status" = 'RUNNING' AND "lease_until" <= now()))
+          AND "cancellation_marker_id" IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "ai"."account_access_revocations" AS "revocation"
+            WHERE "revocation"."user_id" = "processing_jobs"."owner_id"
+          )
+        )
         ORDER BY "created_at" ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -85,6 +151,12 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
           AND (
             ("status" = 'PENDING' AND "next_visible_at" <= now())
             OR ("status" = 'RUNNING' AND "lease_until" <= now())
+          )
+          AND "cancellation_marker_id" IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "ai"."account_access_revocations" AS "revocation"
+            WHERE "revocation"."user_id" = "processing_jobs"."owner_id"
           )
         RETURNING "id", "attempts", "lease_id" AS "leaseId"
         `,

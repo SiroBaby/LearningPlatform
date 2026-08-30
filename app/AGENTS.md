@@ -29,6 +29,7 @@
 - `content -> ai`: `course.outbox` -> relay -> `AiIngestion`; content không ghi `ai.*`.
 - `ai -> content`: dùng `ai.outbox` return seam; AI không ghi trực tiếp `course.documents`.
 - Relay là at-least-once. Consumer/repository write phải idempotent.
+- AI enqueue phải từ chối event cũ nếu `ai.account_access_revocations` đã có marker cho `owner_id`; cancellation relay có thể chạy sau forward relay nên không được chỉ dựa vào bước cancel pending job.
 - Go worker phải persist mọi thay đổi `ai` và `ai.outbox` result trong cùng transaction khi `attempt` + `lease_id` còn hiệu lực, rồi mới ACK/finalize. Node return relay là owner duy nhất của course write và phải project idempotent mọi course/document/budget outcome.
 - Production Go worker tái sử dụng các key database hiện có từ Secret `learning-platform-api-runtime` để kết nối cùng PostgreSQL. Consumer store và tracked migration runner dùng cùng một database URL; không tạo SSM parameter, Secret hay PostgreSQL role riêng cho Go worker.
 - Return-relay payload validation must accept every value of its versioned domain error-code enum; add a FAILED relay test whenever a producer introduces a new code.
@@ -65,7 +66,8 @@
 - Swagger mặc định tắt (`SWAGGER_ENABLED=false`).
 - Chỉ bật Swagger khi đã đặt `SWAGGER_USERNAME` và `SWAGGER_PASSWORD`; nếu thiếu credentials, app phải fail-fast.
 - Swagger UI dùng Basic Auth. Không expose OpenAPI raw JSON/YAML endpoint trừ khi có yêu cầu rõ và bảo vệ cùng cơ chế.
-- Swagger mô tả identity stub Phase 0 qua `X-User-Id`; không mô tả bearer JWT trước Phase 3.
+- Swagger mô tả bearer access session cho resource route; không mô tả `X-User-Id` như cơ chế xác thực.
+- Resource controller phải gắn `SessionAuthGuard` và lấy owner qua `CurrentUser`; không đọc hoặc fallback về `X-User-Id`. Guard phải resolve access session và account status trước khi request chạm service.
 
 ## Phase 0 Invariants
 

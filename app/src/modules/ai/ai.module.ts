@@ -34,6 +34,7 @@ import { ProviderUsageRepository } from './repositories/job-cost-guard.repositor
 import { WorkerModelProviderResolver } from './worker-model-provider-resolver.service';
 import { PROCESSING_JOB_MODEL_SELECTION } from './contracts/processing-job-model-selection.port';
 import { PROCESSING_JOB_BUDGET } from './contracts/processing-job-budget.port';
+import { ACCOUNT_ACCESS_REVOCATION } from './contracts/account-access-revocation.port';
 import { WORKER_DNS_LOOKUP, WORKER_EGRESS_VALIDATOR } from './contracts/worker-egress-validator.contract';
 import { lookup } from 'node:dns/promises';
 import { UnpinnedClientDnsEgressValidator } from './worker-egress-validator.service';
@@ -42,9 +43,10 @@ import { InternalLeaseController } from './internal-lease.controller';
 import { InternalLeaseGuard } from './internal-lease.guard';
 import { LEASE_AUTHORITY } from './contracts/lease-authority.contract';
 import { LeaseAuthorityService } from './lease-authority.service';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [AssessmentModule, forwardRef(() => ContentModule)],
+  imports: [AssessmentModule, forwardRef(() => ContentModule), AuthModule],
   controllers: [InternalLeaseController, ModelCatalogController],
   providers: [
     AiIngestionService,
@@ -74,6 +76,7 @@ import { LeaseAuthorityService } from './lease-authority.service';
     },
     ProcessingJobRepository,
     { provide: AI_INGESTION, useExisting: AiIngestionService },
+    { provide: ACCOUNT_ACCESS_REVOCATION, useExisting: ProcessingJobRepository },
     { provide: PDF_JS_MODULE, useFactory: loadPdfJsModule },
     ExtractionService,
     ChunkService,
@@ -97,6 +100,6 @@ import { LeaseAuthorityService } from './lease-authority.service';
     LeaseAuthorityService,
     { provide: LEASE_AUTHORITY, useExisting: LeaseAuthorityService },
   ],
-  exports: [AI_INGESTION, AiOutboxRepository, JobPoller, MODEL_CATALOG, StuckJobDetector],
+  exports: [ACCOUNT_ACCESS_REVOCATION, AI_INGESTION, AiOutboxRepository, JobPoller, MODEL_CATALOG, ProcessingJobRepository, StuckJobDetector],
 })
 export class AiModule {}

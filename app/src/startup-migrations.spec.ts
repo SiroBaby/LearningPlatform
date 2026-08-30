@@ -204,6 +204,25 @@ describe('backend-owned startup migrations', () => {
     expect(mockStartupEvents).toEqual(['worker.migrate', 'worker.create-context']);
   });
 
+  it('fails closed before migrations when production does not use relay-only execution', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousWorkerExecutionMode = process.env.WORKER_EXECUTION_MODE;
+    process.env.NODE_ENV = 'production';
+    delete process.env.WORKER_EXECUTION_MODE;
+
+    try {
+      await expect(bootstrapWorker()).rejects.toThrow(
+        'WORKER_EXECUTION_MODE=relay-only is required in production',
+      );
+      expect(mockStartupEvents).toEqual([]);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousWorkerExecutionMode === undefined) delete process.env.WORKER_EXECUTION_MODE;
+      else process.env.WORKER_EXECUTION_MODE = previousWorkerExecutionMode;
+    }
+  });
+
   it('does not create the worker application context when migrations reject', async () => {
     // Given
     mockRunStartupMigrations.mockRejectedValueOnce(new Error('migration failed'));

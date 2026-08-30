@@ -11,8 +11,10 @@ import { AssessmentMappingProfile } from './mappings/assessment-mapping.profile'
 import { QuizGenerationHandoffService } from './quiz-generation-handoff.service';
 import { QuizRepository } from './repositories/quiz.repository';
 import { AttemptResultRepository } from './repositories/attempt-result.repository';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
+  imports: [AuthModule],
   controllers: [AssessmentController],
   providers: [
     QuizRepository,

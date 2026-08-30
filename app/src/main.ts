@@ -189,10 +189,6 @@ export async function bootstrapApi(): Promise<void> {
         .setTitle('AI Learning Platform API')
         .setDescription('Phase 0 API: document upload and async processing.')
         .setVersion('0.1.0')
-        .addApiKey(
-          { in: 'header', name: 'X-User-Id', type: 'apiKey' },
-          'ownerId',
-        )
         .addBearerAuth(undefined, 'bearer')
         .addTag('Documents', 'Document upload and processing lifecycle.')
         .build();

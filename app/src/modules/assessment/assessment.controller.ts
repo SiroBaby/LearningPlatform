@@ -9,6 +9,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -35,10 +36,12 @@ import { PracticeFeedbackRequestDto } from './dto/practice-feedback.request.dto'
 import { PracticeFeedbackResponseDto } from './dto/practice-feedback.response.dto';
 import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
 import { AssessmentService } from './assessment.service';
+import { SessionAuthGuard } from '../auth/session-auth.guard';
 
-@ApiSecurity('ownerId')
+@ApiSecurity('bearer')
 @ApiTags('Quizzes')
 @Controller('quizzes')
+@UseGuards(SessionAuthGuard)
 export class AssessmentController {
   constructor(
     private readonly assessment: AssessmentService,

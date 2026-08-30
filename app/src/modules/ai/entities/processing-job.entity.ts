@@ -71,6 +71,15 @@ export class ProcessingJob {
   @Column({ name: 'custom_model_config_id', type: 'uuid', nullable: true })
   customModelConfigId!: string | null;
 
+  @Column({ name: 'cancellation_marker_id', type: 'uuid', nullable: true })
+  cancellationMarkerId!: string | null;
+
+  @Column({ name: 'cancellation_reason', type: 'varchar', length: 64, nullable: true })
+  cancellationReason!: string | null;
+
+  @Column({ name: 'cancelled_at', type: 'timestamptz', nullable: true })
+  cancelledAt!: Date | null;
+
   @Column({ name: 'estimated_credits', type: 'bigint', nullable: true })
   estimatedCredits!: number | null;
 

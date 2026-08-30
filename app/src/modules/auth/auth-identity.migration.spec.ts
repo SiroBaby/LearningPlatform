@@ -23,6 +23,7 @@ describe('auth identity migration', () => {
 
     expect(tables.rows.map((row) => row.table_name)).toEqual([
       'oauth_transactions',
+      'outbox',
       'sessions',
       'user_profiles',
       'users',

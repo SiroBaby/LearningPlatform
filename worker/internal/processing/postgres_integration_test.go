@@ -73,12 +73,16 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		}
 
 		completed, err := database.store.Fail(ctx, *first, Failure{Code: ProcessingFailed})
-		if err != nil || completed {
-			t.Fatalf("stale finalize = (%t, %v), want (false, nil)", completed, err)
+		if err == nil || completed || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("stale finalize = (%t, %v), want (false, ErrJobFenceLost)", completed, err)
 		}
 		retryResult, err := database.store.Retry(ctx, *first, ProviderUnavailable)
-		if err != nil || retryResult.Scheduled || retryResult.Finalized {
-			t.Fatalf("stale retry = (%#v, %v), want ({}, nil)", retryResult, err)
+		if err == nil || retryResult.Scheduled || retryResult.Finalized || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("stale retry = (%#v, %v), want ({}, ErrJobFenceLost)", retryResult, err)
+		}
+		persisted, err := database.store.PersistAndComplete(ctx, *first, []Chunk{{ID: "33333333-3333-4333-8333-333333333333", Index: 0, Text: "stale", ContentHash: "stale"}}, nil)
+		if err == nil || persisted || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("stale persistence = (%t, %v), want (false, ErrJobFenceLost)", persisted, err)
 		}
 		completed, err = database.store.Fail(ctx, *second, Failure{Code: ProcessingFailed})
 		if err != nil || !completed {

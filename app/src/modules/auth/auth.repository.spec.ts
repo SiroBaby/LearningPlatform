@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
 import { AuthRepository } from './repositories/auth.repository';
+import { AccountStatus } from './enums/account-status.enum';
 
 const transactionRow = {
   id: 'tx-1',
@@ -110,5 +111,83 @@ describe('AuthRepository OAuth reservation', () => {
     await repository.releaseOAuthTransaction('tx-1');
     expect(dataSource.query as unknown as jest.Mock).toHaveBeenCalledWith(expect.stringContaining('SET "processing_at" = NULL'), ['tx-1']);
     expect(dataSource.query as unknown as jest.Mock).toHaveBeenCalledWith(expect.stringContaining('"consumed_at" IS NULL'), ['tx-1']);
+  });
+});
+
+describe('AuthRepository account status', () => {
+  it('commits a cancellation command with the status transition', async () => {
+    const manager = {
+      query: jest.fn(async (_sql: string, _parameters: readonly unknown[]) => [{ id: 'user-1' }]),
+      update: jest.fn(async (_target: unknown, _criteria: unknown, _values: unknown) => undefined),
+      insert: jest.fn(async (_target: unknown, _values: unknown) => undefined),
+    };
+    const dataSource = {
+      createEntityManager: jest.fn(() => ({})),
+      transaction: jest.fn(async (callback: (value: typeof manager) => unknown) => callback(manager)),
+    };
+    const repository = new AuthRepository(dataSource as never);
+
+    await repository.updateAccountStatus('user-1', AccountStatus.SUSPENDED, 'ACCOUNT_SUSPENDED');
+
+    expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('"status" <> \'DELETED\''), [
+      'user-1',
+      AccountStatus.SUSPENDED,
+    ]);
+    expect(manager.update).toHaveBeenCalledTimes(1);
+    expect(manager.insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      aggregateId: 'user-1',
+      eventType: 'AccountAccessRevoked',
+      idempotencyKey: expect.stringMatching(/^user-1:SUSPENDED:[0-9a-f-]{36}$/),
+      payload: { reason: 'ACCOUNT_SUSPENDED', userId: 'user-1' },
+    }));
+  });
+
+  it('uses a new idempotency key when an account enters suspension again', async () => {
+    let currentStatus = AccountStatus.ACTIVE;
+    const insertedKeys = new Set<string>();
+    const manager = {
+      query: jest.fn(async (_sql: string, parameters: readonly unknown[]) => {
+        const nextStatus = parameters[1] as AccountStatus;
+        if (currentStatus === AccountStatus.DELETED || currentStatus === nextStatus) return [];
+        currentStatus = nextStatus;
+        return [{ id: 'user-1' }];
+      }),
+      update: jest.fn(async (_target: unknown, _criteria: unknown, _values: unknown) => undefined),
+      insert: jest.fn(async (_target: unknown, values: { readonly idempotencyKey: string }) => {
+        if (insertedKeys.has(values.idempotencyKey)) throw new Error('duplicate idempotency key');
+        insertedKeys.add(values.idempotencyKey);
+      }),
+    };
+    const dataSource = {
+      createEntityManager: jest.fn(() => ({})),
+      transaction: jest.fn(async (callback: (value: typeof manager) => unknown) => callback(manager)),
+    };
+    const repository = new AuthRepository(dataSource as never);
+
+    await repository.updateAccountStatus('user-1', AccountStatus.SUSPENDED, 'ACCOUNT_SUSPENDED');
+    // Model an explicit reactivation before the next suspension cycle.
+    currentStatus = AccountStatus.ACTIVE;
+    await repository.updateAccountStatus('user-1', AccountStatus.SUSPENDED, 'ACCOUNT_SUSPENDED');
+
+    expect(insertedKeys.size).toBe(2);
+    expect([...insertedKeys][0]).not.toBe([...insertedKeys][1]);
+  });
+
+  it('does not emit a duplicate command when the status is already terminal or unchanged', async () => {
+    const manager = {
+      query: jest.fn(async (_sql: string, _parameters: readonly unknown[]) => []),
+      update: jest.fn(async (_target: unknown, _criteria: unknown, _values: unknown) => undefined),
+      insert: jest.fn(async (_target: unknown, _values: unknown) => undefined),
+    };
+    const dataSource = {
+      createEntityManager: jest.fn(() => ({})),
+      transaction: jest.fn(async (callback: (value: typeof manager) => unknown) => callback(manager)),
+    };
+    const repository = new AuthRepository(dataSource as never);
+
+    await repository.updateAccountStatus('user-1', AccountStatus.DELETED, 'ACCOUNT_DELETED');
+
+    expect(manager.update).not.toHaveBeenCalled();
+    expect(manager.insert).not.toHaveBeenCalled();
   });
 });

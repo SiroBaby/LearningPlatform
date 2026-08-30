@@ -16,9 +16,10 @@ import { BudgetReservationRepository } from './repositories/budget-reservation.r
 import { BUDGET_RESERVATION } from './contracts/budget-reservation.port';
 import { OwnerEntitlementRepository } from './repositories/owner-entitlement.repository';
 import { OWNER_ENTITLEMENTS } from './contracts/owner-entitlement.port';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [AssessmentModule, forwardRef(() => AiModule)],
+  imports: [AssessmentModule, forwardRef(() => AiModule), AuthModule],
   controllers: [ContentController],
   providers: [
     ContentService,

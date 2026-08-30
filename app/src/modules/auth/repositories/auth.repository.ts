@@ -6,6 +6,7 @@ import { BaseRepository } from '../../../database/base.repository';
 import { DateTimeUtil } from '../../../common/datetime.util';
 import type { AuthProfileUpdate, AuthSessionPair, AuthUser, GoogleIdentity } from '../contracts/google-auth.contracts';
 import { OAuthTransaction } from '../entities/oauth-transaction.entity';
+import { AuthOutboxEvent } from '../entities/auth-outbox-event.entity';
 import { Session } from '../entities/session.entity';
 import { UserProfile } from '../entities/user-profile.entity';
 import { User } from '../entities/user.entity';
@@ -298,13 +299,31 @@ export class AuthRepository extends BaseRepository<User> {
 
   async updateAccountStatus(userId: string, status: AccountStatus, reason: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      await manager.update(User, { id: userId }, {
-        status,
-        deletedAt: status === AccountStatus.DELETED ? new Date() : null,
-      });
+      const changed = queryRows<{ readonly id: string }>(await manager.query(
+        `UPDATE "auth"."users"
+         SET "status" = $2,
+             "deleted_at" = CASE WHEN $2 = 'DELETED' THEN COALESCE("deleted_at", now()) ELSE NULL END,
+             "updated_at" = now()
+         WHERE "id" = $1
+           AND "status" <> 'DELETED'
+           AND "status" <> $2
+         RETURNING "id"`,
+        [userId, status],
+      ));
+      if (changed.length !== 1) return;
+
       await manager.update(Session, { userId, revokedAt: IsNull() }, {
         revokedAt: new Date(),
         revokedReason: reason,
+      });
+      await manager.insert(AuthOutboxEvent, {
+        aggregateId: userId,
+        eventType: 'AccountAccessRevoked',
+        // Include a transition nonce so a later suspend cycle cannot collide
+        // with an earlier outbox event for the same account and status.
+        idempotencyKey: `${userId}:${status}:${randomUUID()}`,
+        payload: { reason, userId },
+        publishedAt: null,
       });
     });
   }
