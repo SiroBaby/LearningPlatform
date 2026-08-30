@@ -58,6 +58,7 @@
 - Test Jest phải import tường minh APIs từ `@jest/globals` (ví dụ `describe`, `it`, `expect`, `jest`) để editor type-check ổn định.
 - Test dùng dependency ESM-only như `pdfjs-dist` phải chạy qua script `npm run test`/`npm run test:e2e` đã bật `node --experimental-vm-modules`; không gọi trực tiếp binary `jest` vì native dynamic import sẽ lỗi trong Jest VM.
 - E2E khởi tạo toàn bộ `AppModule` phải đặt OAuth config fixture không chứa secret thật (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `AUTH_OAUTH_ENCRYPTION_KEY`) trước khi compile module; CI không có SSM và provider OAuth được khởi tạo eager dù test có thể dùng identity seam khác.
+- Module-compilation test import `AuthModule` trực tiếp hoặc qua module khác phải override `GoogleOAuthClientProvider` và external provider/SDK eager tương tự bằng stub, hoặc dùng explicit sanitized config fixture; không phụ thuộc `app/.env` của developer.
 - Migration test nhắm một version cụ thể không được giả định đó luôn là migration mới nhất; rollback theo version mục tiêu rồi chạy `runUp()` để test vẫn đúng khi có migration mới hơn.
 - Trong `.spec.ts`, nếu VS Code không áp dụng legacy decorator configuration, đăng ký custom `PropertyDecorator` trực tiếp trên prototype (ví dụ `IsNonBlankString()(TestDto.prototype, 'value')`) thay vì decorator syntax. Test DTO vẫn phải dùng `value!: Type` cho property được gán trong test.
 

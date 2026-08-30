@@ -15,9 +15,16 @@ import { QuizRepository } from './repositories/quiz.repository';
 import { AttemptResultRepository } from './repositories/attempt-result.repository';
 import { AuthRepository } from '../auth/repositories/auth.repository';
 import { AuthOutboxRepository } from '../auth/repositories/auth-outbox.repository';
+import { GoogleOAuthClientProvider, type GoogleOAuthProvider } from '../auth/google-oauth.provider';
+
+const googleOAuthProviderStub: GoogleOAuthProvider = {
+  authorizationUrl: () => 'https://oauth.test/authorize',
+  exchangeCode: async () => 'test-id-token',
+  verifyIdToken: async () => undefined,
+};
 
 describe('AssessmentModule', () => {
-  it('provides the assessment-owned handoff port', async () => {
+  it('provides assessment ports without requiring local OAuth configuration', async () => {
     const dataSourceMock = {
       entityMetadatas: [],
       getRepository: () => ({}),
@@ -57,8 +64,11 @@ describe('AssessmentModule', () => {
       .useValue({})
       .overrideProvider(AuthOutboxRepository)
       .useValue({})
+      .overrideProvider(GoogleOAuthClientProvider)
+      .useValue(googleOAuthProviderStub)
       .compile();
 
+    expect(module.get(GoogleOAuthClientProvider)).toBe(googleOAuthProviderStub);
     expect(module.get<QuizGenerationHandoffPort>(QUIZ_GENERATION_HANDOFF)).toBeDefined();
     expect(module.get<QuizAttemptStore>(QUIZ_ATTEMPT_STORE)).toBeDefined();
     expect(module.get<AttemptResultReader>(ATTEMPT_RESULT_READER)).toBeDefined();
