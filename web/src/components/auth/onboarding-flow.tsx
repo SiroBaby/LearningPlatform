@@ -25,33 +25,33 @@ import {
 const onboardingSteps = [
   {
     key: "goal",
-    title: "Bạn muốn LearningPlatform ưu tiên điều gì?",
+    title: "Bạn muốn học để làm gì?",
     description:
-      "Chọn mục tiêu chính để hệ thống ưu tiên đúng kiểu quiz, review queue và gợi ý học tiếp theo.",
+      "Chọn mục tiêu chính để nội dung và nhịp học phù hợp hơn với bạn.",
   },
   {
     key: "language",
-    title: "Ngôn ngữ giải thích nào hợp với bạn?",
+    title: "Bạn muốn được giải thích bằng ngôn ngữ nào?",
     description:
-      "Thiết lập này ảnh hưởng tới cách hiện quiz, tutor và helper copy. Bạn đổi lại bất kỳ lúc nào trong Settings.",
+      "Lựa chọn này áp dụng cho giao diện và lời giải. Bạn có thể đổi lại trong Cài đặt.",
   },
   {
     key: "level",
-    title: "Mức độ nội dung nên ở đâu?",
+    title: "Mức độ giải thích nào phù hợp với bạn?",
     description:
-      "Chúng tôi dùng mức độ này để chọn tông giải thích và độ sâu của câu hỏi, không phải để chấm điểm bạn.",
+      "Chọn bối cảnh học gần nhất để lời giải vừa đủ sâu. Lựa chọn này không đánh giá năng lực của bạn.",
   },
   {
     key: "firstAction",
-    title: "Bạn muốn tới first value bằng cách nào?",
+    title: "Bạn muốn bắt đầu từ đâu?",
     description:
-      "Nếu chưa sẵn tài liệu riêng, bạn vẫn có thể thử sample document để xem rõ cách citation và feedback hoạt động.",
+      "Bạn có thể dùng tài liệu của mình hoặc xem một ví dụ có sẵn trước.",
   },
   {
     key: "acceptsTrustNote",
-    title: "Một lưu ý ngắn về citation và giới hạn của AI",
+    title: "Một lưu ý trước khi bắt đầu",
     description:
-      "Trước khi bắt đầu, hãy xác nhận bạn muốn học theo cách source-grounded thay vì tin mù quáng vào đầu ra AI.",
+      "AI có thể trả lời chưa chính xác. Khi cần, bạn luôn có thể mở nguồn để kiểm tra lại.",
   },
 ] as const;
 
@@ -92,26 +92,26 @@ const goalOptions: readonly {
   {
     value: "exam-prep",
     title: "Ôn thi",
-    description: "Ưu tiên câu hỏi active recall, retry mistakes và review queue sát deadline.",
-    detail: "Phù hợp khi bạn muốn biết hôm nay nên học gì để vào phòng thi tự tin hơn.",
+    description: "Ôn lại kiến thức trọng tâm và luyện những phần bạn còn chưa chắc.",
+    detail: "Phù hợp khi bạn muốn biết hôm nay nên tập trung vào phần nào.",
   },
   {
     value: "course-study",
-    title: "Học theo môn / course",
-    description: "Tổ chức tài liệu theo môn, chapter và tiến độ học dài hơi.",
-    detail: "Hợp với người học có nhiều document và muốn theo dõi mastery theo course.",
+    title: "Học theo môn học",
+    description: "Theo dõi tài liệu và tiến độ theo từng môn.",
+    detail: "Phù hợp khi bạn học nhiều môn và muốn giữ mọi thứ ngăn nắp.",
   },
   {
     value: "self-learning",
-    title: "Tự học",
-    description: "Giữ tông giải thích thân thiện, nhiều prompt kiểu explain / quiz me / summarize.",
-    detail: "Hữu ích khi bạn vừa đọc tài liệu, vừa cần tutor giải thích lại bằng ngôn ngữ dễ hiểu.",
+    title: "Tự học theo nhịp riêng",
+    description: "Đọc, đặt câu hỏi và ôn lại theo cách phù hợp với bạn.",
+    detail: "Hữu ích khi bạn muốn tự chọn nội dung và thời gian học.",
   },
   {
     value: "teaching",
-    title: "Dạy học / tutoring",
-    description: "Nhấn mạnh khả năng tạo câu hỏi, checkpoint và nội dung chia sẻ cho nhóm học.",
-    detail: "Dành cho tutor, giáo viên hoặc người làm nhóm ôn tập.",
+    title: "Chuẩn bị bài giảng",
+    description: "Tạo câu hỏi và nội dung để chia sẻ với lớp hoặc nhóm học.",
+    detail: "Dành cho giáo viên, gia sư hoặc người tổ chức nhóm ôn tập.",
   },
 ];
 
@@ -124,14 +124,14 @@ const languageOptions: readonly {
   {
     value: "vietnamese",
     title: "Tiếng Việt",
-    description: "Quiz, helper copy và giải thích ưu tiên tiếng Việt tự nhiên.",
-    detail: "Phù hợp với slide, ghi chú hoặc ôn thi theo cách diễn đạt quen thuộc.",
+    description: "Giao diện và lời giải ưu tiên tiếng Việt tự nhiên.",
+    detail: "Phù hợp với tài liệu, ghi chú hoặc bài học bằng tiếng Việt.",
   },
   {
     value: "english",
-    title: "English",
-    description: "Giữ thuật ngữ và lời giải nghiêng nhiều hơn về tiếng Anh học thuật.",
-    detail: "Hợp với paper, tài liệu kỹ thuật hoặc khóa học quốc tế.",
+    title: "Tiếng Anh",
+    description: "Giao diện và lời giải ưu tiên tiếng Anh.",
+    detail: "Phù hợp với tài liệu hoặc khóa học bằng tiếng Anh.",
   },
 ];
 
@@ -143,27 +143,27 @@ const levelOptions: readonly {
 }[] = [
   {
     value: "high-school",
-    title: "High school",
-    description: "Ngôn ngữ gọn, dễ bám sát đề và kiểm tra kiến thức nền.",
-    detail: "Ưu tiên câu hỏi rõ ý, ít giả định nền tảng học thuật quá sâu.",
+    title: "Trung học",
+    description: "Lời giải gọn, rõ và bám sát kiến thức nền.",
+    detail: "Phù hợp với bài học và đề kiểm tra ở bậc trung học.",
   },
   {
     value: "university",
-    title: "University",
-    description: "Cân bằng giữa ôn khái niệm, giải thích nguyên lý và liên hệ bài tập.",
-    detail: "Phù hợp với slide môn học, giáo trình và bài giảng dài hơn.",
+    title: "Đại học",
+    description: "Cân bằng giữa khái niệm, nguyên lý và bài tập.",
+    detail: "Phù hợp với giáo trình, slide môn học và bài giảng chuyên sâu.",
   },
   {
     value: "professional",
-    title: "Professional",
-    description: "Giải thích cô đọng hơn, chấp nhận nhiều technical terms và tình huống thực tế.",
-    detail: "Hợp với chứng chỉ, upskill hoặc tài liệu nội bộ dài, dày đặc kiến thức.",
+    title: "Đi làm hoặc chuyên môn",
+    description: "Lời giải cô đọng, gắn với tình huống thực tế.",
+    detail: "Phù hợp với tài liệu nghề nghiệp, chứng chỉ hoặc đào tạo nội bộ.",
   },
   {
     value: "other",
-    title: "Khác / để tôi tự chỉnh sau",
-    description: "Chọn tạm để đi nhanh đến first value, bạn có thể tinh chỉnh lại trong Settings.",
-    detail: "Hữu ích nếu bạn chưa chắc mức độ nào hợp nhất với tài liệu của mình.",
+    title: "Khác",
+    description: "Chọn mức gần nhất, bạn có thể thay đổi sau.",
+    detail: "Hữu ích nếu bạn chưa chắc mức độ nào phù hợp nhất.",
   },
 ];
 
@@ -175,77 +175,77 @@ const firstActionOptions: readonly {
 }[] = [
   {
     value: "upload",
-    title: "Tải tài liệu của tôi ngay",
-    description: "Đi thẳng tới upload để thử PDF, text, video hoặc audio của riêng bạn.",
-    detail: "Tốt nhất khi bạn đã sẵn file và muốn thấy quiz, flashcard hoặc checkpoint ngay từ tài liệu thật.",
+    title: "Dùng tài liệu của tôi",
+    description: "Bắt đầu với PDF, ghi chú hoặc tệp học tập bạn đang có.",
+    detail: "Phù hợp khi bạn đã có tài liệu và muốn học ngay từ nội dung đó.",
   },
   {
     value: "sample",
-    title: "Xem sample document trước",
-    description: "Khám phá quiz có citation, review queue và feedback mà chưa cần chuẩn bị file.",
-    detail: "Rất hợp nếu bạn chỉ muốn hiểu UX trước khi tin tưởng upload tài liệu riêng.",
+    title: "Xem ví dụ trước",
+    description: "Xem một vòng học mẫu mà chưa cần chuẩn bị tài liệu.",
+    detail: "Phù hợp nếu bạn muốn làm quen trước khi dùng tài liệu riêng.",
   },
 ];
 
 const stepContentMap: Record<number, StepContent> = {
   0: {
-    eyebrow: "Mục tiêu học",
-    title: "Để hệ thống ưu tiên đúng việc bạn cần nhất",
+    eyebrow: "Mục tiêu của bạn",
+    title: "Bắt đầu từ điều bạn muốn đạt được",
     description:
-      "LearningPlatform không nên cư xử như chatbot chung chung. Mục tiêu học giúp ưu tiên đúng next best action ngay từ màn hình đầu tiên.",
-    highlight: "Ví dụ: người ôn thi cần retry mistakes sớm hơn, còn người tự học có thể cần tutor giải thích lại nhiều hơn.",
+      "Mục tiêu giúp bạn tập trung vào nội dung và nhịp học phù hợp hơn.",
+    highlight: "Bạn có thể đổi mục tiêu khi nhu cầu học thay đổi.",
     items: [
-      "Review queue sẽ khác nhau giữa ôn thi và học dài hạn.",
-      "Các helper CTA nên nói đúng giọng điệu: thử ngay, ôn lại, hay khám phá tài liệu.",
-      "Bạn vẫn đổi lại được sau trong Settings nếu nhu cầu thay đổi.",
+      "Gợi ý học sẽ bám theo mục tiêu này.",
+      "Bạn có thể đổi mục tiêu bất cứ lúc nào trong Cài đặt.",
+      "Lựa chọn này không dùng để chấm điểm bạn.",
     ],
   },
   1: {
-    eyebrow: "Ngôn ngữ ưu tiên",
-    title: "Giải thích tự nhiên với tài liệu Việt / Anh / mixed",
+    eyebrow: "Ngôn ngữ",
+    title: "Đọc và nhận lời giải theo cách tự nhiên",
     description:
-      "Nhiều người học ở Việt Nam cần giao diện và tutor vừa giữ technical terms, vừa giải thích bằng tiếng Việt dễ hiểu. Đây là setting mặc định cho trải nghiệm đó.",
-    highlight: "Không ép dịch cứng toàn bộ thuật ngữ khi điều đó làm giảm độ rõ ràng của nội dung học.",
+      "Nếu tài liệu có thuật ngữ tiếng Anh, bạn vẫn có thể chọn lời giải tiếng Việt để dễ theo dõi.",
+    highlight: "Bạn có thể giữ nguyên từ chuyên môn quen thuộc khi điều đó giúp dễ hiểu hơn.",
     items: [
-      "Long Vietnamese text cần wrap đẹp, không làm layout vỡ trên mobile.",
-      "Mixed mode phù hợp nhất khi tài liệu gốc là English nhưng người học muốn giải thích Việt.",
-      "Sample document cũng sẽ bám theo ngôn ngữ bạn chọn.",
+      "Giao diện và lời giải ưu tiên ngôn ngữ bạn chọn.",
+      "Bạn vẫn có thể học từ tài liệu bằng ngôn ngữ khác.",
+      "Bạn có thể đổi lựa chọn này sau trong Cài đặt.",
     ],
   },
   2: {
-    eyebrow: "Mức độ nội dung",
-    title: "Độ sâu của quiz và lời giải nên vừa sức",
+    eyebrow: "Mức độ phù hợp",
+    title: "Chọn mức độ phù hợp với việc học hôm nay",
     description:
-      "Một bài giảng đại học và một tài liệu chứng chỉ chuyên nghiệp không nên cho ra cùng kiểu giải thích. Mức độ này giúp hệ thống chọn độ sâu hợp lý hơn.",
-    highlight: "Setting này chỉ để cá nhân hóa cách giải thích, không gắn nhãn năng lực người học.",
+      "Mức độ này giúp lời giải vừa đủ sâu cho bối cảnh học của bạn.",
+    highlight: "Lựa chọn này chỉ điều chỉnh cách giải thích, không gắn nhãn năng lực.",
     items: [
-      "Question difficulty mix có thể điều chỉnh tốt hơn khi biết bối cảnh học của bạn.",
-      "Tutor dễ chọn ví dụ minh họa gần với nền tảng hiện tại hơn.",
-      "Sau này bạn vẫn có thể đổi bằng từng course hoặc từng document.",
+      "Lời giải sẽ gần với nền tảng hiện tại của bạn hơn.",
+      "Ví dụ minh họa sẽ phù hợp với bối cảnh học bạn chọn.",
+      "Bạn có thể thay đổi lựa chọn này sau khi bắt đầu.",
     ],
   },
   3: {
-    eyebrow: "First value",
-    title: "Đi nhanh tới trải nghiệm bạn muốn thử đầu tiên",
+    eyebrow: "Cách bắt đầu",
+    title: "Bắt đầu bằng cách bạn thấy thuận tiện",
     description:
-      "Onboarding nên đưa người dùng tới giá trị đầu tiên thật nhanh, không biến thành form dài vô tận. Vì vậy bạn có thể upload ngay hoặc thử sample trước.",
-    highlight: "Skippable nhưng vẫn recoverable: nếu bỏ qua lúc này, bạn luôn có thể quay lại từ Settings hoặc Home empty state.",
+      "Chưa có tài liệu? Bạn có thể xem ví dụ trước rồi quay lại dùng tài liệu riêng.",
+    highlight: "Bạn có thể bỏ qua lúc này và quay lại từ Trang chủ hoặc Cài đặt.",
     items: [
-      "Upload phù hợp khi bạn đã có PDF, note hoặc video muốn biến thành quiz ngay.",
-      "Sample phù hợp khi bạn chỉ muốn xem citation, feedback và helper panels hoạt động ra sao.",
-      "Cả hai đường đều giữ giọng điệu minh bạch về AI limitations.",
+      "Dùng tài liệu riêng khi bạn đã sẵn sàng.",
+      "Xem ví dụ để làm quen trước.",
+      "Cả hai lựa chọn đều đưa bạn đến bài học đầu tiên.",
     ],
   },
   4: {
-    eyebrow: "Trust first",
-    title: "Citation phải rõ, AI limitations phải nói thẳng",
+    eyebrow: "Kiểm tra nguồn",
+    title: "Bạn luôn có thể đối chiếu với tài liệu gốc",
     description:
-      "Mục tiêu của sản phẩm là biến tài liệu thành active learning, không phải tạo cảm giác AI biết mọi thứ. Bước này nhắc lại nguyên tắc đó trước khi bạn bắt đầu.",
-    highlight: "Mỗi lời giải tốt đều nên nhảy được về nguồn hoặc thừa nhận khi không đủ bằng chứng.",
+      "AI có thể hiểu thiếu hoặc trả lời chưa đúng. Khi cần, bạn có thể mở phần tài liệu liên quan để tự kiểm tra.",
+    highlight: "Hãy xem câu trả lời AI là điểm bắt đầu, không phải kết luận cuối cùng.",
     items: [
-      "Quiz, tutor và review cần hiển thị citation gần nội dung giải thích, không giấu đi.",
-      "Khi AI không chắc, giao diện phải nói rõ thay vì trả lời tự tin mơ hồ.",
-      "Bạn có thể xem lại nguyên tắc này sau trong Settings > Learning Preferences.",
+      "Lời giải sẽ đi kèm nguồn khi có thể.",
+      "Nếu chưa chắc, hãy mở tài liệu và tự đối chiếu.",
+      "Bạn có thể xem lại lưu ý này trong Cài đặt.",
     ],
   },
 };
@@ -275,11 +275,11 @@ function getStepValidationErrors(
   const errors: Partial<Record<OnboardingField, string>> = {};
 
   if (stepIndex === 0 && !values.goal) {
-    errors.goal = "Chọn một mục tiêu chính để hệ thống gợi ý bước tiếp theo phù hợp hơn.";
+    errors.goal = "Chọn một mục tiêu chính để nhận gợi ý học phù hợp hơn.";
   }
 
   if (stepIndex === 1 && !values.language) {
-    errors.language = "Chọn ngôn ngữ ưu tiên cho quiz, tutor và helper copy.";
+    errors.language = "Chọn ngôn ngữ bạn muốn dùng cho giao diện và lời giải.";
   }
 
   if (stepIndex === 2 && !values.level) {
@@ -287,12 +287,12 @@ function getStepValidationErrors(
   }
 
   if (stepIndex === 3 && !values.firstAction) {
-    errors.firstAction = "Chọn cách bạn muốn đi tới first value: upload thật hoặc sample document.";
+    errors.firstAction = "Chọn cách bạn muốn bắt đầu: dùng tài liệu riêng hoặc xem ví dụ.";
   }
 
   if (stepIndex === 4 && !values.acceptsTrustNote) {
     errors.acceptsTrustNote =
-      "Hãy xác nhận rằng bạn muốn kiểm tra đầu ra AI bằng citation nguồn khi cần.";
+      "Hãy xác nhận rằng bạn sẽ kiểm tra nguồn tài liệu khi cần.";
   }
 
   return errors;
@@ -316,10 +316,10 @@ function getFirstActionLabel(firstAction: FirstAction | ""): string {
 
 function getCompletionSummary(values: OnboardingValues): readonly string[] {
   return [
-    `Mục tiêu ưu tiên: ${getGoalLabel(values.goal)}`,
-    `Ngôn ngữ mặc định: ${getLanguageLabel(values.language)}`,
-    `Mức độ giải thích: ${getLevelLabel(values.level)}`,
-    `Đường tới first value: ${getFirstActionLabel(values.firstAction)}`,
+    `Mục tiêu: ${getGoalLabel(values.goal)}`,
+    `Ngôn ngữ: ${getLanguageLabel(values.language)}`,
+    `Mức độ: ${getLevelLabel(values.level)}`,
+    `Bắt đầu bằng: ${getFirstActionLabel(values.firstAction)}`,
   ] as const;
 }
 
@@ -447,23 +447,23 @@ export function OnboardingFlow(): ReactNode {
             Bước {currentStep + 1}/{onboardingSteps.length}
           </p>
           <p className="mt-1 text-sm text-ink-500">
-            Onboarding này ngắn, có thể bỏ qua, và luôn mở lại được trong Settings.
+            Chọn vài điều để bắt đầu. Bạn có thể bỏ qua và quay lại trong Cài đặt.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <LinkButton href={routes.settings} variant="ghost" size="sm">
-            Mở lại sau từ Settings
+            Xem trong Cài đặt
           </LinkButton>
           <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => void skipOnboarding()}>
-            Bỏ qua lúc này
+            Bỏ qua
           </Button>
         </div>
       </div>
 
       {hasCompleted ? (
         <AuthStatusMessage
-          title="Onboarding đã hoàn tất"
-          description="Bạn đã có đủ thiết lập để hệ thống chọn tông giải thích, kiểu quiz và đường tới first value hợp lý hơn ngay từ đầu."
+          title="Bạn đã sẵn sàng"
+          description="Các lựa chọn của bạn đã được lưu. Hãy bắt đầu bằng cách phù hợp nhất với bạn."
           tone="success"
         >
           <div className="space-y-4">
@@ -479,11 +479,11 @@ export function OnboardingFlow(): ReactNode {
                 href={values.firstAction === "sample" ? routes.home : routes.upload}
                 className="w-full sm:w-auto"
               >
-                {values.firstAction === "sample" ? "Mở sample / Home" : "Đi tới upload"}
+                {values.firstAction === "sample" ? "Xem ví dụ" : "Tải tài liệu lên"}
                 <ArrowRight className="h-4 w-4" />
               </LinkButton>
               <LinkButton href={routes.settings} variant="outline" className="w-full sm:w-auto">
-                Chỉnh lại preference trong Settings
+                Thay đổi lựa chọn
               </LinkButton>
             </div>
           </div>
@@ -494,7 +494,7 @@ export function OnboardingFlow(): ReactNode {
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">
-              {onboardingSteps[currentStep].key}
+              {stepContent.eyebrow}
             </p>
             <h2 className="mt-1 text-lg font-semibold text-ink-900">
               {onboardingSteps[currentStep].title}
@@ -589,22 +589,22 @@ export function OnboardingFlow(): ReactNode {
                 <CardBody className="space-y-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-brand-700">
                     <BookOpenCheck className="h-4 w-4" aria-hidden />
-                    Sample document preview
+                    Xem trước
                   </div>
                   <div className="space-y-1">
                     <CardTitle className="text-base">
-                      Nhập môn Hệ điều hành — Chương 3: Quản lý tiến trình.pdf
+                      Nhập môn Hệ điều hành: Quản lý tiến trình
                     </CardTitle>
                     <p className="text-sm leading-6 text-ink-600">
-                      Sample này cho bạn thấy rõ một vòng hoàn chỉnh: document → quiz → explanation → citation → weak topic follow-up.
+                      Bạn sẽ thấy cách một tài liệu trở thành câu hỏi, lời giải và phần ôn lại.
                     </p>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div className="rounded-xl border border-brand-100 bg-white px-3 py-2 text-sm text-ink-700">
-                      5 câu hỏi active recall có lời giải và citation nguồn
+                      5 câu hỏi có lời giải và nguồn tham khảo
                     </div>
                     <div className="rounded-xl border border-brand-100 bg-white px-3 py-2 text-sm text-ink-700">
-                      Weak topic được gợi ý lại để bạn biết phần nào nên review tiếp
+                      Nhắc lại phần bạn còn chưa chắc để ôn tiếp
                     </div>
                   </div>
                 </CardBody>
@@ -617,15 +617,28 @@ export function OnboardingFlow(): ReactNode {
               <Card className="border-ink-200 bg-ink-50/70">
                 <CardBody className="space-y-4">
                   <div className="space-y-2">
-                    <Badge tone="brand">Source-grounded workflow</Badge>
+                    <Badge tone="brand">Học có kiểm chứng</Badge>
                     <CardTitle className="text-base">
-                      Một vòng học đáng tin cậy nên trông như thế nào?
+                      Một vòng học đáng tin cậy
                     </CardTitle>
                     <p className="text-sm leading-6 text-ink-600">
-                      Hệ thống biến document thành câu hỏi, nhưng giá trị thật nằm ở chỗ bạn trả lời, nhận feedback và có thể quay về nguồn để tự kiểm chứng.
+                      Bạn trả lời câu hỏi, xem lời giải rồi mở tài liệu gốc để kiểm tra khi cần.
                     </p>
                   </div>
-                  <StepTimeline steps={buildSteps(6)} />
+                  <StepTimeline
+                    steps={buildSteps(6).map((step, index) => ({
+                      ...step,
+                      label: [
+                        "Mở tài liệu",
+                        "Đọc nội dung",
+                        "Tìm ý chính",
+                        "Tạo câu hỏi",
+                        "Kiểm tra câu trả lời",
+                        "Chuẩn bị phần ôn tập",
+                        "Bắt đầu học",
+                      ][index] ?? step.label,
+                    }))}
+                  />
                 </CardBody>
               </Card>
               <div className="space-y-2">
@@ -637,7 +650,7 @@ export function OnboardingFlow(): ReactNode {
                     className="mt-1 h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
                   />
                   <span>
-                    Tôi hiểu AI-generated quiz hoặc giải thích có thể chưa hoàn hảo, và tôi muốn luôn có citation nguồn để kiểm tra lại khi cần.
+                    Tôi hiểu AI có thể trả lời chưa chính xác. Khi cần, tôi sẽ mở nguồn tài liệu để kiểm tra lại.
                   </span>
                 </label>
               </div>
@@ -662,7 +675,7 @@ export function OnboardingFlow(): ReactNode {
                 Quay lại
               </Button>
               <Button type="button" variant="ghost" disabled={isPending} onClick={() => void skipOnboarding()}>
-                Bỏ qua onboarding
+                Bỏ qua thiết lập
               </Button>
             </div>
             <div className="flex gap-2">
@@ -680,7 +693,7 @@ export function OnboardingFlow(): ReactNode {
                     </>
                   ) : (
                     <>
-                      Hoàn tất onboarding
+                      Hoàn tất thiết lập
                       <ArrowRight className="h-4 w-4" />
                     </>
                   )}

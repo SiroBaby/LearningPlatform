@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { ChevronDown, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 interface FieldProps {
@@ -141,15 +141,34 @@ export function SelectField({
       <label htmlFor={id} className="block text-sm font-medium text-ink-700">
         {label}
       </label>
-      <select
-        id={id}
-        className={cn(inputBase, error ? "border-error-500" : "border-ink-200")}
-        {...props}
-      >
-        {children}
-      </select>
-      {hint && !error && <p className="text-xs text-ink-500">{hint}</p>}
-      {error && <p className="text-xs text-error-600">{error}</p>}
+      <div className="relative">
+        <select
+          id={id}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
+          className={cn(
+            "w-full appearance-none rounded-2xl border bg-white px-4 py-3 pr-11 text-sm text-ink-900 shadow-sm transition-colors focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-ink-50 disabled:text-ink-500",
+            error ? "border-error-500" : "border-ink-200",
+          )}
+          {...props}
+        >
+          {children}
+        </select>
+        <ChevronDown
+          aria-hidden="true"
+          className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500"
+        />
+      </div>
+      {hint && !error && (
+        <p id={`${id}-hint`} className="text-xs text-ink-500">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={`${id}-error`} className="text-xs text-error-600">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
