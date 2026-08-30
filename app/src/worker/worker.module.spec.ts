@@ -7,6 +7,7 @@ import { JobPoller } from '../modules/ai/job-poller.service';
 import { StuckJobDetector } from '../modules/ai/stuck-job-detector.service';
 import { WorkerModule } from './worker.module';
 import { WorkerRunner } from './worker-runner.service';
+import { AuthCancellationRelay } from './auth-cancellation-relay.service';
 
 describe('WorkerModule', () => {
   it('contains only the relay provider graph', () => {
@@ -18,5 +19,6 @@ describe('WorkerModule', () => {
     expect(providers).not.toContain(JobPoller);
     expect(providers).not.toContain(StuckJobDetector);
     expect(providers).toContain(WorkerRunner);
+    expect(providers).toContain(AuthCancellationRelay);
   });
 });

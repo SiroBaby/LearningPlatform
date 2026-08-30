@@ -10,6 +10,7 @@ import { createApplicationLogger } from '../common/logging/application-logger.fa
 import { ApplicationConfigService } from '../config/application-config.service';
 import { ForwardRelay } from '../modules/content/forward-relay.service';
 import { ReturnRelay } from './return-relay.service';
+import { AuthCancellationRelay } from './auth-cancellation-relay.service';
 
 @Injectable()
 export class WorkerRunner
@@ -22,6 +23,7 @@ export class WorkerRunner
 
   constructor(
     private readonly config: ApplicationConfigService,
+    private readonly authCancellationRelay: AuthCancellationRelay,
     private readonly relay: ForwardRelay,
     private readonly returnRelay: ReturnRelay,
   ) {}
@@ -47,6 +49,7 @@ export class WorkerRunner
     let delayMs = worker.pollIntervalMs;
     this.activeRun = (async (): Promise<void> => {
       try {
+        await this.authCancellationRelay.pump(worker.outboxBatchSize);
         await this.relay.pump(worker.outboxBatchSize);
         await this.returnRelay.pump(worker.outboxBatchSize);
       } catch {

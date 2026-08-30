@@ -8,10 +8,12 @@ import { AiModule } from '../modules/ai/ai.module';
 import { LlmProviderModule } from '../modules/ai/llm-provider.module';
 import { AssessmentModule } from '../modules/assessment/assessment.module';
 import { ContentModule } from '../modules/content/content.module';
+import { AuthModule } from '../modules/auth/auth.module';
 import { StorageModule } from '../storage/storage.module';
 import { ReturnRelay } from './return-relay.service';
 import { WorkerHealthServer } from './worker-health-server.service';
 import { LegacyWorkerRunner } from './legacy-worker-runner.service';
+import { AuthCancellationRelay } from './auth-cancellation-relay.service';
 
 @Module({
   imports: [
@@ -26,7 +28,8 @@ import { LegacyWorkerRunner } from './legacy-worker-runner.service';
     AiModule,
     AssessmentModule,
     ContentModule,
+    AuthModule,
   ],
-  providers: [LegacyWorkerRunner, ReturnRelay, WorkerHealthServer],
+  providers: [AuthCancellationRelay, LegacyWorkerRunner, ReturnRelay, WorkerHealthServer],
 })
 export class LegacyWorkerModule {}

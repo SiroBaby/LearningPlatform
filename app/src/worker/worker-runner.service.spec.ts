@@ -3,6 +3,7 @@ import { ConsoleLogger } from '@nestjs/common';
 
 import type { ApplicationConfigService } from '../config/application-config.service';
 import type { ForwardRelay } from '../modules/content/forward-relay.service';
+import type { AuthCancellationRelay } from './auth-cancellation-relay.service';
 import type { ReturnRelay } from './return-relay.service';
 import { WorkerRunner } from './worker-runner.service';
 
@@ -22,12 +23,14 @@ describe('WorkerRunner', () => {
   it('runs forward and return relays in order without successful cycle logs', async () => {
     const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
     const relay = { pump: jest.fn<ForwardRelay['pump']>().mockResolvedValue(undefined) };
+    const authCancellationRelay = { pump: jest.fn<AuthCancellationRelay['pump']>().mockResolvedValue(undefined) };
     const returnRelay = {
       pump: jest.fn<ReturnRelay['pump']>().mockResolvedValue(undefined),
     };
     const config = workerConfig();
     const runner = new WorkerRunner(
       config,
+      authCancellationRelay as unknown as AuthCancellationRelay,
       relay as unknown as ForwardRelay,
       returnRelay as unknown as ReturnRelay,
     );
@@ -36,9 +39,13 @@ describe('WorkerRunner', () => {
     await runner.onApplicationShutdown();
 
     expect(relay.pump).toHaveBeenCalledWith(5);
+    expect(authCancellationRelay.pump).toHaveBeenCalledWith(5);
     expect(returnRelay.pump).toHaveBeenCalledWith(5);
     expect(relay.pump.mock.invocationCallOrder[0]).toBeLessThan(
       returnRelay.pump.mock.invocationCallOrder[0],
+    );
+    expect(authCancellationRelay.pump.mock.invocationCallOrder[0]).toBeLessThan(
+      relay.pump.mock.invocationCallOrder[0],
     );
     expect(logger).toHaveBeenCalledWith({ event: 'worker.started', runtime: 'worker' });
     const cycleLogs = logger.mock.calls
@@ -56,6 +63,7 @@ describe('WorkerRunner', () => {
     const config = workerConfig();
     const runner = new WorkerRunner(
       config,
+      { pump: async () => undefined } as unknown as AuthCancellationRelay,
       { pump: async () => undefined } as unknown as ForwardRelay,
       { pump: async () => undefined } as unknown as ReturnRelay,
     );
@@ -77,6 +85,7 @@ describe('WorkerRunner', () => {
     const config = workerConfig();
     const runner = new WorkerRunner(
       config,
+      { pump: async () => undefined } as unknown as AuthCancellationRelay,
       { pump: async () => { throw new Error('raw document: secret lecture text'); } } as unknown as ForwardRelay,
       { pump: async () => undefined } as unknown as ReturnRelay,
     );

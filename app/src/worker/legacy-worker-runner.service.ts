@@ -12,6 +12,7 @@ import { JobPoller } from '../modules/ai/job-poller.service';
 import { StuckJobDetector } from '../modules/ai/stuck-job-detector.service';
 import { ForwardRelay } from '../modules/content/forward-relay.service';
 import { ReturnRelay } from './return-relay.service';
+import { AuthCancellationRelay } from './auth-cancellation-relay.service';
 
 @Injectable()
 export class LegacyWorkerRunner
@@ -24,6 +25,7 @@ export class LegacyWorkerRunner
 
   constructor(
     private readonly config: ApplicationConfigService,
+    private readonly authCancellationRelay: AuthCancellationRelay,
     private readonly relay: ForwardRelay,
     private readonly poller: JobPoller,
     private readonly returnRelay: ReturnRelay,
@@ -51,6 +53,7 @@ export class LegacyWorkerRunner
     let delayMs = worker.pollIntervalMs;
     this.activeRun = (async (): Promise<void> => {
       try {
+        await this.authCancellationRelay.pump(worker.outboxBatchSize);
         await this.relay.pump(worker.outboxBatchSize);
         for (let index = 0; index < worker.jobBatchSize; index += 1) {
           if (!(await this.poller.tick())) break;

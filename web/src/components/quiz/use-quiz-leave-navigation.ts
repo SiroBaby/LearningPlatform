@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef } from "react";
 import { routes } from "@/lib/routes";
 import { writeQuizDraft } from "@/components/quiz/quiz-session";
 import { createDraftSnapshot, type QuizDraftSnapshot } from "./quiz-play-utils";
+import {
+  confirmQuizNavigation,
+  type ConfirmNavigationOptions,
+} from "./quiz-navigation-guard";
 import type { QuizMode } from "@/lib/types";
 
 interface UseQuizLeaveNavigationParams {
@@ -18,7 +22,7 @@ export function useQuizLeaveNavigation({
   mode,
   getDraftSnapshot,
   onBeforeConfirmedLeave,
-}: UseQuizLeaveNavigationParams): () => void {
+}: UseQuizLeaveNavigationParams): (options?: ConfirmNavigationOptions) => void {
   const isNavigationConfirmedRef = useRef<boolean>(false);
   const cleanupNavigationGuardsRef = useRef<(() => void) | null>(null);
 
@@ -26,12 +30,18 @@ export function useQuizLeaveNavigation({
     writeQuizDraft(quizId, mode, createDraftSnapshot(getDraftSnapshot(), mode));
   }, [getDraftSnapshot, mode, quizId]);
 
-  const confirmInternalLeave = useCallback(() => {
-    isNavigationConfirmedRef.current = true;
-    cleanupNavigationGuardsRef.current?.();
-    cleanupNavigationGuardsRef.current = null;
-    onBeforeConfirmedLeave?.();
-    persistLatestDraft();
+  const confirmInternalLeave = useCallback((options: ConfirmNavigationOptions = {}) => {
+    confirmQuizNavigation({
+      markConfirmed: () => {
+        isNavigationConfirmedRef.current = true;
+      },
+      cleanup: () => {
+        cleanupNavigationGuardsRef.current?.();
+        cleanupNavigationGuardsRef.current = null;
+      },
+      onBeforeConfirmedLeave,
+      persistDraft: persistLatestDraft,
+    }, options);
   }, [onBeforeConfirmedLeave, persistLatestDraft]);
 
   useEffect(() => {

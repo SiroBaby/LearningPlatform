@@ -47,6 +47,69 @@ func TestProcessOnePersistsChunksGeneratesAndCompletes(t *testing.T) {
 	}
 }
 
+func TestProcessOneDoesNotRetryWhenJobFenceIsLost(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:         &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+		source:      processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+		persistErr:  processing.ErrJobFenceLost,
+		retryResult: processing.RetryResult{Scheduled: true},
+	}
+	worker := New(store, objectMock{bytes: []byte("document text")}, generatorMock{})
+	if err := worker.processOne(context.Background()); !errors.Is(err, processing.ErrJobFenceLost) {
+		t.Fatalf("processOne() error = %v, want ErrJobFenceLost", err)
+	}
+	if store.retried {
+		t.Fatal("fenced result must not be retried")
+	}
+}
+
+func TestProcessOneTreatsFalseNilPersistenceAsFenceLoss(t *testing.T) {
+	t.Parallel()
+	persisted := false
+	store := &storeMock{
+		job:           &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+		source:        processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+		persistResult: &persisted,
+		retryResult:   processing.RetryResult{Scheduled: true},
+	}
+	worker := New(store, objectMock{bytes: []byte("document text")}, generatorMock{})
+	if err := worker.processOne(context.Background()); !errors.Is(err, processing.ErrJobFenceLost) {
+		t.Fatalf("processOne() error = %v, want ErrJobFenceLost", err)
+	}
+	if store.retried {
+		t.Fatal("fenced result must not be retried")
+	}
+}
+
+func TestDispatchLogsFencedInsteadOfCompleted(t *testing.T) {
+	output := make(chan []byte, 8)
+	store := &storeMock{
+		job:        &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+		source:     processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+		persistErr: processing.ErrJobFenceLost,
+	}
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(logChannelWriter{output: output}, nil)))
+	worker.slots = make(chan struct{}, 1)
+	worked, err := worker.dispatch(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("dispatch() = (%t, %v), want (true, nil)", worked, err)
+	}
+	var logs strings.Builder
+	deadline := time.After(time.Second)
+	for !strings.Contains(logs.String(), "worker.processing.fenced") {
+		select {
+		case entry := <-output:
+			logs.Write(entry)
+		case <-deadline:
+			t.Fatalf("fenced log not emitted: %s", logs.String())
+		}
+	}
+	if strings.Contains(logs.String(), "worker.processing.completed") {
+		t.Fatalf("fenced job was logged as completed: %s", logs.String())
+	}
+}
+
 func TestProcessOneRequeuesTechnicalFailure(t *testing.T) {
 	t.Parallel()
 	store := &storeMock{job: &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1}, source: processing.Source{StorageRef: "document.txt", Type: "TEXT"}}
@@ -253,6 +316,7 @@ type storeMock struct {
 	source                       processing.Source
 	retryResult                  processing.RetryResult
 	persistErr                   error
+	persistResult                *bool
 	persisted                    bool
 	replaced, completed, retried bool
 }
@@ -263,11 +327,12 @@ func (store *storeMock) Source(context.Context, processing.Job) (processing.Sour
 }
 func (store *storeMock) PersistAndComplete(_ context.Context, _ processing.Job, chunks []processing.Chunk, _ []processing.Question) (bool, error) {
 	store.replaced = len(chunks) > 0
-	store.completed = store.persistErr == nil
-	if store.persisted || store.persistErr == nil {
-		return true, store.persistErr
+	persisted := store.persisted || store.persistErr == nil
+	if store.persistResult != nil {
+		persisted = *store.persistResult
 	}
-	return false, store.persistErr
+	store.completed = persisted && store.persistErr == nil
+	return persisted, store.persistErr
 }
 func (store *storeMock) Fail(context.Context, processing.Job, processing.Failure) (bool, error) {
 	return true, nil
@@ -278,6 +343,13 @@ func (store *storeMock) Retry(context.Context, processing.Job, processing.Failur
 }
 
 type objectMock struct{ bytes []byte }
+
+type logChannelWriter struct{ output chan<- []byte }
+
+func (writer logChannelWriter) Write(value []byte) (int, error) {
+	writer.output <- append([]byte(nil), value...)
+	return len(value), nil
+}
 
 func (object objectMock) Read(context.Context, string, int64) ([]byte, error) {
 	return object.bytes, nil

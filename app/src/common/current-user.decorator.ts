@@ -1,24 +1,23 @@
 import {
   createParamDecorator,
   ExecutionContext,
-  BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { validate as isUuid } from 'uuid';
 import type { Request } from 'express';
+import { AUTH_USER_REQUEST_KEY, type AuthenticatedRequest } from '../modules/auth/session-auth.guard';
 
 /**
- * CurrentUser seam (Phase 0): danh tính lấy từ header `X-User-Id`.
- * Hỗ trợ nhiều user (dev) để test IDOR thật. Xem ADR-0011.
- *
- * Phase 3: chính decorator này đổi sang trích userId từ JWT —
- * controller KHÔNG phải sửa. Đây là đường nối (seam) cho Auth thật.
+ * Returns the user identity attached by SessionAuthGuard.
+ * Resource controllers never trust a caller-supplied owner header.
  */
 export const CurrentUser = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): string => {
-    const req = ctx.switchToHttp().getRequest<Request>();
-    const ownerId = req.headers['x-user-id'];
-    if (typeof ownerId !== 'string' || !isUuid(ownerId)) {
-      throw new BadRequestException('Missing or invalid X-User-Id header');
+    const req = ctx.switchToHttp().getRequest<AuthenticatedRequest & Request>();
+    const user = req[AUTH_USER_REQUEST_KEY];
+    const ownerId = user?.id;
+    if (!ownerId || !isUuid(ownerId)) {
+      throw new UnauthorizedException('Invalid session');
     }
     return ownerId;
   },

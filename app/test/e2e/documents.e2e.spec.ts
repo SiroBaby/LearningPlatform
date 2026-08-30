@@ -1,11 +1,11 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { ExecutionContext, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { randomUUID } from 'crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import { DataSource } from 'typeorm';
 
 import { AppModule } from '../../src/app.module';
 import { Document } from '../../src/modules/content/entities/document.entity';
+import { AUTH_USER_REQUEST_KEY, SessionAuthGuard, type AuthenticatedRequest } from '../../src/modules/auth/session-auth.guard';
 import { STORAGE_VERIFIER } from '../../src/storage/contracts/storage-verifier.port';
 import { StorageService } from '../../src/storage/storage.service';
 import { PDF_JS_MODULE } from '../../src/modules/ai/extraction.service';
@@ -20,8 +20,8 @@ describe('Document HTTP flow', () => {
   let app: INestApplication;
   let dataSource: DataSource;
   let storage: TestStorageServer;
-  const ownerId = randomUUID();
-  const otherOwnerId = randomUUID();
+  const ownerId = '00000000-0000-4000-8000-000000000101';
+  const otherOwnerId = '00000000-0000-4000-8000-000000000102';
 
   beforeAll(async () => {
     // AppModule eagerly constructs the OAuth provider; e2e uses the legacy
@@ -33,6 +33,27 @@ describe('Document HTTP flow', () => {
     db = await startTestDb();
     storage = await TestStorageServer.start();
     const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideGuard(SessionAuthGuard)
+      .useValue({
+        canActivate: (context: ExecutionContext): boolean => {
+          const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+          const rawUserId = request.headers['x-user-id'];
+          if (typeof rawUserId !== 'string') return false;
+          request[AUTH_USER_REQUEST_KEY] = {
+            id: rawUserId,
+            email: 'e2e@example.com',
+            displayName: null,
+            learningGoal: null,
+            onboardingCompletedAt: null,
+            onboardingSkippedAt: null,
+            preferredLanguage: null,
+            proficiencyLevel: null,
+            role: 'USER',
+            status: 'ACTIVE',
+          };
+          return true;
+        },
+      })
       .overrideProvider(StorageService)
       .useValue({
         createPresignedPostUrl: (
@@ -203,6 +224,7 @@ describe('Document HTTP flow', () => {
   });
 
   function ownerHeaders(id: string = ownerId): HeadersInit {
+    // The header is consumed only by the deterministic e2e guard fixture above.
     return { 'Content-Type': 'application/json', 'X-User-Id': id };
   }
 

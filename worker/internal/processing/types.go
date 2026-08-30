@@ -3,8 +3,13 @@ package processing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
+
+// ErrJobFenceLost means the claimed attempt is no longer allowed to mutate
+// durable state. Callers must discard the result and must not retry it.
+var ErrJobFenceLost = errors.New("job fence lost")
 
 type Job struct {
 	ID, DocumentID, OwnerID, CorrelationID, LeaseID string

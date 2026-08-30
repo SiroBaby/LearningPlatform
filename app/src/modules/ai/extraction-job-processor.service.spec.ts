@@ -183,6 +183,9 @@ function createJob(): ProcessingJob {
     customModelConfigId: null,
     modelSelectionKind: null,
     platformModelId: null,
+    cancellationMarkerId: null,
+    cancellationReason: null,
+    cancelledAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };

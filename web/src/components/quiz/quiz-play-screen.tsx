@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { clearQuizDraft } from "@/components/quiz/quiz-session";
 import { Phase0ClientError, submitPhase0QuizAttempt } from "@/lib/phase0/client";
@@ -26,7 +25,6 @@ interface QuizPlayScreenProps {
 }
 
 export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
-  const router = useRouter();
   const { notify } = useToast();
   const summaryId = useId();
   const errorSummaryRef = useRef<HTMLDivElement | null>(null);
@@ -165,8 +163,10 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
       const response = await submitPhase0QuizAttempt(quiz.id, {
         answers: buildSubmitAnswers(quiz, answers),
       });
+      persistDraftSnapshot(draftStateRef.current);
       clearQuizDraft(quiz.id, mode);
-      router.push(routes.quizResult(quiz.id, response.attemptId));
+      confirmLeaveNavigation({ persistDraft: false });
+      window.location.assign(routes.quizResult(quiz.id, response.attemptId));
     } catch (error) {
       const message = error instanceof Phase0ClientError
         ? error.message

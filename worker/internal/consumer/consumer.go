@@ -185,6 +185,10 @@ func (bootstrap *Bootstrap) dispatch(ctx context.Context) (bool, error) {
 			bootstrap.logLifecycle("worker.processing.cancelled", job, active, time.Since(started))
 			return
 		}
+		if errors.Is(err, processing.ErrJobFenceLost) {
+			bootstrap.logLifecycle("worker.processing.fenced", job, active, time.Since(started))
+			return
+		}
 		if err != nil {
 			bootstrap.logLifecycle("worker.processing.failed", job, active, time.Since(started))
 			return
@@ -233,6 +237,9 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	}
 	persisted, err := bootstrap.store.PersistAndComplete(ctx, job, chunks, questions)
 	if err == nil {
+		if !persisted {
+			return processing.ErrJobFenceLost
+		}
 		return nil
 	}
 	if persisted {
@@ -247,6 +254,9 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return ctx.Err()
 	}
+	if errors.Is(err, processing.ErrJobFenceLost) {
+		return processing.ErrJobFenceLost
+	}
 	persistCtx := ctx
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		var cancel context.CancelFunc
@@ -260,6 +270,9 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 	if failure.Technical {
 		result, retryErr := bootstrap.store.Retry(persistCtx, job, failure.Code)
 		if retryErr != nil {
+			if errors.Is(retryErr, processing.ErrJobFenceLost) {
+				return processing.ErrJobFenceLost
+			}
 			bootstrap.logFailure("worker.processing.retry.persistence_failed", "retry", job, failure)
 			return retryErr
 		}
@@ -273,6 +286,9 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 	}
 	finalized, failErr := bootstrap.store.Fail(persistCtx, job, failure)
 	if failErr != nil {
+		if errors.Is(failErr, processing.ErrJobFenceLost) {
+			return processing.ErrJobFenceLost
+		}
 		bootstrap.logFailure("worker.processing.failure.persistence_failed", "finalize", job, failure)
 	} else if finalized {
 		bootstrap.logFailure("worker.processing.failed", "finalize", job, failure)

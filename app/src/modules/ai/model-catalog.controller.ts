@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 
 import { CurrentUser } from '../../common/current-user.decorator';
@@ -6,10 +6,12 @@ import { ModelCatalogService } from './model-catalog.service';
 import { OwnerModelConfigService } from './owner-model-config.service';
 import { CreateCustomModelConfigDto } from './dto/create-custom-model-config.dto';
 import { ModelCatalogItemDto } from './dto/model-catalog-item.dto';
+import { SessionAuthGuard } from '../auth/session-auth.guard';
 
-@ApiSecurity('ownerId')
+@ApiSecurity('bearer')
 @ApiTags('AI models')
 @Controller('ai/models')
+@UseGuards(SessionAuthGuard)
 export class ModelCatalogController {
   constructor(
     private readonly catalog: ModelCatalogService,
