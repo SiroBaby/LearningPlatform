@@ -16,7 +16,7 @@ import {
 } from "@/components/ui";
 
 export const metadata: Metadata = {
-  title: "Examples",
+  title: "Ví dụ",
   description:
     "Xem gallery output mẫu của LearningPlatform: source excerpt, generated question, explanation, citation và result state trước khi tạo tài khoản.",
 };

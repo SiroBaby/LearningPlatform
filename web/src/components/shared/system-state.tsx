@@ -83,19 +83,19 @@ export function SystemStatePage({
 
             <div className="border-t border-ink-100 bg-ink-50/80 p-6 sm:p-10 lg:border-l lg:border-t-0">
               <div className="rounded-3xl border border-ink-100 bg-white p-5 card-shadow">
-                <p className="text-sm font-semibold text-ink-900">What you can do next</p>
+                <p className="text-sm font-semibold text-ink-900">Bạn có thể làm gì tiếp theo?</p>
                 <ul className="mt-4 space-y-3 text-sm leading-6 text-ink-600">
                   <li className="flex gap-3">
                     <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" aria-hidden />
-                    Quay lại Home để tiếp tục review queue hoặc mở tài liệu đang sẵn sàng.
+                    Quay lại Trang chủ để tiếp tục ôn tập hoặc mở tài liệu đang sẵn sàng.
                   </li>
                   <li className="flex gap-3">
                     <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" aria-hidden />
-                    Nếu lỗi liên quan đến xử lý tài liệu, hãy kiểm tra upload status và phần credit estimate.
+                    Nếu lỗi liên quan đến xử lý tài liệu, hãy kiểm tra trạng thái tải lên và số lượt dùng.
                   </li>
                   <li className="flex gap-3">
                     <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" aria-hidden />
-                    Trường hợp không đủ quyền hoặc tài liệu bị giới hạn theo plan, xem lại Billing / Usage để biết nguyên nhân cụ thể.
+                    Nếu không đủ quyền hoặc tài liệu bị giới hạn theo gói, hãy xem lại thanh toán và mức sử dụng để biết nguyên nhân.
                   </li>
                 </ul>
               </div>
@@ -111,7 +111,7 @@ export function HomeActions() {
   return (
     <>
       <LinkButton href="/home">
-        Quay về Home
+        Quay về trang chủ
         <ArrowRight className="h-4 w-4" />
       </LinkButton>
       <ReloadButton />
@@ -122,9 +122,9 @@ export function HomeActions() {
 export function AccessActions() {
   return (
     <>
-      <LinkButton href="/billing/upgrade">Xem options nâng cấp</LinkButton>
+      <LinkButton href="/billing/upgrade">Xem các gói nâng cấp</LinkButton>
       <Link href="/home" className="inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium text-ink-600 hover:bg-ink-100 hover:text-ink-900">
-        Về Home
+        Về trang chủ
       </Link>
     </>
   );

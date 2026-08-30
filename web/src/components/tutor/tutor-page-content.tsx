@@ -20,6 +20,17 @@ import {
   SectionHeading,
 } from "@/components/ui";
 
+const OUTPUT_LABELS = {
+  quiz: "Bài kiểm tra",
+  flashcards: "Thẻ ghi nhớ",
+  tutor: "Trợ giảng",
+  checkpoints: "Điểm dừng",
+} as const;
+
+function getOutputLabels(outputs: ReadonlyArray<keyof typeof OUTPUT_LABELS>): string {
+  return outputs.map((output) => OUTPUT_LABELS[output]).join(", ");
+}
+
 interface TutorContextOption {
   readonly key: string;
   readonly label: string;
@@ -36,12 +47,12 @@ interface TutorAnswerTemplate {
 }
 
 const TUTOR_SUGGESTED_PROMPTS = [
-  "Explain this like I’m 10.",
-  "Quiz me on this chapter.",
-  "What are the key formulas?",
-  "What should I review before the exam?",
-  "Compare these two concepts.",
-  "Make 5 flashcards from this section.",
+  "Giải thích phần này thật dễ hiểu.",
+  "Hãy kiểm tra mình về chương này.",
+  "Công thức nào là trọng tâm?",
+  "Mình nên ôn gì trước kỳ thi?",
+  "So sánh hai khái niệm này.",
+  "Tạo 5 thẻ ghi nhớ từ phần này.",
 ] as const;
 
 const TUTOR_ANSWER_TEMPLATES: readonly TutorAnswerTemplate[] = [
@@ -63,21 +74,21 @@ const TUTOR_ANSWER_TEMPLATES: readonly TutorAnswerTemplate[] = [
     key: "gradient",
     matcher: (question) => hasKeyword(question, ["formula", "gradient", "learning rate", "optimization"]),
     content:
-      "Trong bộ tài liệu hiện tại, điểm trọng tâm là quy tắc cập nhật của gradient descent: tham số được điều chỉnh theo hướng ngược lại gradient của hàm loss, với bước nhảy do learning rate quyết định. Nếu bạn muốn, tôi có thể biến quy tắc này thành flashcards hoặc mini quiz ngay trong context hiện tại.",
+      "Trong bộ tài liệu hiện tại, điểm trọng tâm là quy tắc cập nhật của gradient descent: tham số được điều chỉnh theo hướng ngược lại gradient của hàm loss, với bước nhảy do learning rate quyết định. Nếu bạn muốn, tôi có thể biến quy tắc này thành thẻ ghi nhớ hoặc bài kiểm tra ngắn ngay trong phần đang học.",
     citations: [citations.mlGradient],
   },
   {
     key: "review-plan",
     matcher: (question) => hasKeyword(question, ["review", "exam", "weak", "ôn", "chuẩn bị thi"]),
     content:
-      "Trước kỳ thi, bạn nên ưu tiên hai cụm yếu đang hiện rõ trong mock data: Đồng bộ tiến trình và UDP vs TCP. Cả hai đều đã có câu sai hoặc checkpoint bỏ lỡ, nên chiến lược tốt nhất là review lại citation gốc trước, sau đó làm flashcard review rồi mới chuyển sang quiz retry.",
+      "Trước kỳ thi, bạn nên ưu tiên hai cụm yếu đang hiện rõ trong dữ liệu minh họa: Đồng bộ tiến trình và UDP vs TCP. Cả hai đều đã có câu sai hoặc mốc bỏ lỡ, nên chiến lược tốt nhất là xem lại trích dẫn gốc trước, sau đó ôn bằng thẻ ghi nhớ rồi mới làm lại câu hỏi.",
     citations: [citations.osSync, citations.videoUdp],
   },
   {
     key: "flashcards",
     matcher: (question) => hasKeyword(question, ["flashcard", "5 cards", "thẻ", "make cards"]),
     content:
-      "Tôi có thể rút ngay 5 flashcard theo phần đang học: context switch overhead, Round-Robin quantum, wait()/signal() trên semaphore, three-way handshake của TCP, và trade-off của UDP. Mỗi thẻ đều nên gắn citation để bạn quay lại đúng đoạn gốc khi cần kiểm tra lại.",
+      "Tôi có thể tạo ngay 5 thẻ ghi nhớ theo phần đang học: context switch overhead, Round-Robin quantum, wait()/signal() trên semaphore, three-way handshake của TCP và trade-off của UDP. Mỗi thẻ đều gắn dẫn nguồn để bạn quay lại đúng đoạn gốc khi cần kiểm tra.",
     citations: [citations.osContextSwitch, citations.osScheduling, citations.osSync, citations.videoTcp, citations.videoUdp],
   },
 ] as const;
@@ -104,9 +115,9 @@ export function TutorPageContent({
           <Card>
             <CardHeader>
               <SectionHeading
-                eyebrow="Context selector"
+                eyebrow="Phạm vi tài liệu"
                 title="Chọn phạm vi bằng chứng trước khi hỏi"
-                description="Context được giữ trên URL để refresh hoặc share mà vẫn còn đúng course / document bạn đang học."
+                description="Chọn đúng phạm vi để câu trả lời bám sát khóa học hoặc tài liệu bạn đang học."
               />
             </CardHeader>
             <CardBody className="space-y-3">
@@ -124,7 +135,7 @@ export function TutorPageContent({
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={option.key === selectedContext.key ? "brand" : "neutral"}>
-                      {option.key === selectedContext.key ? "Active context" : "Available context"}
+                      {option.key === selectedContext.key ? "Đang chọn" : "Có thể chọn"}
                     </Badge>
                     <span className="text-sm font-semibold">{option.label}</span>
                   </div>
@@ -137,9 +148,9 @@ export function TutorPageContent({
           <Card>
             <CardHeader>
               <SectionHeading
-                eyebrow="Tutor chat"
+                eyebrow="Trao đổi với trợ giảng"
                 title="Hỏi tự do, nhưng luôn nhìn thấy nguồn"
-                description="Assistant chỉ nên trả lời khi tìm thấy bằng chứng trong context đã chọn. Nếu không đủ bằng chứng, nó phải nói rõ điều đó."
+                description="Trợ giảng sẽ chỉ trả lời dựa trên phần tài liệu bạn đã chọn và nói rõ khi chưa đủ thông tin."
               />
             </CardHeader>
             <CardBody className="space-y-5">
@@ -178,7 +189,7 @@ export function TutorPageContent({
                 }}
               >
                 <label className="block text-sm font-medium text-ink-700" htmlFor="tutor-question">
-                  Ask tutor
+                  Đặt câu hỏi
                 </label>
                 <textarea
                   id="tutor-question"
@@ -189,10 +200,10 @@ export function TutorPageContent({
                 />
                 <div className="flex flex-wrap gap-3">
                   <Button type="submit">
-                    Send question <Send className="h-4 w-4" />
+                    Gửi câu hỏi <Send className="h-4 w-4" />
                   </Button>
                   <LinkButton href={routes.review} variant="outline">
-                    Open review queue
+                    Mở danh sách ôn tập
                   </LinkButton>
                 </div>
               </form>
@@ -205,7 +216,7 @@ export function TutorPageContent({
             <CardHeader>
               <div className="flex items-center gap-2 text-sm font-medium text-ink-800">
                 <SearchCheck className="h-4 w-4 text-brand-600" />
-                <span>Visible evidence</span>
+                <span>Đoạn nguồn liên quan</span>
               </div>
             </CardHeader>
             <CardBody className="space-y-4">
@@ -213,16 +224,16 @@ export function TutorPageContent({
                 <EmptyState
                   icon={SearchCheck}
                   title="Chưa có đủ bằng chứng trong nguồn"
-                  description="Tutor đang nói rõ rằng nó không tìm thấy source evidence đủ mạnh trong context hiện tại. Hãy đổi context hoặc hỏi hẹp hơn."
-                  action={<LinkButton href={buildTutorHref("all")}>Switch to all documents</LinkButton>}
+                  description="Chưa tìm thấy đoạn tài liệu đủ sát trong phạm vi hiện tại. Hãy đổi phạm vi hoặc hỏi cụ thể hơn."
+                  action={<LinkButton href={buildTutorHref("all")}>Mở toàn bộ tài liệu</LinkButton>}
                 />
               ) : visibleCitations.length > 0 ? (
                 visibleCitations.map((citation) => <CitationSnippet key={citation.chunkId} citation={citation} />)
               ) : (
                 <EmptyState
                   icon={MessageSquareQuote}
-                  title="Chưa có answer card nào"
-                  description="Chọn prompt gợi ý hoặc gửi câu hỏi để làm đầy panel citation này."
+                  title="Chưa có câu trả lời"
+                  description="Chọn câu hỏi gợi ý hoặc tự nhập câu hỏi để xem phần giải thích có dẫn nguồn."
                 />
               )}
             </CardBody>
@@ -232,7 +243,7 @@ export function TutorPageContent({
             <CardHeader>
               <div className="flex items-center gap-2 text-sm font-medium text-ink-800">
                 <FileStack className="h-4 w-4 text-brand-600" />
-                <span>Documents in context</span>
+                <span>Tài liệu trong phạm vi này</span>
               </div>
             </CardHeader>
             <CardBody className="space-y-3">
@@ -240,7 +251,7 @@ export function TutorPageContent({
                 <div key={document.id} className="rounded-2xl border border-ink-200 bg-ink-50/60 p-4">
                   <p className="text-sm font-semibold text-ink-900">{document.title}</p>
                   <p className="mt-1 text-sm leading-6 text-ink-600">
-                    Outputs: {document.outputs.join(", ")} · Mastery {document.masteryPct ?? 0}%
+                    Nội dung: {getOutputLabels(document.outputs)} · Mức ghi nhớ {document.masteryPct ?? 0}%
                   </p>
                 </div>
               ))}
@@ -251,7 +262,7 @@ export function TutorPageContent({
             <CardHeader>
               <div className="flex items-center gap-2 text-sm font-medium text-ink-800">
                 <BookOpenCheck className="h-4 w-4 text-brand-600" />
-                <span>Weak topics you can ask about</span>
+                <span>Chủ đề còn khó</span>
               </div>
             </CardHeader>
             <CardBody className="space-y-3">
@@ -261,10 +272,10 @@ export function TutorPageContent({
                   <div key={topic.id} className="rounded-2xl border border-ink-200 bg-ink-50/60 p-4">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-sm font-semibold text-ink-900">{topic.name}</p>
-                      <Badge tone="review">Mastery {topic.masteryPct}%</Badge>
+                      <Badge tone="review">Ghi nhớ {topic.masteryPct}%</Badge>
                     </div>
                     <p className="mt-2 text-sm leading-6 text-ink-600">
-                      Missed questions: {topic.missedQuestions}. Hãy dùng Tutor để giải thích lại, rồi chuyển sang flashcards hoặc quiz retry.
+                      {topic.missedQuestions} câu sai gần đây. Hãy nhờ trợ giảng giải thích lại, rồi ôn bằng thẻ hoặc làm lại bài kiểm tra.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {topic.citations.map((citation) => (
@@ -316,7 +327,7 @@ function MessageBubble({ message }: { message: TutorMessage }) {
         </div>
         <div className="min-w-0 flex-1 space-y-3">
           <div>
-            <p className="text-sm font-semibold text-ink-900">{isAssistant ? "Tutor" : "You"}</p>
+            <p className="text-sm font-semibold text-ink-900">{isAssistant ? "Trợ giảng" : "Bạn"}</p>
             <p className="mt-1 text-sm leading-6 text-ink-700">{message.content}</p>
           </div>
           {isAssistant && message.citations?.length ? (
@@ -328,7 +339,7 @@ function MessageBubble({ message }: { message: TutorMessage }) {
           ) : null}
           {isAssistant && message.noEvidence ? (
             <p className="text-sm font-medium text-warning-700">
-              We could not find enough source evidence to answer confidently.
+              Chưa có đủ thông tin trong tài liệu để trả lời chắc chắn.
             </p>
           ) : null}
         </div>
@@ -341,7 +352,7 @@ function buildGreetingMessage(selectedContext: TutorContextOption): TutorMessage
   return {
     id: `assistant-greeting-${selectedContext.key}`,
     role: "assistant",
-    content: `Tutor đang đọc context “${selectedContext.label}”. Hỏi tôi để giải thích, quiz lại, hoặc nhờ gom flashcards — tôi sẽ chỉ bám vào tài liệu nằm trong phạm vi này.`,
+    content: `Trợ giảng đang đọc “${selectedContext.label}”. Hãy hỏi để được giải thích, kiểm tra lại hoặc tạo thẻ ghi nhớ — câu trả lời sẽ chỉ dựa trên tài liệu trong phạm vi này.`,
   };
 }
 
@@ -352,7 +363,7 @@ function buildAssistantMessage(question: string, selectedContext: TutorContextOp
     return {
       id: `assistant-${Date.now()}`,
       role: "assistant",
-      content: "Tôi chưa tìm thấy chunk nguồn đủ sát để trả lời câu này trong context hiện tại. Hãy hỏi hẹp hơn theo topic, document, hoặc đổi sang context rộng hơn.",
+      content: "Tôi chưa tìm thấy đoạn tài liệu đủ sát để trả lời câu này trong phạm vi hiện tại. Hãy hỏi cụ thể hơn theo chủ đề, tài liệu hoặc mở rộng phạm vi.",
       noEvidence: true,
     };
   }
@@ -365,7 +376,7 @@ function buildAssistantMessage(question: string, selectedContext: TutorContextOp
     return {
       id: `assistant-${Date.now()}`,
       role: "assistant",
-      content: "Tôi thấy câu hỏi hợp lý, nhưng không có đủ bằng chứng trong context bạn đang chọn. Hãy chuyển context sang course hoặc all documents rồi hỏi lại để tôi bám đúng nguồn.",
+      content: "Câu hỏi rất phù hợp, nhưng phạm vi bạn chọn chưa có đủ thông tin. Hãy chuyển sang khóa học hoặc toàn bộ tài liệu rồi hỏi lại.",
       noEvidence: true,
     };
   }
@@ -381,8 +392,8 @@ function buildAssistantMessage(question: string, selectedContext: TutorContextOp
 function buildTutorContextOptions(): TutorContextOption[] {
   const allDocumentsContext: TutorContextOption = {
     key: "all",
-    label: "All documents",
-    description: "Tutor có thể tham chiếu qua toàn bộ tài liệu mock đang sẵn sàng.",
+    label: "Toàn bộ tài liệu",
+    description: "Trợ giảng có thể tham chiếu tất cả tài liệu đã sẵn sàng.",
     documentIds: documents.filter((document) => document.status === "ready").map((document) => document.id),
     href: buildTutorHref("all"),
   };
@@ -390,7 +401,7 @@ function buildTutorContextOptions(): TutorContextOption[] {
   const courseContexts = courses.map((course) => ({
     key: `course:${course.id}`,
     label: course.name,
-    description: `${course.documentIds.length} documents · Due reviews ${course.dueReviews}`,
+    description: `${course.documentIds.length} tài liệu · ${course.dueReviews} lượt ôn đến hạn`,
     documentIds: course.documentIds,
     href: buildTutorHref(`course:${course.id}`),
   }));
@@ -400,7 +411,7 @@ function buildTutorContextOptions(): TutorContextOption[] {
     .map((document) => ({
       key: `document:${document.id}`,
       label: document.title,
-      description: `Single-document grounding · Outputs: ${document.outputs.join(", ")}`,
+      description: `Chỉ dùng tài liệu này · Nội dung: ${getOutputLabels(document.outputs)}`,
       documentIds: [document.id],
       href: buildTutorHref(`document:${document.id}`),
     }));

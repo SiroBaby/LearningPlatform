@@ -31,7 +31,7 @@ import {
 } from "@/components/ui";
 
 export const metadata: Metadata = {
-  title: "Product",
+  title: "Sản phẩm",
   description:
     "Khám phá cách LearningPlatform biến tài liệu thành quiz, checkpoint, tutor, flashcards, analytics và workflow ôn thi có trích dẫn nguồn rõ ràng.",
 };

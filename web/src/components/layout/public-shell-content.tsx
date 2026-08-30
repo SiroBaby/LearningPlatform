@@ -61,9 +61,9 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
             ) : (
               <>
                 <Link href={routes.login} className="text-sm font-medium text-ink-600 hover:text-ink-900">
-                  Login
+                  Đăng nhập
                 </Link>
-                <LinkButton href={routes.signup}>Start free</LinkButton>
+                <LinkButton href={routes.signup}>Dùng thử miễn phí</LinkButton>
               </>
             )}
           </div>
@@ -109,10 +109,10 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
                   className="rounded-lg px-3 py-2 text-sm font-medium text-ink-700 hover:bg-ink-100"
                   onClick={() => setOpen(false)}
                 >
-                  Login
+                  Đăng nhập
                 </Link>
                 <LinkButton href={routes.signup} className="justify-center" onClick={() => setOpen(false)}>
-                  Start free
+                  Dùng thử miễn phí
                 </LinkButton>
               </>
             )}
@@ -127,25 +127,25 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
           <div>
             <p className="text-base font-semibold text-ink-900">LearningPlatform</p>
             <p className="mt-2 max-w-md text-sm leading-6 text-ink-600">
-              Biến PDF, văn bản và video bài giảng thành quiz, checkpoint và kế hoạch ôn tập có trích dẫn nguồn.
+              Biến PDF, văn bản và video bài giảng thành bài kiểm tra, điểm dừng và kế hoạch ôn tập có trích dẫn nguồn.
             </p>
           </div>
           <div>
             <p className="text-sm font-semibold text-ink-900">Sản phẩm</p>
             <ul className="mt-3 space-y-2 text-sm text-ink-600">
-              <li><Link href={routes.product}>Product</Link></li>
-              <li><Link href={routes.examples}>Examples</Link></li>
-              <li><Link href={routes.pricing}>Pricing</Link></li>
+              <li><Link href={routes.product}>Sản phẩm</Link></li>
+              <li><Link href={routes.examples}>Ví dụ</Link></li>
+              <li><Link href={routes.pricing}>Bảng giá</Link></li>
             </ul>
           </div>
           <div>
             <p className="text-sm font-semibold text-ink-900">Niềm tin & trợ giúp</p>
             <ul className="mt-3 space-y-2 text-sm text-ink-600">
               <li><Link href={routes.faq}>FAQ</Link></li>
-              <li><Link href={routes.privacy}>Privacy Policy</Link></li>
-              <li><Link href={routes.terms}>Terms</Link></li>
-              <li><Link href={routes.billing}>Usage transparency</Link></li>
-              <li>Uploaded documents are private by default.</li>
+              <li><Link href={routes.privacy}>Quyền riêng tư</Link></li>
+              <li><Link href={routes.terms}>Điều khoản</Link></li>
+              <li><Link href={routes.billing}>Minh bạch mức sử dụng</Link></li>
+              <li>Tài liệu tải lên mặc định ở chế độ riêng tư.</li>
             </ul>
           </div>
         </div>

@@ -54,28 +54,28 @@ export function ReviewPageContent() {
     <div className="space-y-8">
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          title="Due today"
+          title="Cần ôn hôm nay"
           value={String(reviewSummary.dueTodayCount)}
           description="Thẻ đã đến hạn đúng hôm nay."
           icon={BookOpenCheck}
           toneClassName="bg-brand-50 text-brand-700"
         />
         <MetricCard
-          title="Overdue"
+          title="Đã quá hạn"
           value={String(reviewSummary.overdueCount)}
-          description="Ưu tiên xử lý trước khi bắt đầu quiz mới."
+          description="Ưu tiên xử lý trước khi bắt đầu bài kiểm tra mới."
           icon={AlertTriangle}
           toneClassName="bg-error-50 text-error-700"
         />
         <MetricCard
-          title="Upcoming"
+          title="Sắp đến lượt ôn"
           value={String(reviewSummary.upcomingCount)}
           description="Thẻ mới hoặc sắp vào phiên ôn kế tiếp."
           icon={CalendarClock}
           toneClassName="bg-review-50 text-review-600"
         />
         <MetricCard
-          title="Estimated time"
+          title="Thời gian dự kiến"
           value={formatMinutes(reviewSummary.estimatedMinutes)}
           description="Tổng thời gian ước tính cho hàng đợi hiện tại."
           icon={Clock3}
@@ -87,9 +87,9 @@ export function ReviewPageContent() {
         <Card>
           <CardHeader>
             <SectionHeading
-              eyebrow="Today’s queue"
-              title="Review ngay các thẻ cần quay lại"
-              description="Hàng đợi gom thẻ đến hạn, thẻ quá hạn, và thẻ mới cần mở phiên đầu tiên."
+              eyebrow="Danh sách cần ôn"
+              title="Bắt đầu với thẻ cần nhớ lại ngay"
+              description="Ưu tiên thẻ quá hạn, rồi đến thẻ cần ôn hôm nay và thẻ mới."
             />
           </CardHeader>
           <CardBody className="space-y-4">
@@ -101,8 +101,8 @@ export function ReviewPageContent() {
               <EmptyState
                 icon={BookOpenCheck}
                 title="Không có thẻ cần ôn"
-                description="Bạn đang bắt kịp review queue. Hãy chuyển sang quiz hoặc mở Tutor để đào sâu phần khó."
-                action={<LinkButton href={routes.home}>Về dashboard</LinkButton>}
+                description="Bạn đã hoàn thành phần cần ôn. Hãy tiếp tục với một bài kiểm tra hoặc hỏi trợ giảng về phần khó."
+                action={<LinkButton href={routes.home}>Về trang học</LinkButton>}
               />
             )}
           </CardBody>
@@ -111,9 +111,9 @@ export function ReviewPageContent() {
         <Card>
           <CardHeader>
             <SectionHeading
-              eyebrow="Recommended tasks"
-              title="Những việc nên làm tiếp theo"
-              description="Các task còn mở được kéo từ study plan mock để bạn có lộ trình rõ ràng."
+              eyebrow="Sau khi ôn xong"
+              title="Việc học tiếp theo"
+              description="Những việc còn lại được sắp theo thứ tự để bạn không phải tự chọn từ đầu."
             />
           </CardHeader>
           <CardBody className="space-y-3">
@@ -126,13 +126,13 @@ export function ReviewPageContent() {
 
       <section className="grid gap-6 xl:grid-cols-2">
         <BreakdownCard
-          title="Course breakdown"
-          description="Xem course nào đang kéo review queue của bạn lên cao nhất."
+          title="Theo khóa học"
+          description="Xem khóa học nào đang cần bạn dành thời gian ôn nhiều nhất."
           entries={courseBreakdown}
         />
         <BreakdownCard
-          title="Document breakdown"
-          description="Tài liệu nào đang tạo nhiều thẻ quá hạn hoặc thẻ mới nhất."
+          title="Theo tài liệu"
+          description="Xem tài liệu nào có nhiều thẻ quá hạn hoặc thẻ mới nhất."
           entries={documentBreakdown}
         />
       </section>
@@ -197,10 +197,10 @@ function ReviewQueueRow({ entry }: { entry: ReviewQueueCard }) {
 
         <div className="flex w-full flex-col gap-3 lg:max-w-52">
           <LinkButton href={routes.deckReview(entry.deck.id)} className="justify-center">
-            Review now
+            Ôn ngay
           </LinkButton>
           <LinkButton href={routes.deck(entry.deck.id)} variant="outline" className="justify-center">
-            Open deck
+            Mở bộ thẻ
           </LinkButton>
         </div>
       </div>
@@ -244,7 +244,7 @@ function BreakdownCard({
   return (
     <Card>
       <CardHeader>
-        <SectionHeading title={title} description={description} eyebrow="Queue insight" />
+        <SectionHeading title={title} description={description} eyebrow="Tình hình cần ôn" />
       </CardHeader>
       <CardBody className="space-y-4">
         {entries.map((entry) => (
@@ -256,21 +256,21 @@ function BreakdownCard({
                   <p className="mt-1 text-sm text-ink-600">{entry.secondaryLabel}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Badge tone="brand">Due today · {entry.dueTodayCount}</Badge>
-                  <Badge tone="error">Overdue · {entry.overdueCount}</Badge>
-                  <Badge tone="review">Upcoming · {entry.upcomingCount}</Badge>
+                  <Badge tone="brand">Hôm nay · {entry.dueTodayCount}</Badge>
+                  <Badge tone="error">Quá hạn · {entry.overdueCount}</Badge>
+                  <Badge tone="review">Sắp tới · {entry.upcomingCount}</Badge>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 sm:justify-end">
                 <LinkButton href={entry.href} variant="outline" size="sm">
-                  Open
+                  Mở
                 </LinkButton>
               </div>
             </div>
             {typeof entry.masteryPct === "number" ? (
               <div className="mt-4 space-y-2">
                 <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="text-ink-600">Current mastery</span>
+                  <span className="text-ink-600">Mức độ ghi nhớ</span>
                   <span className="font-medium text-ink-900">{entry.masteryPct}%</span>
                 </div>
                 <ProgressBar value={entry.masteryPct} tone="mastery" />
@@ -348,10 +348,10 @@ function buildCourseBreakdown(entries: readonly ReviewQueueCard[]): BreakdownEnt
 
   return [...grouped.entries()].map(([courseId, queueEntries]) => {
     const course = queueEntries[0]?.course;
-    const label = course?.name ?? "Unassigned review";
+    const label = course?.name ?? "Ôn tập chưa phân loại";
     const secondaryLabel = course
-      ? `${queueEntries.length} cards từ ${queueEntries.length > 1 ? "nhiều tài liệu" : "1 tài liệu"}`
-      : "Cards chưa gán course";
+      ? `${queueEntries.length} thẻ từ ${queueEntries.length > 1 ? "nhiều tài liệu" : "1 tài liệu"}`
+      : "Thẻ chưa gán khóa học";
 
     return {
       id: courseId,
@@ -385,7 +385,7 @@ function buildDocumentBreakdown(entries: readonly ReviewQueueCard[]): BreakdownE
     return {
       id: documentId,
       label: document.title,
-      secondaryLabel: course ? `Trong course: ${course.name}` : "Chưa gán vào course",
+      secondaryLabel: course ? `Trong khóa học: ${course.name}` : "Chưa gán vào khóa học",
       reviewableCount: queueEntries.length,
       overdueCount: queueEntries.filter((entry) => entry.card.dueState === "overdue").length,
       dueTodayCount: queueEntries.filter((entry) => entry.card.dueState === "due").length,
@@ -399,20 +399,20 @@ function buildDocumentBreakdown(entries: readonly ReviewQueueCard[]): BreakdownE
 }
 
 function formatMinutes(totalMinutes: number): string {
-  return `${totalMinutes} min`;
+  return `${totalMinutes} phút`;
 }
 
 function getDueLabel(card: Flashcard): string {
   if (card.dueState === "overdue") {
-    return "Overdue";
+    return "Đã quá hạn";
   }
   if (card.dueState === "due") {
-    return "Due today";
+    return "Cần ôn hôm nay";
   }
   if (card.dueState === "upcoming") {
-    return "Upcoming";
+    return "Sắp tới";
   }
-  return "New";
+  return "Mới";
 }
 
 function getDueTone(card: Flashcard): "brand" | "error" | "review" | "neutral" {
@@ -430,12 +430,12 @@ function getDueTone(card: Flashcard): "brand" | "error" | "review" | "neutral" {
 
 function taskTypeLabel(taskType: StudyTask["type"]): string {
   const labelMap: Record<StudyTask["type"], string> = {
-    flashcards: "Flashcards",
-    retry_quiz: "Retry quiz",
-    video_checkpoint: "Video checkpoint",
-    read_source: "Read source",
-    ask_tutor: "Ask tutor",
-    practice_exam: "Practice exam",
+    flashcards: "Thẻ ghi nhớ",
+    retry_quiz: "Làm lại bài kiểm tra",
+    video_checkpoint: "Mốc kiểm tra video",
+    read_source: "Đọc lại tài liệu",
+    ask_tutor: "Hỏi trợ giảng",
+    practice_exam: "Luyện đề",
   };
 
   return labelMap[taskType];

@@ -1,6 +1,6 @@
 import { SelectField } from "@/components/ui";
 import type { Phase0ModelOptionGroup } from "@/lib/phase0/contracts";
-import { serializeModelChoice, type UploadModelChoice } from "./upload-workspace-utils";
+import { getModelLabel, serializeModelChoice, type UploadModelChoice } from "./upload-workspace-utils";
 
 interface UploadModelPanelProps {
   readonly modelSelectId: string;
@@ -22,25 +22,25 @@ export function UploadModelPanel({
   return (
     <div className="space-y-4 rounded-3xl border border-ink-100 bg-white/90 p-4 sm:p-5">
       <div className="space-y-1">
-        <h3 className="text-base font-semibold text-ink-900">Chọn model xử lý</h3>
-        <p className="text-sm leading-6 text-ink-600">Bạn cần chọn model trước khi tải tài liệu lên.</p>
+        <h3 className="text-base font-semibold text-ink-900">Chọn cách xử lý</h3>
+        <p className="text-sm leading-6 text-ink-600">Chọn một lựa chọn trước khi tải tài liệu lên.</p>
       </div>
 
       <SelectField
         id={modelSelectId}
-        label="Model dùng để xử lý"
+        label="Cách xử lý tài liệu"
         value={serializeModelChoice(selectedModel)}
         onChange={(event) => onChange(event.target.value)}
         disabled={isLoadingModels || groupedModelOptions.length === 0}
-        error={!selectedModel && !isLoadingModels && groupedModelOptions.length > 0 ? "Hãy chọn một model để tiếp tục." : undefined}
-        hint={isLoadingModels ? "Đang tải danh sách model…" : "Model trong gói và API riêng sẽ được nhóm riêng để bạn dễ chọn."}
+        error={!selectedModel && !isLoadingModels && groupedModelOptions.length > 0 ? "Hãy chọn một cách xử lý để tiếp tục." : undefined}
+        hint={isLoadingModels ? "Đang tải các lựa chọn…" : "Các lựa chọn được nhóm theo nguồn để bạn dễ cân nhắc."}
       >
-        <option value="">Chọn model phù hợp</option>
+        <option value="">Chọn cách phù hợp</option>
         {groupedModelOptions.map((group) => (
           <optgroup key={group.kind} label={group.title}>
             {group.options.map((option) => (
               <option key={`${option.kind}:${option.id}`} value={`${option.kind}:${option.id}`}>
-                {option.label}
+                {getModelLabel(option.label)}
               </option>
             ))}
           </optgroup>
@@ -62,7 +62,7 @@ export function UploadModelPanel({
 
       {!isLoadingModels && groupedModelOptions.length === 0 && !modelOptionsError ? (
         <div className="rounded-2xl border border-warning-100 bg-warning-50/70 p-4 text-sm text-warning-800">
-          Hiện chưa có model nào sẵn sàng cho tài khoản của bạn.
+          Hiện chưa có cách xử lý nào sẵn sàng cho tài khoản của bạn.
         </div>
       ) : null}
     </div>

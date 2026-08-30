@@ -16,7 +16,7 @@ import {
 } from "@/components/ui";
 
 export const metadata: Metadata = {
-  title: "Pricing",
+  title: "Bảng giá",
   description:
     "So sánh các plan của LearningPlatform theo credits, uploads, page limits, video minutes, analytics, Tutor access và đường nâng cấp khi chạm giới hạn.",
 };

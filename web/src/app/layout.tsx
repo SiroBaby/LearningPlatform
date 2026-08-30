@@ -1,17 +1,11 @@
 import type { Metadata } from "next";
-import { Inter, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/toast";
 
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin", "vietnamese"],
-  display: "swap",
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
   display: "swap",
 });
 
@@ -33,7 +27,7 @@ export default function RootLayout({
     <html
       lang="vi"
       data-scroll-behavior="smooth"
-      className={`${inter.variable} ${geistMono.variable} h-full`}
+      className={`${inter.variable} h-full`}
     >
       <body className="min-h-full flex flex-col bg-(--background) text-ink-900">
         <ToastProvider>{children}</ToastProvider>

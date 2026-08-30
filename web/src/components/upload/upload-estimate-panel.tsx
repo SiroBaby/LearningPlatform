@@ -1,7 +1,7 @@
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui";
 import type { Phase0EstimateResponse, Phase0ModelSelectionKind } from "@/lib/phase0/contracts";
-import { ESTIMATE_HELPER_TEXT, getModelSourceLabel } from "./upload-workspace-utils";
+import { ESTIMATE_HELPER_TEXT, getModelLabel, getModelSourceLabel } from "./upload-workspace-utils";
 import { UploadSpecItem } from "./upload-workspace-primitives";
 import { toUploadEstimateSummaryPresentation } from "./use-upload-model-estimate";
 
@@ -31,19 +31,19 @@ export function UploadEstimatePanel({
 
       {selectedModelLabel && selectedModelKind ? (
         <div className="grid gap-3 sm:grid-cols-2">
-          <UploadSpecItem label="Model đã chọn" value={selectedModelLabel} />
+          <UploadSpecItem label="Cách xử lý đã chọn" value={getModelLabel(selectedModelLabel)} />
           <UploadSpecItem label="Nguồn dùng để xử lý" value={getModelSourceLabel(selectedModelKind)} />
         </div>
       ) : (
         <div className="rounded-2xl border border-ink-100 bg-white p-4 text-sm text-ink-700">
-          Chọn model để xem ước tính cho tài liệu này.
+          Chọn cách xử lý để xem ước tính cho tài liệu này.
         </div>
       )}
 
       {isEstimating ? (
         <div className="flex items-center gap-3 rounded-2xl border border-ink-100 bg-white p-4 text-sm text-ink-700">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Đang tính ước tính cho file và model bạn đã chọn…
+          Đang tính ước tính cho tệp và cách xử lý bạn đã chọn…
         </div>
       ) : null}
 

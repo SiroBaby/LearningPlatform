@@ -50,7 +50,7 @@ export function UploadStatusPanel({
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-semibold text-ink-900">Tiến trình tải lên</p>
-                <Badge tone={statusTone}>{step === "idle" ? "Đang chờ file" : getUploadStepLabel(step)}</Badge>
+                <Badge tone={statusTone}>{step === "idle" ? "Đang chờ tệp" : getUploadStepLabel(step)}</Badge>
               </div>
               <p className="text-sm leading-6 text-ink-700">
                 Tại đây bạn sẽ thấy tài liệu đang ở bước nào và có cần thử lại hay không.
@@ -63,11 +63,11 @@ export function UploadStatusPanel({
           <UploadSpecRow label="Bắt đầu lúc" value={createdAt ? formatDateTime(createdAt) : "Chưa bắt đầu"} />
           <UploadSpecRow label="Đã tải tệp lên" value={step === "uploaded" || step === "confirming" || step === "confirmed" ? "Đã xong" : "Chưa"} />
           <UploadSpecRow label="Bước xử lý" value={confirmStatus ?? (confirmError ? "Chưa thể tiếp tục" : "Chưa có")} />
-          <UploadSpecRow label="Model đã chọn" value={selectedModelLabel ?? "Chưa chọn"} />
+          <UploadSpecRow label="Cách xử lý đã chọn" value={selectedModelLabel ?? "Chưa chọn"} />
           <UploadSpecRow label="Nguồn xử lý" value={selectedModelKind ? getModelSourceLabel(selectedModelKind) : "Chưa chọn"} />
           <UploadSpecRow
             label="Ước tính ban đầu"
-            value={estimate ? (estimate.selectedModelKind === "PLAN" ? `${formatCredits(estimate.estimatedCredits)} credit` : "Không dùng credit trong gói") : isEstimating ? "Đang tính" : "Chưa có"}
+            value={estimate ? (estimate.selectedModelKind === "PLAN" ? `${formatCredits(estimate.estimatedCredits)} lượt dùng` : "Không dùng lượt dùng trong gói") : isEstimating ? "Đang tính" : "Chưa có"}
           />
         </dl>
 
@@ -100,7 +100,7 @@ export function UploadStatusPanel({
         ) : null}
 
         <div className="rounded-2xl border border-ink-100 bg-white p-4 text-sm leading-6 text-ink-700">
-          Hỗ trợ file <span className="font-semibold text-ink-900">PDF</span> và <span className="font-semibold text-ink-900">TXT</span>. Nếu có lỗi, bạn chỉ cần chọn lại file hoặc thử tải lên lần nữa.
+          Hỗ trợ tệp <span className="font-semibold text-ink-900">PDF</span> và <span className="font-semibold text-ink-900">TXT</span>. Nếu có lỗi, bạn chỉ cần chọn lại tệp hoặc thử tải lên lần nữa.
         </div>
       </CardBody>
     </Card>

@@ -9,6 +9,7 @@ import type {
 import {
   findModelOption,
   getModelSourceLabel,
+  getModelLabel,
   getEstimateSummary,
   groupModelOptions,
   type SelectedPhase0File,
@@ -82,7 +83,7 @@ export function useUploadModelEstimate({
 
         setModelOptions([]);
         setModelOptionsError(
-          getClientErrorMessage(error, "Chưa tải được danh sách model lúc này. Bạn hãy thử lại."),
+          getClientErrorMessage(error, "Chưa tải được danh sách cách xử lý lúc này. Bạn hãy thử lại."),
         );
       } finally {
         if (!cancelled) {
@@ -171,13 +172,13 @@ export function toUploadEstimateSummaryPresentation(
   estimate: Phase0EstimateResponse,
 ): UploadEstimateSummaryPresentation {
   return {
-    modelLabel: estimate.selectedModelLabel,
+    modelLabel: getModelLabel(estimate.selectedModelLabel),
     modelSourceLabel: getModelSourceLabel(estimate.selectedModelKind),
     summary: getEstimateSummary(estimate),
     detail: estimate.selectedModelKind === "PLAN"
-      ? `Hiện đang hiển thị mức ước tính khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} credit. Đây chưa phải mức chốt cuối cùng.`
-      : "Model API riêng không dùng credit suy luận trong gói. Nhà cung cấp bạn dùng có thể tính phí riêng ngoài hệ thống này.",
+      ? `Hiện đang hiển thị mức ước tính khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} lượt dùng. Đây chưa phải mức chốt cuối cùng.`
+      : "Kết nối riêng không dùng lượt dùng trong gói. Nhà cung cấp bạn dùng có thể tính phí riêng ngoài hệ thống này.",
     badgeTone: estimate.selectedModelKind === "PLAN" ? "brand" : "neutral",
-    badgeLabel: estimate.selectedModelKind === "PLAN" ? "Có trong gói của bạn" : "API riêng của bạn",
+    badgeLabel: estimate.selectedModelKind === "PLAN" ? "Có trong gói của bạn" : "Kết nối riêng của bạn",
   };
 }

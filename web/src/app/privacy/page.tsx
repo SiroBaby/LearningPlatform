@@ -6,7 +6,7 @@ import { Badge, Card, CardBody, CardTitle } from "@/components/ui";
 import { routes } from "@/lib/routes";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy",
+  title: "Quyền riêng tư",
   description: "Cách LearningPlatform xử lý thông tin tài khoản Google, phiên đăng nhập, tài liệu và dữ liệu học tập.",
 };
 

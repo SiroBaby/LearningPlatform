@@ -14,7 +14,7 @@ export default async function NotFound() {
       badge="404"
       title="Không tìm thấy trang bạn đang tìm"
       description="Liên kết này có thể đã hết hạn, route chưa tồn tại, hoặc tài nguyên đã bị xóa khỏi workspace học của bạn."
-      detail="Nếu bạn đang tìm một document, quiz hoặc result cụ thể, hãy quay lại Library hoặc Home để mở từ luồng điều hướng chính."
+      detail="Nếu bạn đang tìm một tài liệu, bài kiểm tra hoặc kết quả cụ thể, hãy quay lại Thư viện hoặc Trang chủ để mở từ luồng điều hướng chính."
       icon="warning"
       tone="warning"
       primaryAction={<AccessActions />}

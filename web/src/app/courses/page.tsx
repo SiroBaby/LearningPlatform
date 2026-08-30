@@ -4,16 +4,16 @@ import { CoursesPageContent } from "@/components/courses/courses-page-content";
 import { courses, documents } from "@/lib/mock-data";
 
 export const metadata: Metadata = {
-  title: "Courses",
+  title: "Khóa học",
   description:
-    "Nhóm document theo course để theo dõi mastery, due reviews, study plan và exam prep theo từng hành trình học.",
+    "Nhóm tài liệu theo khóa học để theo dõi mức ghi nhớ, lượt ôn đến hạn, kế hoạch học và sự chuẩn bị cho kỳ thi.",
 };
 
 export default function CoursesPage() {
   return (
     <LearnerShell
-      title="Courses"
-      subtitle="Course chỉ nhóm document để học có chiến lược hơn — quiz và output vẫn bám document gốc."
+      title="Khóa học"
+      subtitle="Gom tài liệu theo mục tiêu để mỗi buổi học có hướng đi rõ ràng hơn."
     >
       <CoursesPageContent courses={courses} documents={documents} />
     </LearnerShell>

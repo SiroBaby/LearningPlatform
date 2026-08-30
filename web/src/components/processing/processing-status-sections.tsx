@@ -48,7 +48,7 @@ export function ProcessingHeader({ document, detailHref, libraryHref, error }: P
   const title = document?.originalName ?? "Đang tải trạng thái tài liệu";
   const description = isFailed
     ? "Tài liệu này chưa xử lý thành công. Bạn có thể xem lý do bên dưới và thử lại nếu hệ thống hỗ trợ."
-    : "Theo dõi tiến độ xử lý, model đã chọn cùng mức ước tính và credit chốt khi có dữ liệu mới.";
+    : "Theo dõi tiến độ xử lý, cách xử lý đã chọn cùng mức ước tính và số lượt dùng cuối cùng khi có dữ liệu mới.";
 
   return (
     <Card>
@@ -132,10 +132,10 @@ export function ProcessingStatusPanel({
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <SpecItem label="Model đã chọn" value={document?.selectedModelLabel ?? "Chưa có"} />
+          <SpecItem label="Cách xử lý đã chọn" value={document?.selectedModelLabel ?? "Chưa có"} />
           <SpecItem label="Nguồn xử lý" value={getModelSourceLabel(document?.selectedModelKind ?? null)} />
           <SpecItem label="Ước tính ban đầu" value={getEstimateStatusLabel(document)} />
-          <SpecItem label="Credit chốt" value={getSettledCreditsLabel(document)} />
+          <SpecItem label="Lượt dùng đã chốt" value={getSettledCreditsLabel(document)} />
           <SpecItem label="Mức ngân sách" value={getBudgetStatusLabel(document?.budgetStatus ?? null)} />
           <SpecItem label="Cập nhật gần nhất" value={document ? formatDateTime(document.updatedAt) : "Chưa có"} />
         </div>
@@ -197,7 +197,7 @@ export function ProcessingDocumentInfoPanel({ document, detailHref }: Processing
         <SpecRow label="Cập nhật lúc" value={document ? formatDateTime(document.updatedAt) : "Chưa có"} />
         <SpecRow label="Ngôn ngữ" value={document?.language ?? "Chưa có"} />
         <SpecRow label="Số trang" value={document?.pageCount !== null && document?.pageCount !== undefined ? String(document.pageCount) : "Chưa có"} />
-        <SpecRow label="Model đã chọn" value={document?.selectedModelLabel ?? "Chưa có"} />
+        <SpecRow label="Cách xử lý đã chọn" value={document?.selectedModelLabel ?? "Chưa có"} />
         <SpecRow label="Nguồn xử lý" value={getModelSourceLabel(document?.selectedModelKind ?? null)} />
         <div className="flex flex-wrap gap-2 pt-2">
           <LinkButton href={detailHref} size="sm">

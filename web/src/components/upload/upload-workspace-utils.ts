@@ -61,12 +61,12 @@ export function normalizeFileSelection(file: File): SelectedPhase0File | { reado
   }
 
   if (!extensionAllowed) {
-    return { error: "Hiện chỉ hỗ trợ file PDF hoặc TXT." };
+    return { error: "Hiện chỉ hỗ trợ tệp PDF hoặc TXT." };
   }
 
   if (!mimeAllowed) {
     return {
-      error: "Không đọc được đúng định dạng của tệp này. Hãy chọn lại file PDF hoặc TXT gốc.",
+      error: "Không đọc được đúng định dạng của tệp này. Hãy chọn lại tệp PDF hoặc TXT gốc.",
     };
   }
 
@@ -99,8 +99,8 @@ export async function uploadFileToStorage(
     const detail = responseText.trim();
     throw new Error(
       detail.length > 0
-        ? `Storage upload failed: ${response.status} ${response.statusText} — ${detail}`
-        : `Storage upload failed: ${response.status} ${response.statusText}`,
+        ? `Không thể tải tệp lên: ${detail}`
+        : "Không thể tải tệp lên. Hãy thử lại sau.",
     );
   }
 }
@@ -113,13 +113,13 @@ export function groupModelOptions(models: readonly Phase0ModelOption[]): readonl
     {
       kind: "PLAN",
       title: "Có trong gói của bạn",
-      description: "Dùng model sẵn có trong gói hiện tại.",
+      description: "Dùng lựa chọn sẵn có trong gói hiện tại.",
       options: planOptions,
     },
     {
       kind: "CUSTOM",
-      title: "API riêng của bạn",
-      description: "Dùng model từ cấu hình riêng của bạn.",
+      title: "Kết nối riêng của bạn",
+      description: "Dùng lựa chọn từ kết nối riêng của bạn.",
       options: customOptions,
     },
   ];
@@ -175,15 +175,19 @@ export function formatCredits(value: number): string {
 }
 
 export function getModelSourceLabel(kind: Phase0ModelOption["kind"]): string {
-  return kind === "PLAN" ? "Có trong gói của bạn" : "API riêng của bạn";
+  return kind === "PLAN" ? "Có trong gói của bạn" : "Kết nối riêng của bạn";
+}
+
+export function getModelLabel(label: string): string {
+  return label === "Fast platform model" ? "Mô hình xử lý nhanh" : label;
 }
 
 export function getEstimateSummary(estimate: Phase0EstimateResponse): string {
   if (estimate.selectedModelKind === "CUSTOM") {
-    return "Tài liệu này không dùng credit suy luận trong gói. Nhà cung cấp model riêng của bạn có thể tính phí riêng.";
+    return "Tài liệu này không dùng lượt dùng trong gói. Nhà cung cấp kết nối riêng của bạn có thể tính phí riêng.";
   }
 
-  return `Ước tính khoảng ${formatCredits(estimate.estimatedCredits)} credit cho lần xử lý này.`;
+  return `Ước tính khoảng ${formatCredits(estimate.estimatedCredits)} lượt dùng cho lần này.`;
 }
 
 export function getUploadStepLabel(step: UploadStep): string {

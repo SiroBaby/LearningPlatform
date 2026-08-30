@@ -32,7 +32,7 @@ export function buildSteps(
     { key: "chunk", label: "Chia nhỏ nội dung" },
     { key: "generate", label: "Sinh câu hỏi" },
     { key: "validate", label: "Kiểm tra đầu ra" },
-    { key: "build", label: "Dựng quiz / flashcards" },
+    { key: "build", label: "Tạo bài kiểm tra / thẻ ghi nhớ" },
     { key: "ready", label: "Sẵn sàng" },
   ];
   return defs.map((d, i) => ({
@@ -445,7 +445,7 @@ export const decks: FlashcardDeck[] = [
     id: "deck_os_ch3",
     documentId: "doc_os_ch3",
     documentTitle: documents[0].title,
-    title: "Flashcards — Quản lý tiến trình",
+    title: "Thẻ ghi nhớ — Quản lý tiến trình",
     total: osCards.length,
     dueCount: 2,
     newCount: 1,
@@ -533,7 +533,7 @@ export const studyTasks: StudyTask[] = [
   {
     id: "task_1",
     type: "flashcards",
-    title: "Ôn 2 flashcard đến hạn — Quản lý tiến trình",
+    title: "Ôn 2 thẻ ghi nhớ đến hạn — Quản lý tiến trình",
     documentTitle: documents[0].title,
     estimatedMinutes: 5,
     done: false,
@@ -557,7 +557,7 @@ export const studyTasks: StudyTask[] = [
   {
     id: "task_4",
     type: "ask_tutor",
-    title: "Hỏi Tutor: so sánh TCP và UDP",
+    title: "Hỏi trợ giảng: so sánh TCP và UDP",
     documentTitle: documents[2].title,
     estimatedMinutes: 3,
     done: true,
@@ -586,7 +586,7 @@ export function getExam(id: string): Exam | undefined {
 
 export const usage: UsageState = {
   planTier: "free",
-  planLabel: "Free",
+  planLabel: "Miễn phí",
   creditsRemaining: 18,
   creditsTotal: 100,
   uploadsUsed: 6,
@@ -600,7 +600,7 @@ export const invoices: Invoice[] = [
     date: "2026-06-01",
     amount: "0₫",
     status: "paid",
-    planLabel: "Free",
+    planLabel: "Miễn phí",
   },
 ];
 
@@ -611,7 +611,7 @@ export const notifications: AppNotification[] = [
     id: "n_1",
     type: "document_ready",
     title: "Tài liệu đã sẵn sàng",
-    body: "Quiz cho “Nhập môn Hệ điều hành — Chương 3” đã được tạo.",
+    body: "Bài kiểm tra cho “Nhập môn Hệ điều hành — Chương 3” đã được tạo.",
     createdAt: "2026-07-07T21:00:00Z",
     read: false,
     href: "/library/doc_os_ch3",
@@ -619,7 +619,7 @@ export const notifications: AppNotification[] = [
   {
     id: "n_2",
     type: "review_due",
-    title: "2 flashcard đến hạn ôn",
+    title: "2 thẻ ghi nhớ đến hạn ôn",
     body: "Bạn có 2 thẻ cần ôn hôm nay để giữ tiến độ ghi nhớ.",
     createdAt: "2026-07-08T06:00:00Z",
     read: false,

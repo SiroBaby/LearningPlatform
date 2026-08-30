@@ -19,7 +19,7 @@ export default function ErrorPage({
     <SystemStatePage
       badge="System issue"
       title="Có lỗi xảy ra khi dựng màn hình này"
-      description="Đây là lỗi không mong đợi ở tầng giao diện. Bạn có thể thử render lại segment hiện tại hoặc quay về Home để tiếp tục học."
+      description="Đây là lỗi không mong đợi ở giao diện. Bạn có thể thử tải lại trang hoặc quay về trang chủ để tiếp tục học."
       detail={error.message ? `Chi tiết kỹ thuật: ${error.message}` : undefined}
       icon="error"
       tone="error"
@@ -28,7 +28,7 @@ export default function ErrorPage({
           Thử render lại
         </Button>
       }
-      secondaryAction={<LinkButton href="/home" variant="outline">Về Home</LinkButton>}
+      secondaryAction={<LinkButton href="/home" variant="outline">Về trang chủ</LinkButton>}
     />
   );
 }

@@ -165,12 +165,12 @@ export function UploadWorkspace() {
     event.preventDefault();
 
     if (!selectedFile) {
-      setValidationError("Hãy chọn file PDF hoặc TXT trước khi tiếp tục.");
+      setValidationError("Hãy chọn tệp PDF hoặc TXT trước khi tiếp tục.");
       return;
     }
 
     if (!uploadSelection) {
-      setValidationError("Hãy chọn model trước khi tải tài liệu lên.");
+      setValidationError("Hãy chọn cách xử lý trước khi tải tài liệu lên.");
       return;
     }
 

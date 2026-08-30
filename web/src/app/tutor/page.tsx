@@ -9,8 +9,8 @@ interface TutorSearchParams {
 }
 
 export const metadata: Metadata = {
-  title: "Tutor",
-  description: "Chat với Tutor có source grounding, citation rõ ràng, và no-evidence state khi thiếu bằng chứng.",
+  title: "Trợ giảng",
+  description: "Đặt câu hỏi về tài liệu và nhận lời giải thích có trích dẫn rõ ràng.",
 };
 
 export default async function TutorPage(props: PageProps<"/tutor">) {
@@ -19,15 +19,15 @@ export default async function TutorPage(props: PageProps<"/tutor">) {
 
   return (
     <LearnerShell
-      title="Tutor"
-      subtitle="Chat layout với context selector, suggested prompts, answer cards có citation, và no-evidence state khi không đủ nguồn."
+      title="Trợ giảng"
+      subtitle="Chọn tài liệu, đặt câu hỏi, rồi kiểm tra lại phần giải thích ngay trong nguồn học."
       actions={
         <>
           <LinkButton href={routes.review} variant="outline">
-            Review queue
+            Ôn tập
           </LinkButton>
           <LinkButton href={routes.courses} variant="outline">
-            Courses
+            Khóa học
           </LinkButton>
         </>
       }
