@@ -29,7 +29,7 @@ Luồng chuẩn:
 ```text
 Browser
   -> Next GET /auth/google/start
-  -> Next --mTLS/internal--> Nest POST /api/v1/internal/auth/google/start
+  -> Next --mTLS/internal--> Nest POST /internal/v1/auth/google/start
   -> Nest tạo state + nonce + PKCE, lưu OAuth transaction PostgreSQL
   -> Browser redirect tới Google (prompt=select_account)
   -> Google callback về Next GET /auth/google/callback
@@ -42,6 +42,7 @@ Browser
 ```
 
 - Nest tạo, lưu và consume `state`, `nonce`, PKCE transaction; Next không tự tạo verifier mà Nest không thể kiểm tra.
+- Next đặt cookie transaction binding host-only, `HttpOnly`, `SameSite=Lax`, TTL 10 phút; giá trị chỉ là one-way hash của `state`, không lưu state plaintext. Callback bắt buộc binding khớp với state trước khi exchange và xóa cookie ở mọi nhánh kết thúc để chống login CSRF và replay callback giữa các browser.
 - Callback exchange ngay trong cùng request rồi redirect về URL cố định trong allowlist. Không nhận `redirect_uri` tùy ý từ query.
 - User nhập email chỉ để truyền `login_hint`; tài khoản được chọn trên Google và token đã verify mới quyết định identity.
 - Lỗi OAuth, gồm `access_denied`, state mismatch, nonce mismatch, token invalid, suspended và deleted, đều redirect cùng thông báo generic. Không đưa email, user ID, code hoặc reason nội bộ vào URL.
@@ -124,11 +125,11 @@ Nest internal route:
 
 | API | Mục đích |
 | --- | --- |
-| `POST /api/v1/internal/auth/google/start` | Tạo transaction và authorization URL |
-| `POST /api/v1/internal/auth/google/exchange` | Verify callback và trả session pair |
-| `POST /api/v1/internal/auth/refresh` | Rotate refresh session |
-| `POST /api/v1/internal/auth/revoke` | Revoke session/family |
-| `GET /api/v1/internal/auth/me` | Trả user UUID, email, display name, role, status |
+| `POST /internal/v1/auth/google/start` | Tạo transaction và authorization URL |
+| `POST /internal/v1/auth/google/exchange` | Verify callback và trả session pair |
+| `POST /internal/v1/auth/refresh` | Rotate refresh session |
+| `POST /internal/v1/auth/revoke` | Revoke session/family |
+| `GET /internal/v1/auth/me` | Trả user UUID, email, display name, role, status |
 
 Internal route không đi qua public ingress, có NetworkPolicy và service authentication mTLS. Nest kiểm tra chain CA, expiry, SAN/SPIFFE identity và scope theo route; private IP chỉ là defense-in-depth, không phải authentication. Response không log token hoặc provider response raw.
 
