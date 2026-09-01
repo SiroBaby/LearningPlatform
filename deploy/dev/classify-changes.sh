@@ -57,9 +57,14 @@ classify_changes() {
               go_worker=true
               ;;
             app/src/main.ts|app/src/app.module.ts|app/src/modules/health/*)
+              # The web BFF consumes the API authentication contract. Reconcile
+              # it whenever the shared backend changes so a partial rollout
+              # cannot leave the BFF on a legacy runtime contract.
+              web=true
               api=true
               ;;
             app/*)
+              web=true
               api=true
               worker=true
               go_worker=true
@@ -78,7 +83,15 @@ classify_changes() {
               worker=true
               go_worker=true
               ;;
-            .github/workflows/deploy-dev.yml|deploy/dev/classify-changes.sh|deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/k3s/*|infra/scripts/*)
+            deploy/dev/classify-changes.sh)
+              # A classifier change must reconcile every application so a
+              # corrected target decision also repairs stale workloads.
+              web=true
+              api=true
+              worker=true
+              go_worker=true
+              ;;
+            .github/workflows/deploy-dev.yml|deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/k3s/*|infra/scripts/*)
               observability=true
               ;;
           esac
