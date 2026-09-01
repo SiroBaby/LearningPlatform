@@ -7,10 +7,13 @@ export interface SwaggerSettings {
 export interface ApplicationSettings {
   authAdminGoogleSubs: readonly string[];
   environment: string;
+  identityMode: IdentityMode;
   internalMtls: InternalMtlsSettings;
   port: number;
   swagger: SwaggerSettings;
 }
+
+export type IdentityMode = 'mtls' | 'stub';
 
 export interface GoogleOAuthSettings {
   readonly clientId: string;
@@ -24,6 +27,7 @@ export interface InternalMtlsSettings {
   readonly certPath: string | undefined;
   readonly enabled: boolean;
   readonly expectedClientSpiffeUri: string | undefined;
+  readonly expectedWebBffSpiffeUri: string | undefined;
   readonly keyPath: string | undefined;
   readonly port: number;
 }
@@ -147,6 +151,7 @@ export const CONFIG_PATH = {
   app: {
     authAdminGoogleSubs: 'app.authAdminGoogleSubs',
     environment: 'app.env',
+    identityMode: 'app.identityMode',
     googleOAuth: {
       clientId: 'app.googleOAuth.clientId',
       clientSecret: 'app.googleOAuth.clientSecret',
@@ -158,6 +163,7 @@ export const CONFIG_PATH = {
       caPath: 'app.internalMtls.caPath',
       certPath: 'app.internalMtls.certPath',
       expectedClientSpiffeUri: 'app.internalMtls.expectedClientSpiffeUri',
+      expectedWebBffSpiffeUri: 'app.internalMtls.expectedWebBffSpiffeUri',
       keyPath: 'app.internalMtls.keyPath',
       port: 'app.internalMtls.port',
     },

@@ -5,6 +5,13 @@ metadata:
   namespace: {{ learning_platform_namespace }}
 automountServiceAccountToken: false
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web-bff
+  namespace: {{ learning_platform_namespace }}
+automountServiceAccountToken: false
+---
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
@@ -69,8 +76,30 @@ spec:
   duration: 24h
   renewBefore: 8h
   commonName: go-worker
+  usages:
+    - client auth
   uris:
     - spiffe://learning-platform.local/ns/{{ learning_platform_namespace }}/sa/go-worker
+  issuerRef:
+    name: internal-ca
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: web-bff
+  namespace: {{ learning_platform_namespace }}
+spec:
+  secretName: web-bff-tls
+  privateKey:
+    rotationPolicy: Always
+  duration: 24h
+  renewBefore: 8h
+  commonName: web-bff
+  usages:
+    - client auth
+  uris:
+    - spiffe://learning-platform.local/ns/{{ learning_platform_namespace }}/sa/web-bff
   issuerRef:
     name: internal-ca
     kind: Issuer
@@ -112,4 +141,4 @@ spec:
               app.kubernetes.io/component: web
       ports:
         - protocol: TCP
-          port: 3000
+          port: 3443

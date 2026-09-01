@@ -13,11 +13,11 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
-  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 
@@ -38,7 +38,7 @@ import { SubmitQuizAttemptDto } from './dto/submit-quiz-attempt.dto';
 import { AssessmentService } from './assessment.service';
 import { SessionAuthGuard } from '../auth/session-auth.guard';
 
-@ApiSecurity('bearer')
+@ApiBearerAuth()
 @ApiTags('Quizzes')
 @Controller('quizzes')
 @UseGuards(SessionAuthGuard)

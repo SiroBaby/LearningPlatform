@@ -156,6 +156,17 @@ export async function bootstrapApi(): Promise<void> {
     const config = app.get(ApplicationConfigService);
     return config.application;
   });
+  if (application.identityMode === 'stub') {
+    logger.warn(
+      {
+        environment: application.environment,
+        event: 'api.identity.stub.enabled',
+        mode: application.identityMode,
+        runtime: 'api',
+      },
+      'ApiBootstrap',
+    );
+  }
 
   await runApiBootstrapStage('module-setup', async () => {
     app.enableShutdownHooks();
@@ -189,7 +200,7 @@ export async function bootstrapApi(): Promise<void> {
         .setTitle('AI Learning Platform API')
         .setDescription('Phase 0 API: document upload and async processing.')
         .setVersion('0.1.0')
-        .addBearerAuth(undefined, 'bearer')
+        .addBearerAuth()
         .addTag('Documents', 'Document upload and processing lifecycle.')
         .build();
       const document = SwaggerModule.createDocument(app, swaggerConfig);

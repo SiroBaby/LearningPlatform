@@ -82,7 +82,7 @@ describe('createInternalMtlsServer', () => {
     const untrustedClient = await createTrustedClient(await createPki());
     const lifecycle = await createInternalMtlsServer({
       getHttpAdapter: () => ({ getInstance: () => (_request: unknown, response: { end(): void }) => response.end() }),
-    } as never, { caPath: pki.ca, certPath: pki.cert, enabled: true, expectedClientSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/go-worker', keyPath: pki.key, port: 0 });
+    } as never, { caPath: pki.ca, certPath: pki.cert, enabled: true, expectedClientSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/go-worker', expectedWebBffSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/web-bff', keyPath: pki.key, port: 0 });
     expect(lifecycle).toBeDefined();
     try {
       await new Promise<void>((resolve) => lifecycle?.server.listen(0, resolve));
@@ -100,7 +100,7 @@ describe('createInternalMtlsServer', () => {
     const pki = await createPki();
     const server = await createInternalMtlsServer({
       getHttpAdapter: () => ({ getInstance: () => (_request: unknown, response: { end(): void }) => response.end() }),
-    } as never, { caPath: pki.ca, certPath: pki.cert, enabled: true, expectedClientSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/go-worker', keyPath: pki.key, port: 0 });
+    } as never, { caPath: pki.ca, certPath: pki.cert, enabled: true, expectedClientSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/go-worker', expectedWebBffSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/web-bff', keyPath: pki.key, port: 0 });
     const context = jest.spyOn(server!.server, 'setSecureContext');
     try {
       const [ca, cert, key] = await Promise.all([readFile(pki.ca), readFile(pki.cert), readFile(pki.key)]);
@@ -120,7 +120,7 @@ describe('createInternalMtlsServer', () => {
     const pki = await createPki();
     const server = await createInternalMtlsServer({
       getHttpAdapter: () => ({ getInstance: () => (_request: unknown, response: { end(): void }) => response.end() }),
-    } as never, { caPath: pki.ca, certPath: pki.cert, enabled: true, expectedClientSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/go-worker', keyPath: pki.key, port: 0 });
+    } as never, { caPath: pki.ca, certPath: pki.cert, enabled: true, expectedClientSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/go-worker', expectedWebBffSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/web-bff', keyPath: pki.key, port: 0 });
     const context = jest.spyOn(server!.server, 'setSecureContext');
     const [ca, cert, key] = await Promise.all([readFile(pki.ca), readFile(pki.cert), readFile(pki.key)]);
 

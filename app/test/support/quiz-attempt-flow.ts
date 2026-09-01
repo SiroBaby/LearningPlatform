@@ -13,7 +13,7 @@ interface QuizAttemptFlowFixture {
   readonly dataSource: DataSource;
   readonly options: readonly QuestionOptionEntity[];
   readonly otherOwnerId: string;
-  readonly ownerHeaders: (ownerId: string) => HeadersInit;
+  readonly authHeaders: (ownerId: string) => HeadersInit;
   readonly ownerId: string;
   readonly question: QuestionEntity;
   readonly quiz: QuizEntity;
@@ -63,7 +63,7 @@ interface PracticeFeedbackBody {
 
 export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Promise<void> {
   const servedQuiz = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}`, {
-    headers: fixture.ownerHeaders(fixture.ownerId),
+    headers: fixture.authHeaders(fixture.ownerId),
   });
   expect(servedQuiz.status).toBe(200);
   const servedBody = await servedQuiz.json();
@@ -76,7 +76,7 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
   expect(JSON.stringify(servedBody)).not.toContain('explanation');
 
   const hiddenQuiz = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}`, {
-    headers: fixture.ownerHeaders(fixture.otherOwnerId),
+    headers: fixture.authHeaders(fixture.otherOwnerId),
   });
   expect(hiddenQuiz.status).toBe(404);
 
@@ -94,7 +94,7 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
     `/api/v1/quizzes/${fixture.quiz.id}/practice-feedback`,
     {
       method: 'POST',
-      headers: fixture.ownerHeaders(fixture.ownerId),
+      headers: fixture.authHeaders(fixture.ownerId),
       body: JSON.stringify({ optionId: incorrectOption.id, questionId: fixture.question.id }),
     },
   );
@@ -116,7 +116,7 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
     `/api/v1/quizzes/${fixture.quiz.id}/practice-feedback`,
     {
       method: 'POST',
-      headers: fixture.ownerHeaders(fixture.ownerId),
+      headers: fixture.authHeaders(fixture.ownerId),
       body: JSON.stringify({ optionId: randomUUID(), questionId: fixture.question.id }),
     },
   );
@@ -126,7 +126,7 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
     `/api/v1/quizzes/${fixture.quiz.id}/practice-feedback`,
     {
       method: 'POST',
-      headers: fixture.ownerHeaders(fixture.otherOwnerId),
+      headers: fixture.authHeaders(fixture.otherOwnerId),
       body: JSON.stringify({ optionId: correctOption.id, questionId: fixture.question.id }),
     },
   );
@@ -134,7 +134,7 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
 
   const submitted = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}/attempts`, {
     method: 'POST',
-    headers: fixture.ownerHeaders(fixture.ownerId),
+    headers: fixture.authHeaders(fixture.ownerId),
     body: JSON.stringify({
       answers: [{ optionId: correctOption.id, questionId: fixture.question.id }],
     }),
@@ -172,7 +172,7 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
 
   const persistedResult = await fixture.request(
     `/api/v1/quizzes/${fixture.quiz.id}/attempts/${graded.attemptId}`,
-    { headers: fixture.ownerHeaders(fixture.ownerId) },
+    { headers: fixture.authHeaders(fixture.ownerId) },
   );
   expect(persistedResult.status).toBe(200);
   const persistedBody = await persistedResult.json() as AttemptResultBody;
@@ -198,18 +198,18 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
 
   const hiddenPersistedResult = await fixture.request(
     `/api/v1/quizzes/${fixture.quiz.id}/attempts/${graded.attemptId}`,
-    { headers: fixture.ownerHeaders(fixture.otherOwnerId) },
+    { headers: fixture.authHeaders(fixture.otherOwnerId) },
   );
   expect(hiddenPersistedResult.status).toBe(404);
   const mismatchedQuizResult = await fixture.request(
     `/api/v1/quizzes/${randomUUID()}/attempts/${graded.attemptId}`,
-    { headers: fixture.ownerHeaders(fixture.ownerId) },
+    { headers: fixture.authHeaders(fixture.ownerId) },
   );
   expect(mismatchedQuizResult.status).toBe(404);
 
   const invalidAttempt = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}/attempts`, {
     method: 'POST',
-    headers: fixture.ownerHeaders(fixture.ownerId),
+    headers: fixture.authHeaders(fixture.ownerId),
     body: JSON.stringify({
       answers: [{ optionId: randomUUID(), questionId: fixture.question.id }],
     }),
@@ -220,7 +220,7 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
 
   const hiddenAttempt = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}/attempts`, {
     method: 'POST',
-    headers: fixture.ownerHeaders(fixture.otherOwnerId),
+    headers: fixture.authHeaders(fixture.otherOwnerId),
     body: JSON.stringify({
       answers: [{ optionId: correctOption.id, questionId: fixture.question.id }],
     }),

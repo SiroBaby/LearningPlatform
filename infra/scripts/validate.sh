@@ -356,6 +356,13 @@ check_application_edge_contract() {
   local swagger_external_secret_template="${INFRA_DIR}/k8s/swagger-external-secret.yaml.j2"
   local app_vars="${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"
 
+  if grep -Fq 'name: PHASE0_DEV_OWNER_ID' "${app_template}" \
+    || grep -Fq 'name: PHASE0_API_BASE_URL' "${app_template}" \
+    || grep -Fq 'phase0_api_base_url' "${app_template}" \
+    || grep -Fq 'phase0_dev_owner_id' "${app_template}"; then
+    fail 'Production web Deployment must use the authenticated BFF contract without Phase 0 runtime variables.'
+  fi
+
   for required_pattern in \
     '^  db_ssl_mode: /REPLACE/WITH/EXACT/db-ssl-mode$' \
     '^  db_ssl_ca: /REPLACE/WITH/EXACT/db-ssl-ca$' \
@@ -369,8 +376,6 @@ check_application_edge_contract() {
     '^ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET$' \
     '^web_public_host: REPLACE_WITH_WEB_PUBLIC_HOST$' \
     '^api_public_host: REPLACE_WITH_API_PUBLIC_HOST$' \
-    '^phase0_api_base_url: http://api:3000/api/v1$' \
-    '^phase0_dev_owner_id: REPLACE_WITH_DEV_OWNER_UUID$' \
     '^deployment_targets: \[web, api, worker\]$'; do
     if ! grep -qE "${required_pattern}" "${app_vars}"; then
       fail "Missing application contract variable matching ${required_pattern}."
@@ -431,7 +436,6 @@ check_application_edge_contract() {
     "ghcr_pull_secret_name is not search('REPLACE_WITH')" \
     'web_public_host is string' \
     'api_public_host is string' \
-    "phase0_api_base_url == 'http://api:3000/api/v1'" \
     'ingress_tls_secret_name is string'; do
     if ! grep -Fqx "      - ${required_assertion}" "${app_tasks}"; then
       fail "Application assertion must use the exact list indentation: ${required_assertion}."

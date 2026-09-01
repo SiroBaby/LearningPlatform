@@ -123,10 +123,19 @@ export class ApplicationConfigService {
   }
 
   get application(): ApplicationSettings {
+    const environment = this.required<string>(CONFIG_PATH.app.environment);
+    const identityMode = this.config.get<string>(CONFIG_PATH.app.identityMode) ?? 'mtls';
+    if (identityMode !== 'mtls' && identityMode !== 'stub') {
+      throw new Error('IDENTITY_MODE must be mtls or stub');
+    }
+    if (identityMode === 'stub' && environment !== 'development' && environment !== 'test') {
+      throw new Error('IDENTITY_MODE=stub is allowed only in development or test');
+    }
     const internalMtls = {
       caPath: this.config.get<string>(CONFIG_PATH.app.internalMtls.caPath),
       certPath: this.config.get<string>(CONFIG_PATH.app.internalMtls.certPath),
       expectedClientSpiffeUri: this.config.get<string>(CONFIG_PATH.app.internalMtls.expectedClientSpiffeUri),
+      expectedWebBffSpiffeUri: this.config.get<string>(CONFIG_PATH.app.internalMtls.expectedWebBffSpiffeUri),
       keyPath: this.config.get<string>(CONFIG_PATH.app.internalMtls.keyPath),
       port: this.config.get<number>(CONFIG_PATH.app.internalMtls.port) ?? 3443,
     };
@@ -135,15 +144,21 @@ export class ApplicationConfigService {
     if (configuredPaths.length !== 0 && configuredPaths.length !== 3) {
       throw new Error('INTERNAL_MTLS_CA_PATH, INTERNAL_MTLS_CERT_PATH, and INTERNAL_MTLS_KEY_PATH must be configured together');
     }
-    if (configuredPaths.length === 3 && !/^spiffe:\/\/learning-platform\.local\/ns\/[a-z0-9]([-a-z0-9]*[a-z0-9])?\/sa\/go-worker$/.test(internalMtls.expectedClientSpiffeUri ?? '')) {
-      throw new Error('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI must be a valid Go worker SPIFFE URI');
+    const expectedSpiffeUri = /^spiffe:\/\/learning-platform\.local\/ns\/[a-z0-9]([-a-z0-9]*[a-z0-9])?\/sa\//u;
+    if (
+      configuredPaths.length === 3 &&
+      (!new RegExp(`${expectedSpiffeUri.source}go-worker$`, 'u').test(internalMtls.expectedClientSpiffeUri ?? '') ||
+        !new RegExp(`${expectedSpiffeUri.source}web-bff$`, 'u').test(internalMtls.expectedWebBffSpiffeUri ?? ''))
+    ) {
+      throw new Error('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI and INTERNAL_MTLS_EXPECTED_WEB_BFF_SPIFFE_URI must be valid SPIFFE URIs');
     }
     if (!Number.isInteger(internalMtls.port) || internalMtls.port < 1 || internalMtls.port > 65535) {
       throw new Error('INTERNAL_MTLS_PORT must be a valid TCP port');
     }
     return {
       authAdminGoogleSubs: this.authAdminGoogleSubs,
-      environment: this.required<string>(CONFIG_PATH.app.environment),
+      environment,
+      identityMode,
       internalMtls: { ...internalMtls, enabled: configuredPaths.length === 3 },
       port: this.required<number>(CONFIG_PATH.app.port),
       swagger: {

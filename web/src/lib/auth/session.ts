@@ -12,7 +12,7 @@ export async function hasAuthenticatedSession(): Promise<boolean> {
   const response = await requestAuthBackend({
     authorization: `Bearer ${accessToken}`,
     method: "GET",
-    path: "/api/v1/auth/me",
+    path: "/internal/v1/auth/me",
   });
   return response.ok;
 }

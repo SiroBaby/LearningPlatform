@@ -81,13 +81,14 @@ describe('ApplicationConfigService', () => {
   });
 
   it('requires a strict Go worker SPIFFE URI when internal mTLS is enabled', () => {
-    const application = (expectedClientSpiffeUri: string | undefined): ApplicationConfigService => new ApplicationConfigService(new ConfigService({
+    const application = (expectedClientSpiffeUri: string | undefined, expectedWebBffSpiffeUri = 'spiffe://learning-platform.local/ns/learning-platform-qa/sa/web-bff'): ApplicationConfigService => new ApplicationConfigService(new ConfigService({
       app: {
         env: 'test',
         internalMtls: {
           caPath: '/identity/ca.crt',
           certPath: '/identity/tls.crt',
           expectedClientSpiffeUri,
+          expectedWebBffSpiffeUri,
           keyPath: '/identity/tls.key',
           port: 3443,
         },
@@ -98,9 +99,48 @@ describe('ApplicationConfigService', () => {
 
     expect(application('spiffe://learning-platform.local/ns/learning-platform-qa/sa/go-worker').application.internalMtls.expectedClientSpiffeUri)
       .toBe('spiffe://learning-platform.local/ns/learning-platform-qa/sa/go-worker');
+    expect(application('spiffe://learning-platform.local/ns/learning-platform-qa/sa/go-worker').application.internalMtls.expectedWebBffSpiffeUri)
+      .toBe('spiffe://learning-platform.local/ns/learning-platform-qa/sa/web-bff');
     expect(() => application(undefined).application).toThrow('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI');
     expect(() => application('spiffe://learning-platform.local/ns/INVALID/sa/go-worker').application).toThrow('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI');
     expect(() => application('spiffe://learning-platform.local/ns/learning-platform-qa/sa/other').application).toThrow('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI');
+    expect(() => application('spiffe://learning-platform.local/ns/learning-platform-qa/sa/go-worker', 'spiffe://learning-platform.local/ns/learning-platform-qa/sa/other').application).toThrow('INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI');
+  });
+
+  it('allows the explicit identity stub only in local or test environments', () => {
+    const local = new ApplicationConfigService(new ConfigService({
+      app: {
+        env: 'development',
+        identityMode: 'stub',
+        port: 3000,
+        swagger: { enabled: false },
+      },
+    }));
+    const production = new ApplicationConfigService(new ConfigService({
+      app: {
+        env: 'production',
+        identityMode: 'stub',
+        port: 3000,
+        swagger: { enabled: false },
+      },
+    }));
+
+    expect(local.application.identityMode).toBe('stub');
+    expect(() => production.application).toThrow(
+      'IDENTITY_MODE=stub is allowed only in development or test',
+    );
+  });
+
+  it('defaults to mTLS and rejects an unknown identity mode', () => {
+    const defaultMode = new ApplicationConfigService(new ConfigService({
+      app: { env: 'development', port: 3000, swagger: { enabled: false } },
+    }));
+    const invalidMode = new ApplicationConfigService(new ConfigService({
+      app: { env: 'development', identityMode: 'unsafe', port: 3000, swagger: { enabled: false } },
+    }));
+
+    expect(defaultMode.application.identityMode).toBe('mtls');
+    expect(() => invalidMode.application).toThrow('IDENTITY_MODE must be mtls or stub');
   });
 
   it('returns verified database TLS settings when a CA is configured', () => {

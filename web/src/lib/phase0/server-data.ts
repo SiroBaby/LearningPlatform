@@ -1,6 +1,6 @@
 import "server-only";
 
-import { requestPhase0Backend } from "@/lib/phase0/backend-client";
+import { requestAuthenticatedPhase0Backend } from "@/lib/phase0/backend-client";
 import type {
   Phase0AttemptResultResponse,
   Phase0Document,
@@ -40,7 +40,7 @@ function readErrorMessage(value: unknown): string {
 }
 
 async function requestServerData<T>(path: string, mapper: (value: unknown) => T): Promise<T> {
-  const response = await requestPhase0Backend({ method: "GET", path });
+  const response = await requestAuthenticatedPhase0Backend({ method: "GET", path });
   const body = await readResponseBody(response);
   if (!response.ok) {
     throw new Phase0ServerError(response.status, readErrorMessage(body));

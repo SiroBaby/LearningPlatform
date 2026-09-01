@@ -11,7 +11,7 @@ export async function POST(request: Request): Promise<Response> {
   if (rejected) return rejected;
   const refreshToken = (await cookies()).get("lp_refresh")?.value;
   if (!refreshToken) return NextResponse.json({ code: "SESSION_INVALID", message: "Phiên đăng nhập không còn hiệu lực" }, { status: 401 });
-  const response = await requestAuthBackend({ authorization: `Bearer ${refreshToken}`, method: "POST", path: "/api/v1/auth/refresh" });
+  const response = await requestAuthBackend({ authorization: `Bearer ${refreshToken}`, method: "POST", path: "/internal/v1/auth/refresh" });
   if (!response.ok) return NextResponse.json({ code: "SESSION_INVALID", message: "Phiên đăng nhập không còn hiệu lực" }, { status: 401 });
   const session = (await response.json()) as { accessToken?: string; accessExpiresAt?: string; refreshToken?: string; refreshExpiresAt?: string };
   if (!session.accessToken || !session.refreshToken || !session.accessExpiresAt || !session.refreshExpiresAt) {

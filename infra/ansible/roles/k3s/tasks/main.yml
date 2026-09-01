@@ -23,6 +23,9 @@
       - k3s_traefik_http_node_port | int >= 30000
       - k3s_traefik_http_node_port | int <= 32767
       - k3s_traefik_http_node_port in k3s_ingress_ports
+      - traefik_forwarded_headers_trusted_ips is sequence
+      - traefik_forwarded_headers_trusted_ips is not string
+      - traefik_forwarded_headers_trusted_ips == ['127.0.0.1/32']
       - nginx_service_name is string
       - nginx_learning_platform_config_path is string
       - nginx_tls_certificate_path is string
@@ -33,7 +36,9 @@
       - grafana_ingress_host == grafana_public_host
       - learning_platform_namespace is string
       - learning_platform_namespace | length > 0
-    fail_msg: k3s_version and learning_platform_namespace must be explicitly configured.
+    fail_msg: >-
+      k3s_version, learning_platform_namespace, and the loopback-only Traefik
+      forwarded-header trust boundary must be explicitly configured.
 
 - name: Gather package facts before K3s bootstrap
   ansible.builtin.package_facts:

@@ -11,5 +11,7 @@ spec:
       web:
         exposedPort: 80
         nodePort: {{ k3s_traefik_http_node_port }}
+        forwardedHeaders:
+          trustedIPs: {{ traefik_forwarded_headers_trusted_ips | to_json }}
       websecure:
         expose: false

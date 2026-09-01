@@ -16,7 +16,7 @@ export async function GET(request: Request): Promise<Response> {
   const response = await requestAuthBackend({
     body: { code, state },
     method: "POST",
-    path: "/api/v1/auth/google/exchange",
+    path: "/internal/v1/auth/google/exchange",
   });
   if (!response.ok) return NextResponse.redirect(getWebPublicUrl("/login?error=login_failed"));
   const session = (await response.json()) as {
@@ -31,7 +31,7 @@ export async function GET(request: Request): Promise<Response> {
   const profileResponse = await requestAuthBackend({
     authorization: `Bearer ${session.accessToken}`,
     method: "GET",
-    path: "/api/v1/auth/me",
+    path: "/internal/v1/auth/me",
   });
   const profile = profileResponse.ok ? await profileResponse.json() as {
     readonly onboardingCompletedAt?: string | null;

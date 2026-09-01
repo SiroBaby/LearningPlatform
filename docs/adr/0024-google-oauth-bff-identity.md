@@ -6,7 +6,7 @@
 
 ## Bối cảnh
 
-MVP-1 hiện dùng identity stub `X-User-Id` và `PHASE0_DEV_OWNER_ID`. Cách này phù hợp cho fixture local nhưng không cung cấp đăng nhập, session, revoke, role hoặc identity boundary cho người dùng thật. Issue #108 đưa Google OAuth lên trước các capability product surface tiếp theo.
+Baseline trước Issue #108 từng dùng identity stub `X-User-Id` và `PHASE0_DEV_OWNER_ID`; đây là lịch sử đã được loại bỏ, không còn là compatibility seam. Google OAuth, bearer session và mTLS là contract hiện hành cho identity và service-to-service.
 
 NestJS là nơi sở hữu nghiệp vụ identity và kiểm tra claim của Google. Next.js là Backend for Frontend (BFF, lớp trung gian cùng nguồn với trình duyệt), chịu trách nhiệm điều hướng OAuth và giữ cookie host-only. Browser không gọi API Nest trực tiếp và không nhìn thấy Google token, authorization code hoặc session token dạng plaintext.
 
@@ -157,9 +157,9 @@ Trước mọi persist extraction/quiz, worker dùng conditional write kiểm tr
 
 ### 9. Môi trường, cấu hình và rollout
 
-- Local và automated test có thể dùng `IDENTITY_MODE=stub` explicit; shared dev và production bắt buộc Google auth thật.
+- Local và automated test chỉ được bật `IDENTITY_MODE=stub` tường minh cho fixture hoặc bypass mTLS nội bộ đã kiểm soát; mode này không phải cơ chế định danh cho browser/client. Mọi protected resource request vẫn bắt buộc có bearer session đã xác thực. Shared dev và production bắt buộc Google auth thật.
 - Nếu `NODE_ENV=production` và stub mode được bật, app fail-closed lúc startup; production không fallback khi feature flag auth tắt.
-- `PHASE0_DEV_OWNER_ID` và `X-User-Id` bị reject/không được đọc ở production. Chỉ xóa biến production sau khi BFF, cookie, mTLS, ownership và E2E đã pass.
+- Legacy client owner-identity header và `PHASE0_DEV_OWNER_ID` đã bị loại khỏi mọi runtime path; không được đọc, tạo hoặc forward ở bất kỳ environment nào. Local/test dùng session fixture hoặc Google auth cho resource request; stub chỉ phục vụ fixture hoặc bypass mTLS nội bộ đã được kiểm soát.
 - OAuth client ID/secret tách theo environment; Google Console allowlist redirect URI chính xác, không wildcard. Secret chỉ ở Nest Secret/SSM, không vào Next hoặc image.
 - Rollout theo expand/contract: migration additive -> auth code/mTLS/OAuth config -> readiness/contract checks -> local Google -> shared dev Google -> production auth-only -> theo dõi ổn định -> contract/remove stub seam.
 - Rollback code phải tương thích schema đã migrate; không drop auth tables để rollback.
@@ -177,7 +177,7 @@ Acceptance tối thiểu:
 3. Refresh rotation, reuse detection, logout revoke và status revoke có test.
 4. BFF chỉ set host-only cookie; browser không thấy token và không gọi Nest trực tiếp.
 5. Internal route yêu cầu mTLS đúng service identity và scope.
-6. Production/shared dev reject stub và `X-User-Id`; local/test stub cần bật explicit.
+6. Production/shared dev bắt buộc Google auth và không có fallback stub; local/test chỉ bật stub tường minh cho fixture hoặc bypass mTLS nội bộ, còn resource request vẫn yêu cầu bearer session đã xác thực.
 7. Ownership, IDOR, resource hiding và presigned URL của deleted user được kiểm tra.
 8. Migration, cleanup CLI, cancellation/outbox và rollback compatibility có evidence.
 
