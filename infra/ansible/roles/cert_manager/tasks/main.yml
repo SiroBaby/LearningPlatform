@@ -98,23 +98,26 @@
 - name: Validate internal PKI identity documents before Kubernetes mutation
   ansible.builtin.assert:
     that:
-      - cert_manager_internal_pki_definitions | length == 7
-      - cert_manager_internal_pki_definitions | map(attribute='kind') | list == ['ServiceAccount', 'Issuer', 'Certificate', 'Issuer', 'Certificate', 'Certificate', 'NetworkPolicy']
+      - cert_manager_internal_pki_definitions | length == 9
+      - cert_manager_internal_pki_definitions | map(attribute='kind') | list == ['ServiceAccount', 'ServiceAccount', 'Issuer', 'Certificate', 'Issuer', 'Certificate', 'Certificate', 'Certificate', 'NetworkPolicy']
       - cert_manager_internal_pki_definitions | map(attribute='metadata.namespace') | unique | list == [learning_platform_namespace]
-      - cert_manager_internal_pki_definitions[4].spec.duration == '24h'
-      - cert_manager_internal_pki_definitions[4].spec.renewBefore == '8h'
       - cert_manager_internal_pki_definitions[5].spec.duration == '24h'
       - cert_manager_internal_pki_definitions[5].spec.renewBefore == '8h'
-      - cert_manager_internal_pki_definitions[4].spec.uris == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/api-internal']
-      - cert_manager_internal_pki_definitions[5].spec.uris == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/go-worker']
-      - "cert_manager_internal_pki_definitions[6].spec.podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'api'}"
-      - "cert_manager_internal_pki_definitions[6].spec.ingress[0].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'worker'}"
-      - "cert_manager_internal_pki_definitions[6].spec.ingress[0].ports == [{'protocol': 'TCP', 'port': 3443}]"
-      - "cert_manager_internal_pki_definitions[6].spec.ingress[1].from[0].namespaceSelector.matchLabels == {'kubernetes.io/metadata.name': 'kube-system'}"
-      - "cert_manager_internal_pki_definitions[6].spec.ingress[1].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'traefik'}"
-      - "cert_manager_internal_pki_definitions[6].spec.ingress[1].ports == [{'protocol': 'TCP', 'port': 3000}]"
-      - "cert_manager_internal_pki_definitions[6].spec.ingress[2].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'web'}"
-      - "cert_manager_internal_pki_definitions[6].spec.ingress[2].ports == [{'protocol': 'TCP', 'port': 3000}]"
+      - cert_manager_internal_pki_definitions[6].spec.duration == '24h'
+      - cert_manager_internal_pki_definitions[6].spec.renewBefore == '8h'
+      - cert_manager_internal_pki_definitions[7].spec.duration == '24h'
+      - cert_manager_internal_pki_definitions[7].spec.renewBefore == '8h'
+      - cert_manager_internal_pki_definitions[5].spec.uris == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/api-internal']
+      - cert_manager_internal_pki_definitions[6].spec.uris == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/go-worker']
+      - cert_manager_internal_pki_definitions[7].spec.uris == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/web-bff']
+      - "cert_manager_internal_pki_definitions[8].spec.podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'api'}"
+      - "cert_manager_internal_pki_definitions[8].spec.ingress[0].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'worker'}"
+      - "cert_manager_internal_pki_definitions[8].spec.ingress[0].ports == [{'protocol': 'TCP', 'port': 3443}]"
+      - "cert_manager_internal_pki_definitions[8].spec.ingress[1].from[0].namespaceSelector.matchLabels == {'kubernetes.io/metadata.name': 'kube-system'}"
+      - "cert_manager_internal_pki_definitions[8].spec.ingress[1].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'traefik'}"
+      - "cert_manager_internal_pki_definitions[8].spec.ingress[1].ports == [{'protocol': 'TCP', 'port': 3000}]"
+      - "cert_manager_internal_pki_definitions[8].spec.ingress[2].from[0].podSelector.matchLabels == {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'web'}"
+      - "cert_manager_internal_pki_definitions[8].spec.ingress[2].ports == [{'protocol': 'TCP', 'port': 3443}]"
     fail_msg: >-
       Internal PKI must remain namespace-scoped, use the approved SPIFFE URI
       identities, and rotate server and client credentials every 24h with 8h renewal.
@@ -146,3 +149,4 @@
   loop:
     - api-internal
     - go-worker
+    - web-bff

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { requestPhase0Backend } from "@/lib/phase0/backend-client";
+import { requestAuthenticatedPhase0Backend } from "@/lib/phase0/backend-client";
 
 interface BackendRouteRequest {
   readonly method: "GET" | "POST";
@@ -9,7 +9,7 @@ interface BackendRouteRequest {
 }
 
 export async function proxyPhase0Request(request: BackendRouteRequest): Promise<Response> {
-  const response = await requestPhase0Backend(request);
+  const response = await requestAuthenticatedPhase0Backend(request);
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok) {
     return response;

@@ -9,8 +9,6 @@
     ghcr_pull_secret_name: learning-platform-dev-ghcr
     web_public_host: learningplatform-dev.example.test
     api_public_host: learningplatform-dev-api.example.test
-    phase0_api_base_url: http://api:3000/api/v1
-    phase0_dev_owner_id: 123e4567-e89b-12d3-a456-426614174000
     ingress_tls_secret_name: ''
     web_image: ghcr.io/sirobaby/learningplatform-web@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
     web_resources:
@@ -77,7 +75,7 @@
           Web, API, and worker Deployments must run one replica, use Recreate
           with rollingUpdate null, and carry the source-controlled rollout revision.
 
-    - name: Select internal API service and public ingress
+    - name: Select internal API service, public ingress, and auth rate limits
       ansible.builtin.set_fact:
         applications_internal_services: >-
           {{ applications_rendered_manifests
@@ -87,6 +85,27 @@
         applications_public_ingresses: >-
           {{ applications_rendered_manifests
              | selectattr('kind', 'equalto', 'Ingress')
+             | selectattr('metadata.name', 'equalto', 'learning-platform')
+             | list }}
+        applications_auth_google_start_middlewares: >-
+          {{ applications_rendered_manifests
+             | selectattr('kind', 'equalto', 'Middleware')
+             | selectattr('metadata.name', 'equalto', 'auth-google-start-rate-limit')
+             | list }}
+        applications_auth_google_callback_middlewares: >-
+          {{ applications_rendered_manifests
+             | selectattr('kind', 'equalto', 'Middleware')
+             | selectattr('metadata.name', 'equalto', 'auth-google-callback-rate-limit')
+             | list }}
+        applications_auth_google_start_ingresses: >-
+          {{ applications_rendered_manifests
+             | selectattr('kind', 'equalto', 'Ingress')
+             | selectattr('metadata.name', 'equalto', 'learning-platform-auth-google-start')
+             | list }}
+        applications_auth_google_callback_ingresses: >-
+          {{ applications_rendered_manifests
+             | selectattr('kind', 'equalto', 'Ingress')
+             | selectattr('metadata.name', 'equalto', 'learning-platform-auth-google-callback')
              | list }}
 
     - name: Require API and worker identity material and public routing contracts
@@ -101,6 +120,7 @@
           - applications_rendered_api_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'api-internal-tls') | map(attribute='secret.secretName') | list == ['api-internal-tls']
           - applications_rendered_api_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'api-internal-tls') | map(attribute='secret.defaultMode') | list == [288]
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI') | map(attribute='value') | list == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/go-worker']
+          - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'INTERNAL_MTLS_EXPECTED_WEB_BFF_SPIFFE_URI') | map(attribute='value') | list == ['spiffe://learning-platform.local/ns/' ~ learning_platform_namespace ~ '/sa/web-bff']
           - applications_rendered_worker_deployments | length == 1
           - applications_rendered_worker_deployments[0].spec.template.spec.serviceAccountName == 'go-worker'
           - "applications_rendered_worker_deployments[0].spec.template.spec.securityContext == {'runAsNonRoot': true, 'runAsUser': 1000, 'runAsGroup': 1000, 'fsGroup': 1000}"
@@ -115,12 +135,55 @@
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'GOOGLE_REDIRECT_URI') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_OAUTH_ENCRYPTION_KEY') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_ADMIN_GOOGLE_SUBS') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
-          - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_INTERNAL_API_BASE_URL') | map(attribute='value') | list == ['http://api:3000']
+          - applications_rendered_web_deployments[0].spec.template.spec.serviceAccountName == 'web-bff'
+          - "applications_rendered_web_deployments[0].spec.template.spec.securityContext == {'runAsNonRoot': true, 'runAsUser': 1000, 'runAsGroup': 1000, 'fsGroup': 1000}"
+          - applications_rendered_web_deployments[0].spec.template.spec.containers[0].volumeMounts | selectattr('name', 'equalto', 'web-bff-tls') | selectattr('readOnly', 'equalto', true) | list | length == 1
+          - applications_rendered_web_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'web-bff-tls') | map(attribute='secret.secretName') | list == ['web-bff-tls']
+          - applications_rendered_web_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'web-bff-tls') | map(attribute='secret.defaultMode') | list == [288]
+          - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_INTERNAL_API_BASE_URL') | map(attribute='value') | list == ['https://api-internal:3443']
+          - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_INTERNAL_MTLS_CA_PATH') | map(attribute='value') | list == ['/var/run/identity/web-bff/ca.crt']
+          - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_INTERNAL_MTLS_CERT_PATH') | map(attribute='value') | list == ['/var/run/identity/web-bff/tls.crt']
+          - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_INTERNAL_MTLS_KEY_PATH') | map(attribute='value') | list == ['/var/run/identity/web-bff/tls.key']
           - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'WEB_PUBLIC_ORIGIN') | map(attribute='value') | list == ['https://' ~ web_public_host]
+          - applications_rendered_web_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'PHASE0_DEV_OWNER_ID') | list | length == 0
           - applications_public_ingresses | length == 1
           - applications_public_ingresses[0].spec.ingressClassName == 'traefik'
           - applications_public_ingresses[0].spec.rules[0].http.paths | selectattr('path', 'equalto', '/api/v1') | selectattr('backend.service.name', 'equalto', 'api') | list | length == 1
           - applications_public_ingresses | to_json is not search('api-internal')
+          - applications_auth_google_start_middlewares | length == 1
+          - applications_auth_google_start_middlewares[0].apiVersion == 'traefik.io/v1alpha1'
+          - applications_auth_google_start_middlewares[0].metadata.namespace == learning_platform_namespace
+          - applications_auth_google_start_middlewares[0].spec.rateLimit.average == 10
+          - applications_auth_google_start_middlewares[0].spec.rateLimit.period == '1m'
+          - applications_auth_google_start_middlewares[0].spec.rateLimit.burst == 3
+          - applications_auth_google_start_middlewares[0].spec.rateLimit.sourceCriterion.ipStrategy.depth == 1
+          - applications_auth_google_callback_middlewares | length == 1
+          - applications_auth_google_callback_middlewares[0].apiVersion == 'traefik.io/v1alpha1'
+          - applications_auth_google_callback_middlewares[0].metadata.namespace == learning_platform_namespace
+          - applications_auth_google_callback_middlewares[0].spec.rateLimit.average == 20
+          - applications_auth_google_callback_middlewares[0].spec.rateLimit.period == '1m'
+          - applications_auth_google_callback_middlewares[0].spec.rateLimit.sourceCriterion.ipStrategy.depth == 1
+          - applications_auth_google_start_ingresses | length == 1
+          - applications_auth_google_start_ingresses[0].spec.ingressClassName == 'traefik'
+          - applications_auth_google_start_ingresses[0].metadata.annotations['traefik.ingress.kubernetes.io/router.middlewares'] == learning_platform_namespace ~ '-auth-google-start-rate-limit@kubernetescrd'
+          - applications_auth_google_start_ingresses[0].spec.rules | length == 1
+          - applications_auth_google_start_ingresses[0].spec.rules[0].host == web_public_host
+          - applications_auth_google_start_ingresses[0].spec.rules[0].http.paths | length == 1
+          - applications_auth_google_start_ingresses[0].spec.rules[0].http.paths[0].path == '/auth/google/start'
+          - applications_auth_google_start_ingresses[0].spec.rules[0].http.paths[0].pathType == 'Exact'
+          - applications_auth_google_start_ingresses[0].spec.rules[0].http.paths[0].backend.service.name == 'web'
+          - applications_auth_google_start_ingresses[0].spec.rules[0].http.paths[0].backend.service.port.name == 'http'
+          - applications_auth_google_callback_ingresses | length == 1
+          - applications_auth_google_callback_ingresses[0].spec.ingressClassName == 'traefik'
+          - applications_auth_google_callback_ingresses[0].metadata.annotations['traefik.ingress.kubernetes.io/router.middlewares'] == learning_platform_namespace ~ '-auth-google-callback-rate-limit@kubernetescrd'
+          - applications_auth_google_callback_ingresses[0].spec.rules | length == 1
+          - applications_auth_google_callback_ingresses[0].spec.rules[0].host == web_public_host
+          - applications_auth_google_callback_ingresses[0].spec.rules[0].http.paths | length == 1
+          - applications_auth_google_callback_ingresses[0].spec.rules[0].http.paths[0].path == '/auth/google/callback'
+          - applications_auth_google_callback_ingresses[0].spec.rules[0].http.paths[0].pathType == 'Exact'
+          - applications_auth_google_callback_ingresses[0].spec.rules[0].http.paths[0].backend.service.name == 'web'
+          - applications_auth_google_callback_ingresses[0].spec.rules[0].http.paths[0].backend.service.port.name == 'http'
         fail_msg: >-
           api-internal and go-worker mTLS material must be readable only by the
-          non-root runtime group, while the public /api/v1 Ingress targets api.
+          non-root runtime group, while public and Google auth routes target the
+          intended services with their source-managed rate limits.

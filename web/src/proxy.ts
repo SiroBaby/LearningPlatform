@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+import { requestAuthBackend } from "@/lib/auth/backend-client";
 import { getWebPublicUrl } from "@/lib/auth/public-origin";
 
 async function hasValidAccessSession(request: NextRequest): Promise<boolean> {
   const accessToken = request.cookies.get("lp_access")?.value;
-  const apiBaseUrl = process.env.AUTH_INTERNAL_API_BASE_URL;
-  if (!accessToken || !apiBaseUrl) return false;
+  if (!accessToken) return false;
 
   try {
-    const response = await fetch(new URL("/api/v1/auth/me", apiBaseUrl), {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${accessToken}` },
+    const response = await requestAuthBackend({
+      authorization: `Bearer ${accessToken}`,
+      method: "GET",
+      path: "/internal/v1/auth/me",
     });
     return response.ok;
   } catch {

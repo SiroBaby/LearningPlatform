@@ -85,8 +85,6 @@ IAM bootstrap cho ESO phải giới hạn như sau:
 - `web_image`, `api_image`, `worker_image`
 - `ghcr_pull_secret_name`
 - `web_public_host`, `api_public_host`
-- `phase0_api_base_url`
-- `phase0_dev_owner_id`
 - `ingress_tls_secret_name`
 - `deployment_targets`
 - `web_resources`, `api_resources`, `worker_resources`

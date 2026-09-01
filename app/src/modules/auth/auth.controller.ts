@@ -1,15 +1,17 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 
+import { InternalAuthGuard } from '../../common/internal-mtls.guard';
 import { AuthService } from './auth.service';
-import { GoogleExchangeRequest, GoogleStartQuery } from './dto/google-auth.dto';
+import { GoogleExchangeRequest, GoogleStartRequest } from './dto/google-auth.dto';
 
-@Controller('auth/google')
+@Controller('internal/v1/auth/google')
+@UseGuards(InternalAuthGuard)
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Get('start')
-  start(@Query() query: GoogleStartQuery): Promise<{ readonly authorizationUrl: string }> {
-    return this.authService.start(query.login_hint);
+  @Post('start')
+  start(@Body() request: GoogleStartRequest): Promise<{ readonly authorizationUrl: string }> {
+    return this.authService.start(request.login_hint);
   }
 
   @Post('exchange')

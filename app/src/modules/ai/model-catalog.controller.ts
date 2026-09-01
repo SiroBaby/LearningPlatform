@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
-import { ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { CurrentUser } from '../../common/current-user.decorator';
 import { ModelCatalogService } from './model-catalog.service';
@@ -8,7 +8,7 @@ import { CreateCustomModelConfigDto } from './dto/create-custom-model-config.dto
 import { ModelCatalogItemDto } from './dto/model-catalog-item.dto';
 import { SessionAuthGuard } from '../auth/session-auth.guard';
 
-@ApiSecurity('bearer')
+@ApiBearerAuth()
 @ApiTags('AI models')
 @Controller('ai/models')
 @UseGuards(SessionAuthGuard)

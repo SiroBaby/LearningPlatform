@@ -2,7 +2,7 @@
 
 > Mục tiêu: thiết kế REST API, routing qua Gateway, luồng xác thực/phân quyền, và toàn bộ lớp bảo mật (JWT, refresh token, RBAC, file upload, chống abuse AI). Bảo mật ở đây không phải tính năng phụ — với platform xử lý tài liệu người dùng + tốn tiền inference, nó là sống còn.
 
-> **Nguyên tắc triển khai:** Các security boundary được code production-grade theo đúng phase, nhưng production traffic chỉ được mở sau core phases Phase 0-6 và production launch gate. Identity stub `X-User-Id` chỉ dùng trong local/dev hoặc staging có kiểm soát; không phải cơ chế xác thực production.
+> **Nguyên tắc triển khai:** Các security boundary được code production-grade theo đúng phase, nhưng production traffic chỉ được mở sau core phases Phase 0-6 và production launch gate. Identity stub chỉ dùng trong local/test khi bật `IDENTITY_MODE=stub` explicit; không phải cơ chế xác thực shared dev hay production.
 
 ---
 
@@ -113,7 +113,7 @@ graph TB
 2. Inject `correlationId` (trace toàn hệ thống).
 3. Rate limit (Redis sliding window) — chặn abuse *trước* khi tốn tài nguyên downstream.
 4. Verify JWT (chữ ký qua JWKS cache; **không** gọi Auth mỗi request).
-5. Trích claims (userId, roles) → forward downstream qua header nội bộ (vd `X-User-Id`, đã ký).
+5. (Thiết kế legacy trước Issue #108) Trích claims (userId, roles) → forward downstream qua header nội bộ đã ký. Luồng hiện tại dùng session bearer token qua BFF và mTLS cho internal route.
 6. Route + timeout + retry (cho GET idempotent) + circuit breaker.
 
 **Gateway KHÔNG làm:** business logic, truy cập DB nghiệp vụ, authorization chi tiết theo tài nguyên (việc đó ở service sở hữu tài nguyên).

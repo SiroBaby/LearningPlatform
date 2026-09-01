@@ -17,6 +17,8 @@ minio_volume="${run_id}-minio-data"
 postgres_port=""
 minio_port=""
 api_port=""
+auth_owner_id=""
+auth_access_token=""
 api_log=""
 relay_log=""
 relay_health_port=""
@@ -393,9 +395,10 @@ start_go_worker() {
 }
 
 run_document_flow() {
-  node - "http://127.0.0.1:${api_port}" <<'NODE'
+  node - "http://127.0.0.1:${api_port}" "$auth_owner_id" "$auth_access_token" <<'NODE'
 const apiBaseUrl = process.argv[2];
-const ownerId = crypto.randomUUID();
+const ownerId = process.argv[3];
+const accessToken = process.argv[4];
 const input = 'A bounded E2E document checks one learning concept.';
 const requestTimeoutMs = 10_000;
 const pollDeadlineMs = 180_000;
@@ -434,7 +437,10 @@ function sleep(milliseconds) {
 }
 
 async function main() {
-  const headers = { 'Content-Type': 'application/json', 'X-User-Id': ownerId };
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+  };
   phase = 'upload-url';
   const upload = await requestJson('/api/v1/documents/upload-url', {
     method: 'POST',
@@ -511,6 +517,30 @@ void main().catch((error) => {
   process.exitCode = 1;
 });
 NODE
+}
+
+seed_auth_fixture() {
+  auth_owner_id=$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')
+  auth_access_token=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')
+  local token_hash
+  token_hash=$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1], "utf8").digest("hex"))' "$auth_access_token")
+  docker exec "$postgres_container" psql \
+    --no-psqlrc --quiet \
+    --set=ON_ERROR_STOP=1 \
+    --set=owner_id="$auth_owner_id" \
+    --set=google_sub="local-document-e2e-$auth_owner_id" \
+    --set=email="$auth_owner_id@example.test" \
+    --set=token_hash="$token_hash" \
+    --username=learning --dbname=learning \
+    --command '
+INSERT INTO "auth"."users"
+  ("id", "google_sub", "normalized_email", "email_verified", "role", "status", "deleted_at")
+VALUES (:'"'"'owner_id'"'"', :'"'"'google_sub'"'"', :'"'"'email'"'"', true, '"'"'USER'"'"', '"'"'ACTIVE'"'"', NULL);
+INSERT INTO "auth"."user_profiles" ("user_id") VALUES (:'"'"'owner_id'"'"');
+INSERT INTO "auth"."sessions"
+  ("user_id", "session_family_id", "token_type", "token_hash", "expires_at")
+VALUES (:'"'"'owner_id'"'"', gen_random_uuid(), '"'"'ACCESS'"'"', :'"'"'token_hash'"'"', now() + interval '"'"'15 minutes'"'"');
+' >/dev/null 2>&1
 }
 
 classify_pipeline_stage() {
@@ -641,6 +671,8 @@ emit_phase start-node-api
 start_node_api
 emit_phase wait-node-api
 wait_for_process_http wait-node-api "http://127.0.0.1:${api_port}/api/v1/health" "$api_pid"
+emit_phase seed-auth-fixture
+seed_auth_fixture
 emit_phase start-node-relay
 start_node_relay
 emit_phase wait-node-relay

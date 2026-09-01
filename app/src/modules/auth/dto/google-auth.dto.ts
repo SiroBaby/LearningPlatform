@@ -7,6 +7,13 @@ export class GoogleStartQuery {
   login_hint?: string;
 }
 
+export class GoogleStartRequest {
+  @IsOptional()
+  @IsString()
+  @MaxLength(320)
+  login_hint?: string;
+}
+
 export class GoogleExchangeRequest {
   @IsString()
   @MaxLength(4_096)

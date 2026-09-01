@@ -8,10 +8,14 @@ const mockApiClose = jest.fn<() => Promise<void>>();
 const mockAppUse = jest.fn();
 const mockLoggerError = jest.fn();
 const mockLoggerLog = jest.fn();
+const mockLoggerWarn = jest.fn();
 const mockApplicationLogger = {
   error: mockLoggerError,
   log: mockLoggerLog,
+  warn: mockLoggerWarn,
 };
+let mockIdentityMode: 'mtls' | 'stub' = 'mtls';
+let mockEnvironment = 'test';
 let httpCloseListener: (() => void) | undefined;
 const mockHttpServer = {
   once: jest.fn((event: string, listener: () => void) => {
@@ -44,11 +48,14 @@ jest.mock('@nestjs/core', () => ({
         close: mockApiClose,
         get: () => ({
           application: {
+            environment: mockEnvironment,
+            identityMode: mockIdentityMode,
             internalMtls: {
               caPath: '/tmp/ca.crt',
               certPath: '/tmp/server.crt',
               enabled: true,
               expectedClientSpiffeUri: 'spiffe://test',
+              expectedWebBffSpiffeUri: 'spiffe://test-web-bff',
               keyPath: '/tmp/server.key',
               port: 9443,
             },
@@ -96,6 +103,9 @@ describe('backend-owned startup migrations', () => {
     mockAppUse.mockReset();
     mockLoggerError.mockReset();
     mockLoggerLog.mockReset();
+    mockLoggerWarn.mockReset();
+    mockIdentityMode = 'mtls';
+    mockEnvironment = 'test';
     mockApiClose.mockImplementation(async () => {
       mockHttpServer.emit('close');
     });
@@ -115,6 +125,27 @@ describe('backend-owned startup migrations', () => {
 
     // Then
     expect(mockStartupEvents).toEqual(['api.migrate', 'api.create', 'api.listen']);
+  });
+
+  it('logs one sanitized startup event when the local identity stub is enabled', async () => {
+    mockIdentityMode = 'stub';
+    mockEnvironment = 'development';
+
+    await bootstrapApi();
+
+    expect(mockLoggerWarn).toHaveBeenCalledTimes(1);
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      {
+        environment: 'development',
+        event: 'api.identity.stub.enabled',
+        mode: 'stub',
+        runtime: 'api',
+      },
+      'ApiBootstrap',
+    );
+    expect(JSON.stringify(mockLoggerWarn.mock.calls[0]?.[0])).toBe(
+      '{"environment":"development","event":"api.identity.stub.enabled","mode":"stub","runtime":"api"}',
+    );
   });
 
   it('closes the internal mTLS listener during normal API shutdown', async () => {

@@ -3,6 +3,7 @@ import { Inject } from '@nestjs/common';
 import { Mapper } from '@automapper/core';
 import {
   ApiAcceptedResponse,
+  ApiBearerAuth,
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
@@ -10,7 +11,6 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
-  ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 
@@ -30,7 +30,7 @@ import { Document } from './entities/document.entity';
 import { CreateDocumentEstimateDto } from './dto/create-document-estimate.dto';
 import { SessionAuthGuard } from '../auth/session-auth.guard';
 
-@ApiSecurity('bearer')
+@ApiBearerAuth()
 @ApiTags('Documents')
 @Controller('documents')
 @UseGuards(SessionAuthGuard)

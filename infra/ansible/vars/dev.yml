@@ -6,6 +6,7 @@ k3s_write_kubeconfig_mode: '0640'
 k3s_port_preflight_enabled: true
 k3s_ingress_ports: [32080]
 k3s_traefik_http_node_port: 32080
+traefik_forwarded_headers_trusted_ips: [127.0.0.1/32]
 nginx_service_name: nginx.service
 nginx_learning_platform_config_path: /etc/nginx/sites-enabled/learning-platform-dev
 nginx_tls_certificate_path: /etc/ssl/cloudflare/sirobabycloud.pem
@@ -61,8 +62,6 @@ ssm_parameter_keys:
 ghcr_pull_secret_name: learning-platform-dev-ghcr
 web_public_host: learningplatform-dev.sirobabycloud.io.vn
 api_public_host: learningplatform-dev-api.sirobabycloud.io.vn
-phase0_api_base_url: http://api:3000/api/v1
-phase0_dev_owner_id: a22d87f0-7071-4063-890c-15b5017636cb
 ingress_tls_secret_name: ''
 deployment_targets: [web, api, worker]
 

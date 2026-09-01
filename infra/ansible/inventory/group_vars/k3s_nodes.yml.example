@@ -11,6 +11,7 @@ k3s_write_kubeconfig_mode: '0640'
 k3s_port_preflight_enabled: true
 k3s_ingress_ports: [32080]
 k3s_traefik_http_node_port: 32080
+traefik_forwarded_headers_trusted_ips: [127.0.0.1/32]
 nginx_service_name: nginx.service
 nginx_learning_platform_config_path: /etc/nginx/sites-enabled/learning-platform-dev
 nginx_tls_certificate_path: REPLACE_WITH_EXISTING_TLS_CERTIFICATE_PATH
@@ -87,8 +88,6 @@ worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:REPLACE_WITH_64_HEX_D
 ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET
 web_public_host: REPLACE_WITH_WEB_PUBLIC_HOST
 api_public_host: REPLACE_WITH_API_PUBLIC_HOST
-phase0_api_base_url: http://api:3000/api/v1
-phase0_dev_owner_id: REPLACE_WITH_DEV_OWNER_UUID
 ingress_tls_secret_name: ''
 deployment_targets: [web, api, worker]
 

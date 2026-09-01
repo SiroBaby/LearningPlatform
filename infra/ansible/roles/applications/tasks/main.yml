@@ -24,8 +24,6 @@
       - api_public_host | length > 0
       - api_public_host is not search('REPLACE_WITH')
       - web_public_host != api_public_host
-      - phase0_api_base_url == 'http://api:3000/api/v1'
-      - phase0_dev_owner_id is match('^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
       - ingress_tls_secret_name is string
       - ssm_parameter_keys.swagger_username is string
       - ssm_parameter_keys.swagger_password is string

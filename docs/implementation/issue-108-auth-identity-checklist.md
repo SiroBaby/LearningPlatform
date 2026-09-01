@@ -55,7 +55,7 @@ Checklist này chuyển các quyết định trong [ADR-0024](../adr/0024-google
 - [ ] Callback exchange ngay rồi redirect URL sạch; không nhận redirect đích tùy ý.
 - [ ] Set cookie `HttpOnly`, `Secure`, `SameSite=Lax`, host-only; local có cấu hình `Secure=false` riêng.
 - [ ] BFF forward access token server-side tới Nest qua internal DNS và mTLS; refresh token chỉ dùng route refresh.
-- [ ] Không forward hoặc tạo `X-User-Id`; không cache user data SSR giữa các user.
+- [ ] Legacy client owner-identity header seam đã bị loại bỏ; BFF chỉ forward access token server-side và không cache user data SSR giữa các user.
 - [ ] Error response allowlist gồm `code`, `message`, `retryable`, `traceId` nếu contract yêu cầu; không chuyển tiếp provider detail.
 
 ### 3.5. mTLS và network
@@ -98,8 +98,8 @@ Checklist này chuyển các quyết định trong [ADR-0024](../adr/0024-google
 
 - [ ] Client ID/secret tách theo environment; secret chỉ ở Nest Secret/SSM.
 - [ ] Google Console allowlist exact, không wildcard.
-- [ ] Production reject `X-User-Id` và không đọc `PHASE0_DEV_OWNER_ID`.
-- [ ] Stub mode không bật mặc định; `NODE_ENV=production` + stub phải fail-closed.
+- [ ] Legacy client owner-identity header và `PHASE0_DEV_OWNER_ID` không còn trong runtime contract ở mọi environment.
+- [ ] `IDENTITY_MODE=stub` không bật mặc định; chỉ dùng tường minh cho fixture hoặc bypass mTLS nội bộ đã kiểm soát. Resource request vẫn yêu cầu bearer session đã xác thực; `NODE_ENV=production` + stub phải fail-closed.
 
 ## 5. Test matrix
 
@@ -138,7 +138,7 @@ Checklist này chuyển các quyết định trong [ADR-0024](../adr/0024-google
 5. [ ] Shared dev Google flow pass.
 6. [ ] Production auth-only pass; không có fallback stub.
 7. [ ] Theo dõi login failure, session revoke, callback latency và rate-limit.
-8. [ ] Chỉ sau khi evidence đủ mới xóa `PHASE0_DEV_OWNER_ID` và contract/remove stub seam.
+8. [ ] Xác nhận không còn legacy owner-identity contract; stub chỉ còn ở fixture hoặc bypass mTLS nội bộ được kiểm soát và không trở thành fallback cho resource request.
 
 ## 7. Rủi ro và follow-up
 

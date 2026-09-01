@@ -21,6 +21,12 @@ spec:
         app.kubernetes.io/name: learning-platform
         app.kubernetes.io/component: web
     spec:
+      serviceAccountName: web-bff
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       imagePullSecrets:
         - name: {{ ghcr_pull_secret_name }}
       containers:
@@ -35,14 +41,22 @@ spec:
               value: '3000'
             - name: HOSTNAME
               value: 0.0.0.0
-            - name: PHASE0_API_BASE_URL
-              value: {{ phase0_api_base_url }}
+            - name: NODE_ENV
+              value: production
             - name: AUTH_INTERNAL_API_BASE_URL
-              value: http://api:3000
+              value: https://api-internal:3443
+            - name: AUTH_INTERNAL_MTLS_CA_PATH
+              value: /var/run/identity/web-bff/ca.crt
+            - name: AUTH_INTERNAL_MTLS_CERT_PATH
+              value: /var/run/identity/web-bff/tls.crt
+            - name: AUTH_INTERNAL_MTLS_KEY_PATH
+              value: /var/run/identity/web-bff/tls.key
             - name: WEB_PUBLIC_ORIGIN
               value: https://{{ web_public_host }}
-            - name: PHASE0_DEV_OWNER_ID
-              value: {{ phase0_dev_owner_id }}
+          volumeMounts:
+            - name: web-bff-tls
+              mountPath: /var/run/identity/web-bff
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /
@@ -60,6 +74,11 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           resources: {{ web_resources | to_json }}
+      volumes:
+        - name: web-bff-tls
+          secret:
+            secretName: web-bff-tls
+            defaultMode: 0440
 ---
 apiVersion: v1
 kind: Service
@@ -132,6 +151,8 @@ spec:
               value: /var/run/identity/api-internal/ca.crt
             - name: INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI
               value: spiffe://learning-platform.local/ns/{{ learning_platform_namespace }}/sa/go-worker
+            - name: INTERNAL_MTLS_EXPECTED_WEB_BFF_SPIFFE_URI
+              value: spiffe://learning-platform.local/ns/{{ learning_platform_namespace }}/sa/web-bff
             - name: SWAGGER_ENABLED
               value: 'true'
             - name: SWAGGER_USERNAME
@@ -419,4 +440,97 @@ spec:
                 name: web
                 port:
                   name: http
+{% if 'web' in deployment_targets %}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: auth-google-start-rate-limit
+  namespace: {{ learning_platform_namespace }}
+spec:
+  rateLimit:
+    average: 10
+    period: 1m
+    burst: 3
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: auth-google-callback-rate-limit
+  namespace: {{ learning_platform_namespace }}
+spec:
+  rateLimit:
+    average: 20
+    period: 1m
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: learning-platform-auth-google-start
+  namespace: {{ learning_platform_namespace }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ learning_platform_namespace }}-auth-google-start-rate-limit@kubernetescrd
+    traefik.ingress.kubernetes.io/router.priority: '100'
+{% if ingress_tls_secret_name | length > 0 %}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+{% endif %}
+spec:
+  ingressClassName: traefik
+{% if ingress_tls_secret_name | length > 0 %}
+  tls:
+    - hosts:
+        - {{ web_public_host }}
+      secretName: {{ ingress_tls_secret_name }}
+{% endif %}
+  rules:
+    - host: {{ web_public_host }}
+      http:
+        paths:
+          - path: /auth/google/start
+            pathType: Exact
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: learning-platform-auth-google-callback
+  namespace: {{ learning_platform_namespace }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ learning_platform_namespace }}-auth-google-callback-rate-limit@kubernetescrd
+    traefik.ingress.kubernetes.io/router.priority: '100'
+{% if ingress_tls_secret_name | length > 0 %}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+{% endif %}
+spec:
+  ingressClassName: traefik
+{% if ingress_tls_secret_name | length > 0 %}
+  tls:
+    - hosts:
+        - {{ web_public_host }}
+      secretName: {{ ingress_tls_secret_name }}
+{% endif %}
+  rules:
+    - host: {{ web_public_host }}
+      http:
+        paths:
+          - path: /auth/google/callback
+            pathType: Exact
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+{% endif %}
 {% endif %}
