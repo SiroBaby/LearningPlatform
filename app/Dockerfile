@@ -5,6 +5,7 @@ WORKDIR /app
 FROM base AS build
 
 COPY package.json package-lock.json ./
+COPY scripts/patch-runtime-dependencies.cjs ./scripts/patch-runtime-dependencies.cjs
 RUN npm ci
 
 COPY . ./
@@ -13,6 +14,7 @@ RUN npm run build
 FROM base AS production-dependencies
 
 COPY package.json package-lock.json ./
+COPY scripts/patch-runtime-dependencies.cjs ./scripts/patch-runtime-dependencies.cjs
 RUN npm ci --omit=dev && npm cache clean --force
 
 FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS runner
