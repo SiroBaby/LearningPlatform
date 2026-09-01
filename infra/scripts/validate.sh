@@ -363,6 +363,11 @@ check_application_edge_contract() {
     fail 'Production web Deployment must use the authenticated BFF contract without Phase 0 runtime variables.'
   fi
 
+  if [ "$(grep -Fc '                    $patch: delete' "${app_tasks}")" -ne 2 ] \
+    || ! grep -Fq 'Remove obsolete Phase 0 web BFF environment variables' "${app_tasks}"; then
+    fail 'Application rollout must explicitly remove legacy Phase 0 web BFF environment variables.'
+  fi
+
   for required_pattern in \
     '^  db_ssl_mode: /REPLACE/WITH/EXACT/db-ssl-mode$' \
     '^  db_ssl_ca: /REPLACE/WITH/EXACT/db-ssl-ca$' \

@@ -182,3 +182,59 @@
     kubeconfig: /etc/rancher/k3s/k3s.yaml
     state: present
     definition: "{{ lookup('template', playbook_dir ~ '/../../k8s/apps.yaml.j2') | from_yaml_all | list }}"
+
+- name: Remove obsolete Phase 0 web BFF environment variables
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ learning_platform_namespace }}'
+    name: web
+    state: present
+    merge_type:
+      - strategic-merge
+    definition:
+      metadata:
+        name: web
+        namespace: '{{ learning_platform_namespace }}'
+      spec:
+        template:
+          spec:
+            containers:
+              - name: web
+                env:
+                  - name: PHASE0_API_BASE_URL
+                    $patch: delete
+                  - name: PHASE0_DEV_OWNER_ID
+                    $patch: delete
+  when: "'web' in deployment_targets"
+
+- name: Read back the web BFF Deployment contract
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ learning_platform_namespace }}'
+    name: web
+  register: applications_web_deployment_after_apply
+  when: "'web' in deployment_targets"
+  no_log: true
+
+- name: Require the web BFF Deployment to have no Phase 0 environment variables
+  ansible.builtin.assert:
+    that:
+      - applications_web_deployment_after_apply.resources | length == 1
+      - >-
+        (applications_web_deployment_after_apply.resources[0].spec.template.spec.containers
+        | selectattr('name', 'equalto', 'web')
+        | map(attribute='env')
+        | first
+        | default([])
+        | map(attribute='name')
+        | intersect(['PHASE0_API_BASE_URL', 'PHASE0_DEV_OWNER_ID'])
+        | list) == []
+    fail_msg: >-
+      The web BFF Deployment still contains obsolete Phase 0 environment
+      variables after the source-managed application apply.
+  when: "'web' in deployment_targets"
+  no_log: true
