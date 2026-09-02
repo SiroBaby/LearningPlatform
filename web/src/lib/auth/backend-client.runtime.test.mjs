@@ -21,8 +21,9 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
   const backendPort = await listen(backend);
   const webPort = await freePort();
   const webOrigin = `http://127.0.0.1:${webPort}`;
-  const next = spawn("npm", ["run", "start", "--", "--port", String(webPort)], {
+  const next = spawn("npm", ["run", "start", "--", "--hostname", "127.0.0.1", "--port", String(webPort)], {
     cwd: WEB_ROOT,
+    detached: process.platform !== "win32",
     env: {
       ...process.env,
       AUTH_INTERNAL_API_BASE_URL: `https://127.0.0.1:${backendPort}`,
@@ -30,6 +31,8 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
       AUTH_INTERNAL_MTLS_CERT_PATH: pki.clientCert,
       AUTH_INTERNAL_MTLS_KEY_PATH: pki.clientKey,
       NODE_ENV: "production",
+      HOSTNAME: "127.0.0.1",
+      PORT: String(webPort),
       WEB_LOCAL_PUBLIC_ORIGIN: webOrigin,
       WEB_PUBLIC_ORIGIN: webOrigin,
     },
@@ -52,8 +55,8 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
     assert.equal(callback.status, 307);
     assert.equal(callback.headers.get("location"), `${webOrigin}/home`);
     const callbackCookies = setCookieHeader(callback);
-    assertCookieContract(callbackCookies, "lp_access", "access-callback");
-    assertCookieContract(callbackCookies, "lp_refresh", "refresh-callback");
+    assertCookieContract(callbackCookies, "lp_access", "access-callback", { secure: true });
+    assertCookieContract(callbackCookies, "lp_refresh", "refresh-callback", { secure: true });
     assert.equal(lastRequest(backendRequests, "/internal/v1/auth/google/exchange").method, "POST");
     assert.equal(lastRequest(backendRequests, "/internal/v1/auth/me").authorization, "Bearer access-callback");
     assert.equal(lastRequest(backendRequests, "/internal/v1/auth/me").clientSubjectAltName, `URI:${pki.clientSpiffeUri}`);
@@ -81,8 +84,8 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
     });
     assert.equal(refresh.status, 200);
     const refreshCookies = setCookieHeader(refresh);
-    assertCookieContract(refreshCookies, "lp_access", "access-refresh");
-    assertCookieContract(refreshCookies, "lp_refresh", "refresh-refresh");
+    assertCookieContract(refreshCookies, "lp_access", "access-refresh", { secure: true });
+    assertCookieContract(refreshCookies, "lp_refresh", "refresh-refresh", { secure: true });
     assert.equal(lastRequest(backendRequests, "/internal/v1/auth/refresh").authorization, "Bearer refresh-callback");
 
     const logout = await fetch(`${webOrigin}/auth/logout`, {
@@ -225,7 +228,7 @@ async function waitForWeb(next, url) {
   const deadline = Date.now() + TEST_TIMEOUT_MS - 5_000;
   let lastError;
   while (Date.now() < deadline) {
-    if (next.exitCode !== null) throw new Error("Next dev exited before readiness");
+    if (next.exitCode !== null) throw new Error("Next exited before readiness");
     try {
       const response = await fetch(url);
       if (response.status === 401) return;
@@ -240,12 +243,24 @@ async function waitForWeb(next, url) {
 
 async function stopNext(next) {
   if (next.exitCode !== null) return;
-  next.kill("SIGTERM");
+  signalNextProcessTree(next, "SIGTERM");
   await Promise.race([
     once(next, "exit"),
     new Promise((resolve) => setTimeout(resolve, 5_000)),
   ]);
-  if (next.exitCode === null) next.kill("SIGKILL");
+  if (next.exitCode === null) signalNextProcessTree(next, "SIGKILL");
+}
+
+function signalNextProcessTree(next, signal) {
+  if (process.platform === "win32" || next.pid === undefined) {
+    next.kill(signal);
+    return;
+  }
+  try {
+    process.kill(-next.pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
 }
 
 async function closeServer(server) {
@@ -258,10 +273,11 @@ function sendJson(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-function assertCookieContract(header, name, value) {
+function assertCookieContract(header, name, value, { secure }) {
   const cookie = header.split("\n").find((candidate) => candidate.startsWith(`${name}=${value};`));
   assert.ok(cookie, `Expected ${name} cookie`);
-  assert.match(cookie, /;\s*Secure(?:;|$)/iu);
+  if (secure) assert.match(cookie, /;\s*Secure(?:;|$)/iu);
+  else assert.doesNotMatch(cookie, /;\s*Secure(?:;|$)/iu);
   assert.match(cookie, /;\s*HttpOnly(?:;|$)/iu);
   assert.match(cookie, /;\s*SameSite=Lax(?:;|$)/iu);
   assert.match(cookie, /;\s*Path=\/(?:;|$)/iu);
