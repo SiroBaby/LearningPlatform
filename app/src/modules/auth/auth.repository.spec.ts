@@ -32,7 +32,7 @@ describe('AuthRepository OAuth reservation', () => {
     await expect(repository.beginOAuthExchange('state-hash', 'test')).resolves.toMatchObject({ id: 'tx-1' });
     const claimSql = (manager.query as unknown as jest.Mock).mock.calls[0][0] as string;
     expect(claimSql).toContain('"expires_at" > now()');
-    expect(claimSql).toContain('"processing_at" IS NULL');
+    expect(claimSql).toContain('(\"processing_at\" IS NULL OR \"processing_at\" < now() - ($3 * interval \'1 second\'))');
     expect(claimSql).toContain('"consumed_at" IS NULL');
     expect(claimSql).toContain('"attempt_count" < "max_attempts"');
   });
@@ -108,9 +108,9 @@ describe('AuthRepository OAuth reservation', () => {
     };
     const repository = new AuthRepository(dataSource as never);
 
-    await repository.releaseOAuthTransaction('tx-1');
-    expect(dataSource.query as unknown as jest.Mock).toHaveBeenCalledWith(expect.stringContaining('SET "processing_at" = NULL'), ['tx-1']);
-    expect(dataSource.query as unknown as jest.Mock).toHaveBeenCalledWith(expect.stringContaining('"consumed_at" IS NULL'), ['tx-1']);
+    await repository.releaseOAuthTransaction('tx-1', 1);
+    expect(dataSource.query as unknown as jest.Mock).toHaveBeenCalledWith(expect.stringContaining('SET "processing_at" = NULL'), ['tx-1', 1]);
+    expect(dataSource.query as unknown as jest.Mock).toHaveBeenCalledWith(expect.stringContaining('"attempt_count" = $2'), ['tx-1', 1]);
   });
 });
 

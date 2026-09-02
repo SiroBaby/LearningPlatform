@@ -60,6 +60,7 @@
     "typescript": "5.9.3"
   },
   "overrides": {
+    "browserslist": "4.28.8",
     "minio": {
       "query-string": {
         "decode-uri-component": "0.5.0"

@@ -15,10 +15,20 @@ interface PkiFiles {
 }
 
 const temporaryDirectories: string[] = [];
+const RELOAD_WAIT_TIMEOUT_MS = 2_000;
+const RELOAD_POLL_INTERVAL_MS = 25;
 
 const openssl = (args: readonly string[]): void => {
   execFileSync('openssl', args, { stdio: 'ignore' });
 };
+
+async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
+  const deadline = Date.now() + RELOAD_WAIT_TIMEOUT_MS;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, RELOAD_POLL_INTERVAL_MS));
+  }
+}
 
 const createPki = async (): Promise<PkiFiles> => {
   const directory = await mkdtemp(join(tmpdir(), 'internal-mtls-'));
@@ -47,6 +57,23 @@ const createTrustedClient = async (pki: PkiFiles): Promise<PkiFiles> => {
   openssl(['req', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', csr, '-subj', '/CN=go-worker']);
   openssl(['x509', '-req', '-in', csr, '-CA', pki.ca, '-CAkey', pki.caKey, '-CAcreateserial', '-out', cert, '-days', '1', '-extfile', extensions]);
   return { ca: pki.ca, caKey: pki.caKey, cert, key };
+};
+
+const rotateServerMaterial = async (pki: PkiFiles): Promise<void> => {
+  const directory = await mkdtemp(join(tmpdir(), 'internal-mtls-rotation-'));
+  temporaryDirectories.push(directory);
+  const cert = join(directory, 'rotated-server.crt');
+  const csr = join(directory, 'rotated-server.csr');
+  const key = join(directory, 'rotated-server.key');
+  const extensions = join(directory, 'rotated-server.ext');
+  await writeFile(extensions, 'subjectAltName=DNS:api-internal\nextendedKeyUsage=serverAuth\n');
+  openssl(['req', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', csr, '-subj', '/CN=api-internal-rotated']);
+  openssl(['x509', '-req', '-in', csr, '-CA', pki.ca, '-CAkey', pki.caKey, '-CAcreateserial', '-out', cert, '-days', '1', '-extfile', extensions]);
+  const [rotatedCert, rotatedKey] = await Promise.all([readFile(cert), readFile(key)]);
+  // Projected Secret updates can expose files one at a time; the server must
+  // retain its last known-good context until the complete pair is readable.
+  await writeFile(pki.key, rotatedKey);
+  await writeFile(pki.cert, rotatedCert);
 };
 
 const connect = async (port: number, pki: PkiFiles, client?: PkiFiles): Promise<number> => {
@@ -111,6 +138,33 @@ describe('createInternalMtlsServer', () => {
       await writeFile(pki.key, 'incomplete projection');
       await new Promise((resolve) => setTimeout(resolve, 350));
       expect(context).toHaveBeenCalledTimes(1);
+    } finally {
+      await server?.close();
+    }
+  });
+
+  it('keeps serving through a certificate rotation signed by the trusted CA', async () => {
+    const pki = await createPki();
+    const client = await createTrustedClient(pki);
+    const server = await createInternalMtlsServer({
+      getHttpAdapter: () => ({ getInstance: () => (_request: unknown, response: { end(): void }) => response.end() }),
+    } as never, { caPath: pki.ca, certPath: pki.cert, enabled: true, expectedClientSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/go-worker', expectedWebBffSpiffeUri: 'spiffe://learning-platform.local/ns/test/sa/web-bff', keyPath: pki.key, port: 0 });
+    const context = jest.spyOn(server!.server, 'setSecureContext');
+    try {
+      await new Promise<void>((resolve) => server?.server.listen(0, resolve));
+      const port = (server?.server.address() as { port: number }).port;
+      await expect(connect(port, pki, client)).resolves.toBe(200);
+      const originalCertificate = await readFile(pki.cert);
+
+      await rotateServerMaterial(pki);
+      await waitForCondition(
+        () => context.mock.calls.length > 0,
+        'Timed out waiting for the projected server certificate rotation',
+      );
+
+      expect(context).toHaveBeenCalled();
+      expect(await readFile(pki.cert)).not.toEqual(originalCertificate);
+      await expect(connect(port, pki, client)).resolves.toBe(200);
     } finally {
       await server?.close();
     }

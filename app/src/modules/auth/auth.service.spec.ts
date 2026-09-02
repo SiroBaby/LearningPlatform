@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { ConsoleLogger } from '@nestjs/common';
 import type { TokenPayload } from 'google-auth-library';
 
 import type { ApplicationConfigService } from '../../config/application-config.service';
@@ -50,12 +51,13 @@ function repository(overrides: Record<string, unknown> = {}) {
   return {
     beginOAuthExchange: jest.fn(async () => ({
       id: 'transaction-id',
+      attemptCount: 1,
       nonceHash: hashOAuthValue('nonce'),
       pkceVerifierCiphertext: encryptPkceVerifier('verifier', config.googleOAuth.encryptionKey),
     })),
     createOAuthTransaction: jest.fn(async () => undefined),
     createSessionPair: jest.fn(async () => session),
-    markOAuthTransactionConsumed: jest.fn(async () => undefined),
+    markOAuthTransactionConsumed: jest.fn(async () => 1),
     promoteUserIfAllowlisted: jest.fn(async () => undefined),
     releaseOAuthTransaction: jest.fn(async () => 1),
     rotateRefreshSession: jest.fn(async () => session),
@@ -113,7 +115,7 @@ describe('AuthService', () => {
     await expect(service.exchange('code', 'state')).resolves.toEqual(session);
     expect(oidc.exchangeCode as unknown as jest.Mock).toHaveBeenCalledWith('code', 'verifier');
     expect(repo.upsertUser as unknown as jest.Mock).toHaveBeenCalledWith(expect.objectContaining({ googleSub: 'google-sub', email: 'owner@example.com' }));
-    expect(repo.markOAuthTransactionConsumed as unknown as jest.Mock).toHaveBeenCalledWith('transaction-id');
+    expect(repo.markOAuthTransactionConsumed as unknown as jest.Mock).toHaveBeenCalledWith('transaction-id', 1);
     expect(repo.createSessionPair as unknown as jest.Mock).toHaveBeenCalledWith('user-id');
     expect(repo.promoteUserIfAllowlisted as unknown as jest.Mock).toHaveBeenCalledWith('user-id', 'google-sub', []);
     expect(repo.releaseOAuthTransaction as unknown as jest.Mock).not.toHaveBeenCalled();
@@ -165,7 +167,7 @@ describe('AuthService', () => {
     const service = new AuthService(config, repo as never, provider(claims(override)));
 
     await expect(service.exchange('code', 'state')).rejects.toThrow('OAuth login failed');
-    expect(repo.releaseOAuthTransaction as unknown as jest.Mock).toHaveBeenCalledWith('transaction-id');
+    expect(repo.releaseOAuthTransaction as unknown as jest.Mock).toHaveBeenCalledWith('transaction-id', 1);
     expect(repo.upsertUser as unknown as jest.Mock).not.toHaveBeenCalled();
     expect(repo.createSessionPair as unknown as jest.Mock).not.toHaveBeenCalled();
   });
@@ -182,5 +184,40 @@ describe('AuthService', () => {
     await expect(service.exchange('code', 'state')).rejects.toThrow('OAuth login failed');
     expect(oidc.exchangeCode as unknown as jest.Mock).not.toHaveBeenCalled();
     expect(repo.releaseOAuthTransaction as unknown as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('logs only a sanitized failure event when the provider returns credential-like details', async () => {
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      const repo = repository();
+      const oidc = provider(claims());
+      jest.spyOn(oidc, 'exchangeCode').mockRejectedValueOnce(
+        new Error('authorization_code=raw-code access_token=raw-access refresh_token=raw-refresh-token pkce_verifier=raw-verifier cookie=raw-cookie state=raw-state email=owner@example.com'),
+      );
+      const service = new AuthService(config, repo as never, oidc);
+
+      await expect(service.exchange('raw-code', 'raw-state')).rejects.toThrow('OAuth login failed');
+
+      const logOutput = JSON.stringify(logger.mock.calls);
+      expect(logOutput).toContain('auth.google.exchange.failed');
+      expect(logOutput).not.toContain('raw-code');
+      expect(logOutput).not.toContain('raw-access');
+      expect(logOutput).not.toContain('raw-refresh-token');
+      expect(logOutput).not.toContain('raw-verifier');
+      expect(logOutput).not.toContain('raw-cookie');
+      expect(logOutput).not.toContain('owner@example.com');
+      expect(logOutput).not.toContain('raw-state');
+    } finally {
+      logger.mockRestore();
+    }
+  });
+
+  it('does not create a session when the database rejects the OAuth consume claim', async () => {
+    const repo = repository({ markOAuthTransactionConsumed: jest.fn(async () => 0) });
+    const service = new AuthService(config, repo as never, provider(claims()));
+
+    await expect(service.exchange('code', 'state')).rejects.toThrow('OAuth login failed');
+    expect(repo.createSessionPair as unknown as jest.Mock).not.toHaveBeenCalled();
+    expect(repo.releaseOAuthTransaction as unknown as jest.Mock).toHaveBeenCalledWith('transaction-id', 1);
   });
 });

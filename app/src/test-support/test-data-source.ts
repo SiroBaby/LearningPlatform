@@ -4,6 +4,10 @@ import { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Document } from '../modules/content/entities/document.entity';
 import { OutboxEvent } from '../modules/content/entities/outbox-event.entity';
 import { AuthOutboxEvent } from '../modules/auth/entities/auth-outbox-event.entity';
+import { OAuthTransaction } from '../modules/auth/entities/oauth-transaction.entity';
+import { Session } from '../modules/auth/entities/session.entity';
+import { UserProfile } from '../modules/auth/entities/user-profile.entity';
+import { User } from '../modules/auth/entities/user.entity';
 import { ProcessingJob } from '../modules/ai/entities/processing-job.entity';
 import { AiOutboxEvent } from '../modules/ai/entities/ai-outbox-event.entity';
 import { Chunk } from '../modules/ai/entities/chunk.entity';
@@ -37,12 +41,16 @@ export async function createTestDataSource(
       Chunk,
       Document,
       GenerationCacheRecord,
+      OAuthTransaction,
       OutboxEvent,
       ProcessingJob,
       PromptVersion,
       QuestionEntity,
       QuestionOptionEntity,
       QuizEntity,
+      Session,
+      User,
+      UserProfile,
     ],
     synchronize: false,
   });

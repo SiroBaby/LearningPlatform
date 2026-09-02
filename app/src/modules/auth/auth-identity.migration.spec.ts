@@ -1,16 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 
-import { startTestDb, type TestDb } from '../../test-support/test-db';
+import { startTestDatabase, stopTestDatabase, type TestDb } from '../../test-support/test-db';
 
 describe('auth identity migration', () => {
   let db: TestDb;
 
   beforeAll(async () => {
-    db = await startTestDb();
+    db = await startTestDatabase();
   });
 
   afterAll(async () => {
-    await db?.stop();
+    await stopTestDatabase(db);
   });
 
   it('creates the auth tables and security constraints', async () => {
@@ -55,12 +55,64 @@ describe('auth identity migration', () => {
       ['google-sub-1', 'other@example.com'],
     )).rejects.toThrow();
 
+    const oauthTransaction = {
+      environment: 'test',
+      expiresAt: new Date(Date.now() + 60_000),
+      nonceHash: 'nonce-hash-1',
+      pkceVerifierCiphertext: Buffer.from('encrypted-verifier'),
+      stateHash: 'state-hash-1',
+    };
+    await db.client.query(
+      `INSERT INTO "auth"."oauth_transactions"
+        ("environment", "expires_at", "nonce_hash", "pkce_verifier_ciphertext", "state_hash")
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        oauthTransaction.environment,
+        oauthTransaction.expiresAt,
+        oauthTransaction.nonceHash,
+        oauthTransaction.pkceVerifierCiphertext,
+        oauthTransaction.stateHash,
+      ],
+    );
+    await expect(db.client.query(
+      `INSERT INTO "auth"."oauth_transactions"
+        ("environment", "expires_at", "nonce_hash", "pkce_verifier_ciphertext", "state_hash")
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        oauthTransaction.environment,
+        oauthTransaction.expiresAt,
+        'nonce-hash-2',
+        oauthTransaction.pkceVerifierCiphertext,
+        oauthTransaction.stateHash,
+      ],
+    )).rejects.toThrow();
+    for (const maxAttempts of [2, 6]) {
+      await expect(db.client.query(
+        `INSERT INTO "auth"."oauth_transactions"
+          ("environment", "expires_at", "max_attempts", "nonce_hash", "pkce_verifier_ciphertext", "state_hash")
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          oauthTransaction.environment,
+          oauthTransaction.expiresAt,
+          maxAttempts,
+          `nonce-hash-${maxAttempts}`,
+          oauthTransaction.pkceVerifierCiphertext,
+          `state-hash-${maxAttempts}`,
+        ],
+      )).rejects.toThrow();
+    }
+
     await expect(db.client.query(
       `INSERT INTO "auth"."user_profiles" ("user_id", "onboarding_completed_at", "onboarding_skipped_at") VALUES ($1, now(), now())`,
       [userId],
     )).rejects.toThrow();
 
+    await db.client.query(
+      `INSERT INTO "auth"."user_profiles" ("user_id", "display_name") VALUES ($1, $2)`,
+      [userId, 'Learner'],
+    );
     await db.client.query(`DELETE FROM "auth"."users" WHERE "id" = $1`, [userId]);
     expect((await db.client.query(`SELECT to_regclass('auth.user_profiles') AS table_name`)).rows[0].table_name).toBe('auth.user_profiles');
+    expect((await db.client.query(`SELECT count(*)::int AS count FROM "auth"."user_profiles" WHERE "user_id" = $1`, [userId])).rows[0].count).toBe(0);
   });
 });

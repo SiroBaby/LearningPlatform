@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource, IsNull } from 'typeorm';
+import { DataSource, IsNull, Not } from 'typeorm';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { BaseRepository } from '../../../database/base.repository';
@@ -14,6 +14,8 @@ import { AccountRole } from '../enums/account-role.enum';
 import { AccountStatus } from '../enums/account-status.enum';
 import { SessionTokenType } from '../enums/session-token-type.enum';
 import { hashOAuthValue } from '../oauth-crypto';
+
+const OAUTH_PROCESSING_LEASE_TIMEOUT_SECONDS = 60;
 
 interface OAuthTransactionRow {
   readonly id: string;
@@ -95,14 +97,14 @@ export class AuthRepository extends BaseRepository<User> {
          WHERE "state_hash" = $1
            AND "environment" = $2
            AND "expires_at" > now()
-           AND "processing_at" IS NULL
+           AND ("processing_at" IS NULL OR "processing_at" < now() - ($3 * interval '1 second'))
            AND "consumed_at" IS NULL
            AND "failed_at" IS NULL
            AND "attempt_count" < "max_attempts"
          RETURNING "id", "state_hash", "nonce_hash", "pkce_verifier_ciphertext", "environment",
                    "max_attempts", "attempt_count", "expires_at", "processing_at",
                    "consumed_at", "failed_at", "created_at"`,
-        [stateHash, environment],
+        [stateHash, environment, OAUTH_PROCESSING_LEASE_TIMEOUT_SECONDS],
       );
       const result = queryRows<OAuthTransactionRow>(rawResult);
       const row = result[0];
@@ -119,20 +121,21 @@ export class AuthRepository extends BaseRepository<User> {
     });
   }
 
-  async markOAuthTransactionConsumed(id: string): Promise<void> {
-    await this.dataSource.getRepository(OAuthTransaction).update(
-      { id, consumedAt: IsNull(), failedAt: IsNull() },
+  async markOAuthTransactionConsumed(id: string, attemptCount: number): Promise<number> {
+    const result = await this.dataSource.getRepository(OAuthTransaction).update(
+      { id, attemptCount, consumedAt: IsNull(), failedAt: IsNull(), processingAt: Not(IsNull()) },
       { consumedAt: new Date(), processingAt: null },
     );
+    return result.affected ?? 0;
   }
 
-  async releaseOAuthTransaction(id: string): Promise<number> {
+  async releaseOAuthTransaction(id: string, attemptCount: number): Promise<number> {
     const result = await this.dataSource.query(
       `UPDATE "auth"."oauth_transactions"
        SET "processing_at" = NULL
-       WHERE "id" = $1 AND "consumed_at" IS NULL
+       WHERE "id" = $1 AND "attempt_count" = $2 AND "consumed_at" IS NULL
        RETURNING "id"`,
-      [id],
+      [id, attemptCount],
     );
     return queryRows(result).length;
   }

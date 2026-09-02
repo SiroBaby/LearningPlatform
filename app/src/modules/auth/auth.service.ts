@@ -93,7 +93,8 @@ export class AuthService {
       );
       if (user.status && user.status !== AccountStatus.ACTIVE) throw new UnauthorizedException('OAuth login failed');
       phase = 'transaction_consume';
-      await this.repository.markOAuthTransactionConsumed(transaction.id);
+      const consumed = await this.repository.markOAuthTransactionConsumed(transaction.id, transaction.attemptCount);
+      if (consumed !== 1) throw new Error('OAuth transaction consume conflict');
       phase = 'session_create';
       const session = await this.repository.createSessionPair(user.id);
       return session;
@@ -106,7 +107,7 @@ export class AuthService {
       });
       try {
         if (transaction) {
-          const released = await this.repository.releaseOAuthTransaction(transaction.id);
+          const released = await this.repository.releaseOAuthTransaction(transaction.id, transaction.attemptCount);
           if (released !== 1) {
             this.logger.error({
               affected: released,
