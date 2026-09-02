@@ -19,4 +19,5 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Mọi server-side auth session check phải gọi `/internal/v1/auth/me` qua `requestAuthBackend` (mTLS); không gọi lại endpoint public hoặc legacy `/api/v1/auth/me`.
 - Public route dùng shared navigation phải resolve session ở Server Component và truyền boolean tường minh vào Client Component; không default sang guest trong topbar vì user đã đăng nhập sẽ nhận menu Login sai trên route như FAQ/Privacy/Pricing.
 - Auth flow có nested responsive grid phải dùng container width đủ cho các cột ở desktop; kiểm tra breakpoint rộng để tránh cột chính bị co ngoài ý muốn.
+- Runtime test khởi chạy Next/npm phải đặt process vào process group riêng và dừng toàn bộ process tree trong cleanup; không chỉ kill process wrapper để tránh orphan `next-server` làm CI treo sau khi assertion đã pass.
 <!-- END:nextjs-agent-rules -->
