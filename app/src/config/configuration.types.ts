@@ -7,10 +7,17 @@ export interface SwaggerSettings {
 export interface ApplicationSettings {
   authAdminGoogleSubs: readonly string[];
   environment: string;
+  externalApproval: ExternalApprovalSettings;
   identityMode: IdentityMode;
   internalMtls: InternalMtlsSettings;
   port: number;
   swagger: SwaggerSettings;
+}
+
+export interface ExternalApprovalSettings {
+  readonly audience: string | undefined;
+  readonly issuer: string | undefined;
+  readonly publicKey: string | undefined;
 }
 
 export type IdentityMode = 'mtls' | 'stub';
@@ -151,6 +158,11 @@ export const CONFIG_PATH = {
   app: {
     authAdminGoogleSubs: 'app.authAdminGoogleSubs',
     environment: 'app.env',
+    externalApproval: {
+      audience: 'app.externalApproval.audience',
+      issuer: 'app.externalApproval.issuer',
+      publicKey: 'app.externalApproval.publicKey',
+    },
     identityMode: 'app.identityMode',
     googleOAuth: {
       clientId: 'app.googleOAuth.clientId',

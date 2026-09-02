@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   createOAuthBrowserBinding,
+  getOAuthBrowserBindingCookieName,
   matchesOAuthBrowserBinding,
 } from "./oauth-browser-binding.ts";
 
@@ -27,21 +28,29 @@ test("accepts the binding created for the same OAuth transaction", () => {
   assert.equal(matchesOAuthBrowserBinding(binding, "state-value"), true);
 });
 
+test("uses a distinct browser cookie for each OAuth transaction", () => {
+  assert.notEqual(
+    getOAuthBrowserBindingCookieName("first-state"),
+    getOAuthBrowserBindingCookieName("second-state"),
+  );
+});
+
 test("binds the callback to the initiating browser before exchanging code", () => {
   assert.match(startSource, /createOAuthBrowserBinding\(state\)/u);
+  assert.match(startSource, /getOAuthBrowserBindingCookieName\(state\)/u);
   assert.match(startSource, /httpOnly: true/u);
   assert.match(startSource, /sameSite: "lax"/u);
-  assert.match(callbackSource, /cookies\(\)\)\.get\(OAUTH_BROWSER_BINDING_COOKIE\)/u);
+  assert.match(callbackSource, /getOAuthBrowserBindingCookieName\(state\)/u);
   assert.match(callbackSource, /if \(!matchesOAuthBrowserBinding\(browserBinding, state\)\)/u);
   assert.match(
     callbackSource,
-    /if \(!matchesOAuthBrowserBinding\(browserBinding, state\)\) \{[\s\S]*?return redirectToLogin\(\);[\s\S]*?\}\s+const response = await requestAuthBackend/u,
+    /if \(!matchesOAuthBrowserBinding\(browserBinding, state\)\) \{[\s\S]*?return redirectToLogin\(browserBindingCookieName\);[\s\S]*?\}\s+const response = await requestAuthBackend/u,
   );
 });
 
 test("clears the browser binding on callback terminal paths to prevent replay", () => {
-  assert.match(callbackSource, /function redirectToLogin\(\): Response/u);
-  assert.match(callbackSource, /redirect\.cookies\.set\(OAUTH_BROWSER_BINDING_COOKIE, "",/u);
+  assert.match(callbackSource, /function redirectToLogin\(browserBindingCookieName\?: string\): Response/u);
+  assert.match(callbackSource, /response\.cookies\.set\(browserBindingCookieName, "",/u);
   assert.match(callbackSource, /maxAge: 0/u);
   assert.match(callbackSource, /path: OAUTH_BROWSER_BINDING_PATH/u);
 });

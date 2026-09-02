@@ -131,6 +131,19 @@ export class ApplicationConfigService {
     if (identityMode === 'stub' && environment !== 'development' && environment !== 'test') {
       throw new Error('IDENTITY_MODE=stub is allowed only in development or test');
     }
+    const externalApproval = {
+      audience: this.config.get<string>(CONFIG_PATH.app.externalApproval.audience),
+      issuer: this.config.get<string>(CONFIG_PATH.app.externalApproval.issuer),
+      publicKey: this.config.get<string>(CONFIG_PATH.app.externalApproval.publicKey),
+    };
+    if (
+      environment === 'production' &&
+      (!externalApproval.audience?.trim() || !externalApproval.issuer?.trim() || !externalApproval.publicKey?.trim())
+    ) {
+      throw new Error(
+        'AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY, AUTH_EXTERNAL_APPROVAL_ISSUER, and AUTH_EXTERNAL_APPROVAL_AUDIENCE are required in production',
+      );
+    }
     const internalMtls = {
       caPath: this.config.get<string>(CONFIG_PATH.app.internalMtls.caPath),
       certPath: this.config.get<string>(CONFIG_PATH.app.internalMtls.certPath),
@@ -158,6 +171,7 @@ export class ApplicationConfigService {
     return {
       authAdminGoogleSubs: this.authAdminGoogleSubs,
       environment,
+      externalApproval,
       identityMode,
       internalMtls: { ...internalMtls, enabled: configuredPaths.length === 3 },
       port: this.required<number>(CONFIG_PATH.app.port),

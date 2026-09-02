@@ -2,13 +2,14 @@ import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it, jest } from '@jest/globals';
 
 import type { AuthUser } from './contracts/google-auth.contracts';
+import { AccountRole } from './enums/account-role.enum';
 import { SessionAuthGuard } from './session-auth.guard';
 
 const user: AuthUser = {
   displayName: 'Learner',
   email: 'learner@example.com',
   id: '00000000-0000-0000-0000-000000000001',
-  role: 'USER',
+  role: AccountRole.USER,
   status: 'ACTIVE',
 };
 

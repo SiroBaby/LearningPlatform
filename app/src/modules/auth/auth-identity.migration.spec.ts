@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { startTestDatabase, stopTestDatabase, type TestDb } from '../../test-support/test-db';
 
@@ -25,6 +27,10 @@ describe('auth identity migration', () => {
       'oauth_transactions',
       'outbox',
       'sessions',
+      'super_admin_audit_events',
+      'super_admin_external_approval_consumptions',
+      'super_admin_role_change_approvals',
+      'super_admin_role_change_requests',
       'user_profiles',
       'users',
     ]);
@@ -114,5 +120,84 @@ describe('auth identity migration', () => {
     await db.client.query(`DELETE FROM "auth"."users" WHERE "id" = $1`, [userId]);
     expect((await db.client.query(`SELECT to_regclass('auth.user_profiles') AS table_name`)).rows[0].table_name).toBe('auth.user_profiles');
     expect((await db.client.query(`SELECT count(*)::int AS count FROM "auth"."user_profiles" WHERE "user_id" = $1`, [userId])).rows[0].count).toBe(0);
+  });
+
+  it('keeps SUPER_ADMIN audit events immutable', async () => {
+    const userId = '00000000-0000-0000-0000-000000000003';
+    await db.client.query(
+      `INSERT INTO "auth"."users" ("id", "google_sub", "normalized_email") VALUES ($1, $2, $3)`,
+      [userId, 'google-sub-audit', 'audit@example.com'],
+    );
+    const event = await db.client.query<{ id: string }>(
+      `INSERT INTO "auth"."super_admin_audit_events" ("event_type", "target_user_id")
+       VALUES ('BOOTSTRAP_COMPLETED', $1) RETURNING "id"`, [userId],
+    );
+
+    await expect(db.client.query(
+      `UPDATE "auth"."super_admin_audit_events" SET "event_type" = 'TAMPERED' WHERE "id" = $1`,
+      [event.rows[0].id],
+    )).rejects.toThrow('SUPER_ADMIN audit events are immutable');
+    await expect(db.client.query(
+      `DELETE FROM "auth"."super_admin_audit_events" WHERE "id" = $1`,
+      [event.rows[0].id],
+    )).rejects.toThrow('SUPER_ADMIN audit events are immutable');
+  });
+
+  it('fails closed instead of dropping role-change or audit history during rollback', async () => {
+    const requesterId = '00000000-0000-0000-0000-000000000004';
+    const targetId = '00000000-0000-0000-0000-000000000005';
+    const approverId = '00000000-0000-0000-0000-000000000003';
+    await db.client.query(
+      `INSERT INTO "auth"."users" ("id", "google_sub", "normalized_email") VALUES
+        ($1, 'google-sub-history-requester', 'history-requester@example.com'),
+        ($2, 'google-sub-history-target', 'history-target@example.com')`,
+      [requesterId, targetId],
+    );
+    const request = await db.client.query<{ id: string }>(
+      `INSERT INTO "auth"."super_admin_role_change_requests" ("requester_id", "target_user_id", "desired_role")
+       VALUES ($1, $2, 'SUPER_ADMIN') RETURNING "id"`,
+      [requesterId, targetId],
+    );
+    await db.client.query(
+      `INSERT INTO "auth"."super_admin_role_change_approvals" ("request_id", "approver_id") VALUES ($1, $2)`,
+      [request.rows[0].id, approverId],
+    );
+
+    const downSql = readFileSync(join(__dirname, '../../database/migrations/1787803960000_add_super_admin_rbac.down.sql'), 'utf8');
+    await expect(db.client.query(downSql)).rejects.toThrow('Cannot revert SUPER_ADMIN RBAC while role-change or audit history exists');
+
+    const history = await db.client.query<{ table_name: string; row_count: string }>(`
+      SELECT table_name, row_count
+      FROM (
+        SELECT 'super_admin_role_change_requests' AS table_name, count(*)::text AS row_count
+        FROM "auth"."super_admin_role_change_requests"
+        WHERE "id" = $1
+        UNION ALL
+        SELECT 'super_admin_role_change_approvals', count(*)::text
+        FROM "auth"."super_admin_role_change_approvals"
+        WHERE "request_id" = $1 AND "approver_id" = $2
+        UNION ALL
+        SELECT 'super_admin_audit_events', count(*)::text
+        FROM "auth"."super_admin_audit_events"
+      ) AS history`,
+      [request.rows[0].id, approverId],
+    );
+    expect(history.rows).toEqual([
+      { table_name: 'super_admin_role_change_requests', row_count: '1' },
+      { table_name: 'super_admin_role_change_approvals', row_count: '1' },
+      { table_name: 'super_admin_audit_events', row_count: '1' },
+    ]);
+  });
+
+  it('fails closed instead of dropping SUPER_ADMIN data during rollback', async () => {
+    await db.client.query(
+      `INSERT INTO "auth"."users" ("google_sub", "normalized_email", "role") VALUES ($1, $2, 'SUPER_ADMIN')`,
+      ['google-sub-super-admin-down', 'super-admin-down@example.com'],
+    );
+    const downSql = readFileSync(join(__dirname, '../../database/migrations/1787803960000_add_super_admin_rbac.down.sql'), 'utf8');
+
+    await expect(db.client.query(downSql)).rejects.toThrow('Cannot revert SUPER_ADMIN RBAC while SUPER_ADMIN accounts exist');
+    expect((await db.client.query(`SELECT to_regclass('auth.super_admin_role_change_requests') AS table_name`)).rows[0].table_name)
+      .toBe('auth.super_admin_role_change_requests');
   });
 });

@@ -36,16 +36,25 @@
       - ssm_parameter_keys.google_redirect_uri is string
       - ssm_parameter_keys.auth_oauth_encryption_key is string
       - ssm_parameter_keys.auth_admin_google_subs is string
+      - ssm_parameter_keys.auth_external_approval_public_key is string
+      - ssm_parameter_keys.auth_external_approval_issuer is string
+      - ssm_parameter_keys.auth_external_approval_audience is string
       - ssm_parameter_keys.google_client_id is search('^/')
       - ssm_parameter_keys.google_client_secret is search('^/')
       - ssm_parameter_keys.google_redirect_uri is search('^/')
       - ssm_parameter_keys.auth_oauth_encryption_key is search('^/')
       - ssm_parameter_keys.auth_admin_google_subs is search('^/')
+      - ssm_parameter_keys.auth_external_approval_public_key is search('^/')
+      - ssm_parameter_keys.auth_external_approval_issuer is search('^/')
+      - ssm_parameter_keys.auth_external_approval_audience is search('^/')
       - ssm_parameter_keys.google_client_id is not search('REPLACE_WITH')
       - ssm_parameter_keys.google_client_secret is not search('REPLACE_WITH')
       - ssm_parameter_keys.google_redirect_uri is not search('REPLACE_WITH')
       - ssm_parameter_keys.auth_oauth_encryption_key is not search('REPLACE_WITH')
       - ssm_parameter_keys.auth_admin_google_subs is not search('REPLACE_WITH')
+      - ssm_parameter_keys.auth_external_approval_public_key is not search('REPLACE_WITH')
+      - ssm_parameter_keys.auth_external_approval_issuer is not search('REPLACE_WITH')
+      - ssm_parameter_keys.auth_external_approval_audience is not search('REPLACE_WITH')
     fail_msg: >-
       Application images must be lowercase ghcr.io immutable sha256 digests,
       deployment_targets must contain only web, api, and worker, and GHCR/

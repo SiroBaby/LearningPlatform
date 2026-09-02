@@ -46,6 +46,7 @@ export const routes = {
   billing: "/billing",
   upgrade: "/billing/upgrade",
   settings: "/settings",
+  accessDenied: "/access-denied",
 
   // Teacher
   teacherHome: "/teacher",
@@ -56,8 +57,7 @@ export const routes = {
 
   // Admin
   adminOverview: "/admin",
-  adminJobs: "/admin/jobs",
-  adminCost: "/admin/cost",
-  adminSupport: "/admin/support",
-  adminModeration: "/admin/moderation",
+  adminAccess: "/admin/access",
+  adminActivity: "/admin/activity",
+  adminHealth: "/admin/health",
 } as const;

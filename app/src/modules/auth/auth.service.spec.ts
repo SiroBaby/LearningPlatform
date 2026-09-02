@@ -5,6 +5,7 @@ import type { TokenPayload } from 'google-auth-library';
 import type { ApplicationConfigService } from '../../config/application-config.service';
 import type { AuthSessionPair, GoogleIdentity } from './contracts/google-auth.contracts';
 import { AuthService, classifyProviderError } from './auth.service';
+import { AccountRole } from './enums/account-role.enum';
 import type { GoogleOAuthProvider } from './google-oauth.provider';
 import { encryptPkceVerifier, hashOAuthValue } from './oauth-crypto';
 
@@ -63,7 +64,7 @@ function repository(overrides: Record<string, unknown> = {}) {
     rotateRefreshSession: jest.fn(async () => session),
     revokeSessionFamily: jest.fn(async () => undefined),
     updateProfile: jest.fn(async () => undefined),
-    getUserByAccessToken: jest.fn(async () => ({ id: 'user-id', email: 'owner@example.com', displayName: null, role: 'USER', status: 'ACTIVE' })),
+    getUserByAccessToken: jest.fn(async () => ({ id: 'user-id', email: 'owner@example.com', displayName: null, role: AccountRole.USER, status: 'ACTIVE' })),
     upsertUser: jest.fn(async (_identity: GoogleIdentity) => ({ id: 'user-id' })),
     ...overrides,
   };

@@ -4,7 +4,7 @@ import { requestAuthBackend } from "@/lib/auth/backend-client";
 import { getWebPublicUrl } from "@/lib/auth/public-origin";
 import {
   createOAuthBrowserBinding,
-  OAUTH_BROWSER_BINDING_COOKIE,
+  getOAuthBrowserBindingCookieName,
   OAUTH_BROWSER_BINDING_PATH,
   OAUTH_BROWSER_BINDING_TTL_SECONDS,
 } from "@/lib/auth/oauth-browser-binding";
@@ -13,14 +13,6 @@ const isProduction = process.env.NODE_ENV === "production";
 
 function redirectToLogin(): Response {
   const response = NextResponse.redirect(getWebPublicUrl("/login?error=login_failed"));
-  response.cookies.set(OAUTH_BROWSER_BINDING_COOKIE, "", {
-    expires: new Date(0),
-    httpOnly: true,
-    maxAge: 0,
-    sameSite: "lax",
-    secure: isProduction,
-    path: OAUTH_BROWSER_BINDING_PATH,
-  });
   return response;
 }
 
@@ -49,7 +41,7 @@ export async function GET(request: Request): Promise<Response> {
   if (!state) return redirectToLogin();
 
   const redirect = NextResponse.redirect(body.authorizationUrl);
-  redirect.cookies.set(OAUTH_BROWSER_BINDING_COOKIE, createOAuthBrowserBinding(state), {
+  redirect.cookies.set(getOAuthBrowserBindingCookieName(state), createOAuthBrowserBinding(state), {
     httpOnly: true,
     maxAge: OAUTH_BROWSER_BINDING_TTL_SECONDS,
     sameSite: "lax",

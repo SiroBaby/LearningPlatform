@@ -1,12 +1,17 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 export const OAUTH_BROWSER_BINDING_COOKIE = "lp_oauth_browser_binding";
+export const OAUTH_BROWSER_BINDING_COOKIE_PREFIX = `${OAUTH_BROWSER_BINDING_COOKIE}_`;
 export const OAUTH_BROWSER_BINDING_PATH = "/auth/google";
 export const OAUTH_BROWSER_BINDING_TTL_SECONDS = 10 * 60;
 
 /** Store a one-way transaction handle so the callback must return to the browser that started OAuth. */
 export function createOAuthBrowserBinding(state: string): string {
   return createHash("sha256").update(state, "utf8").digest("base64url");
+}
+
+export function getOAuthBrowserBindingCookieName(state: string): string {
+  return `${OAUTH_BROWSER_BINDING_COOKIE_PREFIX}${createOAuthBrowserBinding(state)}`;
 }
 
 export function matchesOAuthBrowserBinding(binding: string | undefined, state: string): boolean {

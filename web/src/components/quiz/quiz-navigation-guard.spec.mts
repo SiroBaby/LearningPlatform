@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+// The native Node test runner loads this source TypeScript file directly.
+// @ts-expect-error TS5097: this test intentionally imports a .ts module.
 import { confirmQuizNavigation } from "./quiz-navigation-guard.ts";
 
 describe("confirmQuizNavigation", () => {
