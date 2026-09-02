@@ -76,7 +76,7 @@ describe('Document HTTP flow', () => {
 
   beforeEach(async () => {
     await db.client.query(
-      'TRUNCATE "auth"."sessions", "auth"."user_profiles", "auth"."users", "quiz"."options", "quiz"."questions", "quiz"."quizzes", "ai"."generation_cache", "ai"."prompt_versions", "course"."documents", "course"."outbox", "ai"."outbox", "ai"."processing_jobs", "ai"."chunks" CASCADE',
+      'TRUNCATE "auth"."outbox", "auth"."sessions", "auth"."user_profiles", "auth"."users", "quiz"."options", "quiz"."questions", "quiz"."quizzes", "ai"."generation_cache", "ai"."prompt_versions", "course"."documents", "course"."outbox", "ai"."outbox", "ai"."processing_jobs", "ai"."chunks" CASCADE',
     );
     await dataSource.getRepository(User).insert([
       {
@@ -230,6 +230,63 @@ describe('Document HTTP flow', () => {
       id: upload.documentId,
     });
     expect(document.ownerId).toBe(ownerId);
+  });
+
+  it('rejects deleted-user access and presigned URL creation while retaining the product row', async () => {
+    const created = await request('/api/v1/documents/upload-url', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        originalName: 'retained-after-delete.pdf',
+        modelSelectionKind: 'PLAN',
+        platformModelId: 'platform-default',
+        sizeBytes: 22,
+        type: 'PDF',
+      }),
+    });
+    expect(created.status).toBe(201);
+    const upload = await created.json() as { readonly documentId: string };
+
+    await authRepository.updateAccountStatus(ownerId, AccountStatus.DELETED, 'ACCOUNT_DELETED');
+
+    const list = await request('/api/v1/documents', { headers: authHeaders() });
+    expect(list.status).toBe(401);
+    const presign = await request('/api/v1/documents/upload-url', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        originalName: 'should-not-be-issued.pdf',
+        modelSelectionKind: 'PLAN',
+        platformModelId: 'platform-default',
+        sizeBytes: 22,
+        type: 'PDF',
+      }),
+    });
+    expect(presign.status).toBe(401);
+
+    const retained = await dataSource.getRepository(Document).findOneByOrFail({ id: upload.documentId });
+    expect(retained.ownerId).toBe(ownerId);
+    const otherOwnerView = await request(`/api/v1/documents/${upload.documentId}`, {
+      headers: authHeaders(otherOwnerId),
+    });
+    expect(otherOwnerView.status).toBe(404);
+  });
+
+  it('rejects presigned URL creation for a suspended user', async () => {
+    await authRepository.updateAccountStatus(ownerId, AccountStatus.SUSPENDED, 'ACCOUNT_SUSPENDED');
+
+    const presign = await request('/api/v1/documents/upload-url', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        originalName: 'should-not-be-issued.pdf',
+        modelSelectionKind: 'PLAN',
+        platformModelId: 'platform-default',
+        sizeBytes: 22,
+        type: 'PDF',
+      }),
+    });
+    expect(presign.status).toBe(401);
   });
 
   function authHeaders(id: string = ownerId): HeadersInit {
