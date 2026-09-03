@@ -27,6 +27,12 @@ export class User {
   @AutoMap()
   role!: AccountRole;
 
+  @Column({ name: 'super_admin_expires_at', type: 'timestamptz', nullable: true })
+  superAdminExpiresAt!: Date | null;
+
+  @Column({ name: 'super_admin_role_epoch', type: 'bigint', default: 0 })
+  superAdminRoleEpoch!: string;
+
   @Column({ type: 'varchar', length: 16, default: AccountStatus.ACTIVE })
   @AutoMap()
   status!: AccountStatus;

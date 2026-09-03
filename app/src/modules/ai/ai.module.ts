@@ -44,6 +44,8 @@ import { InternalLeaseGuard } from './internal-lease.guard';
 import { LEASE_AUTHORITY } from './contracts/lease-authority.contract';
 import { LeaseAuthorityService } from './lease-authority.service';
 import { AuthModule } from '../auth/auth.module';
+import { AI_OPERATIONAL_SNAPSHOT } from './contracts/ai-operational-snapshot.port';
+import { AiOperationalSnapshotRepository } from './repositories/ai-operational-snapshot.repository';
 
 @Module({
   imports: [AssessmentModule, forwardRef(() => ContentModule), AuthModule],
@@ -75,6 +77,7 @@ import { AuthModule } from '../auth/auth.module';
       },
     },
     ProcessingJobRepository,
+    AiOperationalSnapshotRepository,
     { provide: AI_INGESTION, useExisting: AiIngestionService },
     { provide: ACCOUNT_ACCESS_REVOCATION, useExisting: ProcessingJobRepository },
     { provide: PDF_JS_MODULE, useFactory: loadPdfJsModule },
@@ -94,12 +97,13 @@ import { AuthModule } from '../auth/auth.module';
     { provide: PROCESSING_JOB_BUDGET, useExisting: ProcessingJobRepository },
     { provide: WORKER_EGRESS_VALIDATOR, useExisting: UnpinnedClientDnsEgressValidator },
     { provide: PROVIDER_USAGE, useExisting: ProviderUsageRepository },
+    { provide: AI_OPERATIONAL_SNAPSHOT, useExisting: AiOperationalSnapshotRepository },
     JobPoller,
     StuckJobDetector,
     InternalLeaseGuard,
     LeaseAuthorityService,
     { provide: LEASE_AUTHORITY, useExisting: LeaseAuthorityService },
   ],
-  exports: [ACCOUNT_ACCESS_REVOCATION, AI_INGESTION, AiOutboxRepository, JobPoller, MODEL_CATALOG, ProcessingJobRepository, StuckJobDetector],
+  exports: [ACCOUNT_ACCESS_REVOCATION, AI_INGESTION, AI_OPERATIONAL_SNAPSHOT, AiOutboxRepository, JobPoller, MODEL_CATALOG, ProcessingJobRepository, StuckJobDetector],
 })
 export class AiModule {}

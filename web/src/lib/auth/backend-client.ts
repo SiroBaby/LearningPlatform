@@ -19,6 +19,8 @@ const SESSION_INVALID_ERROR = {
   code: "SESSION_INVALID",
   message: "Phiên đăng nhập không còn hiệu lực",
 } as const;
+const AUTH_BACKEND_REQUEST_TIMEOUT_MS = 10_000;
+const RESPONSE_STATUSES_WITHOUT_BODY = new Set([204, 205, 304]);
 
 function getAuthBackendUrl(): string {
   const value = process.env.AUTH_INTERNAL_API_BASE_URL;
@@ -58,25 +60,45 @@ function getRequestOptions(url: URL, request: AuthBackendRequest): RequestOption
 
 function requestWithClient(url: URL, request: AuthBackendRequest): Promise<Response> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    function settle(callback: () => void): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    }
     const client = url.protocol === "https:" ? httpsRequest : httpRequest;
     const requestHandle: ClientRequest = client(getRequestOptions(url, request), (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
       response.on("end", () => {
-        const headers = new Headers();
-        Object.entries(response.headers).forEach(([name, value]) => {
-          if (typeof value === "string") headers.set(name, value);
-          else if (Array.isArray(value)) headers.set(name, value.join(", "));
-        });
-        resolve(new Response(Buffer.concat(chunks), {
-          headers,
-          status: response.statusCode ?? 502,
-          statusText: response.statusMessage,
-        }));
+        try {
+          const headers = new Headers();
+          Object.entries(response.headers).forEach(([name, value]) => {
+            if (typeof value === "string") headers.set(name, value);
+            else if (Array.isArray(value)) headers.set(name, value.join(", "));
+          });
+          const status = response.statusCode ?? 502;
+          const body = RESPONSE_STATUSES_WITHOUT_BODY.has(status) ? null : Buffer.concat(chunks);
+          const result = new Response(body, { headers, status, statusText: response.statusMessage });
+          settle(() => resolve(result));
+        } catch (error: unknown) {
+          settle(() => reject(error));
+        }
       });
+      response.once("error", (error) => settle(() => reject(error)));
     });
-    requestHandle.setTimeout(10_000, () => requestHandle.destroy(new Error("Auth backend request timed out")));
-    requestHandle.once("error", reject);
+    const timeout = setTimeout(() => {
+      const error = new Error("Auth backend request timed out");
+      settle(() => reject(error));
+      requestHandle.destroy(error);
+    }, AUTH_BACKEND_REQUEST_TIMEOUT_MS);
+    requestHandle.setTimeout(AUTH_BACKEND_REQUEST_TIMEOUT_MS, () => {
+      const error = new Error("Auth backend request timed out");
+      settle(() => reject(error));
+      requestHandle.destroy(error);
+    });
+    requestHandle.once("error", (error) => settle(() => reject(error)));
     if (request.body !== undefined) requestHandle.write(JSON.stringify(request.body));
     requestHandle.end();
   });

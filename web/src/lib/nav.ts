@@ -1,4 +1,5 @@
 import {
+  Activity,
   BarChart3,
   BookOpen,
   Bot,
@@ -8,9 +9,9 @@ import {
   GraduationCap,
   Home,
   Library,
+  ListChecks,
   MessageSquare,
   Settings,
-  Shield,
   Upload,
   Users,
 } from "lucide-react";
@@ -53,11 +54,10 @@ export const teacherNav: NavItem[] = [
 ];
 
 export const adminNav: NavItem[] = [
-  { href: routes.adminOverview, label: "Overview", icon: Gauge },
-  { href: routes.adminJobs, label: "Jobs", icon: FileStack },
-  { href: routes.adminCost, label: "AI Cost", icon: BarChart3 },
-  { href: routes.adminModeration, label: "Moderation", icon: Shield },
-  { href: routes.adminSupport, label: "Support", icon: MessageSquare },
+  { href: routes.adminOverview, label: "Tổng quan", icon: Gauge },
+  { href: routes.adminAccess, label: "Người dùng & quyền", icon: Users },
+  { href: routes.adminActivity, label: "Hoạt động", icon: ListChecks },
+  { href: routes.adminHealth, label: "Tình trạng hệ thống", icon: Activity },
 ];
 
 export const publicNav = [

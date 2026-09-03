@@ -135,6 +135,9 @@
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'GOOGLE_REDIRECT_URI') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_OAUTH_ENCRYPTION_KEY') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_ADMIN_GOOGLE_SUBS') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
+          - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
+          - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_EXTERNAL_APPROVAL_ISSUER') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
+          - applications_rendered_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'AUTH_EXTERNAL_APPROVAL_AUDIENCE') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_rendered_web_deployments[0].spec.template.spec.serviceAccountName == 'web-bff'
           - "applications_rendered_web_deployments[0].spec.template.spec.securityContext == {'runAsNonRoot': true, 'runAsUser': 1000, 'runAsGroup': 1000, 'fsGroup': 1000}"
           - applications_rendered_web_deployments[0].spec.template.spec.containers[0].volumeMounts | selectattr('name', 'equalto', 'web-bff-tls') | selectattr('readOnly', 'equalto', true) | list | length == 1

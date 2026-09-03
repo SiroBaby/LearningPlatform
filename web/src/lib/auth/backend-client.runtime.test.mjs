@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+const { getOAuthBrowserBindingCookieName } = await import("./oauth-browser-binding.ts");
+
 const WEB_ROOT = join(new URL("../../../../", import.meta.url).pathname, "web");
 const TEST_TIMEOUT_MS = 60_000;
 
@@ -42,6 +44,10 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
   try {
     await waitForWeb(next, `${webOrigin}/auth/me`);
 
+    const guestAdmin = await fetch(`${webOrigin}/admin`, { redirect: "manual" });
+    assert.equal(guestAdmin.status, 307);
+    assert.equal(guestAdmin.headers.get("location"), "/login");
+
     const missingSession = await fetch(`${webOrigin}/auth/me`);
     assert.equal(missingSession.status, 401);
     assert.equal(backendRequests.length, 0);
@@ -49,7 +55,7 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
     const state = "runtime-state";
     const binding = createHash("sha256").update(state, "utf8").digest("base64url");
     const callback = await fetch(`${webOrigin}/auth/google/callback?code=runtime-code&state=${state}`, {
-      headers: { cookie: `lp_oauth_browser_binding=${binding}` },
+      headers: { cookie: `${getOAuthBrowserBindingCookieName(state)}=${binding}` },
       redirect: "manual",
     });
     assert.equal(callback.status, 307);
@@ -100,6 +106,17 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
     assert.equal(lastRequest(backendRequests, "/internal/v1/auth/logout").authorization, "Bearer access-refresh");
     assert.match(setCookieHeader(logout), /lp_access=/u);
 
+    const bootstrap = await fetch(`${webOrigin}/api/admin/super-admin/bootstrap`, {
+      headers: {
+        cookie: "lp_access=access-refresh",
+        origin: webOrigin,
+        "sec-fetch-site": "same-origin",
+      },
+      method: "POST",
+    });
+    assert.equal(bootstrap.status, 204);
+    assert.equal(lastRequest(backendRequests, "/api/v1/admin/super-admin/bootstrap").method, "POST");
+
     const scopeDenied = await requestBackend(backendPort, pki, "/internal/v1/auth/admin", "Bearer access-refresh");
     assert.equal(scopeDenied.status, 403);
     const wrongService = await requestBackend(
@@ -133,6 +150,7 @@ function createBackendServer(pki, requests) {
     };
     requests.push(record);
     const allowedRoutes = new Set([
+      "/api/v1/admin/super-admin/bootstrap",
       "/internal/v1/auth/google/exchange",
       "/internal/v1/auth/google/start",
       "/internal/v1/auth/logout",
@@ -160,6 +178,10 @@ function createBackendServer(pki, requests) {
         refreshExpiresAt: "2026-01-31T00:00:00.000Z",
         refreshToken: "refresh-callback",
       });
+    }
+    if (request.url === "/api/v1/admin/super-admin/bootstrap") {
+      response.writeHead(204);
+      return response.end();
     }
     if (request.url === "/internal/v1/auth/me") return sendJson(response, 200, { onboardingCompletedAt: "2026-01-01T00:00:00.000Z" });
     if (request.url === "/internal/v1/auth/refresh") {

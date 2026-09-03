@@ -7,6 +7,7 @@ docs/agents/
 data/
 key/
 web/MODIFIED_FILES.txt
+.codebase-memory/
 
 # Local deployment inventory and non-runtime host configuration
 infra/ansible/inventory/hosts.yml

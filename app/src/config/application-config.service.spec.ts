@@ -131,6 +131,32 @@ describe('ApplicationConfigService', () => {
     );
   });
 
+  it('requires external approval verification settings in production', () => {
+    const missing = new ApplicationConfigService(new ConfigService({
+      app: { env: 'production', port: 3000, swagger: { enabled: false } },
+    }));
+    const configured = new ApplicationConfigService(new ConfigService({
+      app: {
+        env: 'production',
+        externalApproval: {
+          audience: 'learning-platform-operations',
+          issuer: 'learning-platform-security',
+          publicKey: '-----BEGIN PUBLIC KEY-----\npublic-key\n-----END PUBLIC KEY-----',
+        },
+        port: 3000,
+        swagger: { enabled: false },
+      },
+    }));
+
+    expect(() => missing.application).toThrow(
+      'AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY, AUTH_EXTERNAL_APPROVAL_ISSUER, and AUTH_EXTERNAL_APPROVAL_AUDIENCE are required in production',
+    );
+    expect(configured.application.externalApproval).toMatchObject({
+      audience: 'learning-platform-operations',
+      issuer: 'learning-platform-security',
+    });
+  });
+
   it('defaults to mTLS and rejects an unknown identity mode', () => {
     const defaultMode = new ApplicationConfigService(new ConfigService({
       app: { env: 'development', port: 3000, swagger: { enabled: false } },

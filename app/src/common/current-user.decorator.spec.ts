@@ -4,12 +4,13 @@ import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 
 import { CurrentUser } from './current-user.decorator';
 import { AUTH_USER_REQUEST_KEY } from '../modules/auth/session-auth.guard';
+import { AccountRole } from '../modules/auth/enums/account-role.enum';
 
 const authenticatedUser = {
   displayName: 'Learner',
   email: 'learner@example.com',
   id: '11111111-1111-4111-8111-111111111111',
-  role: 'USER',
+  role: AccountRole.USER,
   status: 'ACTIVE',
 } as const;
 

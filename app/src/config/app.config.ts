@@ -11,6 +11,11 @@ export default registerAs('app', () => ({
     encryptionKey: process.env.AUTH_OAUTH_ENCRYPTION_KEY,
   },
   authAdminGoogleSubs: process.env.AUTH_ADMIN_GOOGLE_SUBS,
+  externalApproval: {
+    audience: process.env.AUTH_EXTERNAL_APPROVAL_AUDIENCE,
+    issuer: process.env.AUTH_EXTERNAL_APPROVAL_ISSUER,
+    publicKey: process.env.AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY,
+  },
   internalMtls: {
     caPath: process.env.INTERNAL_MTLS_CA_PATH,
     certPath: process.env.INTERNAL_MTLS_CERT_PATH,

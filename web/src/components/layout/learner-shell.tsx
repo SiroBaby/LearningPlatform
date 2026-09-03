@@ -10,14 +10,30 @@ import { routes } from "@/lib/routes";
 import { cn } from "@/lib/cn";
 import { Badge } from "@/components/ui";
 
-function NavLink({ href, label, icon: Icon }: { href: string; label: string; icon: React.ComponentType<{ className?: string }> }) {
-  const pathname = usePathname();
-  const active = pathname === href || (href !== routes.home && pathname.startsWith(href));
+function isLearnerRouteActive(pathname: string, href: string) {
+  return pathname === href || (href !== routes.home && pathname.startsWith(`${href}/`));
+}
+
+function NavLink({
+  href,
+  label,
+  icon: Icon,
+  activePathname,
+  onNavigate,
+}: {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  activePathname: string;
+  onNavigate: (href: string) => void;
+}) {
+  const active = isLearnerRouteActive(activePathname, href);
   return (
     <Link
       href={href}
+      onNavigate={() => onNavigate(href)}
       className={cn(
-        "group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium transition-colors",
+        "group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600",
         active ? "bg-brand-600 text-white shadow-[0_8px_18px_rgba(216,79,56,0.2)]" : "text-ink-600 hover:bg-brand-50 hover:text-brand-800",
       )}
       aria-current={active ? "page" : undefined}
@@ -51,12 +67,49 @@ export function LearnerShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const [pendingNavigation, setPendingNavigation] = useState<{ from: string; to: string } | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const mobileMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
+  const navigationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPhase0Route = isPhase0LearnerRoute(pathname);
   const showDemoLabel = !isPhase0Route;
-  const isPersonalRoute = learnerSecondaryNav.some(({ href }) => pathname === href || pathname.startsWith(`${href}/`));
+  const pendingPathname = pendingNavigation?.from === pathname ? pendingNavigation.to : null;
+  const activePathname = pendingPathname ?? pathname;
+  const isPersonalRoute = learnerSecondaryNav.some(({ href }) => isLearnerRouteActive(activePathname, href));
+  const isNavigationPending = pendingPathname !== null;
+
+  function handleNavigate(href: string) {
+    if (navigationTimeoutRef.current) {
+      clearTimeout(navigationTimeoutRef.current);
+      navigationTimeoutRef.current = null;
+    }
+
+    if (href === pathname) {
+      setPendingNavigation(null);
+      return;
+    }
+
+    setPendingNavigation({ from: pathname, to: href });
+    // A failed or interrupted transition must not leave the previous screen marked as pending forever.
+    navigationTimeoutRef.current = setTimeout(() => {
+      setPendingNavigation((current) => {
+        if (current?.from === pathname && current.to === href) {
+          return null;
+        }
+        return current;
+      });
+      navigationTimeoutRef.current = null;
+    }, 10000);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (navigationTimeoutRef.current) {
+        clearTimeout(navigationTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isMobileMenuOpen) return;
@@ -125,7 +178,12 @@ export function LearnerShell({
 
           <nav aria-label="Điều hướng học tập" className="space-y-1">
             {learnerPrimaryNav.map((item) => (
-              <NavLink key={item.href} {...item} />
+              <NavLink
+                key={item.href}
+                {...item}
+                activePathname={activePathname}
+                onNavigate={handleNavigate}
+              />
             ))}
           </nav>
 
@@ -135,7 +193,12 @@ export function LearnerShell({
             </p>
             <div className="space-y-1">
               {learnerSecondaryNav.map((item) => (
-                <NavLink key={item.href} {...item} />
+                <NavLink
+                  key={item.href}
+                  {...item}
+                  activePathname={activePathname}
+                  onNavigate={handleNavigate}
+                />
               ))}
             </div>
           </div>
@@ -156,6 +219,16 @@ export function LearnerShell({
         </aside>
 
         <div className="min-w-0 flex-1">
+          {isNavigationPending ? (
+            <div
+              className="pointer-events-none fixed inset-x-0 top-0 z-[60] h-1 bg-brand-100/80"
+              role="status"
+              aria-live="polite"
+              aria-label="Đang mở trang"
+            >
+              <div className="h-full w-1/3 animate-pulse bg-brand-500" />
+            </div>
+          ) : null}
           <header className="mb-6 rounded-[2rem] border border-ink-200 bg-[#fffdf9]/90 px-4 py-4 shadow-[0_18px_50px_rgba(64,55,47,0.07)] sm:px-7 sm:py-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -223,11 +296,12 @@ export function LearnerShell({
               <Link
                 key={href}
                 href={href}
-                aria-current={pathname === href ? "page" : undefined}
+                onNavigate={() => handleNavigate(href)}
+                aria-current={isLearnerRouteActive(activePathname, href) ? "page" : undefined}
                 onClick={() => setIsMobileMenuOpen(false)}
                 className={cn(
                   "flex min-h-11 items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600",
-                  pathname === href ? "bg-brand-50 text-brand-700" : "text-ink-700 hover:bg-ink-100",
+                  isLearnerRouteActive(activePathname, href) ? "bg-brand-50 text-brand-700" : "text-ink-700 hover:bg-ink-100",
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -241,11 +315,12 @@ export function LearnerShell({
       <nav aria-hidden={isMobileMenuOpen} className="fixed inset-x-0 bottom-0 z-40 border-t border-ink-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-2 py-2">
           {learnerBottomNav.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href || (href !== routes.home && pathname.startsWith(href));
+            const active = isLearnerRouteActive(activePathname, href);
             return (
               <Link
                 key={href}
                 href={href}
+                onNavigate={() => handleNavigate(href)}
                 tabIndex={isMobileMenuOpen ? -1 : undefined}
                 aria-current={active ? "page" : undefined}
                 className={cn(

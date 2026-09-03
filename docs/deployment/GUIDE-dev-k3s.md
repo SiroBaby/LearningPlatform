@@ -7,7 +7,7 @@ Mục đích của tài liệu này là giúp owner và operator chuẩn bị đ
 | Hạng mục | Trạng thái cần đạt |
 | --- | --- |
 | Aiven | Đã có `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, file CA, IP VPS đã được allowlist |
-| AWS SSM | Đã tạo đủ exact path cho application runtime và Grafana admin |
+| AWS SSM | Đã tạo đủ exact path cho application runtime, ba tham số external approval verification và Grafana admin |
 | IAM | Đã có IAM bootstrap chỉ đọc đúng parameter ARN cần thiết, không wildcard |
 | VPS | Đã có host Debian hoặc Ubuntu, user deploy riêng, SSH key, passwordless sudo, firewall và fingerprint `known_hosts` đã kiểm tra |
 | K3s bootstrap Secrets | Đã chuẩn bị 2 Secret cho `learning-platform-dev`; workflow tự tạo/upsert Secret AWS riêng cho `observability` |
@@ -48,9 +48,68 @@ Mục đích của tài liệu này là giúp owner và operator chuẩn bị đ
 | Object storage | `/learning-platform/dev/object-storage-endpoint`, `/learning-platform/dev/object-storage-port`, `/learning-platform/dev/object-storage-region`, `/learning-platform/dev/object-storage-use-ssl`, `/learning-platform/dev/object-storage-access-key`, `/learning-platform/dev/object-storage-secret-key`, `/learning-platform/dev/object-storage-bucket` |
 | AI | `/learning-platform/dev/ai-credential-encryption-key`, `/learning-platform/dev/openai-base-url`, `/learning-platform/dev/openai-api-key`, `/learning-platform/dev/openai-model` |
 | Swagger | `/learning-platform/dev/swagger-username`, `/learning-platform/dev/swagger-password` |
+| External approval verification | `/learning-platform/dev/auth-external-approval-public-key`, `/learning-platform/dev/auth-external-approval-issuer`, `/learning-platform/dev/auth-external-approval-audience` |
 | Grafana admin | `/learning-platform/dev/grafana-admin-user`, `/learning-platform/dev/grafana-admin-password` |
 
-### 3.2. Nơi nào giữ gì
+### 3.2. Ba SSM parameter cho external approval verification
+
+Ba parameter dưới đây là prerequisite bắt buộc trước rollout K3s dev. Deployment manifest đặt `NODE_ENV=production`, nên API fail-closed khi thiếu hoặc để trống bất kỳ giá trị nào. Local development/test chạy với `NODE_ENV=development` không cần ba parameter này.
+
+| AWS SSM path | Biến môi trường API | Mục đích | Định dạng và nguồn giá trị |
+| --- | --- | --- | --- |
+| `/learning-platform/dev/auth-external-approval-public-key` | `AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY` | Xác minh chữ ký của compact JWS external approval bằng `RS256`. | Một public key RSA dạng PEM `SubjectPublicKeyInfo` (SPKI), gồm đúng một khối `BEGIN PUBLIC KEY`/`END PUBLIC KEY`, do đầu mối quản lý external approval cung cấp và tương ứng với private signing key của bên ký. |
+| `/learning-platform/dev/auth-external-approval-issuer` | `AUTH_EXTERNAL_APPROVAL_ISSUER` | Ràng buộc claim `iss` để token chỉ được chấp nhận từ đúng bên phát hành. | Chuỗi không rỗng, lấy từ contract của bên phát hành và phải khớp chính xác claim `iss` trong token. |
+| `/learning-platform/dev/auth-external-approval-audience` | `AUTH_EXTERNAL_APPROVAL_AUDIENCE` | Ràng buộc claim `aud` để token chỉ dành cho đúng hệ thống đích. | Chuỗi không rỗng, lấy từ contract của bên phát hành và phải khớp chính xác claim `aud` trong token. |
+
+Tạo cả ba parameter trong AWS Systems Manager Parameter Store của môi trường `dev`, tại region `ap-southeast-1` theo `infra/ansible/vars/dev.yml`. Có thể dùng loại `SecureString` để giảm khả năng lộ giá trị trong thao tác vận hành. External Secrets Operator (ESO) đọc đúng exact path và đồng bộ vào Secret `learning-platform-api-runtime`; không tạo hoặc sửa Secret Kubernetes này bằng tay.
+
+Ví dụ AWS CLI dưới đây chỉ đọc giá trị từ các file cục bộ được kiểm soát. Thay các đường dẫn file bằng file input thật của operator; không dán secret hoặc token trực tiếp vào command line, shell history, repository hay log:
+
+```bash
+public_key_file="/path/to/external-approval-public-key.pem"
+issuer_file="/path/to/external-approval-issuer.txt"
+audience_file="/path/to/external-approval-audience.txt"
+
+aws ssm put-parameter \
+  --region ap-southeast-1 \
+  --name "/learning-platform/dev/auth-external-approval-public-key" \
+  --type SecureString \
+  --value "$(cat "$public_key_file")" \
+  --overwrite
+
+aws ssm put-parameter \
+  --region ap-southeast-1 \
+  --name "/learning-platform/dev/auth-external-approval-issuer" \
+  --type SecureString \
+  --value "$(cat "$issuer_file")" \
+  --overwrite
+
+aws ssm put-parameter \
+  --region ap-southeast-1 \
+  --name "/learning-platform/dev/auth-external-approval-audience" \
+  --type SecureString \
+  --value "$(cat "$audience_file")" \
+  --overwrite
+```
+
+Kiểm tra metadata mà không đọc giá trị parameter:
+
+```bash
+aws ssm get-parameters \
+  --region ap-southeast-1 \
+  --names \
+    "/learning-platform/dev/auth-external-approval-public-key" \
+    "/learning-platform/dev/auth-external-approval-issuer" \
+    "/learning-platform/dev/auth-external-approval-audience" \
+  --query 'Parameters[].{Name:Name,Type:Type,Version:Version}' \
+  --output table
+```
+
+Private signing key chỉ được giữ tại hệ thống/đầu mối phát hành external approval. Private key không được đưa vào API, SSM, Kubernetes Secret, inventory, GitHub Environment, image hoặc log. API chỉ nhận public key để kiểm tra chữ ký; private key cũng không cần để xử lý normal login.
+
+`AUTH_ADMIN_GOOGLE_SUBS` là cấu hình riêng và không phải prerequisite cho normal login hoặc cho ba parameter external approval. Nếu cần bootstrap `ADMIN` lần đầu, parameter tương ứng `/learning-platform/dev/auth-admin-google-subs` có thể chứa allowlist (danh sách cho phép) `sub` Google, phân tách bằng dấu phẩy; nếu không thực hiện bootstrap này thì để trống theo contract hiện hành.
+
+### 3.3. Nơi nào giữ gì
 
 | Nơi lưu | Được chứa gì | Không được chứa gì |
 | --- | --- | --- |

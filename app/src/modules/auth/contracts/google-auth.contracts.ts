@@ -1,3 +1,5 @@
+import type { AccountRole } from '../enums/account-role.enum';
+
 export interface GoogleIdentity {
   readonly email: string;
   readonly emailVerified: true;
@@ -17,7 +19,7 @@ export interface AuthUser {
   readonly id: string;
   readonly email: string;
   readonly displayName: string | null;
-  readonly role: string;
+  readonly role: AccountRole;
   readonly status: string;
   readonly learningGoal?: string | null;
   readonly preferredLanguage?: string | null;

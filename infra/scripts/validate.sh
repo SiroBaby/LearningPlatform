@@ -376,6 +376,9 @@ check_application_edge_contract() {
     '^  google_redirect_uri: /REPLACE/WITH/EXACT/google-redirect-uri$' \
     '^  auth_oauth_encryption_key: /REPLACE/WITH/EXACT/auth-oauth-encryption-key$' \
     '^  auth_admin_google_subs: /REPLACE/WITH/EXACT/auth-admin-google-subs$' \
+    '^  auth_external_approval_public_key: /REPLACE/WITH/EXACT/auth-external-approval-public-key$' \
+    '^  auth_external_approval_issuer: /REPLACE/WITH/EXACT/auth-external-approval-issuer$' \
+    '^  auth_external_approval_audience: /REPLACE/WITH/EXACT/auth-external-approval-audience$' \
     '^  swagger_username: /REPLACE/WITH/EXACT/swagger-username$' \
     '^  swagger_password: /REPLACE/WITH/EXACT/swagger-password$' \
     '^ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET$' \
@@ -394,7 +397,13 @@ check_application_edge_contract() {
     || [ "$(grep -c "'GOOGLE_REDIRECT_URI': ssm_parameter_keys.google_redirect_uri" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c "'AUTH_OAUTH_ENCRYPTION_KEY': ssm_parameter_keys.auth_oauth_encryption_key" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c "'AUTH_ADMIN_GOOGLE_SUBS': ssm_parameter_keys.auth_admin_google_subs" "${eso_template}")" -ne 1 ] \
+    || [ "$(grep -c "'AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY': ssm_parameter_keys.auth_external_approval_public_key" "${eso_template}")" -ne 1 ] \
+    || [ "$(grep -c "'AUTH_EXTERNAL_APPROVAL_ISSUER': ssm_parameter_keys.auth_external_approval_issuer" "${eso_template}")" -ne 1 ] \
+    || [ "$(grep -c "'AUTH_EXTERNAL_APPROVAL_AUDIENCE': ssm_parameter_keys.auth_external_approval_audience" "${eso_template}")" -ne 1 ] \
     || ! grep -Eq '^AUTH_ADMIN_GOOGLE_SUBS=' "${app_env_example}" \
+    || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY=' "${app_env_example}" \
+    || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_ISSUER=' "${app_env_example}" \
+    || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_AUDIENCE=' "${app_env_example}" \
     || [ "$(grep -c 'imagePullSecrets:' "${app_template}")" -ne 3 ] \
     || ! grep -q 'kind: Ingress' "${app_template}" \
     || ! grep -q 'ingressClassName: traefik' "${app_template}" \
@@ -419,7 +428,7 @@ check_application_edge_contract() {
     fail 'Go worker must source its shared PostgreSQL configuration from the backend runtime Secret.'
   fi
 
-  for api_oauth_env in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REDIRECT_URI AUTH_OAUTH_ENCRYPTION_KEY AUTH_ADMIN_GOOGLE_SUBS; do
+  for api_oauth_env in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REDIRECT_URI AUTH_OAUTH_ENCRYPTION_KEY AUTH_ADMIN_GOOGLE_SUBS AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY AUTH_EXTERNAL_APPROVAL_ISSUER AUTH_EXTERNAL_APPROVAL_AUDIENCE; do
     if ! grep -Fq "'${api_oauth_env}'" "${app_template}" \
       || ! grep -Fq '                  name: learning-platform-api-runtime' "${app_template}"; then
       fail "API must source ${api_oauth_env} from the shared runtime Secret."

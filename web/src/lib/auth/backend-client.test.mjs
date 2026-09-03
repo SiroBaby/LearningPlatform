@@ -25,3 +25,18 @@ test("routes protected Phase 0 requests through the versioned internal API", () 
   assert.match(phase0Source, /path: `\$\{API_PREFIX\}\$\{request\.path\}`/u);
   assert.doesNotMatch(phase0Source, new RegExp(`${legacyOwnerHeader}|${legacyOwnerEnvironment}`, "u"));
 });
+
+test("bounds the complete internal backend request, including a stalled response", () => {
+  assert.match(source, /AUTH_BACKEND_REQUEST_TIMEOUT_MS/u);
+  assert.match(source, /setTimeout\(\(\) => \{/u);
+  assert.match(source, /requestHandle\.destroy\(error\)/u);
+  assert.match(source, /response\.once\("error"/u);
+  assert.match(source, /clearTimeout\(timeout\)/u);
+});
+
+test("preserves empty successful responses such as the bootstrap 204 contract", () => {
+  assert.match(source, /RESPONSE_STATUSES_WITHOUT_BODY/u);
+  assert.match(source, /RESPONSE_STATUSES_WITHOUT_BODY\.has\(status\) \? null/u);
+  assert.match(source, /new Response\(body, \{ headers, status, statusText: response\.statusMessage \}\)/u);
+  assert.match(source, /catch \(error: unknown\)/u);
+});
