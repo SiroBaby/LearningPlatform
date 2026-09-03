@@ -1,8 +1,9 @@
 import type { RefObject } from "react";
 import { CircleAlert, Loader2, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, LinkButton, StatusPill, TypeBadge } from "@/components/ui";
-import type { Phase0Document } from "@/lib/phase0/contracts";
+import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
+import { routes } from "@/lib/routes";
 import {
   formatBytes,
   formatDateTime,
@@ -94,6 +95,10 @@ interface ProcessingStatusPanelProps {
   readonly retryError: string | null;
   readonly retryButtonRef: RefObject<HTMLButtonElement | null>;
   readonly onRetryConfirm: () => void;
+  readonly quizDiscovery: Phase0DocumentQuizResponse | null;
+  readonly isQuizLoading: boolean;
+  readonly quizError: string | null;
+  readonly onRetryQuiz: () => void;
 }
 
 export function ProcessingStatusPanel({
@@ -103,6 +108,10 @@ export function ProcessingStatusPanel({
   retryError,
   retryButtonRef,
   onRetryConfirm,
+  quizDiscovery,
+  isQuizLoading,
+  quizError,
+  onRetryQuiz,
 }: ProcessingStatusPanelProps) {
   const failurePresentation = document?.status === "FAILED"
     ? getDocumentFailurePresentation(document.errorCode)
@@ -146,6 +155,18 @@ export function ProcessingStatusPanel({
               <p className="font-semibold">{failurePresentation.title}</p>
               <p className="mt-1">{failurePresentation.description}</p>
             </div>
+            {!failurePresentation.retryable ? (
+              <p className="leading-6 text-error-800">
+                Nếu lỗi vẫn tiếp diễn, hãy liên hệ hỗ trợ tại{" "}
+                <a
+                  href="mailto:ngocphat076@gmail.com"
+                  className="font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+                >
+                  ngocphat076@gmail.com
+                </a>
+                . Khi gửi yêu cầu, chỉ cần nêu tên tài liệu và thời điểm gặp lỗi; không gửi mật khẩu, token hoặc mã xác thực.
+              </p>
+            ) : null}
             {canRetryFailure ? (
               <Button
                 ref={retryButtonRef}
@@ -174,6 +195,36 @@ export function ProcessingStatusPanel({
         <div className="rounded-2xl border border-warning-100 bg-warning-50/60 p-4 text-sm leading-6 text-warning-800">
           {getBudgetMessage(document)}
         </div>
+
+        {document?.status === "READY" ? (
+          <div className="space-y-3 rounded-2xl border border-success-100 bg-success-50/70 p-4">
+            <div>
+              <p className="font-semibold text-success-900">Tài liệu đã sẵn sàng</p>
+              <p className="mt-1 text-sm leading-6 text-success-800">
+                Bạn có thể mở quiz ngay khi bộ câu hỏi đã sẵn sàng.
+              </p>
+            </div>
+            {isQuizLoading ? (
+              <div className="flex items-center gap-2 text-sm text-success-800" role="status" aria-live="polite">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Đang kiểm tra quiz…
+              </div>
+            ) : null}
+            {quizDiscovery ? (
+              <LinkButton href={routes.quizStart(quizDiscovery.quizId)}>
+                Mở quiz
+              </LinkButton>
+            ) : null}
+            {!isQuizLoading && quizError ? (
+              <div className="space-y-3 text-sm text-success-900" role="alert">
+                <p>{quizError}</p>
+                <Button type="button" variant="outline" onClick={onRetryQuiz}>
+                  Cập nhật lại
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </CardBody>
     </Card>
   );

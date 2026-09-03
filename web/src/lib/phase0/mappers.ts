@@ -1,6 +1,7 @@
 import type {
   Phase0AttemptResultItem,
   Phase0AttemptResultResponse,
+  Phase0AttemptHistoryItem,
   Phase0BudgetStatus,
   Phase0CitationLocator,
   Phase0ConfirmDocumentResponse,
@@ -281,6 +282,17 @@ function mapAttemptResultItem(value: unknown): Phase0AttemptResultItem {
   };
 }
 
+function mapAttemptHistoryItem(value: unknown): Phase0AttemptHistoryItem {
+  const source = readObject(value);
+  return {
+    attemptId: readString(source.attemptId, "attempt.attemptId"),
+    quizId: readString(source.quizId, "attempt.quizId"),
+    submittedAt: readString(source.submittedAt, "attempt.submittedAt"),
+    score: readNumber(source.score, "attempt.score"),
+    questionCount: readNumber(source.questionCount, "attempt.questionCount"),
+  };
+}
+
 export function mapDocumentsResponse(value: unknown): readonly Phase0Document[] {
   return readArray(value, "documents").map(mapDocument);
 }
@@ -381,4 +393,8 @@ export function mapAttemptResultResponse(value: unknown): Phase0AttemptResultRes
     questionCount: readNumber(source.questionCount, "questionCount"),
     results: readArray(source.results, "results").map(mapAttemptResultItem),
   };
+}
+
+export function mapAttemptHistoryResponse(value: unknown): readonly Phase0AttemptHistoryItem[] {
+  return readArray(value, "attempts").map(mapAttemptHistoryItem);
 }

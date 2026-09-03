@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { BookOpen } from "lucide-react";
+import { Card, CardBody, LinkButton } from "@/components/ui";
 import { useToast } from "@/components/ui/toast";
 import { clearQuizDraft } from "@/components/quiz/quiz-session";
-import { Phase0ClientError, submitPhase0QuizAttempt } from "@/lib/phase0/client";
+import { submitPhase0QuizAttempt } from "@/lib/phase0/client";
 import type { Phase0QuizResponse } from "@/lib/phase0/contracts";
+import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
 import type { QuizMode } from "@/lib/types";
 import { QuizLeaveDialog, QuizPaletteCard, QuizQuestionCard } from "./quiz-play-panels";
@@ -46,6 +49,7 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
   const { answers, currentIndex, elapsedSec, flaggedQuestionIds } = draftState;
 
   const currentQuestion = quiz.questions[currentIndex];
+  const currentAnswer = currentQuestion ? answers[currentQuestion.id] : null;
   const flaggedSet = useMemo(() => new Set(flaggedQuestionIds), [flaggedQuestionIds]);
   const answeredCount = useMemo(
     () => quiz.questions.filter((question) => typeof answers[question.id] === "string").length,
@@ -168,9 +172,10 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
       confirmLeaveNavigation({ persistDraft: false });
       window.location.assign(routes.quizResult(quiz.id, response.attemptId));
     } catch (error) {
-      const message = error instanceof Phase0ClientError
-        ? error.message
-        : "Chưa thể nộp bài lúc này. Phần làm dở của bạn vẫn được giữ lại để thử lại.";
+      const message = getPhase0UiErrorMessage(
+        error,
+        "Chưa thể nộp bài lúc này. Phần làm dở của bạn vẫn được giữ lại để thử lại.",
+      );
       setSubmitError(message);
       notify(message, "error");
       setIsSubmitting(false);
@@ -181,10 +186,22 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
   }
 
   if (!currentQuestion) {
-    return null;
+    return (
+      <Card>
+        <CardBody className="space-y-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-warning-50 text-warning-700">
+            <BookOpen className="h-6 w-6" aria-hidden />
+          </div>
+          <h2 className="text-xl font-semibold text-ink-900">Quiz chưa có câu hỏi</h2>
+          <p className="text-sm leading-6 text-ink-600">
+            Bộ câu hỏi chưa sẵn sàng để làm. Bạn hãy quay lại trang quiz sau ít phút.
+          </p>
+          <LinkButton href={routes.quizStart(quiz.id)} variant="outline">Về trang quiz</LinkButton>
+        </CardBody>
+      </Card>
+    );
   }
 
-  const currentAnswer = answers[currentQuestion.id];
   const currentQuestionTone = flaggedSet.has(currentQuestion.id)
     ? "warning"
     : currentAnswer

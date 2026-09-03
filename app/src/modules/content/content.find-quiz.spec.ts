@@ -219,6 +219,10 @@ class RecordingQuizDiscovery implements QuizDiscovery {
 
   constructor(private readonly quiz: QuizDiscoverySummary | null) {}
 
+  async findAllByOwnerId(): Promise<readonly QuizDiscoverySummary[]> {
+    return [];
+  }
+
   async findByOwnerAndDocumentId(
     ownerId: string,
     documentId: string,

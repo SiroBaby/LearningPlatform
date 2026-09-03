@@ -69,3 +69,24 @@ export class AttemptResultResponseDto {
   @AutoMap(() => [AttemptResultQuestionResponseDto])
   readonly results: AttemptResultQuestionResponseDto[];
 }
+
+export class AttemptHistoryResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  @AutoMap()
+  readonly attemptId: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @AutoMap()
+  readonly quizId: string;
+
+  @ApiProperty({ format: 'date-time', example: '2026-07-16T00:00:00.000Z' })
+  readonly submittedAt: string;
+
+  @ApiProperty({ example: 1 })
+  @AutoMap()
+  readonly score: number;
+
+  @ApiProperty({ example: 2 })
+  @AutoMap()
+  readonly questionCount: number;
+}

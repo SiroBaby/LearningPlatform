@@ -18,6 +18,7 @@ import {
   pdfJsWithText,
   TestStorageServer,
 } from '../support/document-flow-test-doubles';
+import { clearDocumentFlowData } from '../support/test-database-cleanup';
 
 describe('Document HTTP flow', () => {
   let db: TestDb;
@@ -75,9 +76,7 @@ describe('Document HTTP flow', () => {
   });
 
   beforeEach(async () => {
-    await db.client.query(
-      'TRUNCATE "auth"."outbox", "auth"."sessions", "auth"."user_profiles", "auth"."users", "quiz"."options", "quiz"."questions", "quiz"."quizzes", "ai"."generation_cache", "ai"."prompt_versions", "course"."documents", "course"."outbox", "ai"."outbox", "ai"."processing_jobs", "ai"."chunks" CASCADE',
-    );
+    await clearDocumentFlowData(db.client);
     await dataSource.getRepository(User).insert([
       {
         id: ownerId,

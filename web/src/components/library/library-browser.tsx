@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { FileQuestion, FileText, Filter, Grid2x2, LayoutList, Search, Sparkles, Upload } from "lucide-react";
-import { Badge, EmptyState, LinkButton, SectionHeading, StatusPill, TypeBadge } from "@/components/ui";
+import { FileQuestion, FileText, Filter, Grid2x2, LayoutList, RefreshCcw, Search, Sparkles, Upload } from "lucide-react";
+import { Badge, Button, EmptyState, LinkButton, SectionHeading, StatusPill, TypeBadge } from "@/components/ui";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
-import { Phase0ClientError, getPhase0Documents } from "@/lib/phase0/client";
+import { getPhase0Documents } from "@/lib/phase0/client";
 import type {
   Phase0Document,
   Phase0DocumentProcessingFailureCode,
@@ -15,8 +15,8 @@ import type {
   Phase0DocumentType,
 } from "@/lib/phase0/contracts";
 import { getDocumentFailurePresentation } from "@/lib/phase0/document-failure";
+import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
-import { useEffect, useState } from "react";
 
 type LibraryView = "grid" | "list";
 type SortKey = "recent" | "name" | "status" | "updated";
@@ -178,27 +178,16 @@ function filterDocuments(
   });
 }
 
-function getClientErrorMessage(error: unknown): string {
-  if (error instanceof Phase0ClientError) {
-    return error.message;
-  }
-
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-
-  return "Chưa thể tải thư viện lúc này.";
-}
-
 function usePhase0Documents() {
   const [documents, setDocuments] = useState<readonly Phase0DocumentPresentation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function load(): Promise<void> {
+    async function loadDocuments(): Promise<void> {
       setIsLoading(true);
       setError(null);
 
@@ -212,7 +201,7 @@ function usePhase0Documents() {
         if (cancelled) {
           return;
         }
-        setError(getClientErrorMessage(loadError));
+        setError(getPhase0UiErrorMessage(loadError, "Chưa thể tải thư viện lúc này."));
       } finally {
         if (!cancelled) {
           setIsLoading(false);
@@ -220,14 +209,13 @@ function usePhase0Documents() {
       }
     }
 
-    void load();
-
+    void loadDocuments();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
-  return { documents, isLoading, error };
+  return { documents, isLoading, error, retry: () => setReloadKey((currentKey) => currentKey + 1) };
 }
 
 function LibraryDocumentCard({
@@ -323,7 +311,7 @@ function LibraryDocumentCard({
 export function LibraryBrowser() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { documents, isLoading, error } = usePhase0Documents();
+  const { documents, isLoading, error, retry } = usePhase0Documents();
 
   const searchTerm = searchParams.get("q") ?? "";
   const typeFilter = normalizeTypeFilter(searchParams.get("type"));
@@ -393,7 +381,7 @@ export function LibraryBrowser() {
                   value={searchTerm}
                   onChange={(event) => updateSearchParams({ q: event.target.value || null }, "replace")}
                   placeholder="Tìm theo tên file hoặc ngôn ngữ"
-                  className="h-11 w-full rounded-xl border border-ink-200 bg-white pl-10 pr-3 text-sm text-ink-900 placeholder:text-ink-400"
+                  className="h-11 w-full rounded-xl border border-ink-200 bg-white pl-10 pr-3 text-sm text-ink-900 placeholder:text-ink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
                 />
               </div>
             </label>
@@ -403,7 +391,7 @@ export function LibraryBrowser() {
               <select
                 value={typeFilter}
                 onChange={(event) => updateSearchParams({ type: event.target.value }, "push")}
-                className="h-11 w-full rounded-xl border border-ink-200 bg-white px-3 text-sm text-ink-900"
+                className="h-11 w-full rounded-xl border border-ink-200 bg-white px-3 text-sm text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
               >
                 <option value="all">Mọi loại</option>
                 <option value="PDF">PDF</option>
@@ -416,7 +404,7 @@ export function LibraryBrowser() {
               <select
                 value={statusFilter}
                 onChange={(event) => updateSearchParams({ status: event.target.value }, "push")}
-                className="h-11 w-full rounded-xl border border-ink-200 bg-white px-3 text-sm text-ink-900"
+                className="h-11 w-full rounded-xl border border-ink-200 bg-white px-3 text-sm text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
               >
                 <option value="all">Mọi trạng thái</option>
                 <option value="READY">Sẵn sàng</option>
@@ -431,7 +419,7 @@ export function LibraryBrowser() {
               <select
                 value={sortKey}
                 onChange={(event) => updateSearchParams({ sort: event.target.value }, "push")}
-                className="h-11 w-full rounded-xl border border-ink-200 bg-white px-3 text-sm text-ink-900"
+                className="h-11 w-full rounded-xl border border-ink-200 bg-white px-3 text-sm text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
               >
                 {SORT_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -443,7 +431,7 @@ export function LibraryBrowser() {
           </div>
 
           <div className="flex flex-col gap-4 rounded-2xl border border-ink-100 bg-ink-50 p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap items-center gap-3 text-sm text-ink-600">
+            <div className="flex flex-wrap items-center gap-3 text-sm text-ink-600" aria-live="polite">
               <Badge tone="brand">{filteredDocuments.length} tài liệu</Badge>
               <span className="inline-flex items-center gap-2">
                 <Filter className="h-4 w-4" aria-hidden />
@@ -453,7 +441,7 @@ export function LibraryBrowser() {
                 <button
                   type="button"
                   onClick={clearFilters}
-                  className="text-sm font-medium text-brand-700 hover:text-brand-800"
+                  className="rounded-md text-sm font-medium text-brand-700 hover:text-brand-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
                 >
                   Xóa bộ lọc
                 </button>
@@ -466,7 +454,7 @@ export function LibraryBrowser() {
                 onClick={() => updateSearchParams({ view: "grid" }, "push")}
                 aria-pressed={view === "grid"}
                 className={cn(
-                  "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium",
+                  "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2",
                   view === "grid" ? "bg-brand-50 text-brand-700" : "text-ink-600",
                 )}
               >
@@ -478,7 +466,7 @@ export function LibraryBrowser() {
                 onClick={() => updateSearchParams({ view: "list" }, "push")}
                 aria-pressed={view === "list"}
                 className={cn(
-                  "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium",
+                  "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2",
                   view === "list" ? "bg-brand-50 text-brand-700" : "text-ink-600",
                 )}
               >
@@ -491,8 +479,14 @@ export function LibraryBrowser() {
       </Card>
 
       {error ? (
-        <Card className="border-error-100 bg-error-50/70">
-          <CardBody className="text-sm text-error-700">{error}</CardBody>
+        <Card className="border-error-100 bg-error-50/70" role="alert">
+          <CardBody className="flex flex-col gap-3 text-sm text-error-700 sm:flex-row sm:items-center sm:justify-between">
+            <p>{error}</p>
+            <Button type="button" variant="outline" onClick={() => void retry()} disabled={isLoading}>
+              <RefreshCcw className={cn("h-4 w-4", isLoading && "animate-spin")} aria-hidden />
+              {isLoading ? "Đang thử lại…" : "Thử lại"}
+            </Button>
+          </CardBody>
         </Card>
       ) : null}
 

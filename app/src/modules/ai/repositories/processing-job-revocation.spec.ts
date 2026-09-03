@@ -7,6 +7,7 @@ import { createTestDataSource } from '../../../test-support/test-data-source';
 import { startTestDb, type TestDb } from '../../../test-support/test-db';
 import { JobStatus } from '../enums/job-status.enum';
 import { JobType } from '../enums/job-type.enum';
+import { AiOutboxEvent } from '../entities/ai-outbox-event.entity';
 import { ProcessingJob } from '../entities/processing-job.entity';
 import { ProcessingJobRepository } from './processing-job.repository';
 
@@ -14,6 +15,7 @@ describe('ProcessingJobRepository account access revocation', () => {
   let db: TestDb;
   let dataSource: DataSource;
   let jobs: Repository<ProcessingJob>;
+  let outbox: Repository<AiOutboxEvent>;
   let repository: ProcessingJobRepository;
 
   beforeAll(async () => {
@@ -27,6 +29,7 @@ describe('ProcessingJobRepository account access revocation', () => {
   beforeEach(async () => {
     dataSource = await createTestDataSource(db.container);
     jobs = dataSource.getRepository(ProcessingJob);
+    outbox = dataSource.getRepository(AiOutboxEvent);
     repository = new ProcessingJobRepository(dataSource);
     await db.client.query('TRUNCATE "ai"."account_access_revocations", "ai"."processing_jobs" CASCADE');
   });
@@ -136,6 +139,27 @@ describe('ProcessingJobRepository account access revocation', () => {
       attempts: 0,
       status: JobStatus.PENDING,
     });
+  });
+
+  it('includes the terminal attempt and lease fence in the result event', async () => {
+    const ownerId = randomUUID();
+    const leaseId = randomUUID();
+    const job = await jobs.save({
+      attempts: 2,
+      correlationId: randomUUID(),
+      documentId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      jobType: JobType.FULL_PIPELINE,
+      leaseId,
+      leaseUntil: new Date(Date.now() + 60_000),
+      ownerId,
+      status: JobStatus.RUNNING,
+    });
+
+    await expect(repository.complete({ id: job.id, attempts: 2, leaseId })).resolves.toBe(true);
+
+    const event = await outbox.findOneByOrFail({ aggregateId: job.id });
+    expect(event.payload).toMatchObject({ attempt: 2, leaseId });
   });
 
   async function createJob(ownerId: string, status: JobStatus): Promise<ProcessingJob> {

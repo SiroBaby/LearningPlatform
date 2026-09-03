@@ -25,12 +25,18 @@ import { CurrentUser } from '../../common/current-user.decorator';
 import { MAPPER } from '../../common/mapping/mapper.provider';
 import {
   GradedAttemptResult,
+  AttemptHistoryResult,
   PersistedAttemptResult,
   PracticeFeedbackResult,
+  QuizSummaryResult,
   ServedQuizResult,
 } from './contracts/quiz-attempt.result';
 import { GradedAttemptResponseDto } from './dto/graded-attempt.response.dto';
-import { AttemptResultResponseDto } from './dto/attempt-result.response.dto';
+import {
+  AttemptHistoryResponseDto,
+  AttemptResultResponseDto,
+} from './dto/attempt-result.response.dto';
+import { QuizSummaryResponseDto } from './dto/quiz-summary.response.dto';
 import { QuizResponseDto } from './dto/quiz.response.dto';
 import { PracticeFeedbackRequestDto } from './dto/practice-feedback.request.dto';
 import { PracticeFeedbackResponseDto } from './dto/practice-feedback.response.dto';
@@ -47,6 +53,14 @@ export class AssessmentController {
     private readonly assessment: AssessmentService,
     @Inject(MAPPER) private readonly mapper: Mapper,
   ) {}
+
+  @Get()
+  @ApiOperation({ summary: 'List Quiz summaries owned by the current Owner.' })
+  @ApiOkResponse({ type: QuizSummaryResponseDto, isArray: true })
+  async listQuizzes(@CurrentUser() ownerId: string): Promise<QuizSummaryResponseDto[]> {
+    const results = await this.assessment.getQuizzes(ownerId);
+    return this.mapper.mapArray(results, QuizSummaryResult, QuizSummaryResponseDto);
+  }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get an owned Quiz without revealing correct answers.' })
@@ -89,6 +103,18 @@ export class AssessmentController {
   ): Promise<AttemptResultResponseDto> {
     const result = await this.assessment.getAttemptResult(ownerId, quizId, attemptId);
     return this.mapper.map(result, PersistedAttemptResult, AttemptResultResponseDto);
+  }
+
+  @Get(':id/attempts')
+  @ApiOperation({ summary: 'List graded Attempt history for an owned Quiz.' })
+  @ApiNotFoundResponse({ description: 'Quiz does not belong to the current Owner.' })
+  @ApiOkResponse({ type: AttemptHistoryResponseDto, isArray: true })
+  async listAttemptHistory(
+    @CurrentUser() ownerId: string,
+    @Param('id', new ParseUUIDPipe()) quizId: string,
+  ): Promise<AttemptHistoryResponseDto[]> {
+    const results = await this.assessment.getAttemptHistory(ownerId, quizId);
+    return this.mapper.mapArray(results, AttemptHistoryResult, AttemptHistoryResponseDto);
   }
 
   @Post(':id/attempts')

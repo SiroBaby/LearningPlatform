@@ -1,21 +1,26 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import { LearnerShell } from "@/components/layout";
-import { Badge, Card, CardBody, CardHeader, CardTitle, ProgressBar } from "@/components/ui";
+import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, LinkButton, ProgressBar } from "@/components/ui";
 import { formatVietnameseDateTime } from "@/lib/date-time";
 import type { Phase0CitationLocator } from "@/lib/phase0/contracts";
-import { getPhase0AttemptResultServer, Phase0ServerError } from "@/lib/phase0/server-data";
+import { getPhase0AttemptResultServer } from "@/lib/phase0/server-data";
+import {
+  isQuizAttemptNotAvailableError,
+  QUIZ_ATTEMPT_NOT_AVAILABLE_DESCRIPTION,
+  QUIZ_ATTEMPT_NOT_AVAILABLE_TITLE,
+} from "@/lib/phase0/quiz-result-errors";
+import { routes } from "@/lib/routes";
 
 interface QuizResultPageProps {
   params: Promise<{ id: string; attemptId: string }>;
 }
 
-async function loadAttemptResultOr404(quizId: string, attemptId: string) {
+async function loadAttemptResultOrSafeError(quizId: string, attemptId: string) {
   try {
     return await getPhase0AttemptResultServer(quizId, attemptId);
   } catch (error) {
-    if (error instanceof Phase0ServerError && error.status === 404) {
-      notFound();
+    if (isQuizAttemptNotAvailableError(error)) {
+      return null;
     }
     throw error;
   }
@@ -45,7 +50,26 @@ export function generateMetadata(): Metadata {
 
 export default async function QuizResultPage({ params }: QuizResultPageProps) {
   const { id, attemptId } = await params;
-  const attempt = await loadAttemptResultOr404(id, attemptId);
+  const attempt = await loadAttemptResultOrSafeError(id, attemptId);
+  if (attempt === null) {
+    return (
+      <LearnerShell
+        title="Kết quả quiz"
+        subtitle="Xem điểm số, câu nào đúng sai và đọc lại giải thích bất cứ lúc nào."
+      >
+        <Card>
+          <CardBody>
+            <EmptyState
+              title={QUIZ_ATTEMPT_NOT_AVAILABLE_TITLE}
+              description={QUIZ_ATTEMPT_NOT_AVAILABLE_DESCRIPTION}
+              action={<LinkButton href={routes.quizStart(id)} variant="outline">Về lịch sử làm bài</LinkButton>}
+              secondaryAction={<LinkButton href={routes.library} variant="ghost">Về thư viện</LinkButton>}
+            />
+          </CardBody>
+        </Card>
+      </LearnerShell>
+    );
+  }
   const scorePct = toPercent(attempt.score, attempt.questionCount);
   const correctCount = attempt.results.filter((item) => item.isCorrect).length;
   const resultTone = scorePct >= 70 ? "success" : "warning";
@@ -99,6 +123,7 @@ export default async function QuizResultPage({ params }: QuizResultPageProps) {
                 <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3">Bạn có thể xem lại từng câu ngay bên dưới.</div>
                 <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3">Hãy ghi chú lại những câu bạn còn nhầm để ôn lại sau.</div>
                 <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3">Khi sẵn sàng, bạn có thể quay lại thư viện để mở tài liệu hoặc làm quiz khác.</div>
+                <LinkButton href={routes.quizStart(id)} variant="outline">Xem lịch sử làm bài</LinkButton>
               </CardBody>
             </Card>
           </CardBody>
@@ -109,6 +134,13 @@ export default async function QuizResultPage({ params }: QuizResultPageProps) {
             <CardTitle>Xem lại từng câu</CardTitle>
           </CardHeader>
           <CardBody className="space-y-4">
+            {attempt.results.length === 0 ? (
+              <EmptyState
+                title="Chưa có chi tiết câu trả lời"
+                description="Kết quả này chưa có dữ liệu từng câu. Bạn có thể quay lại lịch sử để chọn một lần làm bài khác."
+                action={<LinkButton href={routes.quizStart(id)} variant="outline">Về lịch sử làm bài</LinkButton>}
+              />
+            ) : null}
             {attempt.results.map((item, index) => (
               <div key={item.questionId} className="rounded-2xl border border-ink-100 bg-white p-4">
                 <div className="flex flex-wrap items-center gap-2">

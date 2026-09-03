@@ -2,6 +2,7 @@ package processing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -91,6 +92,7 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		if countRows(t, ctx, database.admin, "SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1", second.ID) != 1 {
 			t.Fatal("current attempt must emit exactly one result outbox event")
 		}
+		assertOutboxFence(t, ctx, database.admin, *second)
 	})
 
 	t.Run("retries technical failures then atomically moves the job to the DLQ", func(t *testing.T) {
@@ -120,6 +122,7 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		if countRows(t, ctx, database.admin, "SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1", job.ID) != 1 {
 			t.Fatal("exhausted technical retry must emit one failed result event")
 		}
+		assertOutboxFence(t, ctx, database.admin, *job)
 		var status string
 		if err := database.admin.QueryRow(ctx, "SELECT status FROM ai.processing_jobs WHERE id=$1", job.ID).Scan(&status); err != nil {
 			t.Fatalf("read terminal job: %v", err)
@@ -174,6 +177,7 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		if countRows(t, ctx, database.admin, "SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1", job.ID) != 1 {
 			t.Fatal("successful transaction must emit one result outbox event")
 		}
+		assertOutboxFence(t, ctx, database.admin, *job)
 	})
 }
 
@@ -255,6 +259,27 @@ func assertFailure(t *testing.T, err error, code FailureCode, technical bool) {
 	var failure Failure
 	if !errors.As(err, &failure) || failure.Code != code || failure.Technical != technical {
 		t.Fatalf("error = %#v, want failure (%s, technical=%t)", err, code, technical)
+	}
+}
+
+func assertOutboxFence(t *testing.T, ctx context.Context, database *pgxpool.Pool, job Job) {
+	t.Helper()
+	var payload struct {
+		Attempt *int    `json:"attempt"`
+		LeaseID *string `json:"leaseId"`
+	}
+	var encoded []byte
+	if err := database.QueryRow(ctx, `SELECT payload FROM ai.outbox WHERE aggregate_id=$1 AND event_type='DocumentProcessingResult' ORDER BY id DESC LIMIT 1`, job.ID).Scan(&encoded); err != nil {
+		t.Fatalf("read result outbox payload: %v", err)
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("decode result outbox payload: %v", err)
+	}
+	if payload.Attempt == nil || *payload.Attempt != job.Attempt {
+		t.Fatalf("result outbox attempt = %v, want %d", payload.Attempt, job.Attempt)
+	}
+	if payload.LeaseID == nil || *payload.LeaseID != job.LeaseID {
+		t.Fatalf("result outbox leaseId = %v, want claimed lease", payload.LeaseID)
 	}
 }
 

@@ -48,6 +48,7 @@ describe('AssessmentModule', () => {
       .useValue(dataSourceMock)
       .overrideProvider(QuizRepository)
       .useValue({
+        findAllByOwnerId: async () => [],
         findForGradingByOwnerId: async () => null,
         findServedByOwnerId: async () => null,
         persist: async () => ({
@@ -59,7 +60,7 @@ describe('AssessmentModule', () => {
         persistAttempt: async () => false,
       })
       .overrideProvider(AttemptResultRepository)
-      .useValue({ findByOwnerQuizAndAttemptId: async () => null })
+      .useValue({ findAllByOwnerAndQuizId: async () => [], findByOwnerQuizAndAttemptId: async () => null })
       .overrideProvider(AuthRepository)
       .useValue({})
       .overrideProvider(AuthOutboxRepository)

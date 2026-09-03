@@ -17,11 +17,17 @@ import {
   type AttemptResultReader,
 } from './contracts/attempt-result-reader.port';
 import {
+  QUIZ_DISCOVERY,
+  type QuizDiscovery,
+} from './contracts/quiz-discovery.port';
+import {
+  AttemptHistoryResult,
   GradedAttemptResult,
   GradedQuestionResult,
   PersistedAttemptQuestionResult,
   PersistedAttemptResult,
   PracticeFeedbackResult,
+  QuizSummaryResult,
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
@@ -35,7 +41,29 @@ export class AssessmentService {
     private readonly store: QuizAttemptStore,
     @Inject(ATTEMPT_RESULT_READER)
     private readonly attempts: AttemptResultReader,
+    @Inject(QUIZ_DISCOVERY)
+    private readonly quizzes: QuizDiscovery,
   ) {}
+
+  async getQuizzes(ownerId: string): Promise<QuizSummaryResult[]> {
+    const quizzes = await this.quizzes.findAllByOwnerId(ownerId);
+    return quizzes.map((quiz) => Object.assign(new QuizSummaryResult(), quiz));
+  }
+
+  async getAttemptHistory(ownerId: string, quizId: string): Promise<AttemptHistoryResult[]> {
+    const quiz = await this.store.findServedByOwnerId(ownerId, quizId);
+    if (!quiz) {
+      throw new NotFoundException(`Quiz ${quizId} not found`);
+    }
+    const attempts = await this.attempts.findAllByOwnerAndQuizId(ownerId, quizId);
+    return attempts.map((attempt) => Object.assign(new AttemptHistoryResult(), {
+      id: attempt.id,
+      questionCount: attempt.questionCount,
+      quizId: attempt.quizId,
+      score: attempt.score,
+      submittedAt: attempt.submittedAt,
+    }));
+  }
 
   async getQuiz(ownerId: string, quizId: string): Promise<ServedQuizResult> {
     const quiz = await this.store.findServedByOwnerId(ownerId, quizId);
