@@ -70,6 +70,7 @@ main() {
   grep -Eq 'kube-prometheus-stack-87\.21\.0|loki-18\.7\.0|alloy-1\.11\.0' "$SAMPLER" || fail 'release identity pins missing'
   grep -Eq 'get secret grafana-admin -o json \| python3' "$SAMPLER" && ! grep -Eq 'curl .* -u |GRAFANA_CURL_CONFIG|Authorization.*Basic.*\$' "$SAMPLER" || fail 'Grafana credentials must remain in the in-memory helper'
   grep -Eq 'start=\$emitted_at_ns.*end=\$now_ns' "$SAMPLER" || fail 'Loki query must use bounded nanosecond timestamps'
+  grep -Eq '"Host":"grafana\.sirobabycloud\.io\.vn".*"X-Forwarded-Proto":"https"' "$SAMPLER" || fail 'Grafana API checks must use the canonical HTTPS host contract through port-forward'
   grep -Eq 'observabilityPodsReady.*pvcUsage' "$SAMPLER" || fail 'each snapshot must record readiness and PVC usage'
   grep -Fq '"transport":"remote-script-executed"' "$SAMPLER" || fail 'production remote evidence must identify completed transport'
   positive="$(run_fixture positive env)"
@@ -107,7 +108,7 @@ def grafana_contract(datasources, health, dashboards):
         'Loki': ('loki', 'http://learning-platform-loki.observability.svc.cluster.local:3100'),
     }
     indexed = {item['name']: item for item in datasources}
-    return len(indexed) == 2 and all(name in indexed and (indexed[name]['type'], indexed[name]['url']) == contract and health[indexed[name]['uid']] == 'OK' for name, contract in expected.items()) and dashboards == {
+    return len(indexed) >= len(expected) and len(indexed) == len(datasources) and all(name in indexed and (indexed[name]['type'], indexed[name]['url']) == contract and health[indexed[name]['uid']] == 'OK' for name, contract in expected.items()) and dashboards == {
         'Kubernetes / Compute Resources / Cluster', 'Kubernetes / Compute Resources / Node (Pods)',
         'Kubernetes / Compute Resources / Namespace (Pods)', 'Node Exporter / Nodes'}
 
@@ -123,8 +124,10 @@ marker = '00000000-0000-4000-8000-000000000001'; start = 1_000_000_000_000
 assert loki_latency({'data': {'result': [{'values': [[str(start + 120_000_000_000), marker]]}]}}, start, start + 120_000_000_000, marker) == 120
 assert loki_latency({'data': {'result': [{'values': [[str(start - 1), marker]]}]}}, start, start + 120_000_000_000, marker) == 121
 sources = [{'name': 'Prometheus', 'type': 'prometheus', 'url': 'http://prometheus-operated.observability.svc.cluster.local:9090', 'uid': 'prometheus'}, {'name': 'Loki', 'type': 'loki', 'url': 'http://learning-platform-loki.observability.svc.cluster.local:3100', 'uid': 'loki'}]
+sources_with_chart_alertmanager = [*sources, {'name': 'Alertmanager', 'type': 'alertmanager', 'url': 'http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093', 'uid': 'alertmanager'}]
 dashboards = {'Kubernetes / Compute Resources / Cluster', 'Kubernetes / Compute Resources / Node (Pods)', 'Kubernetes / Compute Resources / Namespace (Pods)', 'Node Exporter / Nodes'}
 assert grafana_contract(sources, {'prometheus': 'OK', 'loki': 'OK'}, dashboards)
+assert grafana_contract(sources_with_chart_alertmanager, {'prometheus': 'OK', 'loki': 'OK'}, dashboards)
 assert not grafana_contract([{**sources[0], 'url': 'http://wrong'}, sources[1]], {'prometheus': 'OK', 'loki': 'OK'}, dashboards)
 assert not grafana_contract(sources, {'prometheus': 'OK', 'loki': 'ERROR'}, dashboards)
 claims = [{'owner': 'learning-platform-monitori-prometheus', 'size': '3Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'a', 'volumeName': 'pv-a'}, {'owner': 'learning-platform-monitoring', 'size': '1Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'b', 'volumeName': 'pv-b'}, {'owner': 'learning-platform-loki', 'size': '2Gi', 'phase': 'Bound', 'storageClass': 'local-path', 'uid': 'c', 'volumeName': 'pv-c'}]
