@@ -228,6 +228,14 @@ export interface Phase0AttemptResultResponse {
   readonly results: readonly Phase0AttemptResultItem[];
 }
 
+export interface Phase0AttemptHistoryItem {
+  readonly attemptId: string;
+  readonly quizId: string;
+  readonly submittedAt: string;
+  readonly score: number;
+  readonly questionCount: number;
+}
+
 export interface Phase0ApiError {
   readonly code?: string;
   readonly message: string;

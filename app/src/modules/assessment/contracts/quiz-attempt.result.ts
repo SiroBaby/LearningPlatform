@@ -130,3 +130,30 @@ export class PersistedAttemptResult {
 
   submittedAt!: Date;
 }
+
+export class AttemptHistoryResult {
+  @AutoMap()
+  id!: string;
+
+  @AutoMap()
+  questionCount!: number;
+
+  @AutoMap()
+  quizId!: string;
+
+  @AutoMap()
+  score!: number;
+
+  submittedAt!: Date;
+}
+
+export class QuizSummaryResult {
+  @AutoMap()
+  documentId!: string;
+
+  @AutoMap()
+  questionCount!: number;
+
+  @AutoMap()
+  quizId!: string;
+}

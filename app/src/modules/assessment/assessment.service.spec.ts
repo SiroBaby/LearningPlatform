@@ -10,6 +10,7 @@ import type {
   ServedQuiz,
 } from './contracts/quiz-attempt-store.port';
 import type { AttemptResultReader } from './contracts/attempt-result-reader.port';
+import type { QuizDiscovery } from './contracts/quiz-discovery.port';
 import { AssessmentService } from './assessment.service';
 
 describe('AssessmentService', () => {
@@ -24,6 +25,7 @@ describe('AssessmentService', () => {
   const persistedResult = persistedAttemptResult();
   let store: QuizAttemptStore;
   let attempts: AttemptResultReader;
+  let quizzes: QuizDiscovery;
   let service: AssessmentService;
 
   beforeEach(() => {
@@ -33,9 +35,14 @@ describe('AssessmentService', () => {
       persistAttempt: jest.fn(async () => true),
     };
     attempts = {
+      findAllByOwnerAndQuizId: jest.fn(async () => []),
       findByOwnerQuizAndAttemptId: jest.fn(async () => persistedResult),
     };
-    service = new AssessmentService(store, attempts);
+    quizzes = {
+      findAllByOwnerId: jest.fn(async () => []),
+      findByOwnerAndDocumentId: jest.fn(async () => null),
+    };
+    service = new AssessmentService(store, attempts, quizzes);
   });
 
   it('serves only the quiz owned by the current Owner', async () => {

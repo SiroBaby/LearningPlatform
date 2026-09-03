@@ -115,6 +115,20 @@ export class ContentController {
     return this.mapper.map(document, Document, ConfirmDocumentResponseDto);
   }
 
+  @Post(':id/retry')
+  @HttpCode(202)
+  @ApiOperation({ summary: 'Retry a retryable failed Document without re-uploading its source.' })
+  @ApiAcceptedResponse({ type: ConfirmDocumentResponseDto })
+  @ApiConflictResponse({ description: 'Document failure is terminal or processing is already in progress.' })
+  @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner.' })
+  async retry(
+    @CurrentUser() ownerId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<ConfirmDocumentResponseDto> {
+    const document = await this.content.retry(ownerId, id);
+    return this.mapper.map(document, Document, ConfirmDocumentResponseDto);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a Document and its processing status.' })
   @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner.' })

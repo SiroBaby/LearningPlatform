@@ -7,6 +7,8 @@ export interface QuizDiscoverySummary {
 }
 
 export interface QuizDiscovery {
+  findAllByOwnerId(ownerId: string): Promise<readonly QuizDiscoverySummary[]>;
+
   findByOwnerAndDocumentId(
     ownerId: string,
     documentId: string,

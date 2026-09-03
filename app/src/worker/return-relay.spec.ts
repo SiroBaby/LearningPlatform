@@ -19,18 +19,25 @@ import {
   AssessmentError,
   AssessmentErrorCode,
 } from '../modules/assessment/domain/assessment.error';
+import { QuizGenerationHandoffService } from '../modules/assessment/quiz-generation-handoff.service';
 import {
   DocumentStatusProjection,
   DocumentStatusProjectionCommand,
 } from '../modules/content/contracts/document-status-projection.port';
+import type { QuizGenerationHandoffPort } from '../modules/assessment/contracts/quiz-generation-handoff.contract';
 import { DocumentStatusProjectionService } from '../modules/content/document-status-projection.service';
 import { Document } from '../modules/content/entities/document.entity';
 import { DocumentStatus } from '../modules/content/enums/document-status.enum';
 import { DocumentType } from '../modules/content/enums/document-type.enum';
+import { OutboxEvent } from '../modules/content/entities/outbox-event.entity';
 import { ContentRepository } from '../modules/content/repositories/content.repository';
+import { QuestionEntity } from '../modules/assessment/entities/question.entity';
+import { QuizEntity } from '../modules/assessment/entities/quiz.entity';
+import { QuizRepository } from '../modules/assessment/repositories/quiz.repository';
 import { createTestDataSource } from '../test-support/test-data-source';
 import { startTestDb, TestDb } from '../test-support/test-db';
-import { ReturnRelay } from './return-relay.service';
+import { clearDocumentFlowData } from '../../test/support/test-database-cleanup';
+import { LegacyUnfencedResultError, ReturnRelay } from './return-relay.service';
 
 const quizHandoff = { persist: async () => ({ optionCount: 0, questionCount: 0, questionIds: [], quizId: randomUUID() }) };
 
@@ -38,7 +45,10 @@ describe('ReturnRelay', () => {
   let db: TestDb;
   let ds: DataSource;
   let documents: Repository<Document>;
+  let courseOutbox: Repository<OutboxEvent>;
   let outbox: Repository<AiOutboxEvent>;
+  let questions: Repository<QuestionEntity>;
+  let quizzes: Repository<QuizEntity>;
   let relay: ReturnRelay;
 
   beforeAll(async () => {
@@ -52,13 +62,16 @@ describe('ReturnRelay', () => {
   beforeEach(async () => {
     ds = await createTestDataSource(db.container);
     documents = ds.getRepository(Document);
+    courseOutbox = ds.getRepository(OutboxEvent);
     outbox = ds.getRepository(AiOutboxEvent);
+    questions = ds.getRepository(QuestionEntity);
+    quizzes = ds.getRepository(QuizEntity);
     relay = new ReturnRelay(
       new AiOutboxRepository(ds),
       new DocumentStatusProjectionService(new ContentRepository(ds)),
       quizHandoff,
     );
-    await db.client.query('TRUNCATE "ai"."outbox", "course"."documents"');
+    await clearDocumentFlowData(db.client);
   });
 
   async function seedProcessingDocument(ownerId = randomUUID()): Promise<Document> {
@@ -97,6 +110,26 @@ describe('ReturnRelay', () => {
         },
       }),
     );
+  }
+
+  function questionPayload(stem: string): Record<string, unknown> {
+    const chunkId = randomUUID();
+    return {
+      chunkId,
+      chunkIndex: 0,
+      citation: {
+        chunkId,
+        locator: { kind: 'page', page: 1 },
+        snippet: `citation for ${stem}`,
+      },
+      explanation: `explanation for ${stem}`,
+      options: [
+        { content: `correct for ${stem}`, isCorrect: true },
+        { content: `incorrect for ${stem}`, isCorrect: false },
+      ],
+      ordinal: 0,
+      stem,
+    };
   }
 
   it('idempotently projects READY then marks ai outbox published', async () => {
@@ -158,6 +191,244 @@ describe('ReturnRelay', () => {
     expect(projected.status).toBe(DocumentStatus.FAILED);
     expect(projected.errorMessage).toBe('Processing failed');
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+  });
+
+  it('ignores a stale FAILED result after retry and applies the newer fenced result', async () => {
+    const document = await documents.save(
+      documents.create({
+        ownerId: randomUUID(),
+        originalName: 'lecture.pdf',
+        sizeBytes: 100,
+        status: DocumentStatus.FAILED,
+        storageRef: `documents/${randomUUID()}.pdf`,
+        type: DocumentType.PDF,
+      }),
+    );
+    const oldLeaseId = randomUUID();
+    const newLeaseId = randomUUID();
+    const oldEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        attempt: 1,
+        documentId: document.id,
+        errorCode: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+        errorMessage: 'Document processing is temporarily unavailable. Please try again later.',
+        leaseId: oldLeaseId,
+        ownerId: document.ownerId,
+        status: DocumentStatus.FAILED,
+        version: 1,
+      },
+    }));
+    await courseOutbox.save(courseOutbox.create({
+      aggregateId: document.id,
+      eventType: 'DocumentReadyForProcessing',
+      payload: {
+        documentId: document.id,
+        ownerId: document.ownerId,
+        jobType: 'FULL_PIPELINE',
+      },
+    }));
+
+    await new ContentRepository(ds).retryProcessing(document.ownerId, document.id, {
+      customModelConfigId: null,
+      kind: 'PLAN',
+      platformModelId: randomUUID(),
+    });
+    const newEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        attempt: 2,
+        documentId: document.id,
+        errorCode: null,
+        errorMessage: null,
+        leaseId: newLeaseId,
+        ownerId: document.ownerId,
+        status: DocumentStatus.READY,
+        version: 1,
+      },
+    }));
+
+    await relay.pump(10);
+
+    expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(DocumentStatus.READY);
+    expect((await documents.findOneByOrFail({ id: document.id })).errorCode).toBeNull();
+    expect((await outbox.findOneByOrFail({ id: oldEvent.id })).publishedAt).not.toBeNull();
+    expect((await outbox.findOneByOrFail({ id: newEvent.id })).publishedAt).not.toBeNull();
+  });
+
+  it('does not persist a stale READY quiz after retry and persists the current READY quiz', async () => {
+    const document = await documents.save(
+      documents.create({
+        ownerId: randomUUID(),
+        originalName: 'lecture.pdf',
+        sizeBytes: 100,
+        status: DocumentStatus.FAILED,
+        storageRef: `documents/${randomUUID()}.pdf`,
+        type: DocumentType.PDF,
+      }),
+    );
+    const oldLeaseId = randomUUID();
+    const newLeaseId = randomUUID();
+    const oldRequest = await courseOutbox.save(courseOutbox.create({
+      aggregateId: document.id,
+      eventType: 'DocumentReadyForProcessing',
+      payload: {
+        documentId: document.id,
+        ownerId: document.ownerId,
+        jobType: 'FULL_PIPELINE',
+      },
+    }));
+    const oldEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        attempt: 1,
+        budgetStatus: 'SETTLED',
+        documentId: document.id,
+        errorCode: null,
+        errorMessage: null,
+        estimatedCredits: 100,
+        estimateStatus: 'AUTHORITATIVE',
+        leaseId: oldLeaseId,
+        ownerId: document.ownerId,
+        questions: [questionPayload('stale question')],
+        settledCredits: 25,
+        status: DocumentStatus.READY,
+        version: 1,
+      },
+    }));
+
+    await new ContentRepository(ds).retryProcessing(document.ownerId, document.id, {
+      customModelConfigId: null,
+      kind: 'PLAN',
+      platformModelId: randomUUID(),
+    });
+    const requests = await courseOutbox.find({
+      order: { id: 'ASC' },
+      where: { aggregateId: document.id, eventType: 'DocumentReadyForProcessing' },
+    });
+    const retryRequest = requests.find((request) => request.id !== oldRequest.id);
+    if (!retryRequest) {
+      throw new Error('Expected retry processing marker');
+    }
+    const newEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        attempt: 2,
+        budgetStatus: 'SETTLED',
+        documentId: document.id,
+        errorCode: null,
+        errorMessage: null,
+        estimatedCredits: 100,
+        estimateStatus: 'AUTHORITATIVE',
+        leaseId: newLeaseId,
+        ownerId: document.ownerId,
+        questions: [questionPayload('current question')],
+        settledCredits: 25,
+        status: DocumentStatus.READY,
+        version: 1,
+      },
+    }));
+
+    await db.client.query(
+      'UPDATE "course"."outbox" SET "created_at" = CASE WHEN "id" = $1 THEN $2::timestamptz WHEN "id" = $3 THEN $4::timestamptz END WHERE "id" IN ($1, $3)',
+      [oldRequest.id, '2020-01-01T00:00:01.000Z', retryRequest.id, '2020-01-01T00:00:03.000Z'],
+    );
+    await db.client.query(
+      'UPDATE "ai"."outbox" SET "created_at" = CASE WHEN "id" = $1 THEN $2::timestamptz WHEN "id" = $3 THEN $4::timestamptz END WHERE "id" IN ($1, $3)',
+      [oldEvent.id, '2020-01-01T00:00:02.000Z', newEvent.id, '2020-01-01T00:00:04.000Z'],
+    );
+
+    const realHandoff = new QuizGenerationHandoffService(new QuizRepository(ds));
+    const realRelay = new ReturnRelay(
+      new AiOutboxRepository(ds),
+      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      realHandoff,
+    );
+
+    await realRelay.pump(10);
+
+    const persistedQuiz = await quizzes.findOneByOrFail({ documentId: document.id });
+    const persistedQuestions = await questions.find({ where: { quizId: persistedQuiz.id } });
+    expect(persistedQuestions.map((question) => question.stem)).toEqual(['current question']);
+    expect(await quizzes.count({ where: { documentId: document.id } })).toBe(1);
+    expect((await outbox.findOneByOrFail({ id: oldEvent.id })).publishedAt).not.toBeNull();
+    expect((await outbox.findOneByOrFail({ id: newEvent.id })).publishedAt).not.toBeNull();
+  });
+
+  it('replays quiz persistence after document projection already applied', async () => {
+    const document = await seedProcessingDocument();
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        attempt: 1,
+        budgetStatus: 'SETTLED',
+        documentId: document.id,
+        errorCode: null,
+        errorMessage: null,
+        estimatedCredits: 100,
+        estimateStatus: 'AUTHORITATIVE',
+        leaseId: randomUUID(),
+        ownerId: document.ownerId,
+        questions: [questionPayload('replayed question')],
+        settledCredits: 25,
+        status: DocumentStatus.READY,
+        version: 1,
+      },
+    }));
+    const failingRelay = new ReturnRelay(
+      new AiOutboxRepository(ds),
+      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      { persist: async () => { throw new Error('simulated crash after projection'); } },
+    );
+
+    await expect(failingRelay.pump(10)).rejects.toThrow('simulated crash after projection');
+    expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(DocumentStatus.READY);
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();
+
+    const replayRelay = new ReturnRelay(
+      new AiOutboxRepository(ds),
+      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      new QuizGenerationHandoffService(new QuizRepository(ds)),
+    );
+    await replayRelay.pump(10);
+
+    expect(await quizzes.count({ where: { documentId: document.id } })).toBe(1);
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+  });
+
+  it('keeps an unfenced legacy result unpublished when a processing marker exists', async () => {
+    const document = await seedProcessingDocument();
+    const event = await seedResult(document, DocumentStatus.FAILED);
+    await courseOutbox.save(courseOutbox.create({
+      aggregateId: document.id,
+      eventType: 'DocumentReadyForProcessing',
+      payload: {
+        correlationId: randomUUID(),
+        documentId: document.id,
+        ownerId: document.ownerId,
+        jobType: 'FULL_PIPELINE',
+      },
+    }));
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
+
+    await expect(relay.pump(10)).rejects.toBeInstanceOf(LegacyUnfencedResultError);
+
+    expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(
+      DocumentStatus.PROCESSING,
+    );
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();
+    expect(logger).toHaveBeenCalledWith({
+      event: 'ai.job.return.unverified_legacy',
+      jobId: event.aggregateId,
+      runtime: 'worker',
+      stage: 'document-project',
+    });
+    logger.mockRestore();
   });
 
   it('logs a safe failure event when quiz handoff persistence fails', async () => {

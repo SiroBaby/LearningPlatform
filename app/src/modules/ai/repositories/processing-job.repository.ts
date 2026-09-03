@@ -272,6 +272,7 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
           processingJob,
           DocumentProcessingResultStatus.FAILED,
           reasonCode,
+          attempt,
         ));
         return true;
       }
@@ -343,7 +344,7 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
       if (finalized.length !== 1) {
         return false;
       }
-      await manager.save(AiOutboxEvent, this.createResultEvent(job, documentStatus, errorCode));
+      await manager.save(AiOutboxEvent, this.createResultEvent(job, documentStatus, errorCode, attempt));
       return true;
     });
   }
@@ -352,17 +353,20 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     job: ProcessingJob,
     documentStatus: DocumentProcessingResultStatus,
     errorCode: DocumentProcessingFailureCode | null,
+    attempt: ProcessingJobAttempt,
   ): AiOutboxEvent {
     return this.dataSource.manager.create(AiOutboxEvent, {
       aggregateId: job.id,
       eventType: DOCUMENT_PROCESSING_RESULT_EVENT,
       payload: {
+        attempt: attempt.attempts,
         documentId: job.documentId,
         budgetStatus: job.budgetStatus ?? (errorCode === DocumentProcessingFailureCode.BUDGET_EXHAUSTED ? 'EXHAUSTED' : null),
         estimatedCredits: job.estimatedCredits === null ? null : Number(job.estimatedCredits),
         estimateStatus: job.estimatedCredits === null ? null : 'AUTHORITATIVE',
         errorCode,
         errorMessage: this.failureMessage(errorCode),
+        leaseId: attempt.leaseId,
         ownerId: job.ownerId,
         settledCredits: job.settledCredits === null ? null : Number(job.settledCredits),
         status: documentStatus,

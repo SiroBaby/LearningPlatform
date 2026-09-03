@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, In } from 'typeorm';
 
 import { BaseRepository } from '../../../database/base.repository';
-import type { AttemptResultReader } from '../contracts/attempt-result-reader.port';
+import type {
+  AttemptResultReader,
+  PersistedAttemptSummary,
+} from '../contracts/attempt-result-reader.port';
 import type { PersistedAttemptResult } from '../contracts/quiz-attempt-store.port';
 import { AttemptAnswerEntity } from '../entities/attempt-answer.entity';
 import { AttemptEntity } from '../entities/attempt.entity';
@@ -16,6 +19,24 @@ export class AttemptResultRepository
 {
   constructor(private readonly dataSource: DataSource) {
     super(AttemptEntity, dataSource);
+  }
+
+  async findAllByOwnerAndQuizId(
+    ownerId: string,
+    quizId: string,
+  ): Promise<readonly PersistedAttemptSummary[]> {
+    const attempts = await this.find({
+      order: { createdAt: 'DESC', id: 'DESC' },
+      select: { createdAt: true, id: true, questionCount: true, quizId: true, score: true },
+      where: { ownerId, quizId },
+    });
+    return attempts.map((attempt) => ({
+      id: attempt.id,
+      questionCount: attempt.questionCount,
+      quizId: attempt.quizId,
+      score: attempt.score,
+      submittedAt: attempt.createdAt,
+    }));
   }
 
   async findByOwnerQuizAndAttemptId(

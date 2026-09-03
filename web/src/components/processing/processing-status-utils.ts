@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatVietnameseDateTime } from "@/lib/date-time";
-import { Phase0ClientError, getPhase0Document } from "@/lib/phase0/client";
+import { getPhase0Document } from "@/lib/phase0/client";
 import type { Phase0BudgetStatus, Phase0Document, Phase0ModelSelectionKind } from "@/lib/phase0/contracts";
+import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 
 export function formatDateTime(iso: string): string {
   return formatVietnameseDateTime(iso);
@@ -128,15 +129,7 @@ export function getBudgetMessage(document: Phase0Document | null): string {
 }
 
 function getClientErrorMessage(error: unknown): string {
-  if (error instanceof Phase0ClientError) {
-    return error.message;
-  }
-
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-
-  return "Chưa thể tải trạng thái tài liệu lúc này.";
+  return getPhase0UiErrorMessage(error, "Chưa thể tải trạng thái tài liệu lúc này.");
 }
 
 interface UseProcessingDocumentStatusResult {

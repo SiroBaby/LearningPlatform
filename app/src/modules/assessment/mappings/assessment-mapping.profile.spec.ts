@@ -3,19 +3,25 @@ import { createMapper, type Mapper } from '@automapper/core';
 import { beforeEach, describe, expect, it } from '@jest/globals';
 
 import {
+  AttemptHistoryResult,
   GradedAttemptResult,
   GradedQuestionResult,
   PersistedAttemptQuestionResult,
   PersistedAttemptResult,
   PracticeFeedbackResult,
+  QuizSummaryResult,
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
 } from '../contracts/quiz-attempt.result';
 import { GradedAttemptResponseDto } from '../dto/graded-attempt.response.dto';
-import { AttemptResultResponseDto } from '../dto/attempt-result.response.dto';
+import {
+  AttemptHistoryResponseDto,
+  AttemptResultResponseDto,
+} from '../dto/attempt-result.response.dto';
 import { QuizResponseDto } from '../dto/quiz.response.dto';
 import { PracticeFeedbackResponseDto } from '../dto/practice-feedback.response.dto';
+import { QuizSummaryResponseDto } from '../dto/quiz-summary.response.dto';
 import { AssessmentMappingProfile } from './assessment-mapping.profile';
 
 describe('AssessmentMappingProfile', () => {
@@ -57,6 +63,38 @@ describe('AssessmentMappingProfile', () => {
     expect(JSON.stringify(actual)).not.toContain('isCorrect');
     expect(JSON.stringify(actual)).not.toContain('explanation');
     expect(JSON.stringify(actual)).not.toContain('citation');
+  });
+
+  it('maps Quiz summaries with the public id field', () => {
+    const summary = Object.assign(new QuizSummaryResult(), {
+      documentId: 'd9c63d87-9ec5-4f00-9ab7-32d35a5b1e7e',
+      questionCount: 5,
+      quizId: '4e248637-40c9-4d58-9de3-8d230fe56309',
+    });
+
+    expect(mapper.map(summary, QuizSummaryResult, QuizSummaryResponseDto)).toEqual({
+      documentId: summary.documentId,
+      id: summary.quizId,
+      questionCount: summary.questionCount,
+    });
+  });
+
+  it('maps attempt history as one top-level item with UTC submission time', () => {
+    const attempt = Object.assign(new AttemptHistoryResult(), {
+      id: 'aeb863c3-78ba-4e38-b86e-a5f04b9f8fc5',
+      questionCount: 5,
+      quizId: '4e248637-40c9-4d58-9de3-8d230fe56309',
+      score: 4,
+      submittedAt: new Date('2026-07-16T00:00:00.000Z'),
+    });
+
+    expect(mapper.map(attempt, AttemptHistoryResult, AttemptHistoryResponseDto)).toEqual({
+      attemptId: attempt.id,
+      questionCount: attempt.questionCount,
+      quizId: attempt.quizId,
+      score: attempt.score,
+      submittedAt: '2026-07-16T00:00:00.000Z',
+    });
   });
 
   it('maps graded results with correctness, explanation, and self-contained citation', () => {

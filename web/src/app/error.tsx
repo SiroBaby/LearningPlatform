@@ -17,10 +17,9 @@ export default function ErrorPage({
 
   return (
     <SystemStatePage
-      badge="System issue"
-      title="Có lỗi xảy ra khi dựng màn hình này"
-      description="Đây là lỗi không mong đợi ở giao diện. Bạn có thể thử tải lại trang hoặc quay về trang chủ để tiếp tục học."
-      detail={error.message ? `Chi tiết kỹ thuật: ${error.message}` : undefined}
+      badge="Lỗi tạm thời"
+      title="Màn hình chưa thể mở"
+      description="Đã có lỗi tạm thời khi mở nội dung này. Bạn có thể thử lại hoặc quay về trang chủ để tiếp tục học."
       icon="error"
       tone="error"
       primaryAction={

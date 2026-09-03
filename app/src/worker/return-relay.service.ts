@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { validate as isUuid } from 'uuid';
 
 import { createApplicationLogger } from '../common/logging/application-logger.factory';
 import {
@@ -59,7 +60,40 @@ export class ReturnRelay {
         const startedAt = performance.now();
         const queueWaitMs = Math.max(0, Date.now() - row.createdAt.getTime());
         payload = this.parseResult(row.payload);
-        if (payload.status === DocumentProcessingResultStatus.READY && payload.questions) {
+        const projectionStartedAt = performance.now();
+        stage = 'document-project';
+        const projectionOutcome = await this.projection.project({
+          attempt: payload.attempt,
+          documentId: payload.documentId,
+          estimatedCredits: payload.estimatedCredits,
+          estimateStatus: payload.estimateStatus,
+          budgetStatus: payload.budgetStatus,
+          errorCode: payload.errorCode,
+          errorMessage: payload.errorMessage,
+          eventCreatedAt: row.createdAt,
+          leaseId: payload.leaseId,
+          ownerId: payload.ownerId,
+          settledCredits: payload.settledCredits,
+          status:
+            payload.status === DocumentProcessingResultStatus.READY
+              ? DocumentStatus.READY
+              : DocumentStatus.FAILED,
+        });
+        if (projectionOutcome === 'UNVERIFIED_LEGACY') {
+          this.logger.error({
+            event: 'ai.job.return.unverified_legacy',
+            jobId: row.aggregateId,
+            runtime: 'worker',
+            stage: 'document-project',
+          });
+          throw new LegacyUnfencedResultError();
+        }
+        const projectionDurationMs = elapsedMilliseconds(projectionStartedAt);
+        if (
+          (projectionOutcome === 'APPLIED' || projectionOutcome === 'ALREADY_APPLIED') &&
+          payload.status === DocumentProcessingResultStatus.READY &&
+          payload.questions
+        ) {
           stage = 'quiz-persist';
           await this.quizHandoff.persist({
             documentId: payload.documentId,
@@ -69,23 +103,6 @@ export class ReturnRelay {
             questions: payload.questions,
           });
         }
-        const projectionStartedAt = performance.now();
-        stage = 'document-project';
-        await this.projection.project({
-          documentId: payload.documentId,
-          estimatedCredits: payload.estimatedCredits,
-          estimateStatus: payload.estimateStatus,
-          budgetStatus: payload.budgetStatus,
-          errorCode: payload.errorCode,
-          errorMessage: payload.errorMessage,
-          ownerId: payload.ownerId,
-          settledCredits: payload.settledCredits,
-          status:
-            payload.status === DocumentProcessingResultStatus.READY
-              ? DocumentStatus.READY
-              : DocumentStatus.FAILED,
-        });
-        const projectionDurationMs = elapsedMilliseconds(projectionStartedAt);
         const publishStartedAt = performance.now();
         stage = 'outbox-publish';
         await this.outbox.markPublished(row.id);
@@ -110,17 +127,29 @@ export class ReturnRelay {
           // failure and acknowledge the outbox row so a deterministic payload
           // cannot block every later return event forever.
           try {
-            await this.projection.project({
+            const projectionOutcome = await this.projection.project({
+              attempt: payload.attempt,
               documentId: payload.documentId,
               estimatedCredits: payload.estimatedCredits,
               estimateStatus: payload.estimateStatus,
               budgetStatus: payload.budgetStatus,
               errorCode: DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS,
               errorMessage: 'Not enough valid questions were generated',
+              eventCreatedAt: row.createdAt,
+              leaseId: payload.leaseId,
               ownerId: payload.ownerId,
               settledCredits: payload.settledCredits,
               status: DocumentStatus.FAILED,
             });
+            if (projectionOutcome === 'UNVERIFIED_LEGACY') {
+              this.logger.error({
+                event: 'ai.job.return.unverified_legacy',
+                jobId: row.aggregateId,
+                runtime: 'worker',
+                stage: 'document-project',
+              });
+              throw new LegacyUnfencedResultError();
+            }
             await this.outbox.markPublished(row.id);
             this.logger.error({
               event: 'ai.job.return.terminal_failed',
@@ -152,15 +181,31 @@ export class ReturnRelay {
   }
 
   private parseResult(payload: Record<string, unknown>): DocumentProcessingResult {
+    // Pre-fence v1 rows may omit both fields; partial or malformed fences fail closed.
+    const attempt = payload.attempt === undefined
+      ? null
+      : typeof payload.attempt === 'number'
+        ? payload.attempt
+        : null;
+    const hasInvalidAttempt = payload.attempt !== undefined && typeof payload.attempt !== 'number';
     const errorCode = this.parseFailureCode(payload.errorCode);
     const budgetStatus = payload.budgetStatus ?? null;
     const estimatedCredits = payload.estimatedCredits ?? null;
     const estimateStatus = payload.estimateStatus ?? null;
     const settledCredits = payload.settledCredits ?? null;
+    const leaseId = payload.leaseId === undefined
+      ? null
+      : typeof payload.leaseId === 'string'
+        ? payload.leaseId
+        : null;
+    const hasInvalidLeaseId = payload.leaseId !== undefined &&
+      (typeof payload.leaseId !== 'string' || !isUuid(payload.leaseId));
     const questions = this.parseQuestions(payload.questions);
 
     if (
       payload.version !== 1 ||
+      hasInvalidAttempt ||
+      (attempt !== null && (!Number.isInteger(attempt) || attempt < 1)) ||
       typeof payload.documentId !== 'string' ||
       typeof payload.ownerId !== 'string' ||
       (budgetStatus !== null && typeof budgetStatus !== 'string') ||
@@ -168,6 +213,8 @@ export class ReturnRelay {
       (estimateStatus !== null && typeof estimateStatus !== 'string') ||
       (settledCredits !== null && typeof settledCredits !== 'number') ||
       (payload.errorMessage !== null && typeof payload.errorMessage !== 'string') ||
+      hasInvalidLeaseId ||
+      ((attempt === null) !== (leaseId === null)) ||
       errorCode === undefined ||
       questions === undefined ||
       (payload.status !== DocumentProcessingResultStatus.READY &&
@@ -177,12 +224,14 @@ export class ReturnRelay {
     }
 
     return {
+      attempt,
       documentId: payload.documentId,
       budgetStatus,
       estimatedCredits,
       estimateStatus,
       errorCode,
       errorMessage: payload.errorMessage,
+      leaseId,
       ownerId: payload.ownerId,
       questions,
       settledCredits,
@@ -226,6 +275,13 @@ export class ReturnRelay {
       return value as DocumentProcessingFailureCode;
     }
     return undefined;
+  }
+}
+
+export class LegacyUnfencedResultError extends Error {
+  constructor() {
+    super('Legacy document processing result cannot be associated with the current processing run');
+    this.name = LegacyUnfencedResultError.name;
   }
 }
 

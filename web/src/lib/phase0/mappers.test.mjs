@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { phase0DocumentProcessingFailureCodes } from "./contracts.ts";
-import { mapDocumentResponse } from "./mappers.ts";
+import { mapAttemptHistoryResponse, mapDocumentResponse } from "./mappers.ts";
 
 const budgetStatuses = [
   "NOT_RESERVED",
@@ -79,4 +79,26 @@ test("maps a document with truncated generation failure code", () => {
   }));
 
   assert.equal(document.errorCode, "GENERATION_OUTPUT_TRUNCATED");
+});
+
+test("maps attempt history returned as a top-level array", () => {
+  const attempts = mapAttemptHistoryResponse([
+    {
+      attemptId: "attempt-1",
+      quizId: "quiz-1",
+      submittedAt: "2026-07-27T00:00:00.000Z",
+      score: 3,
+      questionCount: 5,
+    },
+  ]);
+
+  assert.deepEqual(attempts, [
+    {
+      attemptId: "attempt-1",
+      quizId: "quiz-1",
+      submittedAt: "2026-07-27T00:00:00.000Z",
+      score: 3,
+      questionCount: 5,
+    },
+  ]);
 });

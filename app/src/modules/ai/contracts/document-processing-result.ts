@@ -34,12 +34,14 @@ export function isDocumentProcessingFailureRetryable(
 }
 
 export interface DocumentProcessingResult {
+  readonly attempt: number | null;
   readonly budgetStatus: string | null;
   readonly documentId: string;
   readonly estimatedCredits: number | null;
   readonly estimateStatus: string | null;
   readonly errorCode: DocumentProcessingFailureCode | null;
   readonly errorMessage: string | null;
+  readonly leaseId: string | null;
   readonly ownerId: string;
   readonly questions: readonly DocumentProcessingQuestion[] | null;
   readonly settledCredits: number | null;

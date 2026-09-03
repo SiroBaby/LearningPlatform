@@ -1,11 +1,12 @@
 import { randomUUID } from 'crypto';
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { DataSource } from 'typeorm';
 
 import type { PersistedAttempt } from '../contracts/quiz-attempt-store.port';
 import { AttemptAnswerEntity } from '../entities/attempt-answer.entity';
 import { AttemptEntity } from '../entities/attempt.entity';
+import { QuestionEntity } from '../entities/question.entity';
 import { createTestDataSource } from '../../../test-support/test-data-source';
 import { startTestDb, type TestDb } from '../../../test-support/test-db';
 import { QuizRepository } from './quiz.repository';
@@ -97,6 +98,46 @@ describe('QuizRepository attempt flow', () => {
     await expect(
       repository.findByOwnerAndDocumentId(randomUUID(), fixture.documentId),
     ).resolves.toBeNull();
+  });
+
+  it('lists owned Quiz summaries with counts from one owner-scoped aggregate query', async () => {
+    const fixture = await insertQuizFixture();
+    const secondQuizId = randomUUID();
+    const secondDocumentId = randomUUID();
+    const foreignQuizId = randomUUID();
+    const foreignOwnerId = randomUUID();
+    await db.client.query(`
+      INSERT INTO "quiz"."quizzes"
+        ("id", "document_id", "owner_id", "prompt_version", "idempotency_key")
+      VALUES ($1, $2, $3, 'prompt-v1', $4), ($5, $6, $7, 'prompt-v1', $8)
+    `, [
+      secondQuizId,
+      secondDocumentId,
+      fixture.ownerId,
+      randomHash(),
+      foreignQuizId,
+      randomUUID(),
+      foreignOwnerId,
+      randomHash(),
+    ]);
+    const querySpy = jest.spyOn(dataSource, 'query');
+
+    try {
+      const summaries = await repository.findAllByOwnerId(fixture.ownerId);
+
+      expect(summaries).toEqual(expect.arrayContaining([
+        { documentId: fixture.documentId, questionCount: 1, quizId: fixture.quizId },
+        { documentId: secondDocumentId, questionCount: 0, quizId: secondQuizId },
+      ]));
+      expect(summaries).toHaveLength(2);
+      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(querySpy.mock.calls[0]?.[0]).toContain('COUNT("question"."id")');
+      expect(querySpy.mock.calls[0]?.[0]).toContain('"quiz"."owner_id" = $1');
+      expect(querySpy.mock.calls[0]?.[0]).toContain('"question"."owner_id" = $1');
+      await expect(repository.findAllByOwnerId(randomUUID())).resolves.toEqual([]);
+    } finally {
+      querySpy.mockRestore();
+    }
   });
 
   it('persists an Attempt and its answers atomically', async () => {

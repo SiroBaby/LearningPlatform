@@ -7,6 +7,7 @@ import { formatVietnameseDateTime } from "@/lib/date-time";
 import { Phase0ClientError, getPhase0DocumentQuiz } from "@/lib/phase0/client";
 import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
+import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
 
 interface DocumentDetailProps {
@@ -51,23 +52,12 @@ function mapStatus(status: Phase0Document["status"]): "uploaded" | "processing" 
   }
 }
 
-function getClientErrorMessage(error: unknown): string {
-  if (error instanceof Phase0ClientError) {
-    return error.message;
-  }
-
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-
-  return "Chưa thể kiểm tra quiz cho tài liệu này lúc này.";
-}
-
 export function DocumentDetail({ document }: DocumentDetailProps) {
   const [quizDiscovery, setQuizDiscovery] = useState<Phase0DocumentQuizResponse | null>(null);
   const [isQuizLoading, setIsQuizLoading] = useState(false);
   const [quizUnavailable, setQuizUnavailable] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
+  const [quizReloadKey, setQuizReloadKey] = useState(0);
 
   const type = useMemo(() => mapType(document.type), [document.type]);
   const status = useMemo(() => mapStatus(document.status), [document.status]);
@@ -85,6 +75,7 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
 
     async function loadQuizDiscovery(): Promise<void> {
       setIsQuizLoading(true);
+      setQuizDiscovery(null);
       setQuizError(null);
       setQuizUnavailable(false);
 
@@ -103,7 +94,10 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
           setQuizDiscovery(null);
           setQuizUnavailable(true);
         } else {
-          setQuizError(getClientErrorMessage(error));
+          setQuizError(getPhase0UiErrorMessage(
+            error,
+            "Chưa thể kiểm tra quiz cho tài liệu này lúc này.",
+          ));
         }
       } finally {
         if (!cancelled) {
@@ -117,7 +111,7 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
     return () => {
       cancelled = true;
     };
-  }, [document.id]);
+  }, [document.id, quizReloadKey]);
 
   const primaryAction = quizDiscovery
     ? { href: routes.quizStart(quizDiscovery.quizId), label: "Bắt đầu quiz" }
@@ -225,11 +219,16 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
             ) : null}
 
             {!isQuizLoading && quizError ? (
-              <div className="space-y-3 rounded-2xl border border-error-100 bg-error-50 p-4 text-sm text-error-700">
+              <div className="space-y-3 rounded-2xl border border-error-100 bg-error-50 p-4 text-sm text-error-700" role="alert">
                 <p>{quizError}</p>
-                <Button type="button" variant="outline" onClick={() => window.location.reload()}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setQuizReloadKey((currentKey) => currentKey + 1)}
+                  disabled={isQuizLoading}
+                >
                   <RefreshCcw className="h-4 w-4" />
-                  Tải lại trang
+                  Kiểm tra lại
                 </Button>
               </div>
             ) : null}

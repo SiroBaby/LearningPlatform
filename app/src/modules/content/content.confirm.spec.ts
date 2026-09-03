@@ -1,9 +1,10 @@
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { randomUUID } from 'crypto';
 
 import { startTestDb, TestDb } from '../../test-support/test-db';
 import { createTestDataSource } from '../../test-support/test-data-source';
 import { FakeStorageVerifier } from '../../test-support/fake-storage-verifier';
+import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
 import { ContentService } from './content.service';
 import { Document } from './entities/document.entity';
 import { DocumentStatus } from './enums/document-status.enum';
@@ -13,6 +14,7 @@ import { ContentRepository } from './repositories/content.repository';
 
 describe('ContentService.confirm', () => {
   let db: TestDb;
+  let dataSource: DataSource;
   let service: ContentService;
   let documents: Repository<Document>;
   let outbox: Repository<OutboxEvent>;
@@ -29,12 +31,12 @@ describe('ContentService.confirm', () => {
   });
 
   beforeEach(async () => {
-    const ds = await createTestDataSource(db.container);
-    documents = ds.getRepository(Document);
-    outbox = ds.getRepository(OutboxEvent);
+    dataSource = await createTestDataSource(db.container);
+    documents = dataSource.getRepository(Document);
+    outbox = dataSource.getRepository(OutboxEvent);
     verifier = new FakeStorageVerifier();
     service = new ContentService(
-      new ContentRepository(ds),
+      new ContentRepository(dataSource),
       /* storage */ null as never,
       verifier,
       null as never,
@@ -51,6 +53,21 @@ describe('ContentService.confirm', () => {
         storageRef: `${ownerId}/${randomUUID()}.pdf`,
         sizeBytes: 1024,
         status: DocumentStatus.UPLOADED,
+      }),
+    );
+  }
+
+  async function seedRetryableFailure(ownerId: string): Promise<Document> {
+    return documents.save(
+      documents.create({
+        errorCode: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+        errorMessage: 'Document processing is temporarily unavailable. Please try again later.',
+        ownerId,
+        originalName: 'bai-giang.pdf',
+        sizeBytes: 1024,
+        status: DocumentStatus.FAILED,
+        storageRef: `${ownerId}/${randomUUID()}.pdf`,
+        type: DocumentType.PDF,
       }),
     );
   }
@@ -80,6 +97,27 @@ describe('ContentService.confirm', () => {
 
     const rows = await outbox.find({ where: { aggregateId: doc.id } });
     expect(rows).toHaveLength(1);
+  });
+
+  it('retry CAS: concurrent submissions start one processing attempt only', async () => {
+    const owner = randomUUID();
+    const doc = await seedRetryableFailure(owner);
+    const repository = new ContentRepository(dataSource);
+    const selection = {
+      customModelConfigId: null,
+      kind: 'PLAN' as const,
+      platformModelId: 'platform-default',
+    };
+
+    const results = await Promise.all([
+      repository.retryProcessing(owner, doc.id, selection),
+      repository.retryProcessing(owner, doc.id, selection),
+    ]);
+
+    expect(results.filter((result) => result !== null)).toHaveLength(1);
+    expect(results.filter((result) => result === null)).toHaveLength(1);
+    expect(await outbox.count({ where: { aggregateId: doc.id } })).toBe(1);
+    expect((await documents.findOneByOrFail({ id: doc.id })).status).toBe(DocumentStatus.PROCESSING);
   });
 
   it('ownership: owner khác -> 404, không đổi status, không ghi outbox', async () => {

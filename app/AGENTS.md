@@ -7,6 +7,10 @@
 - `../docs/adr/*` thắng các design docs khi có mâu thuẫn.
 - Backend đang ở Phase 0: PDF/text -> async processing -> grounded MCQ Quiz -> Attempt -> deterministic grading.
 
+## Agent Operational Safety
+
+- Không commit, push hoặc pull; không khởi động service, chạy migration hay chạy test có thể chạm DB nếu chưa có yêu cầu rõ từ owner.
+
 ## Module And Layering
 
 - Mỗi context nằm ở `src/modules/<context>/`, gồm controller, service, repository, entity và DTO.
@@ -62,6 +66,7 @@
 - Module-compilation test import `AuthModule` trực tiếp hoặc qua module khác phải override `GoogleOAuthClientProvider` và external provider/SDK eager tương tự bằng stub, hoặc dùng explicit sanitized config fixture; không phụ thuộc `app/.env` của developer.
 - Migration test nhắm một version cụ thể không được giả định đó luôn là migration mới nhất; rollback theo version mục tiêu rồi chạy `runUp()` để test vẫn đúng khi có migration mới hơn.
 - Trong `.spec.ts`, nếu VS Code không áp dụng legacy decorator configuration, đăng ký custom `PropertyDecorator` trực tiếp trên prototype (ví dụ `IsNonBlankString()(TestDto.prototype, 'value')`) thay vì decorator syntax. Test DTO vẫn phải dùng `value!: Type` cho property được gán trong test.
+- Fixture document flow phải dùng `app/test/support/test-database-cleanup.ts`; credit wallet và credit ledger thuộc schema `course`, không được cleanup bằng tên bảng tương ứng trong schema `ai`.
 
 ## Swagger Security
 

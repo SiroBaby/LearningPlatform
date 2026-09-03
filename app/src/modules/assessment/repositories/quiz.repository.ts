@@ -19,6 +19,12 @@ import { QuestionEntity } from '../entities/question.entity';
 import { QuestionOptionEntity } from '../entities/question-option.entity';
 import { QuizEntity } from '../entities/quiz.entity';
 
+interface QuizSummaryRow {
+  readonly documentId: string;
+  readonly questionCount: number | string;
+  readonly quizId: string;
+}
+
 @Injectable()
 export class QuizRepository
   extends BaseRepository<QuizEntity>
@@ -127,6 +133,27 @@ export class QuizRepository
         stem: question.stem,
       })),
     };
+  }
+
+  async findAllByOwnerId(ownerId: string): Promise<readonly QuizDiscoverySummary[]> {
+    const rows = await this.dataSource.query<QuizSummaryRow[]>(
+      `SELECT "quiz"."document_id" AS "documentId",
+              "quiz"."id" AS "quizId",
+              COUNT("question"."id")::int AS "questionCount"
+       FROM "quiz"."quizzes" AS "quiz"
+       LEFT JOIN "quiz"."questions" AS "question"
+         ON "question"."quiz_id" = "quiz"."id"
+        AND "question"."owner_id" = $1
+       WHERE "quiz"."owner_id" = $1
+       GROUP BY "quiz"."id", "quiz"."document_id", "quiz"."created_at"
+       ORDER BY "quiz"."created_at" DESC, "quiz"."id" DESC`,
+      [ownerId],
+    );
+    return rows.map((row) => ({
+      documentId: row.documentId,
+      questionCount: Number(row.questionCount),
+      quizId: row.quizId,
+    }));
   }
 
   async findForGradingByOwnerId(

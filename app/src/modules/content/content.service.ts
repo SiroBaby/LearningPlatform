@@ -37,6 +37,7 @@ import {
 
 const COARSE_INPUT_TOKEN_BYTES = 4;
 const COARSE_OUTPUT_TOKEN_CAP = 256;
+type ProcessingStartMode = 'CONFIRM' | 'RETRY';
 
 @Injectable()
 export class ContentService {
@@ -183,6 +184,33 @@ export class ContentService {
     return Object.assign(new DocumentQuizResult(), quiz);
   }
 
+  async retry(ownerId: string, id: string): Promise<Document> {
+    const document = await this.contentRepository.findByOwnerId(ownerId, id);
+    if (!document) {
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: `Document ${id} not found`,
+      });
+    }
+    if (document.status !== DocumentStatus.FAILED) {
+      throw new ConflictException({
+        code: 'DOCUMENT_RETRY_NOT_ALLOWED',
+        message: document.status === DocumentStatus.PROCESSING
+          ? 'Document processing is already in progress.'
+          : 'Document cannot be retried in its current state.',
+        retryable: document.status === DocumentStatus.PROCESSING,
+      });
+    }
+    if (!isDocumentProcessingFailureRetryable(document.errorCode)) {
+      throw new ConflictException({
+        code: 'DOCUMENT_RETRY_NOT_ALLOWED',
+        message: 'This Document failure requires a new upload before processing can be retried.',
+        retryable: false,
+      });
+    }
+    return this.verifyAndStartProcessing(ownerId, id, document, 'RETRY');
+  }
+
   /**
    * Confirm upload xong: verify file trên storage, rồi trong MỘT transaction
    * chỉ chạm schema `course` (ADR-0010): CAS status UPLOADED/FAILED -> PROCESSING
@@ -192,9 +220,31 @@ export class ContentService {
   async confirm(ownerId: string, id: string): Promise<Document> {
     const document = await this.contentRepository.findByOwnerId(ownerId, id);
     if (!document) {
-      throw new NotFoundException(`Document ${id} not found`);
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: `Document ${id} not found`,
+      });
+    }
+    if (
+      document.status === DocumentStatus.FAILED &&
+      !isDocumentProcessingFailureRetryable(document.errorCode)
+    ) {
+      throw new ConflictException({
+        code: 'DOCUMENT_RETRY_NOT_ALLOWED',
+        message: 'This Document failure requires a new upload before processing can be retried.',
+        retryable: false,
+      });
     }
 
+    return this.verifyAndStartProcessing(ownerId, id, document, 'CONFIRM');
+  }
+
+  private async verifyAndStartProcessing(
+    ownerId: string,
+    id: string,
+    document: Document,
+    mode: ProcessingStartMode,
+  ): Promise<Document> {
     const v = await this.verifier.verify(document.storageRef, document.type);
     if (
       !v.exists ||
@@ -204,13 +254,23 @@ export class ContentService {
       throw new BadRequestException('Uploaded file failed verification');
     }
 
-    const confirmed = await this.contentRepository.confirmProcessing(ownerId, id, {
+    const selection: DocumentModelSelection = {
       customModelConfigId: document.customModelConfigId,
       kind: document.modelSelectionKind,
       platformModelId: document.platformModelId,
-    });
+    };
+    const confirmed = mode === 'RETRY'
+      ? await this.contentRepository.retryProcessing(ownerId, id, selection)
+      : await this.contentRepository.confirmProcessing(ownerId, id, selection);
     if (!confirmed) {
-      throw new NotFoundException(`Document ${id} not found`);
+      if (mode === 'CONFIRM') {
+        throw new NotFoundException(`Document ${id} not found`);
+      }
+      throw new ConflictException({
+        code: 'DOCUMENT_RETRY_CONFLICT',
+        message: 'Document state changed before processing could be started. Please refresh and try again.',
+        retryable: true,
+      });
     }
 
     return confirmed;

@@ -1,10 +1,7 @@
-export function getRetryConfirmErrorMessage(error: unknown): string {
-  if (isSafeClientError(error) && error.message.trim().length > 0) {
-    return error.message;
-  }
-
-  return "Chưa thể thử lại tài liệu lúc này. Bạn hãy đợi một chút rồi thử lại.";
-}
+const RETRY_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  DOCUMENT_RETRY_NOT_ALLOWED: "Tài liệu này chưa thể thử lại ở trạng thái hiện tại. Hãy kiểm tra trạng thái hoặc tải lên tài liệu mới.",
+  REQUEST_TIMEOUT: "Hệ thống phản hồi quá lâu. Bạn hãy thử lại sau ít phút.",
+};
 
 function isSafeClientError(error: unknown): error is Error & {
   readonly code?: string;
@@ -25,12 +22,20 @@ function isSafeClientError(error: unknown): error is Error & {
     && (candidate.retryable === undefined || typeof candidate.retryable === "boolean");
 }
 
+export function getRetryConfirmErrorMessage(error: unknown): string {
+  if (isSafeClientError(error) && error.code && RETRY_ERROR_MESSAGES[error.code]) {
+    return RETRY_ERROR_MESSAGES[error.code];
+  }
+
+  return "Chưa thể thử lại tài liệu lúc này. Bạn hãy đợi một chút rồi thử lại.";
+}
+
 interface CreateDocumentProcessingRetryActionOptions {
   readonly documentId: string;
   readonly refresh: () => Promise<void>;
   readonly setRetryError: (value: string | null) => void;
   readonly setIsRetrySubmitting: (value: boolean) => void;
-  readonly confirmDocument: (documentId: string) => Promise<unknown>;
+  readonly retryDocument: (documentId: string) => Promise<unknown>;
 }
 
 export function createDocumentProcessingRetryAction({
@@ -38,7 +43,7 @@ export function createDocumentProcessingRetryAction({
   refresh,
   setRetryError,
   setIsRetrySubmitting,
-  confirmDocument,
+  retryDocument,
 }: CreateDocumentProcessingRetryActionOptions): () => Promise<void> {
   let isSubmitting = false;
 
@@ -52,10 +57,10 @@ export function createDocumentProcessingRetryAction({
     setRetryError(null);
 
     try {
-      await confirmDocument(documentId);
+      await retryDocument(documentId);
       await refresh();
-    } catch (confirmError) {
-      setRetryError(getRetryConfirmErrorMessage(confirmError));
+    } catch (retryError) {
+      setRetryError(getRetryConfirmErrorMessage(retryError));
     } finally {
       isSubmitting = false;
       setIsRetrySubmitting(false);
