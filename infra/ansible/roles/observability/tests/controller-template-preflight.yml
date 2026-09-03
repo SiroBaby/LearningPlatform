@@ -79,6 +79,36 @@
             observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
             is search('chat_id:\s+\{\{ \.telegram_chat_id \}\}')
 
+    - name: Require Alertmanager control-alert routing and inhibition order
+      ansible.builtin.assert:
+        that:
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+            is search('alertname=~"\^\(InfoInhibitor\|Watchdog\)\$"')
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml'].find(
+              'alertname=~"^(InfoInhibitor|Watchdog)$"'
+            ) < observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml'].find(
+              'severity="info"'
+            )
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+            is search('receiver:\s+\x27null\x27')
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+            is search('receiver:\s+telegram\s+group_wait:\s+5m\s+group_interval:\s+30m\s+repeat_interval:\s+24h')
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+            is search('name:\s+\x27null\x27\s+- name:\s+telegram')
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+            is search('source_matchers:\s+- severity=~"warning\|critical"\s+target_matchers:\s+- severity="info"')
+          - >-
+            observability_alertmanager_eso_definition.spec.target.template.data['alertmanager.yaml']
+            is search('equal:\s+- namespace\s+- cluster')
+        fail_msg: Alertmanager control alerts must be null-routed before the low-frequency info digest, with namespace and cluster inhibition.
+      no_log: true
+
     - name: Require the controller preflight to precede every Helm action
       ansible.builtin.assert:
         that:

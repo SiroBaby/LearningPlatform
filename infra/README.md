@@ -146,7 +146,7 @@ Chart values pin resource chi tiết cho Prometheus, Alertmanager, Grafana, Loki
 
 ### Alertmanager Telegram routing
 
-`kube-prometheus-stack` chỉ tham chiếu Secret ngoài chart `alertmanager-telegram-config`; chart không render Secret hoặc Telegram value. ESO dựng key `alertmanager.yaml` từ đúng hai SecureString SSM parameter ở trên. Route mặc định gom theo `alertname`, `namespace`, `severity`, chờ `30s`, cập nhật nhóm `5m`, lặp `4h`, và gửi resolved alert. Prometheus tự trỏ tới Alertmanager được bật trong cùng namespace.
+`kube-prometheus-stack` chỉ tham chiếu Secret ngoài chart `alertmanager-telegram-config`; chart không render Secret hoặc Telegram value. ESO dựng key `alertmanager.yaml` từ đúng hai SecureString SSM parameter ở trên. Route mặc định gom theo `alertname`, `namespace`, `severity`, chờ `30s`, cập nhật nhóm `5m`, lặp `4h`, và gửi resolved alert. `InfoInhibitor` và `Watchdog` đi vào receiver rỗng trước mọi route khác; alert `severity=info` dùng Telegram hiện có như digest với group wait `5m`, group interval `30m`, repeat interval `24h`. Alert `warning` và `critical` vẫn đi theo route Telegram mặc định. Inhibition chỉ chặn `info` khi có `warning` hoặc `critical` cùng `namespace` và `cluster` (nếu có). Prometheus tự trỏ tới Alertmanager được bật trong cùng namespace.
 
 ### Loki Retain/Retain decision
 

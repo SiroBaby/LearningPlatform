@@ -336,14 +336,27 @@
       - observability_alertmanager_config.route.group_wait == '30s'
       - observability_alertmanager_config.route.group_interval == '5m'
       - observability_alertmanager_config.route.repeat_interval == '4h'
-      - observability_alertmanager_config.receivers | length == 1
-      - observability_alertmanager_config.receivers[0].name == 'telegram'
-      - observability_alertmanager_config.receivers[0].telegram_configs | length == 1
-      - observability_alertmanager_config.receivers[0].telegram_configs[0].bot_token is string
-      - observability_alertmanager_config.receivers[0].telegram_configs[0].bot_token | length > 0
-      - observability_alertmanager_config.receivers[0].telegram_configs[0].chat_id | string is match('^-?[0-9]+$')
-      - observability_alertmanager_config.receivers[0].telegram_configs[0].send_resolved == true
-    fail_msg: Alertmanager Telegram routing Secret is incomplete or malformed.
+      - observability_alertmanager_config.route.routes | length == 2
+      - observability_alertmanager_config.route.routes[0].matchers == ['alertname=~"^(InfoInhibitor|Watchdog)$"']
+      - observability_alertmanager_config.route.routes[0].receiver == 'null'
+      - observability_alertmanager_config.route.routes[1].matchers == ['severity="info"']
+      - observability_alertmanager_config.route.routes[1].receiver == 'telegram'
+      - observability_alertmanager_config.route.routes[1].group_wait == '5m'
+      - observability_alertmanager_config.route.routes[1].group_interval == '30m'
+      - observability_alertmanager_config.route.routes[1].repeat_interval == '24h'
+      - observability_alertmanager_config.receivers | length == 2
+      - observability_alertmanager_config.receivers | map(attribute='name') | list == ['null', 'telegram']
+      - (observability_alertmanager_config.receivers[0].keys() | list | sort) == ['name']
+      - observability_alertmanager_config.receivers[1].telegram_configs | length == 1
+      - observability_alertmanager_config.receivers[1].telegram_configs[0].bot_token is string
+      - observability_alertmanager_config.receivers[1].telegram_configs[0].bot_token | length > 0
+      - observability_alertmanager_config.receivers[1].telegram_configs[0].chat_id | string is match('^-?[0-9]+$')
+      - observability_alertmanager_config.receivers[1].telegram_configs[0].send_resolved == true
+      - observability_alertmanager_config.inhibit_rules | length == 1
+      - observability_alertmanager_config.inhibit_rules[0].source_matchers == ['severity=~"warning|critical"']
+      - observability_alertmanager_config.inhibit_rules[0].target_matchers == ['severity="info"']
+      - observability_alertmanager_config.inhibit_rules[0].equal == ['namespace', 'cluster']
+    fail_msg: Alertmanager routing and Telegram Secret contracts are incomplete or malformed.
   no_log: true
 
 - name: Collect capacity facts before observability Helm actions

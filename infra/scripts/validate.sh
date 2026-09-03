@@ -627,6 +627,7 @@ fi
 check_application_workloads_are_stateless
 check_observability_workloads
 ruby "${INFRA_DIR}/scripts/tests/test-alloy-log-level-normalization.rb"
+ruby "${INFRA_DIR}/scripts/tests/test-alertmanager-routing.rb"
 ruby "${ANSIBLE_DIR}/roles/k3s/tests/test-nginx-grafana-route.rb"
 check_observability_release_policy_when_present
 check_observability_workflow_bootstrap_contract
