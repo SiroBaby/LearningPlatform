@@ -15,7 +15,9 @@
 - Use stable event names and include only bounded operational metadata needed for correlation and diagnosis, such as phase, attempt, job identifier, correlation identifier when available, failure code, and outcome. Keep event fields consistent across error paths.
 - Never log request or source content, prompt, generated questions or answers, credentials, provider responses, raw error messages, stack traces, storage references, or other payload data. Safe codes and fixed messages are the contract.
 - A persistence or commit error whose final state is uncertain is an explicit `persistence_ambiguous` event. Do not silently retry or represent that state as a confirmed final failure.
+- A malformed store outcome is an explicit `worker.processing.retry.contract_violation` event with bounded phase/category metadata; fail closed without treating it as persistence success.
 - Normal polling and no-work cycles remain silent; logging is for startup/shutdown, real work, retry/backoff, and failure outcomes.
+- Emit `worker.processing.completed` only from an explicit completed outcome; a successful retry schedule or DLQ finalization is a non-completion outcome so durable replays cannot be logged as completions.
 
 ## Tests
 

@@ -10,7 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type PostgresStore struct{ pool *pgxpool.Pool }
+type PostgresStore struct {
+	pool       *pgxpool.Pool
+	beginRetry func(context.Context) (pgx.Tx, error)
+}
 
 func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
@@ -192,7 +195,11 @@ func nilIfEmpty(value string) any {
 }
 func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode) (RetryResult, error) {
 	delays := []string{"5 seconds", "30 seconds", "5 minutes"}
-	tx, err := store.pool.Begin(ctx)
+	begin := store.beginRetry
+	if begin == nil {
+		begin = store.pool.Begin
+	}
+	tx, err := begin(ctx)
 	if err != nil {
 		return RetryResult{}, err
 	}
@@ -221,7 +228,8 @@ func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode
 		return RetryResult{}, ErrJobFenceLost
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return RetryResult{}, err
+		// The update may have committed even when the client cannot confirm it.
+		return RetryResult{Scheduled: true}, err
 	}
 	return RetryResult{Scheduled: true}, nil
 }
