@@ -222,7 +222,7 @@ export class ApplicationConfigService {
     const storage = {
       accessKey: this.required<string>(CONFIG_PATH.storage.accessKey),
       bucket: this.required<string>(CONFIG_PATH.storage.bucket),
-      endpoint: this.required<string>(CONFIG_PATH.storage.endpoint),
+      endpoint: this.storageEndpoint(),
       port: this.required<number>(CONFIG_PATH.storage.port),
       presignExpiry: this.required<number>(CONFIG_PATH.storage.presignExpiry),
       region: this.required<string>(CONFIG_PATH.storage.region),
@@ -388,5 +388,15 @@ export class ApplicationConfigService {
     ) {
       throw new Error('Default MinIO credentials are forbidden in production');
     }
+  }
+
+  private storageEndpoint(): string {
+    const endpoint = this.nonBlankString(CONFIG_PATH.storage.endpoint);
+    if (/[/:?#]/u.test(endpoint)) {
+      throw new Error(
+        'OBJECT_STORAGE_ENDPOINT must be a host name or IP address without scheme, port, path, query, or fragment',
+      );
+    }
+    return endpoint;
   }
 }

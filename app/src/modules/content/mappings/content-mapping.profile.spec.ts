@@ -120,7 +120,16 @@ describe('ContentMappingProfile', () => {
       documentId: 'c1ce6db5-3afd-4d8a-a134-902847cc4f87',
       expirySec: 300,
       objectKey: 'internal/object-key.pdf',
-      uploadFields: { key: 'owner/document.pdf', policy: 'signed-policy' },
+      uploadFields: {
+        bucket: 'documents',
+        key: 'owner/document.pdf',
+        'Content-Type': 'application/pdf',
+        Policy: 'signed-policy',
+        'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+        'X-Amz-Credential': 'ACCESS_KEY/20260904/us-east-1/s3/aws4_request',
+        'X-Amz-Date': '20260904T000000Z',
+        'X-Amz-Signature': 'signed-signature',
+      },
       uploadUrl: 'https://storage.example/upload',
     });
 

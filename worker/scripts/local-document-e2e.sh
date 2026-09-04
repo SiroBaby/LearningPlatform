@@ -381,7 +381,7 @@ start_go_worker() {
     export DB_USER=learning
     export DB_PASSWORD=learning
     export DB_NAME=learning
-    export OBJECT_STORAGE_ENDPOINT="http://127.0.0.1:${minio_port}"
+    export OBJECT_STORAGE_ENDPOINT=127.0.0.1
     export OBJECT_STORAGE_PORT="$minio_port"
     export OBJECT_STORAGE_REGION=us-east-1
     export OBJECT_STORAGE_USE_SSL=false
@@ -524,15 +524,7 @@ seed_auth_fixture() {
   auth_access_token=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')
   local token_hash
   token_hash=$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1], "utf8").digest("hex"))' "$auth_access_token")
-  docker exec "$postgres_container" psql \
-    --no-psqlrc --quiet \
-    --set=ON_ERROR_STOP=1 \
-    --set=owner_id="$auth_owner_id" \
-    --set=google_sub="local-document-e2e-$auth_owner_id" \
-    --set=email="$auth_owner_id@example.test" \
-    --set=token_hash="$token_hash" \
-    --username=learning --dbname=learning \
-    --command '
+  printf '%s\n' '
 INSERT INTO "auth"."users"
   ("id", "google_sub", "normalized_email", "email_verified", "role", "status", "deleted_at")
 VALUES (:'"'"'owner_id'"'"', :'"'"'google_sub'"'"', :'"'"'email'"'"', true, '"'"'USER'"'"', '"'"'ACTIVE'"'"', NULL);
@@ -540,7 +532,163 @@ INSERT INTO "auth"."user_profiles" ("user_id") VALUES (:'"'"'owner_id'"'"');
 INSERT INTO "auth"."sessions"
   ("user_id", "session_family_id", "token_type", "token_hash", "expires_at")
 VALUES (:'"'"'owner_id'"'"', gen_random_uuid(), '"'"'ACCESS'"'"', :'"'"'token_hash'"'"', now() + interval '"'"'15 minutes'"'"');
-' >/dev/null 2>&1
+' | docker exec -i "$postgres_container" psql \
+    --no-psqlrc --quiet \
+    --set=ON_ERROR_STOP=1 \
+    --set=owner_id="$auth_owner_id" \
+    --set=google_sub="local-document-e2e-$auth_owner_id" \
+    --set=email="$auth_owner_id@example.test" \
+    --set=token_hash="$token_hash" \
+    --username=learning --dbname=learning \
+    >/dev/null 2>&1
+}
+
+run_s3_round_trip() {
+  (
+    cd "$root/app"
+    node - "$minio_port" <<'NODE'
+const { ConfigService } = require('@nestjs/config');
+const { Logger } = require('@nestjs/common');
+const {
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  S3Client,
+} = require('@aws-sdk/client-s3');
+const { ApplicationConfigService } = require('./dist/config/application-config.service.js');
+const { StorageService } = require('./dist/storage/storage.service.js');
+
+const port = process.argv[2];
+const bucket = 'documents';
+const accessKeyId = 'minioadmin';
+const secretAccessKey = 'minioadmin';
+const contentType = 'text/plain';
+const content = Buffer.from('S3-compatible storage round trip.');
+const objectKey = `regression/${require('node:crypto').randomUUID()}.txt`;
+const endpoint = `http://127.0.0.1:${port}`;
+const client = new S3Client({
+  credentials: { accessKeyId, secretAccessKey },
+  endpoint,
+  forcePathStyle: true,
+  region: 'us-east-1',
+});
+const service = new StorageService(new ApplicationConfigService(new ConfigService({
+  app: { env: 'development' },
+  storage: {
+    accessKey: accessKeyId,
+    bucket,
+    endpoint: '127.0.0.1',
+    port: Number(port),
+    presignExpiry: 300,
+    region: 'us-east-1',
+    secretKey: secretAccessKey,
+    useSSL: false,
+  },
+})));
+Logger.overrideLogger(false);
+
+function requireCondition(condition) {
+  if (!condition) throw new Error('S3 round trip contract failed');
+}
+
+async function postForm(upload, fields, bytes, fileType) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.set(key, value);
+  form.set('file', new Blob([bytes], { type: fileType }), 'round-trip.txt');
+  const response = await fetch(upload.url, { method: 'POST', body: form });
+  await response.arrayBuffer();
+  return response;
+}
+
+async function expectRejectedUpload(policyName, attemptedKey, upload, fields, bytes, fileType) {
+  const response = await postForm(upload, fields, bytes, fileType);
+  process.stdout.write(`S3_POLICY ${policyName} status=${response.status}\n`);
+  requireCondition(!response.ok);
+  requireCondition(response.status === 400 || response.status === 403);
+  let objectExists = false;
+  try {
+    await client.send(new HeadObjectCommand({ Bucket: bucket, Key: attemptedKey }));
+    objectExists = true;
+  } catch (error) {
+    const metadata = error && typeof error === 'object' && '$metadata' in error
+      ? error.$metadata
+      : undefined;
+    const status = metadata && typeof metadata === 'object' ? metadata.httpStatusCode : undefined;
+    requireCondition(status === 404);
+  }
+  requireCondition(!objectExists);
+  process.stdout.write(`S3_POLICY ${policyName} rejected\n`);
+}
+
+async function main() {
+  const cleanupKeys = new Set([objectKey]);
+  try {
+    await service.onModuleInit();
+    const upload = await service.createPresignedPostUrl(objectKey, contentType, content.length);
+    requireCondition(new URL(upload.url).hostname === '127.0.0.1');
+    requireCondition(upload.formFields.Policy);
+    requireCondition(upload.formFields['X-Amz-Algorithm']);
+    requireCondition(upload.formFields['X-Amz-Credential']);
+    requireCondition(upload.formFields['X-Amz-Date']);
+    requireCondition(upload.formFields['X-Amz-Signature']);
+    requireCondition(upload.formFields['Content-Type'] === contentType);
+    requireCondition(upload.formFields.bucket === bucket);
+    requireCondition(upload.formFields.key === objectKey);
+
+    const response = await postForm(upload, upload.formFields, content, contentType);
+    requireCondition(response.ok);
+
+    const stat = await service.statObject(objectKey);
+    requireCondition(stat.size === content.length && stat.contentType === contentType);
+    requireCondition((await service.readHead(objectKey, content.length)).equals(content));
+    requireCondition((await service.readObject(objectKey, content.length)).equals(content));
+
+    const wrongKey = `${objectKey}-wrong-key`;
+    cleanupKeys.add(wrongKey);
+    const wrongKeyUpload = await service.createPresignedPostUrl(objectKey, contentType, content.length);
+    await expectRejectedUpload(
+      'wrong-key',
+      wrongKey,
+      wrongKeyUpload,
+      { ...wrongKeyUpload.formFields, key: wrongKey },
+      content,
+      contentType,
+    );
+
+    const wrongMimeKey = `${objectKey}-wrong-mime`;
+    cleanupKeys.add(wrongMimeKey);
+    const wrongMimeUpload = await service.createPresignedPostUrl(wrongMimeKey, contentType, content.length);
+    await expectRejectedUpload(
+      'wrong-mime',
+      wrongMimeKey,
+      wrongMimeUpload,
+      { ...wrongMimeUpload.formFields, 'Content-Type': 'application/octet-stream' },
+      content,
+      'application/octet-stream',
+    );
+
+    const wrongSizeKey = `${objectKey}-wrong-size`;
+    cleanupKeys.add(wrongSizeKey);
+    const wrongSizeUpload = await service.createPresignedPostUrl(wrongSizeKey, contentType, content.length);
+    await expectRejectedUpload(
+      'wrong-size',
+      wrongSizeKey,
+      wrongSizeUpload,
+      wrongSizeUpload.formFields,
+      Buffer.concat([content, Buffer.from('x')]),
+      contentType,
+    );
+  } finally {
+    for (const key of cleanupKeys) {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    }
+  }
+}
+
+void main().catch(() => {
+  process.exitCode = 1;
+});
+NODE
+  )
 }
 
 classify_pipeline_stage() {
@@ -665,6 +813,9 @@ docker run --rm \
   --entrypoint /bin/sh \
   "$minio_mc_image" \
   -c 'mc alias set local http://'"$minio_container"':9000 minioadmin minioadmin >/dev/null 2>&1 && mc mb --ignore-existing local/documents >/dev/null 2>&1' >/dev/null 2>&1
+
+emit_phase storage-round-trip
+run_s3_round_trip
 
 emit_phase node
 emit_phase start-node-api

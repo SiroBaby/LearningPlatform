@@ -1,6 +1,7 @@
 import { registerAs } from '@nestjs/config';
 
 export default registerAs('storage', () => ({
+  // Host-only contract; OBJECT_STORAGE_PORT carries the TCP port.
   endpoint: process.env.OBJECT_STORAGE_ENDPOINT ?? 'localhost',
   port: parseInt(process.env.OBJECT_STORAGE_PORT ?? '9000', 10),
   region: process.env.OBJECT_STORAGE_REGION ?? 'us-east-1',

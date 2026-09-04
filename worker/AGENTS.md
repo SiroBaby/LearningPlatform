@@ -19,5 +19,6 @@
 
 ## Tests
 
+- When using `psql` variables in a fixture, pipe the SQL through stdin; `psql --command` does not interpolate `--set` variables in this runtime. Keep fixture output redirected and never expose generated tokens or credentials.
 - Tests for processing failures must assert the structured event name, normalized level, and safe metadata for scheduled retry, retry persistence failure, final failure, final-failure persistence failure, and ambiguous persistence outcomes.
 - Add assertions that forbidden payloads and raw provider/error text do not appear in emitted events. Keep these tests at the logger/consumer boundary so future error paths cannot bypass the contract.

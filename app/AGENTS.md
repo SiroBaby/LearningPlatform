@@ -101,6 +101,7 @@
 - Khi chạy local cùng Next BFF, Nest API phải dùng port `3010` còn Next dùng `3000`; trước OAuth browser smoke phải kiểm tra cả hai health endpoint để chặn `EADDRINUSE` bị BFF che thành lỗi đăng nhập generic.
 - Phải hỏi trước khi thay đổi đáng kể cấu trúc dự án, tạo/sửa database schema hoặc migration, thực hiện thao tác database phá hủy/khó hoàn tác, hay có khả năng tác động staging, production hoặc tài nguyên dùng chung.
 - Tất cả `dependencies` và `devDependencies` dùng exact version; `package.json` không được có prefix range `^`, `~`, `>`, `<`, `*` hoặc workspace range. Chỉ nâng version qua security/dependency upgrade có audit và verification.
+- Production object storage phải dùng S3-compatible client; không thêm MinIO Node SDK vào production dependency graph. Regression phải kiểm `npm ls --omit=dev` và lockfile không chứa `minio` hoặc `stream-json` vulnerable path.
 - Sau mọi `npm install`, `npm uninstall` hoặc dependency upgrade: kiểm tra toàn bộ `package.json` để thay mọi range version bằng exact installed version, chạy `npm install --package-lock-only`, rồi chạy `npm audit`. Không kết thúc task khi package chưa được pin hoặc lockfile chưa đồng bộ.
 - Không commit/push/pull khi chưa có yêu cầu rõ.
 
