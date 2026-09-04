@@ -52,6 +52,14 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
     assert.equal(missingSession.status, 401);
     assert.equal(backendRequests.length, 0);
 
+    const refreshOnlyPrivateRoute = await fetch(`${webOrigin}/home`, {
+      headers: { cookie: "lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(refreshOnlyPrivateRoute.status, 307);
+    assert.equal(refreshOnlyPrivateRoute.headers.get("location"), "/login");
+    assert.equal(backendRequests.length, 0);
+
     const state = "runtime-state";
     const binding = createHash("sha256").update(state, "utf8").digest("base64url");
     const callback = await fetch(`${webOrigin}/auth/google/callback?code=runtime-code&state=${state}`, {
@@ -79,6 +87,81 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
       message: "Phiên đăng nhập không còn hiệu lực",
     });
     assert.equal(lastRequest(backendRequests, "/internal/v1/auth/me").authorization, "Bearer invalid-access");
+
+    const expiredAccessHome = await fetch(`${webOrigin}/home?next=%2Fdashboard&tab=1`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(expiredAccessHome.status, 307);
+    assert.equal(expiredAccessHome.headers.get("location"), "/home?next=%2Fdashboard&tab=1");
+    const proxyRefreshCookies = setCookieHeader(expiredAccessHome);
+    assertCookieContract(proxyRefreshCookies, "lp_access", "access-renewed", { secure: true });
+    assertCookieContract(proxyRefreshCookies, "lp_refresh", "refresh-rotated", { secure: true });
+    assert.equal(lastRequest(backendRequests, "/internal/v1/auth/me").authorization, "Bearer access-expired");
+    assert.equal(lastRequest(backendRequests, "/internal/v1/auth/refresh").authorization, "Bearer refresh-valid");
+
+    const renewedAccessHome = await fetch(`${webOrigin}/home`, {
+      headers: { cookie: "lp_access=access-renewed; lp_refresh=refresh-rotated" },
+    });
+    assert.equal(renewedAccessHome.status, 200);
+
+    const malformedRefresh = await fetch(`${webOrigin}/home?case=malformed`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-malformed" },
+      redirect: "manual",
+    });
+    assert.equal(malformedRefresh.status, 307);
+    assert.equal(malformedRefresh.headers.get("location"), "/login");
+    assert.equal(setCookieHeader(malformedRefresh), "");
+    assert.equal(lastRequest(backendRequests, "/internal/v1/auth/refresh").authorization, "Bearer refresh-malformed");
+
+    const failedRefresh = await fetch(`${webOrigin}/home?case=failed`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-failed" },
+      redirect: "manual",
+    });
+    assert.equal(failedRefresh.status, 307);
+    assert.equal(failedRefresh.headers.get("location"), "/login");
+    assert.equal(setCookieHeader(failedRefresh), "");
+    assert.equal(lastRequest(backendRequests, "/internal/v1/auth/refresh").authorization, "Bearer refresh-failed");
+
+    const refreshRequestsBeforeBackendFailure = backendRequests.filter((request) => request.path === "/internal/v1/auth/refresh").length;
+    const backendFailure = await fetch(`${webOrigin}/home?case=backend-failure`, {
+      headers: { cookie: "lp_access=access-backend-error; lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(backendFailure.status, 307);
+    assert.equal(backendFailure.headers.get("location"), "/login");
+    assert.equal(lastRequest(backendRequests, "/internal/v1/auth/me").authorization, "Bearer access-backend-error");
+    assert.equal(backendRequests.filter((request) => request.path === "/internal/v1/auth/refresh").length, refreshRequestsBeforeBackendFailure);
+
+    const concurrentResponses = await Promise.all([
+      fetch(`${webOrigin}/home?case=concurrent-a`, {
+        headers: { cookie: "lp_access=access-concurrent; lp_refresh=refresh-concurrent" },
+        redirect: "manual",
+      }),
+      fetch(`${webOrigin}/home/not-found?case=concurrent-b`, {
+        headers: { cookie: "lp_access=access-concurrent; lp_refresh=refresh-concurrent" },
+        redirect: "manual",
+      }),
+    ]);
+    assert.deepEqual(concurrentResponses.map((response) => response.status), [307, 307]);
+    assert.equal(concurrentResponses[0].headers.get("location"), "/home?case=concurrent-a");
+    assert.equal(concurrentResponses[1].headers.get("location"), "/home/not-found?case=concurrent-b");
+    assert.equal(
+      backendRequests.filter((request) => request.path === "/internal/v1/auth/refresh" && request.authorization === "Bearer refresh-concurrent").length,
+      1,
+    );
+    const concurrentCookies = setCookieHeader(concurrentResponses[0]);
+    assertCookieContract(concurrentCookies, "lp_access", "access-concurrent-renewed", { secure: true });
+    assertCookieContract(concurrentCookies, "lp_refresh", "refresh-concurrent-rotated", { secure: true });
+
+    const concurrentHomeRetry = await fetch(`${webOrigin}/home?case=concurrent-a`, {
+      headers: { cookie: "lp_access=access-concurrent-renewed; lp_refresh=refresh-concurrent-rotated" },
+    });
+    assert.equal(concurrentHomeRetry.status, 200);
+    const concurrentNotFoundRetry = await fetch(`${webOrigin}/home/not-found?case=concurrent-b`, {
+      headers: { cookie: "lp_access=access-concurrent-renewed; lp_refresh=refresh-concurrent-rotated" },
+    });
+    assert.equal(concurrentNotFoundRetry.status, 404);
 
     const refresh = await fetch(`${webOrigin}/auth/refresh`, {
       headers: {
@@ -162,10 +245,16 @@ function createBackendServer(pki, requests) {
       return sendJson(response, 403, { code: "SERVICE_IDENTITY_DENIED" });
     }
     if (!allowedRoutes.has(request.url ?? "")) return sendJson(response, 403, { code: "ROUTE_SCOPE_DENIED" });
-    if (request.url === "/internal/v1/auth/me" && request.headers.authorization !== "Bearer access-callback" && request.headers.authorization !== "Bearer access-refresh") {
+    if (request.url === "/internal/v1/auth/me" && request.headers.authorization === "Bearer access-backend-error") {
+      return sendJson(response, 503, { code: "BACKEND_UNAVAILABLE" });
+    }
+    if (request.url === "/internal/v1/auth/me" && request.headers.authorization !== "Bearer access-callback" && request.headers.authorization !== "Bearer access-refresh" && request.headers.authorization !== "Bearer access-renewed" && request.headers.authorization !== "Bearer access-concurrent-renewed") {
       return sendJson(response, 401, { code: "UNAUTHORIZED" });
     }
-    if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization !== "Bearer refresh-callback") {
+    if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization === "Bearer refresh-failed") {
+      return sendJson(response, 401, { code: "SESSION_INVALID" });
+    }
+    if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization !== "Bearer refresh-callback" && request.headers.authorization !== "Bearer refresh-valid" && request.headers.authorization !== "Bearer refresh-malformed" && request.headers.authorization !== "Bearer refresh-concurrent") {
       return sendJson(response, 401, { code: "UNAUTHORIZED" });
     }
     if (request.url === "/internal/v1/auth/logout" && request.headers.authorization !== "Bearer access-refresh") {
@@ -185,6 +274,30 @@ function createBackendServer(pki, requests) {
     }
     if (request.url === "/internal/v1/auth/me") return sendJson(response, 200, { onboardingCompletedAt: "2026-01-01T00:00:00.000Z" });
     if (request.url === "/internal/v1/auth/refresh") {
+      if (request.headers.authorization === "Bearer refresh-malformed") {
+        return sendJson(response, 200, {
+          accessExpiresAt: "not-a-date",
+          accessToken: " ",
+          refreshExpiresAt: "2026-02-01T00:15:00.000Z",
+          refreshToken: "refresh-malformed-rotated",
+        });
+      }
+      if (request.headers.authorization === "Bearer refresh-valid") {
+        return sendJson(response, 200, {
+          accessExpiresAt: "2026-01-01T00:45:00.000Z",
+          accessToken: "access-renewed",
+          refreshExpiresAt: "2026-02-01T00:15:00.000Z",
+          refreshToken: "refresh-rotated",
+        });
+      }
+      if (request.headers.authorization === "Bearer refresh-concurrent") {
+        return setTimeout(() => sendJson(response, 200, {
+          accessExpiresAt: "2026-01-01T00:45:00.000Z",
+          accessToken: "access-concurrent-renewed",
+          refreshExpiresAt: "2026-02-01T00:15:00.000Z",
+          refreshToken: "refresh-concurrent-rotated",
+        }), 100);
+      }
       return sendJson(response, 200, {
         accessExpiresAt: "2026-01-01T00:30:00.000Z",
         accessToken: "access-refresh",

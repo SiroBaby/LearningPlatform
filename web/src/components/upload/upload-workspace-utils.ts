@@ -4,6 +4,7 @@ import type {
   Phase0ModelOptionGroup,
   Phase0UploadModelSelection,
 } from "@/lib/phase0/contracts";
+import { formatVietnameseDateTime } from "@/lib/date-time";
 
 export type UploadStep = "idle" | "creating" | "uploading" | "uploaded" | "confirming" | "confirmed";
 
@@ -39,10 +40,7 @@ export function formatBytes(sizeBytes: number): string {
 }
 
 export function formatDateTime(iso: string): string {
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(iso));
+  return formatVietnameseDateTime(iso);
 }
 
 function getExtension(name: string): string {

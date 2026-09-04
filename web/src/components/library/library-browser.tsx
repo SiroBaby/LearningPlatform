@@ -7,6 +7,7 @@ import { FileQuestion, FileText, Filter, Grid2x2, LayoutList, RefreshCcw, Search
 import { Badge, Button, EmptyState, LinkButton, SectionHeading, StatusPill, TypeBadge } from "@/components/ui";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
+import { formatVietnameseDateTime } from "@/lib/date-time";
 import { getPhase0Documents } from "@/lib/phase0/client";
 import type {
   Phase0Document,
@@ -88,10 +89,7 @@ function toPresentationDocument(document: Phase0Document): Phase0DocumentPresent
 }
 
 function formatDateTime(iso: string): string {
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(iso));
+  return formatVietnameseDateTime(iso);
 }
 
 function formatBytes(sizeBytes: number): string {
