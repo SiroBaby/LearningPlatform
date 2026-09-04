@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:runtime": "node --test src/lib/auth/backend-client.runtime.test.mjs"
+    "test:runtime": "node --test src/lib/auth/backend-client.runtime.test.mjs src/lib/date-time.test.mjs"
   },
   "dependencies": {
     "lucide-react": "1.23.0",

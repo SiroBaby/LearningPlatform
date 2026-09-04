@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CheckCircle2, Clock3, ExternalLink, KeyRound, RefreshCw, ShieldAlert, UserCog } from "lucide-react";
 
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, Dialog, SelectField, TextField, useToast } from "@/components/ui";
+import { formatVietnameseDateTime, formatVietnameseMediumDate } from "@/lib/date-time";
 import type { AdminActorRole } from "@/lib/admin/operations";
 import {
   parseAdminRoleChangeRequestList,
@@ -72,7 +73,7 @@ function desiredRoleLabel(role: DesiredRole): string {
 }
 
 function shortDate(isoDate: string): string {
-  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(isoDate));
+  return formatVietnameseMediumDate(isoDate);
 }
 
 function modeLabel(mode: AdminSuperAdminMode): string {
@@ -114,7 +115,7 @@ function expiryLabel(expiresAt: string | null): { label: string; expired: boolea
     expired,
     label: expired
       ? "Đã hết hạn"
-      : `Hết hạn ${new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium", timeStyle: "short" }).format(expiry)}`,
+      : `Hết hạn ${formatVietnameseDateTime(expiresAt)}`,
   };
 }
 

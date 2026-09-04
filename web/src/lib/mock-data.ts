@@ -1,3 +1,4 @@
+import { formatVietnameseDate, formatVietnameseShortDateTime } from "./date-time";
 import type {
   Attempt,
   Citation,
@@ -761,20 +762,11 @@ export function formatSec(totalSec: number): string {
 }
 
 export function formatDate(iso: string): string {
-  return new Intl.DateTimeFormat("vi-VN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(new Date(iso));
+  return formatVietnameseDate(iso);
 }
 
 export function formatDateTime(iso: string): string {
-  return new Intl.DateTimeFormat("vi-VN", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(iso));
+  return formatVietnameseShortDateTime(iso);
 }
 
 /** Simulate an async backend call for realistic loading states. */
