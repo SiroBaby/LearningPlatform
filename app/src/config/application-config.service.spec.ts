@@ -215,6 +215,27 @@ describe('ApplicationConfigService', () => {
     );
   });
 
+  it('requires a host-only object storage endpoint alongside its port', () => {
+    const config = (endpoint: string): ApplicationConfigService => new ApplicationConfigService(new ConfigService({
+      app: { env: 'development' },
+      storage: {
+        accessKey: 'access-key',
+        bucket: 'documents',
+        endpoint,
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'secret-key',
+        useSSL: false,
+      },
+    }));
+
+    expect(config('storage.internal').storage.endpoint).toBe('storage.internal');
+    expect(() => config('http://storage.internal:9000').storage).toThrow(
+      'OBJECT_STORAGE_ENDPOINT must be a host name or IP address without scheme, port, path, query, or fragment',
+    );
+  });
+
   it('allows the deterministic fake provider outside production', () => {
     const config = new ConfigService({
       ai: {

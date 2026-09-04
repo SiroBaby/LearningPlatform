@@ -4,7 +4,6 @@
   "description": "AI Learning Platform - Phase 0 monolith slice",
   "private": true,
   "scripts": {
-    "postinstall": "node scripts/patch-runtime-dependencies.cjs",
     "build": "nest build && npm run test:migration-assets",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -14,6 +13,7 @@
     "start:worker:dev": "ts-node src/worker.ts",
     "migration:new": "node scripts/new-migration.js",
     "test:migration-assets": "node scripts/assert-migration-assets.js",
+    "test:production-dependencies": "node scripts/verify-production-dependency-graph.cjs",
     "migration:run": "ts-node -T src/database/migrate.ts up",
     "migration:run:prod": "node dist/database/migrate.js up",
     "migration:revert": "ts-node -T src/database/migrate.ts down",
@@ -24,6 +24,8 @@
   "dependencies": {
     "@automapper/classes": "8.8.1",
     "@automapper/core": "8.8.1",
+    "@aws-sdk/client-s3": "3.1126.0",
+    "@aws-sdk/s3-presigned-post": "3.1126.0",
     "@nestjs/common": "11.1.28",
     "@nestjs/config": "4.0.4",
     "@nestjs/core": "11.1.28",
@@ -35,7 +37,6 @@
     "class-validator": "0.14.4",
     "dotenv": "16.6.1",
     "google-auth-library": "11.0.2",
-    "minio": "8.0.7",
     "openai": "6.47.0",
     "pdfjs-dist": "5.4.296",
     "pg": "8.21.0",
@@ -62,11 +63,6 @@
   "overrides": {
     "browserslist": "4.28.8",
     "qs": "6.16.0",
-    "minio": {
-      "query-string": {
-        "decode-uri-component": "0.5.0"
-      }
-    },
     "fast-uri": "3.1.6",
     "js-yaml": "4.3.1",
     "@istanbuljs/load-nyc-config": {

@@ -75,7 +75,10 @@ func Load(lookup LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	endpoint = normalizeStorageEndpoint(lookup, endpoint)
+	endpoint, err = normalizeStorageEndpoint(lookup, endpoint)
+	if err != nil {
+		return Config{}, err
+	}
 	if err := requireSecureExternalURL(lookup, storageEndpointEnvironment, endpoint); err != nil {
 		return Config{}, err
 	}
@@ -187,18 +190,23 @@ func requiredProviderTimeout(lookup LookupEnv) (time.Duration, error) {
 	return time.Duration(milliseconds) * time.Millisecond, nil
 }
 
-func normalizeStorageEndpoint(lookup LookupEnv, endpoint string) string {
-	if strings.Contains(endpoint, "://") {
-		return endpoint
+func normalizeStorageEndpoint(lookup LookupEnv, endpoint string) (string, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if strings.ContainsAny(endpoint, ":/?#") {
+		return "", fmt.Errorf("%s must be a host name or IP address without scheme, port, path, query, or fragment", storageEndpointEnvironment)
 	}
 	scheme := "http"
 	if value(lookup, storageUseSSLEnvironment, "false") == "true" {
 		scheme = "https"
 	}
-	if port := value(lookup, storagePortEnvironment, ""); port != "" {
-		endpoint += ":" + port
+	port, err := required(lookup, storagePortEnvironment)
+	if err != nil {
+		return "", err
 	}
-	return scheme + "://" + endpoint
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return "", fmt.Errorf("%s must be a valid port", storagePortEnvironment)
+	}
+	return scheme + "://" + endpoint + ":" + port, nil
 }
 
 func buildDatabaseURL(lookup LookupEnv) (string, error) {

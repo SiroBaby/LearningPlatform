@@ -32,6 +32,10 @@ rejected before Docker resources are created. Its terminal output contains
 phase/status markers only; runtime logs and request payloads remain in a
 temporary directory that is removed during cleanup.
 
+`OBJECT_STORAGE_ENDPOINT` uses the same host-only contract as the API; keep the
+scheme, TCP port, path, query, and fragment out of that value and configure the
+port separately with `OBJECT_STORAGE_PORT`.
+
 `/healthz` reports that the health server is alive. `/readyz` becomes ready
 only after the database connection and consumer lifecycle start.
 

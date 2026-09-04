@@ -15,8 +15,9 @@ func TestLoad(t *testing.T) {
 		wantErr string
 	}{
 		{name: "loads shared backend database configuration", env: validEnvironment()},
-		{name: "rejects insecure object storage outside explicit local override", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "http://localhost:9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents"}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
-		{name: "rejects local override in production", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "http://localhost:9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true", "NODE_ENV": "production"}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
+		{name: "rejects insecure object storage outside explicit local override", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "localhost", storagePortEnvironment: "9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents"}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
+		{name: "rejects local override in production", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "localhost", storagePortEnvironment: "9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true", "NODE_ENV": "production"}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
+		{name: "requires a host-only endpoint", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "http://localhost:9000", storagePortEnvironment: "9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true"}), wantErr: "OBJECT_STORAGE_ENDPOINT must be a host name or IP address"},
 		{name: "rejects missing health address", env: map[string]string{}, wantErr: healthAddressEnvironment + " is required"},
 		{name: "rejects malformed health address", env: map[string]string{healthAddressEnvironment: "3403"}, wantErr: "must be a host:port address"},
 		{name: "requires shared backend database configuration", env: map[string]string{healthAddressEnvironment: "127.0.0.1:3403"}, wantErr: databaseHostEnvironment + " is required"},
@@ -34,6 +35,9 @@ func TestLoad(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
+			}
+			if config.Storage.Endpoint != "http://localhost:9000" {
+				t.Fatalf("Load() storage endpoint = %q", config.Storage.Endpoint)
 			}
 			if config.HealthAddress != "127.0.0.1:3403" {
 				t.Fatalf("Load() config = %#v", config)
@@ -111,7 +115,7 @@ func environmentWithDatabase(env map[string]string) map[string]string {
 }
 
 func validEnvironment() map[string]string {
-	return environmentWithDatabase(map[string]string{storageEndpointEnvironment: "http://localhost:9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true"})
+	return environmentWithDatabase(map[string]string{storageEndpointEnvironment: "localhost", storagePortEnvironment: "9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true"})
 }
 
 func openAIEnvironment(overrides map[string]string) map[string]string {

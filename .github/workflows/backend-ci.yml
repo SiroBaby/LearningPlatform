@@ -1,0 +1,60 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - app/**
+      - worker/**
+      - worker/scripts/local-document-e2e.sh
+      - .github/workflows/backend-ci.yml
+  push:
+    branches:
+      - develop
+    paths:
+      - app/**
+      - worker/**
+      - worker/scripts/local-document-e2e.sh
+      - .github/workflows/backend-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Backend tests and S3-compatible storage regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+    env:
+      LOCAL_DOCUMENT_E2E_PROVIDER_MODE: fake
+      AI_WORKER_ALLOW_INSECURE_LOCAL_ENDPOINTS: true
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: worker/go.mod
+      - run: npm ci
+      - name: Audit high-severity dependencies
+        run: timeout 180s node ../deploy/dev/audit-high.js
+      - run: npm test -- --runInBand
+      - run: npm run test:e2e -- --runInBand
+      - run: npm run build
+      - run: npx tsc -p tsconfig.spec.json --noEmit
+      - name: Prepare local worker fixture
+        run: cp ../worker/.env.example ../worker/.env
+      - name: Run real MinIO S3-compatible round trip
+        run: bash ../worker/scripts/local-document-e2e.sh
+      - name: Verify production dependency graph
+        run: |
+          npm ci --omit=dev
+          npm ls --omit=dev --all --json > \
+            "$RUNNER_TEMP/learningplatform-production-dependencies.json"
+          npm run test:production-dependencies -- \
+            "$RUNNER_TEMP/learningplatform-production-dependencies.json"
