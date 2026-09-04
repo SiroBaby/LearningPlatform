@@ -286,6 +286,10 @@ start_node_api() {
     export AI_LLM_PROVIDER=fake
     export AI_CREDENTIAL_ENCRYPTION_MODE=local
     export AI_CREDENTIAL_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    export GOOGLE_CLIENT_ID=local-document-e2e-client-id
+    export GOOGLE_CLIENT_SECRET=local-document-e2e-client-secret
+    export GOOGLE_REDIRECT_URI=http://127.0.0.1/auth/google/callback
+    export AUTH_OAUTH_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     export SWAGGER_ENABLED=false
     export DB_HOST=127.0.0.1
     export DB_PORT="$postgres_port"
