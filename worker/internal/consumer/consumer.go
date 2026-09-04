@@ -54,6 +54,18 @@ const (
 	maxShutdownTimeout     = 2 * time.Minute
 )
 
+type processOutcome uint8
+
+const (
+	processOutcomeUnknown processOutcome = iota
+	processOutcomeCompleted
+	processOutcomeRetryScheduled
+	processOutcomeFinalized
+	processOutcomeFenced
+)
+
+var errInvalidRetryResult = errors.New("invalid retry result")
+
 func NewBootstrap() *Bootstrap {
 	return &Bootstrap{options: normalizeOptions(Options{})}
 }
@@ -179,8 +191,11 @@ func (bootstrap *Bootstrap) dispatch(ctx context.Context) (bool, error) {
 		active := bootstrap.active.Add(1)
 		bootstrap.logLifecycle("worker.processing.started", job, active, 0)
 		started := time.Now()
-		err := bootstrap.processClaimed(jobCtx, job)
+		outcome, err := bootstrap.processClaimed(jobCtx, job)
 		active = bootstrap.active.Add(-1)
+		if outcome == processOutcomeRetryScheduled || outcome == processOutcomeFinalized {
+			return
+		}
 		if errors.Is(jobCtx.Err(), context.Canceled) || errors.Is(jobCtx.Err(), context.DeadlineExceeded) {
 			bootstrap.logLifecycle("worker.processing.cancelled", job, active, time.Since(started))
 			return
@@ -193,7 +208,9 @@ func (bootstrap *Bootstrap) dispatch(ctx context.Context) (bool, error) {
 			bootstrap.logLifecycle("worker.processing.failed", job, active, time.Since(started))
 			return
 		}
-		bootstrap.logLifecycle("worker.processing.completed", job, active, time.Since(started))
+		if outcome == processOutcomeCompleted {
+			bootstrap.logLifecycle("worker.processing.completed", job, active, time.Since(started))
+		}
 	}(*job)
 	return true, nil
 }
@@ -203,10 +220,11 @@ func (bootstrap *Bootstrap) processOne(ctx context.Context) error {
 	if err != nil || job == nil {
 		return err
 	}
-	return bootstrap.processClaimed(ctx, *job)
+	_, err = bootstrap.processClaimed(ctx, *job)
+	return err
 }
 
-func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.Job) error {
+func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.Job) (processOutcome, error) {
 	source, err := bootstrap.store.Source(ctx, job)
 	if err != nil {
 		return bootstrap.finish(ctx, job, err)
@@ -238,24 +256,24 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	persisted, err := bootstrap.store.PersistAndComplete(ctx, job, chunks, questions)
 	if err == nil {
 		if !persisted {
-			return processing.ErrJobFenceLost
+			return processOutcomeFenced, processing.ErrJobFenceLost
 		}
-		return nil
+		return processOutcomeCompleted, nil
 	}
 	if persisted {
 		// A commit error leaves the final state uncertain; retrying could duplicate the result.
 		bootstrap.logFailure("worker.processing.persistence_ambiguous", "persist", job, processing.Failure{Code: processing.ProcessingFailed, Technical: true})
-		return err
+		return processOutcomeUnknown, err
 	}
 	return bootstrap.finish(ctx, job, err)
 }
 
-func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err error) error {
+func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err error) (processOutcome, error) {
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return ctx.Err()
+		return processOutcomeUnknown, ctx.Err()
 	}
 	if errors.Is(err, processing.ErrJobFenceLost) {
-		return processing.ErrJobFenceLost
+		return processOutcomeFenced, processing.ErrJobFenceLost
 	}
 	persistCtx := ctx
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -271,29 +289,48 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 		result, retryErr := bootstrap.store.Retry(persistCtx, job, failure.Code)
 		if retryErr != nil {
 			if errors.Is(retryErr, processing.ErrJobFenceLost) {
-				return processing.ErrJobFenceLost
+				return processOutcomeFenced, processing.ErrJobFenceLost
+			}
+			if result.Scheduled || result.Finalized {
+				bootstrap.logFailure("worker.processing.persistence_ambiguous", "retry", job, failure)
+				return processOutcomeUnknown, retryErr
 			}
 			bootstrap.logFailure("worker.processing.retry.persistence_failed", "retry", job, failure)
-			return retryErr
+			return processOutcomeUnknown, retryErr
 		}
-		if result.Scheduled {
+		switch {
+		case result.Scheduled && result.Finalized:
+			bootstrap.logFailure("worker.processing.retry.contract_violation", "retry", job, failure)
+			return processOutcomeUnknown, errInvalidRetryResult
+		case result.Scheduled:
 			bootstrap.logFailure("worker.processing.retry.scheduled", "retry", job, failure)
-		}
-		if result.Finalized {
+			return processOutcomeRetryScheduled, nil
+		case result.Finalized:
 			bootstrap.logFailure("worker.processing.failed", "dlq", job, failure)
+			return processOutcomeFinalized, nil
+		default:
+			bootstrap.logFailure("worker.processing.retry.contract_violation", "retry", job, failure)
+			return processOutcomeUnknown, errInvalidRetryResult
 		}
-		return retryErr
 	}
 	finalized, failErr := bootstrap.store.Fail(persistCtx, job, failure)
 	if failErr != nil {
 		if errors.Is(failErr, processing.ErrJobFenceLost) {
-			return processing.ErrJobFenceLost
+			return processOutcomeFenced, processing.ErrJobFenceLost
 		}
-		bootstrap.logFailure("worker.processing.failure.persistence_failed", "finalize", job, failure)
+		if finalized {
+			bootstrap.logFailure("worker.processing.persistence_ambiguous", "finalize", job, failure)
+		} else {
+			bootstrap.logFailure("worker.processing.failure.persistence_failed", "finalize", job, failure)
+		}
 	} else if finalized {
 		bootstrap.logFailure("worker.processing.failed", "finalize", job, failure)
+		return processOutcomeFinalized, nil
 	}
-	return failErr
+	if failErr == nil {
+		return processOutcomeFenced, processing.ErrJobFenceLost
+	}
+	return processOutcomeUnknown, failErr
 }
 
 func (bootstrap *Bootstrap) logLifecycle(event string, job processing.Job, active int64, duration time.Duration) {

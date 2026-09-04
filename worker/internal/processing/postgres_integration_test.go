@@ -13,6 +13,7 @@ import (
 	"github.com/SiroBaby/LearningPlatform/worker/internal/migrations"
 	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
@@ -20,6 +21,86 @@ import (
 )
 
 const postgresImage = "postgres:16-alpine"
+
+func TestPostgresStoreRetryPreservesScheduledOutcomeWhenCommitFails(t *testing.T) {
+	commitErr := errors.New("commit outcome unavailable")
+	transaction := &retryTransactionMock{commitErr: commitErr}
+	store := &PostgresStore{
+		beginRetry: func(context.Context) (pgx.Tx, error) {
+			return transaction, nil
+		},
+	}
+
+	result, err := store.Retry(context.Background(), Job{ID: "job", Attempt: 1, LeaseID: "lease"}, ProviderUnavailable)
+	if !result.Scheduled || result.Finalized || !errors.Is(err, commitErr) {
+		t.Fatalf("retry after commit error = (%#v, %v), want ({Scheduled:true}, commit error)", result, err)
+	}
+	if !transaction.execCalled || !transaction.commitCalled {
+		t.Fatalf("retry transaction calls = (exec=%t, commit=%t), want both after update", transaction.execCalled, transaction.commitCalled)
+	}
+}
+
+func TestPostgresStoreRetryKeepsPreCommitErrorsUnchanged(t *testing.T) {
+	queryErr := errors.New("query failed")
+	execErr := errors.New("update failed")
+	for name, transaction := range map[string]*retryTransactionMock{
+		"query": {queryErr: queryErr},
+		"exec":  {execErr: execErr},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &PostgresStore{
+				beginRetry: func(context.Context) (pgx.Tx, error) {
+					return transaction, nil
+				},
+			}
+			result, err := store.Retry(context.Background(), Job{ID: "job", Attempt: 1, LeaseID: "lease"}, ProviderUnavailable)
+			wantErr := queryErr
+			if name == "exec" {
+				wantErr = execErr
+			}
+			if result != (RetryResult{}) || !errors.Is(err, wantErr) {
+				t.Fatalf("retry before commit = (%#v, %v), want ({}, %v)", result, err, wantErr)
+			}
+		})
+	}
+}
+
+type retryTransactionMock struct {
+	pgx.Tx
+	queryErr                 error
+	execErr                  error
+	commitErr                error
+	execCalled, commitCalled bool
+}
+
+func (transaction *retryTransactionMock) QueryRow(context.Context, string, ...any) pgx.Row {
+	return retryRowMock{err: transaction.queryErr}
+}
+
+func (transaction *retryTransactionMock) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	transaction.execCalled = true
+	if transaction.execErr != nil {
+		return pgconn.CommandTag{}, transaction.execErr
+	}
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (transaction *retryTransactionMock) Commit(context.Context) error {
+	transaction.commitCalled = true
+	return transaction.commitErr
+}
+
+func (transaction *retryTransactionMock) Rollback(context.Context) error { return nil }
+
+type retryRowMock struct{ err error }
+
+func (row retryRowMock) Scan(dest ...any) error {
+	if row.err != nil {
+		return row.err
+	}
+	*(dest[0].(*int)) = 0
+	return nil
+}
 
 type postgresIntegration struct {
 	admin     *pgxpool.Pool
@@ -129,6 +210,45 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		}
 		if status != "FAILED" {
 			t.Fatalf("job status = %q, want FAILED", status)
+		}
+	})
+
+	t.Run("does not rearm a completed attempt", func(t *testing.T) {
+		documentID, _ := database.insertDocumentAndJob(t, ctx)
+		job := database.claim(t, ctx)
+		chunks := []Chunk{{ID: "22222222-2222-4222-8222-222222222222", Index: 0, Text: "completed chunk", ContentHash: "completed"}}
+		persisted, err := database.store.PersistAndComplete(ctx, *job, chunks, nil)
+		if err != nil || !persisted {
+			t.Fatalf("complete job = (%t, %v), want (true, nil)", persisted, err)
+		}
+
+		retryResult, err := database.store.Retry(ctx, *job, ProviderUnavailable)
+		if err == nil || retryResult.Scheduled || retryResult.Finalized || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("completed attempt retry = (%#v, %v), want ({}, ErrJobFenceLost)", retryResult, err)
+		}
+		persisted, err = database.store.PersistAndComplete(ctx, *job, chunks, nil)
+		if err == nil || persisted || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("duplicate completed persistence = (%t, %v), want (false, ErrJobFenceLost)", persisted, err)
+		}
+		finalized, err := database.store.Fail(ctx, *job, Failure{Code: ProviderUnavailable})
+		if err == nil || finalized || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("duplicate completed finalization = (%t, %v), want (false, ErrJobFenceLost)", finalized, err)
+		}
+		var status string
+		if err := database.admin.QueryRow(ctx, "SELECT status FROM ai.processing_jobs WHERE id=$1", job.ID).Scan(&status); err != nil {
+			t.Fatalf("read completed job: %v", err)
+		}
+		if status != "COMPLETED" {
+			t.Fatalf("status after completed retry = %q, want COMPLETED", status)
+		}
+		if countRows(t, ctx, database.admin, "SELECT count(*) FROM ai.processing_job_dlq WHERE job_id=$1", job.ID) != 0 {
+			t.Fatal("completed attempt must not create a DLQ row")
+		}
+		if countRows(t, ctx, database.admin, "SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1", job.ID) != 1 {
+			t.Fatal("completed attempt must keep exactly one result outbox event")
+		}
+		if countRows(t, ctx, database.admin, "SELECT count(*) FROM ai.chunks WHERE document_id=$1", documentID) != 1 {
+			t.Fatal("completed attempt must keep its persisted chunk")
 		}
 	})
 

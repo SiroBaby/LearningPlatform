@@ -110,9 +110,223 @@ func TestDispatchLogsFencedInsteadOfCompleted(t *testing.T) {
 	}
 }
 
+func TestDispatchDoesNotLogCompletedAfterDurableRetryOutcome(t *testing.T) {
+	for name, test := range map[string]struct {
+		retryResult processing.RetryResult
+		event       string
+	}{
+		"scheduled": {retryResult: processing.RetryResult{Scheduled: true}, event: "worker.processing.retry.scheduled"},
+		"finalized": {retryResult: processing.RetryResult{Finalized: true}, event: "worker.processing.failed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			output := make(chan []byte, 8)
+			store := &storeMock{
+				job:         &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+				source:      processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+				retryResult: test.retryResult,
+			}
+			worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Technical: true}}, slog.New(slog.NewJSONHandler(logChannelWriter{output: output}, nil)))
+			worker.slots = make(chan struct{}, 1)
+			worked, err := worker.dispatch(context.Background())
+			if err != nil || !worked {
+				t.Fatalf("dispatch() = (%t, %v), want (true, nil)", worked, err)
+			}
+
+			var logs strings.Builder
+			deadline := time.After(time.Second)
+			for !strings.Contains(logs.String(), test.event) {
+				select {
+				case entry := <-output:
+					logs.Write(entry)
+				case <-deadline:
+					t.Fatalf("retry log not emitted: %s", logs.String())
+				}
+			}
+			worker.workers.Wait()
+			for {
+				select {
+				case entry := <-output:
+					logs.Write(entry)
+				default:
+					if strings.Contains(logs.String(), "worker.processing.completed") {
+						t.Fatalf("retrying job was logged as completed: %s", logs.String())
+					}
+					return
+				}
+			}
+		})
+	}
+}
+
+func TestDispatchDoesNotLogCompletedAfterPersistenceRetryOutcome(t *testing.T) {
+	for name, test := range map[string]struct {
+		retryResult processing.RetryResult
+		event       string
+	}{
+		"scheduled": {retryResult: processing.RetryResult{Scheduled: true}, event: "worker.processing.retry.scheduled"},
+		"finalized": {retryResult: processing.RetryResult{Finalized: true}, event: "worker.processing.failed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			output := make(chan []byte, 8)
+			store := &storeMock{
+				job:         &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+				source:      processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+				persistErr:  errors.New("persistence failed after generation"),
+				retryResult: test.retryResult,
+			}
+			worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(logChannelWriter{output: output}, nil)))
+			worker.slots = make(chan struct{}, 1)
+			worked, err := worker.dispatch(context.Background())
+			if err != nil || !worked {
+				t.Fatalf("dispatch() = (%t, %v), want (true, nil)", worked, err)
+			}
+
+			var logs strings.Builder
+			deadline := time.After(time.Second)
+			for !strings.Contains(logs.String(), test.event) {
+				select {
+				case entry := <-output:
+					logs.Write(entry)
+				case <-deadline:
+					t.Fatalf("retry log not emitted: %s", logs.String())
+				}
+			}
+			worker.workers.Wait()
+			for {
+				select {
+				case entry := <-output:
+					logs.Write(entry)
+				default:
+					if strings.Contains(logs.String(), "worker.processing.completed") {
+						t.Fatalf("post-generation retry was logged as completed: %s", logs.String())
+					}
+					return
+				}
+			}
+		})
+	}
+}
+
+func TestDispatchLogsCompletedAfterPersistedResult(t *testing.T) {
+	output := make(chan []byte, 8)
+	store := &storeMock{
+		job:    &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+		source: processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+	}
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(logChannelWriter{output: output}, nil)))
+	worker.slots = make(chan struct{}, 1)
+	worked, err := worker.dispatch(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("dispatch() = (%t, %v), want (true, nil)", worked, err)
+	}
+
+	var logs strings.Builder
+	deadline := time.After(time.Second)
+	for !strings.Contains(logs.String(), "worker.processing.completed") {
+		select {
+		case entry := <-output:
+			logs.Write(entry)
+		case <-deadline:
+			t.Fatalf("completed log not emitted: %s", logs.String())
+		}
+	}
+	worker.workers.Wait()
+	if !store.completed {
+		t.Fatal("completed lifecycle event was emitted without durable completion")
+	}
+}
+
+func TestDispatchLogsFailureWhenFinalizationPersistenceFails(t *testing.T) {
+	output := make(chan []byte, 8)
+	store := &storeMock{
+		job:        &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+		source:     processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+		failErr:    errors.New("finalization persistence failed"),
+		failResult: boolPtr(false),
+	}
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.OutputInvalid}}, slog.New(slog.NewJSONHandler(logChannelWriter{output: output}, nil)))
+	worker.slots = make(chan struct{}, 1)
+	worked, err := worker.dispatch(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("dispatch() = (%t, %v), want (true, nil)", worked, err)
+	}
+
+	var logs strings.Builder
+	deadline := time.After(time.Second)
+	for !strings.Contains(logs.String(), `"event":"worker.processing.failed"`) {
+		select {
+		case entry := <-output:
+			logs.Write(entry)
+		case <-deadline:
+			t.Fatalf("failed lifecycle log not emitted: %s", logs.String())
+		}
+	}
+	worker.workers.Wait()
+	if !store.failed {
+		t.Fatal("finalization was not attempted")
+	}
+	if strings.Contains(logs.String(), "worker.processing.completed") {
+		t.Fatalf("failed finalization was logged as completed: %s", logs.String())
+	}
+}
+
+func TestProcessOneTreatsFalseNilFinalizationAsFenceLoss(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:        &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+		source:     processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+		failResult: boolPtr(false),
+	}
+	worker := New(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.OutputInvalid}})
+	if err := worker.processOne(context.Background()); !errors.Is(err, processing.ErrJobFenceLost) {
+		t.Fatalf("processOne() error = %v, want ErrJobFenceLost", err)
+	}
+}
+
+func TestDispatchTreatsMalformedRetryResultAsFailure(t *testing.T) {
+	for name, retryResult := range map[string]processing.RetryResult{
+		"neither": {},
+		"both":    {Scheduled: true, Finalized: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			output := make(chan []byte, 8)
+			store := &storeMock{
+				job:         &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+				source:      processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+				persistErr:  errors.New("persistence failed after generation"),
+				retryResult: retryResult,
+			}
+			worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(logChannelWriter{output: output}, nil)))
+			worker.slots = make(chan struct{}, 1)
+			worked, err := worker.dispatch(context.Background())
+			if err != nil || !worked {
+				t.Fatalf("dispatch() = (%t, %v), want (true, nil)", worked, err)
+			}
+
+			var logs strings.Builder
+			deadline := time.After(time.Second)
+			for !strings.Contains(logs.String(), `"event":"worker.processing.failed"`) {
+				select {
+				case entry := <-output:
+					logs.Write(entry)
+				case <-deadline:
+					t.Fatalf("failed lifecycle log not emitted: %s", logs.String())
+				}
+			}
+			worker.workers.Wait()
+			if !strings.Contains(logs.String(), `"event":"worker.processing.retry.contract_violation"`) {
+				t.Fatalf("contract violation event not emitted: %s", logs.String())
+			}
+			if strings.Contains(logs.String(), "worker.processing.completed") {
+				t.Fatalf("malformed retry result was logged as completed: %s", logs.String())
+			}
+		})
+	}
+}
+
 func TestProcessOneRequeuesTechnicalFailure(t *testing.T) {
 	t.Parallel()
-	store := &storeMock{job: &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1}, source: processing.Source{StorageRef: "document.txt", Type: "TEXT"}}
+	store := &storeMock{job: &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1}, source: processing.Source{StorageRef: "document.txt", Type: "TEXT"}, retryResult: processing.RetryResult{Scheduled: true}}
 	worker := New(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Technical: true}})
 	if err := worker.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne() error = %v", err)
@@ -175,6 +389,114 @@ func TestProcessOneDoesNotRetryAmbiguousPersistenceFailure(t *testing.T) {
 	assertLogDoesNotExposeJobData(t, output.String())
 	if strings.Contains(output.String(), "commit outcome unavailable") {
 		t.Fatalf("log exposed persistence error: %s", output.String())
+	}
+}
+
+func TestProcessOneLogsAmbiguousRetryFinalization(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 4},
+		source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		retryResult: processing.RetryResult{Finalized: true},
+		retryErr:    errors.New("commit outcome unavailable"),
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Technical: true}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err == nil {
+		t.Fatal("processOne() error = nil, want persistence error")
+	}
+	if !store.retried {
+		t.Fatal("technical failure was not sent to retry persistence")
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "retry" || entry["attempt"] != float64(4) || entry["category"] != string(processing.ProviderUnavailable) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	assertLogDoesNotExposeJobData(t, output.String())
+	if strings.Contains(output.String(), "commit outcome unavailable") {
+		t.Fatalf("log exposed persistence error: %s", output.String())
+	}
+}
+
+func TestProcessOneLogsAmbiguousScheduledRetryCommit(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 1},
+		source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		retryResult: processing.RetryResult{Scheduled: true},
+		retryErr:    errors.New("commit outcome unavailable"),
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Technical: true}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err == nil {
+		t.Fatal("processOne() error = nil, want persistence error")
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "retry" || entry["attempt"] != float64(1) || entry["category"] != string(processing.ProviderUnavailable) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	assertLogDoesNotExposeJobData(t, output.String())
+	if strings.Contains(output.String(), "commit outcome unavailable") {
+		t.Fatalf("log exposed persistence error: %s", output.String())
+	}
+}
+
+func TestProcessOneLogsAmbiguousFinalization(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:        &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
+		source:     processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		failErr:    errors.New("commit outcome unavailable"),
+		failResult: boolPtr(true),
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.OutputInvalid}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err == nil {
+		t.Fatal("processOne() error = nil, want persistence error")
+	}
+	if !store.failed {
+		t.Fatal("non-technical failure was not sent to finalization persistence")
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "finalize" || entry["attempt"] != float64(2) || entry["category"] != string(processing.OutputInvalid) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	assertLogDoesNotExposeJobData(t, output.String())
+	if strings.Contains(output.String(), "commit outcome unavailable") {
+		t.Fatalf("log exposed persistence error: %s", output.String())
+	}
+}
+
+func TestProcessOneLogsMalformedRetryResultMetadata(t *testing.T) {
+	for name, retryResult := range map[string]processing.RetryResult{
+		"neither": {},
+		"both":    {Scheduled: true, Finalized: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &storeMock{
+				job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
+				source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+				retryResult: retryResult,
+			}
+			var output bytes.Buffer
+			worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.ProviderUnavailable, Technical: true}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+			if err := worker.processOne(context.Background()); err == nil {
+				t.Fatal("processOne() error = nil, want malformed retry result error")
+			}
+
+			entry := decodeLogEntry(t, output.String())
+			if entry["level"] != "ERROR" || entry["event"] != "worker.processing.retry.contract_violation" || entry["phase"] != "retry" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProviderUnavailable) {
+				t.Fatalf("log entry = %#v", entry)
+			}
+			assertLogDoesNotExposeJobData(t, output.String())
+		})
 	}
 }
 
@@ -312,13 +634,16 @@ func assertLogDoesNotExposeJobData(t *testing.T, output string) {
 }
 
 type storeMock struct {
-	job                          *processing.Job
-	source                       processing.Source
-	retryResult                  processing.RetryResult
-	persistErr                   error
-	persistResult                *bool
-	persisted                    bool
-	replaced, completed, retried bool
+	job                                  *processing.Job
+	source                               processing.Source
+	retryResult                          processing.RetryResult
+	retryErr                             error
+	persistErr                           error
+	persistResult                        *bool
+	persisted                            bool
+	failErr                              error
+	failResult                           *bool
+	replaced, completed, failed, retried bool
 }
 
 func (store *storeMock) Claim(context.Context) (*processing.Job, error) { return store.job, nil }
@@ -335,12 +660,19 @@ func (store *storeMock) PersistAndComplete(_ context.Context, _ processing.Job, 
 	return persisted, store.persistErr
 }
 func (store *storeMock) Fail(context.Context, processing.Job, processing.Failure) (bool, error) {
-	return true, nil
+	store.failed = true
+	finalized := true
+	if store.failResult != nil {
+		finalized = *store.failResult
+	}
+	return finalized, store.failErr
 }
 func (store *storeMock) Retry(context.Context, processing.Job, processing.FailureCode) (processing.RetryResult, error) {
 	store.retried = true
-	return store.retryResult, nil
+	return store.retryResult, store.retryErr
 }
+
+func boolPtr(value bool) *bool { return &value }
 
 type objectMock struct{ bytes []byte }
 

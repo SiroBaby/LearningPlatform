@@ -5,6 +5,7 @@ import { DataSource, Repository } from 'typeorm';
 
 import { createTestDataSource } from '../../../test-support/test-data-source';
 import { startTestDb, type TestDb } from '../../../test-support/test-db';
+import { DocumentProcessingFailureCode } from '../contracts/document-processing-result';
 import { JobStatus } from '../enums/job-status.enum';
 import { JobType } from '../enums/job-type.enum';
 import { AiOutboxEvent } from '../entities/ai-outbox-event.entity';
@@ -160,6 +161,57 @@ describe('ProcessingJobRepository account access revocation', () => {
 
     const event = await outbox.findOneByOrFail({ aggregateId: job.id });
     expect(event.payload).toMatchObject({ attempt: 2, leaseId });
+  });
+
+  it('does not finalize an expired matching lease', async () => {
+    const ownerId = randomUUID();
+    const leaseId = randomUUID();
+    const job = await jobs.save({
+      attempts: 2,
+      correlationId: randomUUID(),
+      documentId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      jobType: JobType.FULL_PIPELINE,
+      leaseId,
+      leaseUntil: new Date(Date.now() - 1_000),
+      ownerId,
+      status: JobStatus.RUNNING,
+    });
+
+    await expect(repository.complete({ id: job.id, attempts: 2, leaseId })).resolves.toBe(false);
+    await expect(jobs.findOneByOrFail({ id: job.id })).resolves.toMatchObject({
+      id: job.id,
+      leaseId,
+      status: JobStatus.RUNNING,
+    });
+    await expect(outbox.countBy({ aggregateId: job.id })).resolves.toBe(0);
+  });
+
+  it('does not rearm a completed attempt', async () => {
+    const ownerId = randomUUID();
+    const leaseId = randomUUID();
+    const job = await jobs.save({
+      attempts: 2,
+      correlationId: randomUUID(),
+      documentId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      jobType: JobType.FULL_PIPELINE,
+      leaseId,
+      leaseUntil: new Date(Date.now() + 60_000),
+      ownerId,
+      status: JobStatus.RUNNING,
+    });
+
+    await expect(repository.complete({ id: job.id, attempts: 2, leaseId })).resolves.toBe(true);
+    await expect(repository.retryTechnical(
+      { id: job.id, attempts: 2, leaseId },
+      DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+    )).resolves.toBe(false);
+    await expect(jobs.findOneByOrFail({ id: job.id })).resolves.toMatchObject({
+      id: job.id,
+      status: JobStatus.COMPLETED,
+    });
+    await expect(outbox.countBy({ aggregateId: job.id })).resolves.toBe(1);
   });
 
   async function createJob(ownerId: string, status: JobStatus): Promise<ProcessingJob> {
