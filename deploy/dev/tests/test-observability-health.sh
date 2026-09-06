@@ -110,7 +110,7 @@ def grafana_contract(datasources, health, dashboards):
     indexed = {item['name']: item for item in datasources}
     return len(indexed) >= len(expected) and len(indexed) == len(datasources) and all(name in indexed and (indexed[name]['type'], indexed[name]['url']) == contract and health[indexed[name]['uid']] == 'OK' for name, contract in expected.items()) and dashboards == {
         'Kubernetes / Compute Resources / Cluster', 'Kubernetes / Compute Resources / Node (Pods)',
-        'Kubernetes / Compute Resources / Namespace (Pods)', 'Node Exporter / Nodes'}
+        'Kubernetes / Compute Resources / Namespace (Pods)', 'Node Exporter / Nodes', 'Application / Pod'}
 
 def pvc_contract(items):
     expected = {('learning-platform-monitori-prometheus', '3Gi'), ('learning-platform-monitoring', '1Gi'), ('learning-platform-loki', '2Gi')}
@@ -125,7 +125,7 @@ assert loki_latency({'data': {'result': [{'values': [[str(start + 120_000_000_00
 assert loki_latency({'data': {'result': [{'values': [[str(start - 1), marker]]}]}}, start, start + 120_000_000_000, marker) == 121
 sources = [{'name': 'Prometheus', 'type': 'prometheus', 'url': 'http://prometheus-operated.observability.svc.cluster.local:9090', 'uid': 'prometheus'}, {'name': 'Loki', 'type': 'loki', 'url': 'http://learning-platform-loki.observability.svc.cluster.local:3100', 'uid': 'loki'}]
 sources_with_chart_alertmanager = [*sources, {'name': 'Alertmanager', 'type': 'alertmanager', 'url': 'http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093', 'uid': 'alertmanager'}]
-dashboards = {'Kubernetes / Compute Resources / Cluster', 'Kubernetes / Compute Resources / Node (Pods)', 'Kubernetes / Compute Resources / Namespace (Pods)', 'Node Exporter / Nodes'}
+dashboards = {'Kubernetes / Compute Resources / Cluster', 'Kubernetes / Compute Resources / Node (Pods)', 'Kubernetes / Compute Resources / Namespace (Pods)', 'Node Exporter / Nodes', 'Application / Pod'}
 assert grafana_contract(sources, {'prometheus': 'OK', 'loki': 'OK'}, dashboards)
 assert grafana_contract(sources_with_chart_alertmanager, {'prometheus': 'OK', 'loki': 'OK'}, dashboards)
 assert not grafana_contract([{**sources[0], 'url': 'http://wrong'}, sources[1]], {'prometheus': 'OK', 'loki': 'OK'}, dashboards)

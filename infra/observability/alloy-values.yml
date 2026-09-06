@@ -43,6 +43,12 @@ alloy:
           action        = "replace"
           target_label  = "container"
         }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          action        = "replace"
+          target_label  = "pod"
+        }
       }
 
       loki.source.kubernetes "pods" {
@@ -94,7 +100,7 @@ alloy:
         }
 
         stage.label_keep {
-          values = ["cluster", "namespace", "app", "container", "stream"]
+          values = ["cluster", "namespace", "app", "container", "pod", "stream"]
         }
       }
 
