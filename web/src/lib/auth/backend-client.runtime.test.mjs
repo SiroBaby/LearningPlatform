@@ -57,8 +57,15 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
       redirect: "manual",
     });
     assert.equal(refreshOnlyPrivateRoute.status, 307);
-    assert.equal(refreshOnlyPrivateRoute.headers.get("location"), "/login");
-    assert.equal(backendRequests.length, 0);
+    assert.equal(refreshOnlyPrivateRoute.headers.get("location"), "/home");
+    const refreshOnlyPageCookies = setCookieHeader(refreshOnlyPrivateRoute);
+    assertCookieContract(refreshOnlyPageCookies, "lp_access", "access-renewed", { secure: true });
+    assertCookieContract(refreshOnlyPageCookies, "lp_refresh", "refresh-rotated", { secure: true });
+
+    const refreshOnlyPrivateRouteRetry = await fetch(`${webOrigin}/home`, {
+      headers: { cookie: "lp_access=access-renewed; lp_refresh=refresh-rotated" },
+    });
+    assert.equal(refreshOnlyPrivateRouteRetry.status, 200);
 
     const state = "runtime-state";
     const binding = createHash("sha256").update(state, "utf8").digest("base64url");
@@ -94,6 +101,54 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
       code: "SESSION_INVALID",
       message: "Phiên đăng nhập không còn hiệu lực",
     });
+
+    const refreshOnlyMe = await fetch(`${webOrigin}/auth/me`, {
+      headers: { cookie: "lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(refreshOnlyMe.status, 307);
+    assert.equal(refreshOnlyMe.headers.get("location"), "/auth/me");
+    const refreshOnlyMeCookies = setCookieHeader(refreshOnlyMe);
+    assertCookieContract(refreshOnlyMeCookies, "lp_access", "access-renewed", { secure: true });
+    assertCookieContract(refreshOnlyMeCookies, "lp_refresh", "refresh-rotated", { secure: true });
+
+    const refreshOnlyMeRetry = await fetch(`${webOrigin}/auth/me`, {
+      headers: { cookie: "lp_access=access-renewed; lp_refresh=refresh-rotated" },
+    });
+    assert.equal(refreshOnlyMeRetry.status, 200);
+    assert.deepEqual(await refreshOnlyMeRetry.json(), { onboardingCompletedAt: "2026-01-01T00:00:00.000Z" });
+
+    const refreshOnlyProfileBody = { displayName: "Refresh-only learner" };
+    const refreshOnlyProfile = await fetch(`${webOrigin}/auth/profile`, {
+      body: JSON.stringify(refreshOnlyProfileBody),
+      headers: {
+        cookie: "lp_refresh=refresh-valid",
+        "content-type": "application/json",
+        origin: webOrigin,
+        "sec-fetch-site": "same-origin",
+      },
+      method: "PATCH",
+      redirect: "manual",
+    });
+    assert.equal(refreshOnlyProfile.status, 307);
+    assert.equal(refreshOnlyProfile.headers.get("location"), "/auth/profile");
+    const refreshOnlyProfileCookies = setCookieHeader(refreshOnlyProfile);
+    assertCookieContract(refreshOnlyProfileCookies, "lp_access", "access-renewed", { secure: true });
+    assertCookieContract(refreshOnlyProfileCookies, "lp_refresh", "refresh-rotated", { secure: true });
+
+    const refreshOnlyProfileRetry = await fetch(`${webOrigin}/auth/profile`, {
+      body: JSON.stringify(refreshOnlyProfileBody),
+      headers: {
+        cookie: "lp_access=access-renewed; lp_refresh=refresh-rotated",
+        "content-type": "application/json",
+        origin: webOrigin,
+        "sec-fetch-site": "same-origin",
+      },
+      method: "PATCH",
+    });
+    assert.equal(refreshOnlyProfileRetry.status, 200);
+    assert.deepEqual(await refreshOnlyProfileRetry.json(), refreshOnlyProfileBody);
+    assert.equal(lastRequest(backendRequests, "/api/v1/auth/profile").body, JSON.stringify(refreshOnlyProfileBody));
 
     const expiredAccessMe = await fetch(`${webOrigin}/auth/me`, {
       headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-valid" },
@@ -162,6 +217,22 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
       code: "SESSION_INVALID",
       message: "Phiên đăng nhập không còn hiệu lực",
     });
+
+    const refreshOnlyApiSession = await fetch(`${webOrigin}/api/phase0/documents`, {
+      headers: { cookie: "lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(refreshOnlyApiSession.status, 307);
+    assert.equal(refreshOnlyApiSession.headers.get("location"), "/api/phase0/documents");
+    const refreshOnlyApiCookies = setCookieHeader(refreshOnlyApiSession);
+    assertCookieContract(refreshOnlyApiCookies, "lp_access", "access-renewed", { secure: true });
+    assertCookieContract(refreshOnlyApiCookies, "lp_refresh", "refresh-rotated", { secure: true });
+
+    const refreshOnlyApiRetry = await fetch(`${webOrigin}/api/phase0/documents`, {
+      headers: { cookie: "lp_access=access-renewed; lp_refresh=refresh-rotated" },
+    });
+    assert.equal(refreshOnlyApiRetry.status, 200);
+    assert.deepEqual(await refreshOnlyApiRetry.json(), []);
 
     const unavailableApiSession = await fetch(`${webOrigin}/api/phase0/documents?case=backend-unavailable`, {
       headers: { cookie: "lp_access=access-backend-error; lp_refresh=refresh-valid" },

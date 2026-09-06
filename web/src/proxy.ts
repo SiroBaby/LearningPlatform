@@ -145,11 +145,6 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
       ? authBackendUnavailableApiResponse()
       : NextResponse.redirect(getWebPublicUrl("/login"));
   }
-  if (accessSessionStatus !== "invalid") {
-    return apiRequest
-      ? sessionInvalidApiResponse()
-      : NextResponse.redirect(getWebPublicUrl("/login"));
-  }
   const refreshed = await refreshAccessSession(request);
   if (refreshed) return refreshed;
   return apiRequest
