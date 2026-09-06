@@ -119,7 +119,6 @@ APPLICATION_PROMETHEUS_RULES = {
     namespace="learning-platform-dev"
     pod=~"worker-.*"
     container=~"worker|go-worker"
-    condition="true"
     == 0
   ]
 }.freeze
@@ -396,7 +395,8 @@ class Policy
             content.include?('learning-platform-dev') &&
             content.include?('{namespace=~') && content.include?('container=~') &&
             content.include?('CrashLoopBackOff') && content.include?('Log drilldown') &&
-            container_expr.to_s.include?('condition="true"') &&
+            container_expr.to_s.include?('kube_pod_container_status_ready{namespace=~"$namespace",pod=~"$pod",container=~"$container"}') &&
+            !container_expr.to_s.match?(/kube_pod_container_status_ready\{[^}]*condition=/) &&
             phase_panel&.fetch('type', nil) == 'timeseries' &&
             phase_expr.to_s.include?('sum by (phase)') &&
             phase_expr.to_s.include?('kube_pod_status_phase') &&
@@ -470,6 +470,9 @@ class Policy
       missing = snippets.reject { |snippet| expr.include?(snippet) }
       fail_check("PrometheusRule alert #{alert} is missing expression contract: #{missing.join(', ')}") unless missing.empty?
       fail_check("PrometheusRule alert #{alert} must not depend on kube_pod_labels") if expr.include?('kube_pod_labels')
+      if alert == 'LearningPlatformWorkerUnhealthy' && expr.match?(/kube_pod_container_status_ready\{[^}]*condition=/)
+        fail_check('PrometheusRule alert LearningPlatformWorkerUnhealthy must not filter on a nonexistent condition label')
+      end
       fail_check("PrometheusRule alert #{alert} must wait 10m before firing") unless rule['for'] == '10m'
     end
   end
