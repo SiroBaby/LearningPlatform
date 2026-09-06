@@ -1,4 +1,24 @@
 ---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: {name: learning-platform-monitori-learning-platform-application, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
+spec:
+  groups:
+    - name: learning-platform.application
+      rules:
+        - alert: LearningPlatformPodNotReady
+          expr: kube_pod_status_ready{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*",condition="true"} == 0
+          for: 10m
+        - alert: LearningPlatformContainerCrashLoop
+          expr: kube_pod_container_status_waiting_reason{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*",reason="CrashLoopBackOff"} == 1 or sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*"}[15m])) > 3
+          for: 10m
+        - alert: LearningPlatformDeploymentUnavailable
+          expr: kube_deployment_status_replicas_unavailable{namespace="learning-platform-dev",deployment=~"web|api|worker"} > 0
+          for: 10m
+        - alert: LearningPlatformWorkerUnhealthy
+          expr: kube_pod_container_status_ready{namespace="learning-platform-dev",pod=~"worker-.*",container=~"worker|go-worker",condition="true"} == 0
+          for: 10m
+---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: learning-platform-monitoring-meta, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
@@ -52,6 +72,15 @@ data:
         options: {path: /var/lib/grafana/dashboards/k8s-resources-namespace}
       - name: nodes
         options: {path: /var/lib/grafana/dashboards/nodes}
+      - name: application-pod
+        options: {path: /var/lib/grafana/dashboards/application-pod}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: learning-platform-monitoring-grafana-dashboards-application-pod, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring, dashboard-provider: application-pod}}
+data:
+  application-pod.json: |
+    {"title":"Application / Pod","templating":{"list":[{"name":"namespace","current":{"value":"learning-platform-dev"}},{"name":"workload","query":"label_values(kube_deployment_spec_replicas{namespace=~\"$namespace\"}, deployment)"},{"name":"pod","query":"label_values(kube_pod_status_ready{namespace=~\"$namespace\",pod=~\"$workload.*\"}, pod)"},{"name":"container","query":"label_values(kube_pod_container_status_ready{namespace=~\"$namespace\",pod=~\"$pod\"}, container)"}]},"panels":[{"title":"Pod ready","targets":[{"expr":"kube_pod_status_ready{namespace=~\"$namespace\",pod=~\"$pod\"}"}]},{"title":"Container ready","targets":[{"expr":"kube_pod_container_status_ready{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",condition=\"true\"}"}]},{"title":"Pod phase","type":"timeseries","targets":[{"expr":"sum by (phase) (kube_pod_status_phase{namespace=~\"$namespace\",pod=~\"$pod\",phase=~\"Running|Pending|Failed\"} == 1)"}]},{"title":"Restarts","targets":[{"expr":"kube_pod_container_status_restarts_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"}"}]},{"title":"CrashLoopBackOff","targets":[{"expr":"kube_pod_container_status_waiting_reason{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",reason=\"CrashLoopBackOff\"}"}]},{"title":"Replicas","targets":[{"expr":"kube_deployment_spec_replicas{namespace=~\"$namespace\",deployment=~\"$workload\"}"},{"expr":"kube_deployment_status_replicas_available{namespace=~\"$namespace\",deployment=~\"$workload\"}"}]},{"title":"CPU","targets":[{"expr":"container_cpu_usage_seconds_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"}"}]},{"title":"Memory","targets":[{"expr":"container_memory_working_set_bytes{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"}"}]},{"title":"Log drilldown","targets":[{"expr":"{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"}"}]}]}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -77,7 +106,10 @@ kind: ConfigMap
 metadata: {name: learning-platform-alloy-config, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-alloy, app.kubernetes.io/version: v1.18.0}}
 data:
   config.alloy: |
-    stage.label_keep { values = ["cluster", "namespace", "app", "container", "stream"] }
+    discovery.relabel "pod_logs" {
+      rule { source_labels = ["__meta_kubernetes_pod_name"] action = "replace" target_label = "pod" }
+    }
+    stage.label_keep { values = ["cluster", "namespace", "app", "container", "pod", "stream"] }
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: Prometheus
@@ -140,6 +172,8 @@ spec:
           configMap: {name: learning-platform-monitori-k8s-resources-namespace}
         - name: dashboards-nodes
           configMap: {name: learning-platform-monitori-nodes}
+        - name: dashboards-application-pod
+          configMap: {name: learning-platform-monitoring-grafana-dashboards-application-pod}
       containers:
         - name: grafana
           volumeMounts:
@@ -151,6 +185,8 @@ spec:
               mountPath: /var/lib/grafana/dashboards/k8s-resources-namespace
             - name: dashboards-nodes
               mountPath: /var/lib/grafana/dashboards/nodes
+            - name: dashboards-application-pod
+              mountPath: /var/lib/grafana/dashboards/application-pod/application-pod.json
           resources: {requests: {cpu: 75m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
 ---
 apiVersion: apps/v1

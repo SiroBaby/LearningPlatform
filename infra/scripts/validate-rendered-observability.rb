@@ -4,6 +4,7 @@
 # Offline semantic policy validator for already-rendered observability manifests.
 # Ruby's bundled Psych YAML parser is required; this script never downloads or installs anything.
 begin
+  require 'json'
   require 'yaml'
   require 'rexml/document'
 rescue LoadError => error
@@ -52,8 +53,21 @@ GRAFANA_DASHBOARDS = {
   'k8s-resources-cluster' => 'learning-platform-monitori-k8s-resources-cluster',
   'k8s-resources-node' => 'learning-platform-monitori-k8s-resources-node',
   'k8s-resources-namespace' => 'learning-platform-monitori-k8s-resources-namespace',
-  'nodes' => 'learning-platform-monitori-nodes'
+  'nodes' => 'learning-platform-monitori-nodes',
+  'application-pod' => 'learning-platform-monitoring-grafana-dashboards-application-pod'
 }.freeze
+APPLICATION_POD_DASHBOARD_TITLE = 'Application / Pod'
+APPLICATION_POD_DASHBOARD_METRICS = %w[
+  kube_pod_status_ready
+  kube_pod_container_status_ready
+  kube_pod_status_phase
+  kube_pod_container_status_restarts_total
+  kube_pod_container_status_waiting_reason
+  kube_deployment_spec_replicas
+  kube_deployment_status_replicas_available
+  container_cpu_usage_seconds_total
+  container_memory_working_set_bytes
+].freeze
 GRAFANA_DASHBOARD_VOLUMES = GRAFANA_DASHBOARDS.each_with_object({}) do |(provider, config_map), result|
   result["dashboards-#{provider}"] = config_map
 end.freeze
@@ -76,6 +90,42 @@ GRAFANA_DATASOURCES = {
     }
   }
 }.freeze
+APPLICATION_PROMETHEUS_RULES = {
+  'LearningPlatformPodNotReady' => %w[
+    kube_pod_status_ready
+    namespace="learning-platform-dev"
+    pod=~"api-.*|web-.*|worker-.*"
+    condition="true"
+    == 0
+  ],
+  'LearningPlatformContainerCrashLoop' => %w[
+    kube_pod_container_status_waiting_reason
+    namespace="learning-platform-dev"
+    pod=~"api-.*|web-.*|worker-.*"
+    reason="CrashLoopBackOff"
+    == 1
+    increase(kube_pod_container_status_restarts_total
+    [15m])
+    > 3
+  ],
+  'LearningPlatformDeploymentUnavailable' => %w[
+    kube_deployment_status_replicas_unavailable
+    namespace="learning-platform-dev"
+    deployment=~"web|api|worker"
+    > 0
+  ],
+  'LearningPlatformWorkerUnhealthy' => %w[
+    kube_pod_container_status_ready
+    namespace="learning-platform-dev"
+    pod=~"worker-.*"
+    container=~"worker|go-worker"
+    condition="true"
+    == 0
+  ]
+}.freeze
+APPLICATION_PROMETHEUS_RULE_NAME = 'learning-platform-monitori-learning-platform-application'
+APPLICATION_PROMETHEUS_GROUP_NAME = 'learning-platform.application'
+ALLOY_CANONICAL_LABELS = %w[cluster namespace app container pod stream].freeze
 ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS = %w[
   accessToken
   authType
@@ -174,6 +224,7 @@ class Policy
   def validate
     fail_check('render must contain Kubernetes resources') if @documents.empty?
     @documents.each { |document| validate_document(document) }
+    validate_application_prometheus_rules
     validate_required_resources
     validate_metadata
     validate_aggregate_resources
@@ -280,8 +331,8 @@ class Policy
 
     providers = YAML.safe_load(data['dashboardproviders.yaml'], permitted_classes: [], permitted_symbols: [], aliases: false)
     actual = (providers || {}).fetch('providers', []).each_with_object({}) { |provider, result| result[provider['name']] = value(provider, 'options', 'path') }
-    expected = GRAFANA_DASHBOARDS.transform_keys(&:to_s).transform_values { |name| "/var/lib/grafana/dashboards/#{name.sub('learning-platform-monitori-', '')}" }
-    fail_check('Grafana dashboardproviders.yaml must define exactly the four static provider paths') unless actual == expected
+    expected = GRAFANA_DASHBOARDS.keys.each_with_object({}) { |provider, result| result[provider] = "/var/lib/grafana/dashboards/#{provider}" }
+    fail_check('Grafana dashboardproviders.yaml must define exactly the five static provider paths') unless actual == expected
   rescue Psych::Exception, KeyError, NoMethodError
     fail_check('Grafana ConfigMap static provisioning files must be valid YAML')
   end
@@ -297,14 +348,65 @@ class Policy
     volumes = (pod_spec['volumes'] || []).each_with_object({}) { |volume, result| result[volume['name']] = value(volume, 'configMap', 'name') }
     expected_volumes = GRAFANA_DASHBOARD_VOLUMES
     dashboard_volumes = volumes.slice(*expected_volumes.keys)
-    fail_check('Grafana StatefulSet must define exactly four dashboard ConfigMap volumes') unless dashboard_volumes == expected_volumes
+    fail_check('Grafana StatefulSet must define exactly five dashboard ConfigMap volumes') unless dashboard_volumes == expected_volumes
 
     grafana = containers_for(statefulsets.first).find { |container| container['name'] == 'grafana' } || {}
     fail_check('Grafana StatefulSet must use the approved CPU and memory resources') unless grafana['resources'] == GRAFANA_RESOURCES
     mounts = (grafana['volumeMounts'] || []).each_with_object({}) { |mount, result| result[mount['name']] = mount['mountPath'] }
     expected_mounts = GRAFANA_DASHBOARDS.each_with_object({}) { |(provider, _config_map), result| result["dashboards-#{provider}"] = "/var/lib/grafana/dashboards/#{provider}" }
+    expected_mounts['dashboards-application-pod'] = '/var/lib/grafana/dashboards/application-pod/application-pod.json'
     dashboard_mounts = mounts.slice(*expected_mounts.keys)
-    fail_check('Grafana StatefulSet must mount exactly the four dashboard ConfigMaps at their provider paths') unless dashboard_mounts == expected_mounts
+    fail_check('Grafana StatefulSet must mount exactly the five dashboard ConfigMaps at their provider paths') unless dashboard_mounts == expected_mounts
+    validate_application_pod_dashboard
+  end
+
+  def validate_application_pod_dashboard
+    dashboard_config_maps = @documents.select do |document|
+      kind(document) == 'ConfigMap' && name(document) == GRAFANA_DASHBOARDS['application-pod']
+    end
+    unless dashboard_config_maps.length == 1
+      fail_check("render must contain exactly one application pod dashboard ConfigMap/#{GRAFANA_DASHBOARDS['application-pod']}, got #{dashboard_config_maps.length}")
+      return
+    end
+
+    data = dashboard_config_maps.first['data'] || {}
+    content = data['application-pod.json']
+    unless content.is_a?(String)
+      fail_check('application pod dashboard ConfigMap must contain application-pod.json')
+      return
+    end
+
+    dashboard = JSON.parse(content)
+    unless dashboard.is_a?(Hash)
+      fail_check('application pod dashboard must be valid JSON')
+      return
+    end
+
+    required_filters = %w[$namespace $workload $pod $container]
+    panels = dashboard['panels'].is_a?(Array) ? dashboard['panels'] : []
+    container_panel = panels.find { |panel| panel.is_a?(Hash) && panel['title'] == 'Container ready' }
+    phase_panel = panels.find { |panel| panel.is_a?(Hash) && panel['title'] == 'Pod phase' }
+    loki_panel = panels.find { |panel| panel.is_a?(Hash) && panel['title'] == 'Log drilldown' }
+    container_expr = container_panel&.dig('targets', 0, 'expr')
+    phase_expr = phase_panel&.dig('targets', 0, 'expr')
+    loki_expr = loki_panel&.dig('targets', 0, 'expr')
+    valid = dashboard['title'] == APPLICATION_POD_DASHBOARD_TITLE &&
+            APPLICATION_POD_DASHBOARD_METRICS.all? { |metric| content.include?(metric) } &&
+            required_filters.all? { |filter| content.include?(filter) } &&
+            content.include?('learning-platform-dev') &&
+            content.include?('{namespace=~') && content.include?('container=~') &&
+            content.include?('CrashLoopBackOff') && content.include?('Log drilldown') &&
+            container_expr.to_s.include?('condition="true"') &&
+            phase_panel&.fetch('type', nil) == 'timeseries' &&
+            phase_expr.to_s.include?('sum by (phase)') &&
+            phase_expr.to_s.include?('kube_pod_status_phase') &&
+            phase_expr.to_s.include?('phase=~"Running|Pending|Failed"') &&
+            phase_expr.to_s.include?('== 1') &&
+            loki_expr == '{namespace=~"$namespace",pod=~"$pod",container=~"$container"}' &&
+            !content.match?(/cluster\s*=/)
+    fail_check('application pod dashboard must pin learning-platform-dev, expose all filters and required PromQL/Loki panels without a cluster selector') unless valid
+  rescue JSON::ParserError
+    fail_check('application pod dashboard must be valid JSON')
   end
 
   def validate_loki_auth
@@ -332,6 +434,44 @@ class Policy
     fail_check('Loki ConfigMap/loki data.config.yaml must set top-level auth_enabled to boolean false') unless config['auth_enabled'] == false
   rescue Psych::Exception => error
     fail_check("Loki ConfigMap/loki data.config.yaml must be valid YAML: #{error.message}")
+  end
+
+  def validate_application_prometheus_rules
+    candidates = @documents.select do |document|
+      kind(document) == 'PrometheusRule' &&
+        namespace(document) == EXPECTED_NAMESPACE &&
+        label(document, 'app.kubernetes.io/instance') == 'learning-platform-monitoring'
+    end
+    rules = candidates.select { |document| name(document) == APPLICATION_PROMETHEUS_RULE_NAME }
+    if rules.empty?
+      rules = candidates.select do |document|
+        groups = value(document, 'spec', 'groups') || []
+        groups.any? do |group|
+          group['name'] == APPLICATION_PROMETHEUS_GROUP_NAME &&
+            (group['rules'] || []).map { |rule| rule['alert'] }.compact.sort == APPLICATION_PROMETHEUS_RULES.keys.sort
+        end
+      end
+    end
+    unless rules.length == 1
+      fail_check("render must contain exactly one application PrometheusRule, got #{rules.length} (candidates: #{candidates.length})")
+      return
+    end
+
+    actual_rules = (value(rules.first, 'spec', 'groups') || []).flat_map { |group| group['rules'] || [] }
+    actual_by_alert = actual_rules.each_with_object({}) { |rule, result| result[rule['alert']] = rule }
+    unless actual_by_alert.keys.sort == APPLICATION_PROMETHEUS_RULES.keys.sort
+      fail_check('application PrometheusRule must define exactly the four required application alerts')
+      return
+    end
+
+    APPLICATION_PROMETHEUS_RULES.each do |alert, snippets|
+      rule = actual_by_alert.fetch(alert)
+      expr = rule['expr'].to_s
+      missing = snippets.reject { |snippet| expr.include?(snippet) }
+      fail_check("PrometheusRule alert #{alert} is missing expression contract: #{missing.join(', ')}") unless missing.empty?
+      fail_check("PrometheusRule alert #{alert} must not depend on kube_pod_labels") if expr.include?('kube_pod_labels')
+      fail_check("PrometheusRule alert #{alert} must wait 10m before firing") unless rule['for'] == '10m'
+    end
   end
 
   def validate_namespace(document)
@@ -522,11 +662,17 @@ class Policy
     end
     return unless kind(document) == 'ConfigMap'
     content = (document['data'] || {}).values.join("\n")
-    if content.include?('__meta_kubernetes_pod_uid') || content.include?('__meta_kubernetes_pod_name') || content.include?('__meta_kubernetes_pod_label_') && !content.include?('stage.label_keep')
+    if content.include?('__meta_kubernetes_pod_uid')
       fail_check("Alloy ConfigMap/#{name(document)} permits high-cardinality labels")
     end
-    required_labels = '"cluster", "namespace", "app", "container", "stream"'
-    fail_check("Alloy ConfigMap/#{name(document)} must keep only canonical labels") unless content.include?(required_labels)
+
+    pod_relabel = /source_labels\s*=\s*\[\s*"__meta_kubernetes_pod_name"\s*\].*?action\s*=\s*"replace".*?target_label\s*=\s*"pod"/m
+    fail_check("Alloy ConfigMap/#{name(document)} must relabel the pod name to pod") unless content.match?(pod_relabel)
+
+    label_keep = content.scan(/stage\.label_keep\s*\{(.*?)\}/m).map do |block|
+      block.first.to_s.scan(/"([^"]+)"/).flatten
+    end
+    fail_check("Alloy ConfigMap/#{name(document)} must keep only canonical labels") unless label_keep.length == 1 && label_keep.first == ALLOY_CANONICAL_LABELS
   end
 
   def validate_alloy_runtime(document)
@@ -581,6 +727,7 @@ class Policy
     fail_check("persistent storage owners/sizes must be prometheus=3Gi, grafana=1Gi, loki=2Gi; got #{@claims.sort.inspect}") unless @claims.sort == [['grafana', '1Gi'], ['loki', '2Gi'], ['prometheus', '3Gi']]
     validate_operator_reloader
     validate_loki_auth
+    validate_application_prometheus_rules
     validate_grafana_provisioning
     validate_grafana_dashboard_mounts
   end
