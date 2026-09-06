@@ -67,6 +67,29 @@ function setSessionCookies(response: NextResponse, session: RefreshedSession): v
   });
 }
 
+function isApiRequest(request: NextRequest): boolean {
+  const pathname = request.nextUrl.pathname;
+  return pathname.startsWith("/api/") || pathname === "/auth/me" || pathname === "/auth/profile";
+}
+
+function sessionInvalidApiResponse(): NextResponse {
+  return NextResponse.json(
+    { code: "SESSION_INVALID", message: "Phiên đăng nhập không còn hiệu lực" },
+    { status: 401 },
+  );
+}
+
+function authBackendUnavailableApiResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      code: "AUTH_BACKEND_UNAVAILABLE",
+      message: "Dịch vụ xác thực tạm thời không khả dụng",
+      retryable: true,
+    },
+    { status: 503 },
+  );
+}
+
 async function requestRefreshedSession(refreshToken: string): Promise<RefreshedSession | null> {
   try {
     const response = await requestAuthBackend({
@@ -114,16 +137,29 @@ async function refreshAccessSession(request: NextRequest): Promise<NextResponse 
 
 /** Reject unauthenticated requests before rendering a private App Router route. */
 export async function proxy(request: NextRequest): Promise<NextResponse> {
+  const apiRequest = isApiRequest(request);
   const accessSessionStatus = await getAccessSessionStatus(request);
   if (accessSessionStatus === "valid") return NextResponse.next();
-  if (accessSessionStatus !== "invalid") return NextResponse.redirect(getWebPublicUrl("/login"));
+  if (accessSessionStatus === "unavailable") {
+    return apiRequest
+      ? authBackendUnavailableApiResponse()
+      : NextResponse.redirect(getWebPublicUrl("/login"));
+  }
+  if (accessSessionStatus !== "invalid") {
+    return apiRequest
+      ? sessionInvalidApiResponse()
+      : NextResponse.redirect(getWebPublicUrl("/login"));
+  }
   const refreshed = await refreshAccessSession(request);
   if (refreshed) return refreshed;
-  return NextResponse.redirect(getWebPublicUrl("/login"));
+  return apiRequest
+    ? sessionInvalidApiResponse()
+    : NextResponse.redirect(getWebPublicUrl("/login"));
 }
 
 export const config = {
   matcher: [
+    "/api/:path*",
     "/admin/:path*",
     "/analytics/:path*",
     "/billing/:path*",
@@ -142,5 +178,7 @@ export const config = {
     "/teacher/:path*",
     "/tutor/:path*",
     "/upload/:path*",
+    "/auth/me",
+    "/auth/profile",
   ],
 };
