@@ -54,7 +54,7 @@ additionalPrometheusRulesMap:
               summary: Learning Platform deployment has unavailable replicas
           - alert: LearningPlatformWorkerUnhealthy
             expr: >-
-              kube_pod_container_status_ready{namespace="learning-platform-dev",pod=~"worker-.*",container=~"worker|go-worker",condition="true"} == 0
+              kube_pod_container_status_ready{namespace="learning-platform-dev",pod=~"worker-.*",container=~"worker|go-worker"} == 0
             for: 10m
             labels:
               severity: critical
@@ -244,7 +244,7 @@ grafana:
             "editable": false,
             "panels": [
               {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0}, "id": 1, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(kube_pod_status_ready{namespace=~\"$namespace\",pod=~\"$pod\",condition=\"true\"})", "refId": "A"}], "title": "Pod ready", "type": "stat"},
-              {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0}, "id": 2, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(kube_pod_container_status_ready{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",condition=\"true\"})", "refId": "A"}], "title": "Container ready", "type": "stat"},
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0}, "id": 2, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(kube_pod_container_status_ready{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"})", "refId": "A"}], "title": "Container ready", "type": "stat"},
               {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}, "id": 9, "targets": [{"expr": "sum by (phase) (kube_pod_status_phase{namespace=~\"$namespace\",pod=~\"$pod\",phase=~\"Running|Pending|Failed\"} == 1)", "legendFormat": "{{phase}}", "refId": "A"}], "title": "Pod phase", "type": "timeseries"},
               {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0}, "id": 3, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"}[1h]))", "refId": "A"}], "title": "Restarts (1h)", "type": "stat"},
               {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0}, "id": 4, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(kube_pod_container_status_waiting_reason{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",reason=\"CrashLoopBackOff\"})", "refId": "A"}], "title": "CrashLoopBackOff", "type": "stat"},
