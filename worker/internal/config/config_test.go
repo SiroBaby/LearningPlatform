@@ -49,6 +49,160 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestLoadMediaProbeDoesNotRequireAIProviderCredentials(t *testing.T) {
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
+	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	config, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
+	if err != nil {
+		t.Fatalf("LoadMediaProbe() error = %v", err)
+	}
+	if config.LLM.Provider != "fake" {
+		t.Fatalf("media probe provider = %q, want fake", config.LLM.Provider)
+	}
+	if config.Storage.Bucket != "media" || config.Storage.AccessKey != "media-probe-access" || config.Storage.SecretKey != "media-probe-secret" {
+		t.Fatalf("media probe storage = %#v", config.Storage)
+	}
+	if config.ObjectStorageProxyURL != "" {
+		t.Fatalf("local media probe proxy configuration = %q, want empty", config.ObjectStorageProxyURL)
+	}
+	if config.Probe.BinaryPath != "/usr/local/bin/ffprobe" || config.Probe.MaxDownloadSize != 500*1024*1024 {
+		t.Fatalf("media probe config = %#v", config.Probe)
+	}
+}
+
+func TestLoadSupportsDedicatedMediaStorageForFullPipeline(t *testing.T) {
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	env[fullPipelineMediaAccessKeyEnvironment] = "full-pipeline-access"
+	env[fullPipelineMediaSecretKeyEnvironment] = "full-pipeline-secret"
+	config, err := Load(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if config.MediaStorage.Bucket != "media" || config.MediaStorage.AccessKey != "full-pipeline-access" || config.MediaStorage.SecretKey != "full-pipeline-secret" {
+		t.Fatalf("media storage = %#v", config.MediaStorage)
+	}
+}
+
+func TestLoadRejectsPartialDedicatedMediaStorage(t *testing.T) {
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	if _, err := Load(func(key string) (string, bool) { value, ok := env[key]; return value, ok }); err == nil || !strings.Contains(err.Error(), "must be configured together") {
+		t.Fatalf("Load() error = %v, want partial media storage rejection", err)
+	}
+}
+
+func TestLoadRejectsMediaBucketReuseInEveryEnvironment(t *testing.T) {
+	for _, environment := range []string{"development", "test", "production"} {
+		t.Run(environment, func(t *testing.T) {
+			env := validEnvironment()
+			env["NODE_ENV"] = environment
+			env[mediaBucketEnvironment] = env[storageBucketEnvironment]
+			env[fullPipelineMediaAccessKeyEnvironment] = "full-pipeline-access"
+			env[fullPipelineMediaSecretKeyEnvironment] = "full-pipeline-secret"
+			if environment == "production" {
+				env[storageEndpointEnvironment] = "s3.example.test"
+				env[storagePortEnvironment] = "443"
+				env[storageUseSSLEnvironment] = "true"
+				env[objectStorageEgressProxyEnvironment] = "http://egress-proxy.example.test:3128"
+			}
+
+			if _, err := Load(func(key string) (string, bool) { value, ok := env[key]; return value, ok }); err == nil || !strings.Contains(err.Error(), mediaBucketEnvironment+" must differ from "+storageBucketEnvironment) {
+				t.Fatalf("Load() error = %v, want media/document bucket separation", err)
+			}
+		})
+	}
+}
+
+func TestLoadMediaProbeRejectsMissingDedicatedMediaCredentials(t *testing.T) {
+	env := validEnvironment()
+	if _, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok }); err == nil || !strings.Contains(err.Error(), mediaBucketEnvironment+" is required") {
+		t.Fatalf("LoadMediaProbe() error = %v, want dedicated media bucket requirement", err)
+	}
+}
+
+func TestLoadMediaProbeRequiresEgressProxyInProduction(t *testing.T) {
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
+	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env["NODE_ENV"] = "production"
+	env[storageEndpointEnvironment] = "s3.example.test"
+	env[storagePortEnvironment] = "443"
+	env[storageUseSSLEnvironment] = "true"
+
+	if _, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok }); err == nil || !strings.Contains(err.Error(), objectStorageEgressProxyEnvironment+" is required") {
+		t.Fatalf("LoadMediaProbe() error = %v, want production proxy requirement", err)
+	}
+}
+
+func TestLoadMediaProbeAcceptsValidatedEgressProxyInProduction(t *testing.T) {
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
+	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env["NODE_ENV"] = "production"
+	env[storageEndpointEnvironment] = "s3.example.test"
+	env[storagePortEnvironment] = "443"
+	env[storageUseSSLEnvironment] = "true"
+	env[objectStorageEgressProxyEnvironment] = "http://egress-proxy.example.test:3128"
+
+	config, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
+	if err != nil {
+		t.Fatalf("LoadMediaProbe() error = %v", err)
+	}
+	if config.ObjectStorageProxyURL != env[objectStorageEgressProxyEnvironment] {
+		t.Fatalf("proxy configuration = %q", config.ObjectStorageProxyURL)
+	}
+}
+
+func TestLoadAllowsMissingEgressProxyInProductionWhenMediaDisabled(t *testing.T) {
+	env := validEnvironment()
+	env["NODE_ENV"] = "production"
+	env[storageEndpointEnvironment] = "s3.example.test"
+	env[storagePortEnvironment] = "443"
+	env[storageUseSSLEnvironment] = "true"
+	config, err := Load(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
+	if err != nil {
+		t.Fatalf("Load() error = %v, want no proxy requirement when media is disabled", err)
+	}
+	if config.ObjectStorageProxyURL != "" {
+		t.Fatalf("Load() proxy URL = %q, want empty", config.ObjectStorageProxyURL)
+	}
+}
+
+func TestLoadRequiresEgressProxyInProductionWhenMediaEnabled(t *testing.T) {
+	env := validEnvironment()
+	env["NODE_ENV"] = "production"
+	env[storageEndpointEnvironment] = "s3.example.test"
+	env[storagePortEnvironment] = "443"
+	env[storageUseSSLEnvironment] = "true"
+	env[mediaBucketEnvironment] = "media"
+	env[fullPipelineMediaAccessKeyEnvironment] = "full-pipeline-access"
+	env[fullPipelineMediaSecretKeyEnvironment] = "full-pipeline-secret"
+	if _, err := Load(func(key string) (string, bool) { value, ok := env[key]; return value, ok }); err == nil || !strings.Contains(err.Error(), objectStorageEgressProxyEnvironment+" is required") {
+		t.Fatalf("Load() error = %v, want production proxy requirement for media", err)
+	}
+}
+
+func TestLoadMediaProbeRejectsMalformedProductionProxy(t *testing.T) {
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
+	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env["NODE_ENV"] = "production"
+	env[storageEndpointEnvironment] = "s3.example.test"
+	env[storagePortEnvironment] = "443"
+	env[storageUseSSLEnvironment] = "true"
+	env[objectStorageEgressProxyEnvironment] = "egress-proxy.example.test:3128"
+
+	if _, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok }); err == nil || !strings.Contains(err.Error(), objectStorageEgressProxyEnvironment+" must be an absolute HTTP or HTTPS URL") {
+		t.Fatalf("LoadMediaProbe() error = %v, want malformed proxy rejection", err)
+	}
+}
+
 func TestLoadRequiresCoherentOpenAIProviderProfile(t *testing.T) {
 	tests := []struct {
 		name    string
