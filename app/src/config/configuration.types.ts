@@ -113,6 +113,11 @@ export interface DatabaseSettings {
 export interface StorageSettings {
   accessKey: string;
   bucket: string;
+  mediaApiAccessKey: string | undefined;
+  mediaApiSecretKey: string | undefined;
+  mediaBucket: string | undefined;
+  mediaEnabled: boolean;
+  egressProxyUrl: string | undefined;
   endpoint: string;
   port: number;
   presignExpiry: number;
@@ -199,6 +204,11 @@ export const CONFIG_PATH = {
   storage: {
     accessKey: 'storage.accessKey',
     bucket: 'storage.bucket',
+    mediaApiAccessKey: 'storage.mediaApiAccessKey',
+    mediaApiSecretKey: 'storage.mediaApiSecretKey',
+    mediaBucket: 'storage.mediaBucket',
+    mediaEnabled: 'storage.mediaEnabled',
+    egressProxyUrl: 'storage.egressProxyUrl',
     endpoint: 'storage.endpoint',
     port: 'storage.port',
     presignExpiry: 'storage.presignExpiry',

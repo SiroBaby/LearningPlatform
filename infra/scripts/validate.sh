@@ -384,7 +384,8 @@ check_application_edge_contract() {
     '^ghcr_pull_secret_name: REPLACE_WITH_MANUALLY_PROVISIONED_GHCR_PULL_SECRET$' \
     '^web_public_host: REPLACE_WITH_WEB_PUBLIC_HOST$' \
     '^api_public_host: REPLACE_WITH_API_PUBLIC_HOST$' \
-    '^deployment_targets: \[web, api, worker\]$'; do
+    '^deployment_targets: \[web, api, worker\]$' \
+    '^object_storage_egress_proxy_enabled: false$'; do
     if ! grep -qE "${required_pattern}" "${app_vars}"; then
       fail "Missing application contract variable matching ${required_pattern}."
     fi
@@ -404,7 +405,7 @@ check_application_edge_contract() {
     || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY=' "${app_env_example}" \
     || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_ISSUER=' "${app_env_example}" \
     || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_AUDIENCE=' "${app_env_example}" \
-    || [ "$(grep -c 'imagePullSecrets:' "${app_template}")" -ne 3 ] \
+    || [ "$(grep -c 'imagePullSecrets:' "${app_template}")" -ne 4 ] \
     || ! grep -q 'kind: Ingress' "${app_template}" \
     || ! grep -q 'ingressClassName: traefik' "${app_template}" \
     || ! grep -q 'name: api' "${app_template}" \
@@ -516,7 +517,11 @@ check_application_edge_contract() {
   fi
 
   local api_block
-  api_block="$(awk '/{% if '\''api'\'' in deployment_targets %}/{capture=1} capture {print} /{% endif %}/{if (capture) exit}' "${app_template}")"
+  api_block="$(awk '
+    /{% if '\''api'\'' in deployment_targets %}/ { capture = 1 }
+    capture { print }
+    capture && /^          volumeMounts:/ { exit }
+  ' "${app_template}")"
   if [ "$(grep -Fc '            - name: SWAGGER_ENABLED' "${app_template}")" -ne 1 ] \
     || ! grep -Fqx "              value: 'true'" "${app_template}" \
     || [ "$(grep -Fc '            - name: SWAGGER_USERNAME' "${app_template}")" -ne 1 ] \
@@ -530,6 +535,18 @@ check_application_edge_contract() {
     || ! grep -Fq '            - name: SWAGGER_PASSWORD' <<<"${api_block}" \
     || [ "$(grep -Fc '                  name: learning-platform-swagger-runtime' <<<"${api_block}")" -ne 2 ]; then
     fail 'Swagger must be enabled only for API with both dedicated Secret references.'
+  fi
+
+  if ! grep -Fq "            - name: OBJECT_STORAGE_MEDIA_ENABLED" <<<"${api_block}" \
+    || ! grep -Fq "              value: '{{ api_media_enabled | default(false) | bool | ternary(\"true\", \"false\") }}'" <<<"${api_block}" \
+    || ! grep -Fq "{% if api_media_enabled | default(false) | bool %}" <<<"${api_block}" \
+    || ! grep -Fq "{% for key in ['OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_API_MEDIA_ACCESS_KEY', 'OBJECT_STORAGE_API_MEDIA_SECRET_KEY'] %}" <<<"${api_block}" \
+    || ! grep -Fq '                  key: {{ key }}' <<<"${api_block}" \
+    || grep -Fq 'learning-platform-media-probe-runtime' <<<"${api_block}" \
+    || ! grep -Fq "{% if object_storage_egress_proxy_enabled | default(false) | bool %}" <<<"${api_block}" \
+    || ! grep -Fq '            - name: OBJECT_STORAGE_EGRESS_PROXY_URL' <<<"${api_block}" \
+    || grep -Eq "'HTTP_PROXY'|'HTTPS_PROXY'" <<<"${api_block}"; then
+    fail 'API media storage must be explicitly disabled by default and map media credentials/proxy only under their feature gates.'
   fi
 
   local worker_block
@@ -614,6 +631,10 @@ check_ansible_when_installed() {
       "${ANSIBLE_DIR}/roles/cert_manager/tests/internal-pki-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/api-rollout-strategy.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/api-media-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/media-egress-proxy-contract.yml"
     return
   fi
 
@@ -637,6 +658,7 @@ check_artifact_integrity_contract
 check_monitoring_jobs
 check_k3s_edge_contract
 check_application_edge_contract
+bash "${INFRA_DIR}/scripts/tests/test-application-media-contract.sh"
 bash "${INFRA_DIR}/scripts/tests/test-go-worker-provider-profile-contract.sh"
 check_yaml_when_supported
 check_ansible_when_installed

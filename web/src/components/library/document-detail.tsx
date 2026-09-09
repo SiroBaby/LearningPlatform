@@ -6,6 +6,7 @@ import { Button, Card, CardBody, CardHeader, CardTitle, LinkButton, StatusPill, 
 import { formatVietnameseDateTime } from "@/lib/date-time";
 import { Phase0ClientError, getPhase0DocumentQuiz } from "@/lib/phase0/client";
 import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
+import type { DocumentType, DocumentStatus } from "@/lib/types";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
@@ -35,14 +36,25 @@ function formatBytes(sizeBytes: number): string {
   return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
-function mapType(type: Phase0Document["type"]): "pdf" | "text" {
-  return type === "PDF" ? "pdf" : "text";
+function mapType(type: Phase0Document["type"]): DocumentType {
+  switch (type) {
+    case "PDF":
+      return "pdf";
+    case "TEXT":
+      return "text";
+    case "AUDIO":
+      return "audio";
+    case "VIDEO":
+      return "video";
+  }
 }
 
-function mapStatus(status: Phase0Document["status"]): "uploaded" | "processing" | "ready" | "failed" {
+function mapStatus(status: Phase0Document["status"]): DocumentStatus {
   switch (status) {
     case "UPLOADED":
       return "uploaded";
+    case "PROBING":
+      return "probing";
     case "PROCESSING":
       return "processing";
     case "READY":
@@ -115,7 +127,7 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
 
   const primaryAction = quizDiscovery
     ? { href: routes.quizStart(quizDiscovery.quizId), label: "Bắt đầu quiz" }
-    : status === "processing"
+    : status === "probing" || status === "processing"
       ? { href: routes.processing(document.id), label: "Theo dõi xử lý" }
       : canRetryFailure
         ? { href: routes.processing(document.id), label: "Mở lại trang xử lý" }
@@ -174,7 +186,10 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
             <CardTitle>Thông tin tài liệu</CardTitle>
           </CardHeader>
           <CardBody className="grid gap-3 sm:grid-cols-2">
-            <SpecItem label="Loại tài liệu" value={document.type === "TEXT" ? "TXT" : "PDF"} />
+            <SpecItem
+              label="Loại tài liệu"
+              value={document.type === "TEXT" ? "TXT" : document.type === "AUDIO" ? "MP3" : document.type === "VIDEO" ? "MP4" : "PDF"}
+            />
             <SpecItem label="Kích thước" value={formatBytes(document.sizeBytes)} />
             <SpecItem label="Ngôn ngữ" value={document.language ?? "Chưa có"} />
             <SpecItem label="Tạo lúc" value={formatDateTime(document.createdAt)} />

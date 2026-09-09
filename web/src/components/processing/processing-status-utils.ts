@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { formatVietnameseDateTime } from "@/lib/date-time";
 import { getPhase0Document } from "@/lib/phase0/client";
 import type { Phase0BudgetStatus, Phase0Document, Phase0ModelSelectionKind } from "@/lib/phase0/contracts";
+import type { DocumentStatus, DocumentType } from "@/lib/types";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 
 export function formatDateTime(iso: string): string {
@@ -25,14 +26,25 @@ export function formatBytes(sizeBytes: number): string {
   return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
-export function mapType(type: Phase0Document["type"]): "pdf" | "text" {
-  return type === "PDF" ? "pdf" : "text";
+export function mapType(type: Phase0Document["type"]): DocumentType {
+  switch (type) {
+    case "PDF":
+      return "pdf";
+    case "TEXT":
+      return "text";
+    case "AUDIO":
+      return "audio";
+    case "VIDEO":
+      return "video";
+  }
 }
 
-export function mapStatus(status: Phase0Document["status"]): "uploaded" | "processing" | "ready" | "failed" {
+export function mapStatus(status: Phase0Document["status"]): DocumentStatus {
   switch (status) {
     case "UPLOADED":
       return "uploaded";
+    case "PROBING":
+      return "probing";
     case "PROCESSING":
       return "processing";
     case "READY":
@@ -46,6 +58,8 @@ export function getStatusLabel(status: Phase0Document["status"]): string {
   switch (status) {
     case "UPLOADED":
       return "Đã tải lên";
+    case "PROBING":
+      return "Đang kiểm tra tệp";
     case "PROCESSING":
       return "Đang xử lý";
     case "READY":

@@ -82,6 +82,15 @@ export class Document {
   @AutoMap()
   durationSec!: number | null;
 
+  @Column({ name: 'probe_generation', type: 'uuid', nullable: true })
+  probeGeneration!: string | null;
+
+  @Column({ name: 'probe_policy_version', type: 'varchar', length: 80, nullable: true })
+  probePolicyVersion!: string | null;
+
+  @Column({ name: 'deletion_fence', type: 'bigint', default: 0 })
+  deletionFence!: number;
+
   @Column({ name: 'page_count', type: 'int', nullable: true })
   @AutoMap()
   pageCount!: number | null;

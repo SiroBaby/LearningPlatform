@@ -18,11 +18,13 @@ export function UploadSpecRow({ label, value }: { label: string; value: string }
   );
 }
 
-export function UploadSelectionBadges() {
+export function UploadSelectionBadges({ isMediaUploadEnabled }: { readonly isMediaUploadEnabled: boolean }) {
   return (
     <div className="flex flex-wrap gap-2">
       <Badge tone="neutral">PDF</Badge>
       <Badge tone="neutral">TXT</Badge>
+      {isMediaUploadEnabled ? <Badge tone="neutral">MP3</Badge> : null}
+      {isMediaUploadEnabled ? <Badge tone="neutral">MP4</Badge> : null}
     </div>
   );
 }

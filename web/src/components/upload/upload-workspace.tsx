@@ -35,7 +35,11 @@ function getClientErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export function UploadWorkspace() {
+interface UploadWorkspaceProps {
+  readonly isMediaUploadEnabled: boolean;
+}
+
+export function UploadWorkspace({ isMediaUploadEnabled }: UploadWorkspaceProps) {
   const router = useRouter();
   const fileInputId = useId();
   const modelSelectId = useId();
@@ -127,6 +131,12 @@ export function UploadWorkspace() {
       return;
     }
 
+    if (!isMediaUploadEnabled && (normalized.normalizedType === "AUDIO" || normalized.normalizedType === "VIDEO")) {
+      setSelectedFile(null);
+      setValidationError("Tính năng tải MP3/MP4 chưa sẵn sàng. Hiện bạn có thể tải PDF hoặc TXT.");
+      return;
+    }
+
     setSelectedFile(normalized);
     setValidationError(null);
   }
@@ -165,7 +175,9 @@ export function UploadWorkspace() {
     event.preventDefault();
 
     if (!selectedFile) {
-      setValidationError("Hãy chọn tệp PDF hoặc TXT trước khi tiếp tục.");
+      setValidationError(isMediaUploadEnabled
+        ? "Hãy chọn tệp PDF, TXT, MP3 hoặc MP4 trước khi tiếp tục."
+        : "Hãy chọn tệp PDF hoặc TXT trước khi tiếp tục.");
       return;
     }
 
@@ -229,6 +241,7 @@ export function UploadWorkspace() {
           validationError={validationError}
           step={step}
           canSubmit={canSubmit}
+          isMediaUploadEnabled={isMediaUploadEnabled}
           onFileChange={handleFileChange}
           onSubmit={handleUploadSubmit}
           modelSection={(
@@ -255,6 +268,7 @@ export function UploadWorkspace() {
         <UploadStatusPanel
           step={step}
           statusTone={statusTone}
+          isMediaUploadEnabled={isMediaUploadEnabled}
           createdAt={createdAt}
           confirmStatus={confirmStatus}
           selectedModelLabel={selectedModelOption?.label ?? null}

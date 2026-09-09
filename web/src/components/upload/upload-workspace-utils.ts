@@ -1,4 +1,5 @@
 import type {
+  Phase0DocumentType,
   Phase0EstimateResponse,
   Phase0ModelOption,
   Phase0ModelOptionGroup,
@@ -10,7 +11,7 @@ export type UploadStep = "idle" | "creating" | "uploading" | "uploaded" | "confi
 
 export type SelectedPhase0File = {
   readonly file: File;
-  readonly normalizedType: "PDF" | "TEXT";
+  readonly normalizedType: Phase0DocumentType;
 };
 
 export interface UploadModelChoice {
@@ -18,8 +19,55 @@ export interface UploadModelChoice {
   readonly id: string;
 }
 
-const ACCEPTED_EXTENSIONS = new Set(["pdf", "txt"]);
-const ACCEPTED_MIME_TYPES = new Set(["application/pdf", "text/plain"]);
+export const MAX_DOCUMENT_SIZE_BYTES = 1024 * 1024 * 1024;
+export const MAX_MP3_SIZE_BYTES = 300 * 1024 * 1024;
+export const MAX_MP4_SIZE_BYTES = 500 * 1024 * 1024;
+export const MAX_MEDIA_DURATION_SECONDS = 2 * 60 * 60;
+
+type UploadFilePolicy = {
+  readonly type: Phase0DocumentType;
+  readonly label: string;
+  readonly extension: string;
+  readonly acceptedMimeTypes: readonly string[];
+  readonly maxSizeBytes: number;
+  readonly maxSizeLabel: string;
+};
+
+const UPLOAD_FILE_POLICIES: readonly UploadFilePolicy[] = [
+  {
+    type: "PDF",
+    label: "PDF",
+    extension: "pdf",
+    acceptedMimeTypes: ["application/pdf"],
+    maxSizeBytes: MAX_DOCUMENT_SIZE_BYTES,
+    maxSizeLabel: "1 GiB",
+  },
+  {
+    type: "TEXT",
+    label: "TXT",
+    extension: "txt",
+    acceptedMimeTypes: ["text/plain"],
+    maxSizeBytes: MAX_DOCUMENT_SIZE_BYTES,
+    maxSizeLabel: "1 GiB",
+  },
+  {
+    type: "AUDIO",
+    label: "MP3",
+    extension: "mp3",
+    acceptedMimeTypes: ["audio/mpeg"],
+    maxSizeBytes: MAX_MP3_SIZE_BYTES,
+    maxSizeLabel: "300 MiB",
+  },
+  {
+    type: "VIDEO",
+    label: "MP4",
+    extension: "mp4",
+    acceptedMimeTypes: ["video/mp4"],
+    maxSizeBytes: MAX_MP4_SIZE_BYTES,
+    maxSizeLabel: "500 MiB",
+  },
+];
+
 export const ESTIMATE_HELPER_TEXT = "Đây là ước tính ban đầu để bạn cân nhắc trước khi tải lên. Chi phí thực tế có thể thay đổi sau khi xử lý xong.";
 
 export function formatBytes(sizeBytes: number): string {
@@ -48,29 +96,42 @@ function getExtension(name: string): string {
   return segments.length > 1 ? segments.at(-1)?.toLowerCase() ?? "" : "";
 }
 
+function getUploadFilePolicy(extension: string): UploadFilePolicy | null {
+  return UPLOAD_FILE_POLICIES.find((policy) => policy.extension === extension) ?? null;
+}
+
+export function getUploadTypeLabel(type: Phase0DocumentType): string {
+  return UPLOAD_FILE_POLICIES.find((policy) => policy.type === type)?.label ?? type;
+}
+
 export function normalizeFileSelection(file: File): SelectedPhase0File | { readonly error: string } {
   const extension = getExtension(file.name);
   const mime = file.type.trim().toLowerCase();
-  const extensionAllowed = ACCEPTED_EXTENSIONS.has(extension);
-  const mimeAllowed = mime.length === 0 || ACCEPTED_MIME_TYPES.has(mime);
+  const policy = getUploadFilePolicy(extension);
 
   if (file.size <= 0) {
     return { error: "Tệp này đang trống nên chưa thể tải lên." };
   }
 
-  if (!extensionAllowed) {
-    return { error: "Hiện chỉ hỗ trợ tệp PDF hoặc TXT." };
+  if (!policy) {
+    return { error: "Hiện chỉ hỗ trợ tệp PDF, TXT, MP3 hoặc MP4." };
   }
 
-  if (!mimeAllowed) {
+  if (mime.length > 0 && !policy.acceptedMimeTypes.includes(mime)) {
     return {
-      error: "Không đọc được đúng định dạng của tệp này. Hãy chọn lại tệp PDF hoặc TXT gốc.",
+      error: `Định dạng tệp không khớp với phần mở rộng .${extension}. Hãy chọn đúng tệp ${policy.label} gốc.`,
+    };
+  }
+
+  if (file.size > policy.maxSizeBytes) {
+    return {
+      error: `Tệp ${policy.label} vượt giới hạn ${policy.maxSizeLabel}. Hãy giảm dung lượng rồi tải lại.`,
     };
   }
 
   return {
     file,
-    normalizedType: extension === "pdf" ? "PDF" : "TEXT",
+    normalizedType: policy.type,
   };
 }
 

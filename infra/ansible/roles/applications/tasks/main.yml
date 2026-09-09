@@ -60,6 +60,28 @@
       deployment_targets must contain only web, api, and worker, and GHCR/
       ingress configuration must be explicit.
 
+- name: Validate enabled API media storage contract
+  ansible.builtin.assert:
+    that:
+      - ssm_parameter_keys.object_storage_media_bucket is string
+      - ssm_parameter_keys.object_storage_api_media_access_key is string
+      - ssm_parameter_keys.object_storage_api_media_secret_key is string
+      - ssm_parameter_keys.object_storage_egress_proxy_url is string
+      - ssm_parameter_keys.object_storage_media_bucket is search('^/')
+      - ssm_parameter_keys.object_storage_api_media_access_key is search('^/')
+      - ssm_parameter_keys.object_storage_api_media_secret_key is search('^/')
+      - ssm_parameter_keys.object_storage_egress_proxy_url is search('^/')
+      - ssm_parameter_keys.object_storage_media_bucket is not search('REPLACE_WITH')
+      - ssm_parameter_keys.object_storage_api_media_access_key is not search('REPLACE_WITH')
+      - ssm_parameter_keys.object_storage_api_media_secret_key is not search('REPLACE_WITH')
+      - ssm_parameter_keys.object_storage_egress_proxy_url is not search('REPLACE_WITH')
+      - object_storage_egress_proxy_enabled | default(false) | bool
+    fail_msg: >-
+      Enabled API media storage requires the canonical media bucket, dedicated
+      API media credentials, and an explicitly enabled approved object-storage
+      egress proxy SSM path; media-probe credentials must not be reused.
+  when: api_media_enabled | default(false) | bool
+
 - name: Discover existing Learning Platform workload deployments
   kubernetes.core.k8s_info:
     kubeconfig: /etc/rancher/k3s/k3s.yaml

@@ -51,6 +51,16 @@ ssm_parameter_keys:
   object_storage_access_key: /learning-platform/dev/object-storage-access-key
   object_storage_secret_key: /learning-platform/dev/object-storage-secret-key
   object_storage_bucket: /learning-platform/dev/object-storage-bucket
+  object_storage_media_bucket: /learning-platform/dev/object-storage-media-bucket
+  object_storage_api_media_access_key: /learning-platform/dev/object-storage-api-media-access-key
+  object_storage_api_media_secret_key: /learning-platform/dev/object-storage-api-media-secret-key
+  object_storage_media_probe_access_key: /learning-platform/dev/object-storage-media-probe-access-key
+  object_storage_media_probe_secret_key: /learning-platform/dev/object-storage-media-probe-secret-key
+  object_storage_full_pipeline_media_access_key: /learning-platform/dev/object-storage-full-pipeline-media-access-key
+  object_storage_full_pipeline_media_secret_key: /learning-platform/dev/object-storage-full-pipeline-media-secret-key
+  object_storage_egress_proxy_url: /learning-platform/dev/object-storage-egress-proxy-url
+  media_probe_db_user: /learning-platform/dev/media-probe-db-user
+  media_probe_db_password: /learning-platform/dev/media-probe-db-password
   ai_credential_encryption_key: /learning-platform/dev/ai-credential-encryption-key
   openai_base_url: /learning-platform/dev/openai-base-url
   openai_api_key: /learning-platform/dev/openai-api-key
@@ -67,6 +77,7 @@ web_public_host: learningplatform-dev.sirobabycloud.io.vn
 api_public_host: learningplatform-dev-api.sirobabycloud.io.vn
 ingress_tls_secret_name: ''
 deployment_targets: [web, api, worker]
+object_storage_egress_proxy_enabled: false
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}

@@ -53,6 +53,8 @@ spec:
               value: /var/run/identity/web-bff/tls.key
             - name: WEB_PUBLIC_ORIGIN
               value: https://{{ web_public_host }}
+            - name: MEDIA_UPLOADS_ENABLED
+              value: '{{ api_media_enabled | default(false) | bool | ternary("true", "false") }}'
           volumeMounts:
             - name: web-bff-tls
               mountPath: /var/run/identity/web-bff
@@ -139,6 +141,8 @@ spec:
           env:
             - name: NODE_ENV
               value: production
+            - name: OBJECT_STORAGE_MEDIA_ENABLED
+              value: '{{ api_media_enabled | default(false) | bool | ternary("true", "false") }}'
             - name: PORT
               value: '3000'
             - name: INTERNAL_MTLS_PORT
@@ -172,6 +176,22 @@ spec:
                   name: learning-platform-api-runtime
                   key: {{ key }}
 {% endfor %}
+{% if object_storage_egress_proxy_enabled | default(false) | bool %}
+            - name: OBJECT_STORAGE_EGRESS_PROXY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-api-runtime
+                  key: OBJECT_STORAGE_EGRESS_PROXY_URL
+{% endif %}
+{% if api_media_enabled | default(false) | bool %}
+{% for key in ['OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_API_MEDIA_ACCESS_KEY', 'OBJECT_STORAGE_API_MEDIA_SECRET_KEY'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-api-runtime
+                  key: {{ key }}
+{% endfor %}
+{% endif %}
           volumeMounts:
             - name: api-internal-tls
               mountPath: /var/run/identity/api-internal
@@ -360,6 +380,13 @@ spec:
                   name: learning-platform-go-worker-runtime
                   key: {{ key }}
 {% endfor %}
+{% if object_storage_egress_proxy_enabled | default(false) | bool %}
+            - name: OBJECT_STORAGE_EGRESS_PROXY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-go-worker-runtime
+                  key: OBJECT_STORAGE_EGRESS_PROXY_URL
+{% endif %}
           readinessProbe:
             httpGet:
               path: /readyz
@@ -397,6 +424,188 @@ spec:
     - name: health
       port: 3403
       targetPort: health
+{% endif %}
+{% if object_storage_egress_proxy_enabled | default(false) | bool %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: media-egress-proxy-config
+  namespace: {{ learning_platform_namespace }}
+data:
+  squid.conf: |
+    # This proxy is deliberately limited to HTTPS CONNECT for the regional S3 endpoint.
+    visible_hostname media-egress-proxy
+    http_port 3128
+    acl proxy_localhost src 127.0.0.1/32
+    acl CONNECT method CONNECT
+    acl SSL_ports port 443
+    acl s3_endpoint dstdomain .s3.ap-southeast-1.amazonaws.com
+    http_access allow proxy_localhost manager
+    http_access deny manager
+    http_access allow CONNECT s3_endpoint SSL_ports
+    http_access deny all
+    connect_timeout 30 seconds
+    request_timeout 30 seconds
+    read_timeout 5 minutes
+    cache deny all
+    access_log none
+    cache_store_log none
+    cache_log none
+    pid_filename /tmp/squid.pid
+    coredump_dir /var/spool/squid
+    shutdown_lifetime 1 second
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-egress-proxy
+  namespace: {{ learning_platform_namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-egress-proxy
+  template:
+    metadata:
+      annotations:
+        learning-platform.io/rollout-revision: media-egress-proxy-v1
+      labels:
+        app.kubernetes.io/name: learning-platform
+        app.kubernetes.io/component: media-egress-proxy
+    spec:
+      serviceAccountName: media-egress-proxy
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 13
+        runAsGroup: 13
+        fsGroup: 13
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: {{ ghcr_pull_secret_name }}
+      containers:
+        - name: media-egress-proxy
+          image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/sbin/squid
+          args:
+            - -f
+            - /etc/squid/squid.conf
+            - -NYC
+          ports:
+            - name: proxy
+              containerPort: 3128
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+              ephemeral-storage: 80Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+              ephemeral-storage: 80Mi
+          volumeMounts:
+            - name: squid-config
+              mountPath: /etc/squid/squid.conf
+              subPath: squid.conf
+              readOnly: true
+            - name: squid-cache
+              mountPath: /var/spool/squid
+            - name: squid-logs
+              mountPath: /var/log/squid
+            - name: squid-runtime
+              mountPath: /tmp
+      volumes:
+        - name: squid-config
+          configMap:
+            name: media-egress-proxy-config
+            defaultMode: 0444
+        - name: squid-cache
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: squid-logs
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: squid-runtime
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: media-egress-proxy
+  namespace: {{ learning_platform_namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-egress-proxy
+  namespace: {{ learning_platform_namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: learning-platform
+    app.kubernetes.io/component: media-egress-proxy
+  ports:
+    - name: proxy
+      port: 3128
+      targetPort: proxy
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-egress-proxy-ingress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-egress-proxy
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: api
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: worker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: media-probe-worker
+      ports:
+        - protocol: TCP
+          port: 3128
 {% endif %}
 {% if 'web' in deployment_targets or 'api' in deployment_targets %}
 ---

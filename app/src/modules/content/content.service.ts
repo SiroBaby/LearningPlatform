@@ -10,6 +10,7 @@ import {
   Optional,
 } from '@nestjs/common';
 
+import { ApplicationConfigService } from '../../config/application-config.service';
 import { StorageService } from '../../storage/storage.service';
 import {
   QUIZ_DISCOVERY,
@@ -22,10 +23,16 @@ import {
 import { CreateUploadUrlCommand } from './contracts/create-upload-url.command';
 import { DocumentQuizResult } from './contracts/document-quiz.result';
 import { DocumentEstimateResult } from './contracts/document-estimate.result';
-import { resolveDocumentUploadPolicy } from './contracts/document-upload-policy';
+import {
+  assertDocumentUploadSize,
+  getDocumentUploadPolicy,
+  resolveDocumentUploadPolicy,
+} from './contracts/document-upload-policy';
 import { UploadUrlResult } from './contracts/upload-url.result';
+import { MEDIA_PROBE_POLICY_VERSION } from './contracts/media-probe-policy';
 import { Document } from './entities/document.entity';
 import { DocumentStatus } from './enums/document-status.enum';
+import { DocumentType } from './enums/document-type.enum';
 import { isDocumentProcessingFailureRetryable } from '../ai/contracts/document-processing-result';
 import { ContentRepository } from './repositories/content.repository';
 import {
@@ -49,6 +56,7 @@ export class ContentService {
     @Inject(QUIZ_DISCOVERY)
     private readonly quizzes: QuizDiscovery,
     @Optional() @Inject(MODEL_CATALOG) private readonly models?: ModelCatalog,
+    @Optional() private readonly config?: ApplicationConfigService,
   ) {}
 
   /**
@@ -61,8 +69,12 @@ export class ContentService {
     command: CreateUploadUrlCommand,
   ): Promise<UploadUrlResult> {
     const policy = resolveDocumentUploadPolicy(command.type, command.originalName);
+    this.assertMediaUploadsEnabled(policy.bucket);
+    assertDocumentUploadSize(policy, command.sizeBytes);
     const estimate = await this.estimateModelSelection(ownerId, command.sizeBytes, command.selection);
-    const objectKey = `${ownerId}/${randomUUID()}${policy.extension}`;
+    const objectKey = policy.bucket === 'media'
+      ? `media/${ownerId}/${randomUUID()}${policy.extension}`
+      : `${ownerId}/${randomUUID()}${policy.extension}`;
 
     const persistedCommand = { ...command, estimatedCredits: estimate.estimatedCredits, selectedModelLabel: estimate.selectedModelLabel };
     const saved = await this.contentRepository.createUploaded(ownerId, persistedCommand, objectKey);
@@ -71,6 +83,7 @@ export class ContentService {
       objectKey,
       policy.contentType,
       command.sizeBytes,
+      policy.bucket,
     );
 
     return Object.assign(new UploadUrlResult(), {
@@ -78,7 +91,7 @@ export class ContentService {
       uploadUrl: url,
       uploadFields: formFields,
       objectKey,
-      bucket: this.storage.getBucketName(),
+      bucket: this.storage.getBucketName(policy.bucket),
       expirySec,
     });
   }
@@ -137,8 +150,11 @@ export class ContentService {
 
   async estimateBeforeUpload(
     ownerId: string,
-    input: { readonly sizeBytes: number; readonly type: string; readonly selection: DocumentModelSelection },
+    input: { readonly sizeBytes: number; readonly type: DocumentType; readonly selection: DocumentModelSelection },
   ): Promise<DocumentEstimateResult> {
+    const policy = getDocumentUploadPolicy(input.type);
+    this.assertMediaUploadsEnabled(policy.bucket);
+    assertDocumentUploadSize(policy, input.sizeBytes);
     const estimate = await this.estimateModelSelection(ownerId, input.sizeBytes, input.selection);
     return Object.assign(new DocumentEstimateResult(), {
       estimatedCredits: estimate.estimatedCredits,
@@ -160,6 +176,7 @@ export class ContentService {
     if (!quiz) {
       if (
         document.status === DocumentStatus.UPLOADED ||
+        document.status === DocumentStatus.PROBING ||
         document.status === DocumentStatus.PROCESSING
       ) {
         throw new ConflictException({
@@ -245,11 +262,23 @@ export class ContentService {
     document: Document,
     mode: ProcessingStartMode,
   ): Promise<Document> {
-    const v = await this.verifier.verify(document.storageRef, document.type);
+    const policy = resolveDocumentUploadPolicy(document.type, document.originalName);
+    const declaredSizeBytes = Number(document.sizeBytes);
+    assertDocumentUploadSize(policy, declaredSizeBytes);
+    if (
+      document.status === DocumentStatus.PROBING ||
+      document.status === DocumentStatus.PROCESSING ||
+      document.status === DocumentStatus.READY
+    ) {
+      return document;
+    }
+
+    const v = await this.verifier.verify(document.storageRef, document.type, policy.bucket);
     if (
       !v.exists ||
-      !v.magicBytesValid ||
-      v.sizeBytes !== Number(document.sizeBytes)
+      v.sizeBytes !== declaredSizeBytes ||
+      v.contentValidation === 'INVALID' ||
+      (policy.bucket === 'media' && !v.versionId?.trim())
     ) {
       throw new BadRequestException('Uploaded file failed verification');
     }
@@ -259,9 +288,17 @@ export class ContentService {
       kind: document.modelSelectionKind,
       platformModelId: document.platformModelId,
     };
-    const confirmed = mode === 'RETRY'
-      ? await this.contentRepository.retryProcessing(ownerId, id, selection)
-      : await this.contentRepository.confirmProcessing(ownerId, id, selection);
+    const confirmed = policy.bucket === 'media'
+      ? await this.contentRepository.confirmMediaProbe(
+        ownerId,
+        id,
+        selection,
+        MEDIA_PROBE_POLICY_VERSION,
+        this.storage.getBucketName('media'),
+      )
+      : mode === 'RETRY'
+        ? await this.contentRepository.retryProcessing(ownerId, id, selection)
+        : await this.contentRepository.confirmProcessing(ownerId, id, selection);
     if (!confirmed) {
       if (mode === 'CONFIRM') {
         throw new NotFoundException(`Document ${id} not found`);
@@ -274,5 +311,15 @@ export class ContentService {
     }
 
     return confirmed;
+  }
+
+  private assertMediaUploadsEnabled(bucketKind: 'documents' | 'media'): void {
+    if (bucketKind === 'media' && !this.config?.storage.mediaEnabled) {
+      throw new ConflictException({
+        code: 'MEDIA_UPLOADS_DISABLED',
+        message: 'Media uploads are not enabled until the media processing pipeline is available.',
+        retryable: false,
+      });
+    }
   }
 }

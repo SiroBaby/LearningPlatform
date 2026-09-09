@@ -26,7 +26,13 @@ describe('ContentService.retry', () => {
       },
     };
     const verifier = {
-      verify: async (): Promise<{ readonly exists: boolean; readonly magicBytesValid: boolean; readonly sizeBytes: number }> => ({
+      verify: async (): Promise<{
+        readonly contentValidation: 'VALID';
+        readonly exists: boolean;
+        readonly magicBytesValid: boolean;
+        readonly sizeBytes: number;
+      }> => ({
+        contentValidation: 'VALID',
         exists: true,
         magicBytesValid: true,
         sizeBytes: 1024,
@@ -46,7 +52,13 @@ describe('ContentService.retry', () => {
       retryProcessing: async (): Promise<null> => null,
     };
     const verifier = {
-      verify: async (): Promise<{ readonly exists: boolean; readonly magicBytesValid: boolean; readonly sizeBytes: number }> => ({
+      verify: async (): Promise<{
+        readonly contentValidation: 'VALID';
+        readonly exists: boolean;
+        readonly magicBytesValid: boolean;
+        readonly sizeBytes: number;
+      }> => ({
+        contentValidation: 'VALID',
         exists: true,
         magicBytesValid: true,
         sizeBytes: 1024,
@@ -77,9 +89,14 @@ describe('ContentService.retry', () => {
       },
     };
     const verifier = {
-      verify: async (): Promise<{ readonly exists: boolean; readonly magicBytesValid: boolean; readonly sizeBytes: number }> => {
+      verify: async (): Promise<{
+        readonly contentValidation: 'VALID';
+        readonly exists: boolean;
+        readonly magicBytesValid: boolean;
+        readonly sizeBytes: number;
+      }> => {
         verifyCalls += 1;
-        return { exists: true, magicBytesValid: true, sizeBytes: 1024 };
+        return { contentValidation: 'VALID', exists: true, magicBytesValid: true, sizeBytes: 1024 };
       },
     };
     const service = new ContentService(repository as never, null as never, verifier, null as never);

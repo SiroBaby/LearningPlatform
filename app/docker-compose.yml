@@ -27,6 +27,7 @@ services:
       # Local fixture credentials only; never reuse them outside development.
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_API_CORS_ALLOW_ORIGIN: http://localhost:3000,http://127.0.0.1:3000
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # Web console
@@ -37,6 +38,24 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  minio-init:
+    image: minio/mc@sha256:470f5546b596e16c7816b9c3fa7a78ce4076bb73c2c73f7faeec0c8043923123
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      # Local fixture credentials only; never reuse them outside development.
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 &&
+        mc mb --ignore-existing local/documents >/dev/null 2>&1 &&
+        mc mb --ignore-existing local/media >/dev/null 2>&1 &&
+        mc version enable local/media >/dev/null 2>&1
 
 volumes:
   pg_data:

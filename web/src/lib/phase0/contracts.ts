@@ -1,8 +1,8 @@
-export const phase0DocumentTypes = ["PDF", "TEXT"] as const;
+export const phase0DocumentTypes = ["PDF", "TEXT", "AUDIO", "VIDEO"] as const;
 
 export type Phase0DocumentType = (typeof phase0DocumentTypes)[number];
 
-export const phase0DocumentStatuses = ["UPLOADED", "PROCESSING", "READY", "FAILED"] as const;
+export const phase0DocumentStatuses = ["UPLOADED", "PROBING", "PROCESSING", "READY", "FAILED"] as const;
 
 export type Phase0DocumentStatus = (typeof phase0DocumentStatuses)[number];
 
@@ -91,12 +91,12 @@ export type Phase0UploadModelSelection =
 
 export type Phase0UploadUrlRequest = {
   readonly originalName: string;
-  readonly type: "PDF" | "TEXT";
+  readonly type: Phase0DocumentType;
   readonly sizeBytes: number;
 } & Phase0UploadModelSelection;
 
 export type Phase0EstimateRequest = {
-  readonly type: "PDF" | "TEXT";
+  readonly type: Phase0DocumentType;
   readonly sizeBytes: number;
 } & Phase0UploadModelSelection;
 
