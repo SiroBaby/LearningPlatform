@@ -2,6 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 
 import { ContentService } from './content.service';
 import type { ModelCatalog } from '../ai/contracts/model-selection.contracts';
+import { DocumentType } from './enums/document-type.enum';
+import { MAX_MP3_SIZE_BYTES } from './contracts/document-upload-policy';
 
 describe('ContentService.estimateBeforeUpload', () => {
   it('returns a pricing-aware coarse PLAN estimate without creating a Document or reserving credits', async () => {
@@ -11,7 +13,7 @@ describe('ContentService.estimateBeforeUpload', () => {
 
     const result = await service.estimateBeforeUpload('owner-1', {
       sizeBytes: 2048,
-      type: 'PDF',
+      type: DocumentType.PDF,
       selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'plan-model' },
     });
 
@@ -24,11 +26,18 @@ describe('ContentService.estimateBeforeUpload', () => {
       listForOwner: async () => [],
       resolvePlan: async () => null,
     };
-    const service = new ContentService(null as never, null as never, null as never, null as never, catalog);
+    const service = new ContentService(
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      catalog,
+      { storage: { mediaEnabled: true } } as never,
+    );
 
     await expect(service.estimateBeforeUpload('owner-1', {
       sizeBytes: 1024,
-      type: 'PDF',
+      type: DocumentType.PDF,
       selection: { customModelConfigId: 'foreign-config', kind: 'CUSTOM', platformModelId: null },
     })).rejects.toMatchObject({ status: 400 });
   });
@@ -42,9 +51,30 @@ describe('ContentService.estimateBeforeUpload', () => {
 
     await expect(service.estimateBeforeUpload('owner-1', {
       sizeBytes: 2048,
-      type: 'PDF',
+      type: DocumentType.PDF,
       selection: { customModelConfigId: 'owned-config', kind: 'CUSTOM', platformModelId: null },
     })).resolves.toEqual({ estimatedCredits: 0, precision: 'COARSE', selectedModelKind: 'CUSTOM', selectedModelLabel: 'Owner model' });
+  });
+
+  it('rejects an audio estimate over the media policy cap', async () => {
+    const catalog: ModelCatalog = {
+      listForOwner: async () => [],
+      resolvePlan: async () => null,
+    };
+    const service = new ContentService(
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      catalog,
+      { storage: { mediaEnabled: true } } as never,
+    );
+
+    await expect(service.estimateBeforeUpload('owner-1', {
+      sizeBytes: MAX_MP3_SIZE_BYTES + 1,
+      type: DocumentType.AUDIO,
+      selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'plan-model' },
+    })).rejects.toMatchObject({ status: 400 });
   });
 });
 

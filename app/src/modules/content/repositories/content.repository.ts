@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto';
+
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { EntityManager } from 'typeorm';
@@ -10,8 +12,10 @@ import {
 } from '../contracts/document-status-projection.port';
 import { Document } from '../entities/document.entity';
 import { DocumentStatus } from '../enums/document-status.enum';
+import { DocumentType } from '../enums/document-type.enum';
 import { OutboxEvent } from '../entities/outbox-event.entity';
 import type { DocumentModelSelection } from '../../ai/contracts/model-selection.contracts';
+import { MEDIA_PROBE_JOB_TYPE } from '../contracts/media-probe-policy';
 
 @Injectable()
 export class ContentRepository extends BaseRepository<Document> {
@@ -70,6 +74,67 @@ export class ContentRepository extends BaseRepository<Document> {
       }
 
       return manager.findOne(Document, { where: { id, ownerId } });
+    });
+  }
+
+  /**
+   * Start the media probe without touching the AI schema. The content
+   * transaction owns both the Document CAS and its durable forward event;
+   * the relay later creates the MEDIA_PROBE queue row idempotently.
+   */
+  async confirmMediaProbe(
+    ownerId: string,
+    id: string,
+    selection: DocumentModelSelection,
+    policyVersion: string,
+    sourceBucket: string,
+  ): Promise<Document | null> {
+    return this.dataSource.transaction(async (manager) => {
+      const probeGeneration = randomUUID();
+      const started = await manager
+        .createQueryBuilder()
+        .update(Document)
+        .set({
+          errorCode: null,
+          errorMessage: null,
+          probeGeneration,
+          probePolicyVersion: policyVersion,
+          status: DocumentStatus.PROBING,
+        })
+        .where(
+          'id = :id AND owner_id = :ownerId AND type IN (:...mediaTypes) AND status IN (:...allowed)',
+          {
+            allowed: [DocumentStatus.UPLOADED, DocumentStatus.FAILED],
+            id,
+            mediaTypes: [DocumentType.AUDIO, DocumentType.VIDEO],
+            ownerId,
+          },
+        )
+        .execute();
+
+      const current = await manager.findOne(Document, { where: { id, ownerId } });
+
+      if (started.affected === 1 && current) {
+        const fullPipelineJobId = randomUUID();
+        const outbox = new OutboxEvent();
+        outbox.aggregateId = id;
+        outbox.eventType = 'DocumentProbeRequested';
+        outbox.payload = {
+          documentId: id,
+          fullPipelineJobId,
+          ownerId,
+          jobType: MEDIA_PROBE_JOB_TYPE,
+          probeGeneration,
+          policyVersion,
+          deletionFence: Number(current.deletionFence),
+          sourceBucket,
+          sourceKey: current.storageRef,
+          ...selection,
+        };
+        await manager.save(outbox);
+      }
+
+      return current;
     });
   }
 

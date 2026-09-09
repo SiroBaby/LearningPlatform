@@ -6,6 +6,7 @@ import { createTestDataSource } from '../../test-support/test-data-source';
 import { FakeStorageVerifier } from '../../test-support/fake-storage-verifier';
 import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
 import { ContentService } from './content.service';
+import { MAX_MP3_SIZE_BYTES } from './contracts/document-upload-policy';
 import { Document } from './entities/document.entity';
 import { DocumentStatus } from './enums/document-status.enum';
 import { DocumentType } from './enums/document-type.enum';
@@ -19,6 +20,7 @@ describe('ContentService.confirm', () => {
   let documents: Repository<Document>;
   let outbox: Repository<OutboxEvent>;
   let verifier: FakeStorageVerifier;
+  let storage: { getBucketName: (bucketKind: 'documents' | 'media') => string };
 
   beforeAll(async () => {
     db = await startTestDb();
@@ -35,9 +37,12 @@ describe('ContentService.confirm', () => {
     documents = dataSource.getRepository(Document);
     outbox = dataSource.getRepository(OutboxEvent);
     verifier = new FakeStorageVerifier();
+    storage = {
+      getBucketName: (bucketKind) => bucketKind === 'media' ? 'learning-platform-dev-media-custom' : 'learning-platform-dev-documents',
+    };
     service = new ContentService(
       new ContentRepository(dataSource),
-      /* storage */ null as never,
+      storage as never,
       verifier,
       null as never,
     );
@@ -68,6 +73,19 @@ describe('ContentService.confirm', () => {
         status: DocumentStatus.FAILED,
         storageRef: `${ownerId}/${randomUUID()}.pdf`,
         type: DocumentType.PDF,
+      }),
+    );
+  }
+
+  async function seedUploadedMedia(ownerId: string): Promise<Document> {
+    return documents.save(
+      documents.create({
+        ownerId,
+        type: DocumentType.AUDIO,
+        originalName: 'lecture.mp3',
+        storageRef: `${ownerId}/${randomUUID()}.mp3`,
+        sizeBytes: 1024,
+        status: DocumentStatus.UPLOADED,
       }),
     );
   }
@@ -159,5 +177,102 @@ describe('ContentService.confirm', () => {
 
     const reloaded = await documents.findOneByOrFail({ id: doc.id });
     expect(reloaded.status).toBe(DocumentStatus.UPLOADED);
+  });
+
+  it('confirm media chuyển UPLOADED -> PROBING và ghi một probe outbox', async () => {
+    const owner = randomUUID();
+    const doc = await seedUploadedMedia(owner);
+
+    const confirmed = await service.confirm(owner, doc.id);
+
+    expect(confirmed.status).toBe(DocumentStatus.PROBING);
+    expect(verifier.lastBucketKind).toBe('media');
+    const reloaded = await documents.findOneByOrFail({ id: doc.id });
+    expect(reloaded.status).toBe(DocumentStatus.PROBING);
+    expect(reloaded.probeGeneration).toEqual(expect.any(String));
+    expect(reloaded.probePolicyVersion).toBe('media-v1');
+
+    const rows = await outbox.find({ where: { aggregateId: doc.id } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].eventType).toBe('DocumentProbeRequested');
+    expect(rows[0].payload).toMatchObject({
+      documentId: doc.id,
+      jobType: 'MEDIA_PROBE',
+      ownerId: owner,
+      policyVersion: 'media-v1',
+      probeGeneration: reloaded.probeGeneration,
+      sourceBucket: 'learning-platform-dev-media-custom',
+    });
+  });
+
+  it('confirm media lặp lại là no-op, không tạo probe outbox thứ hai', async () => {
+    const owner = randomUUID();
+    const doc = await seedUploadedMedia(owner);
+
+    await service.confirm(owner, doc.id);
+    const first = await documents.findOneByOrFail({ id: doc.id });
+    await service.confirm(owner, doc.id);
+
+    const second = await documents.findOneByOrFail({ id: doc.id });
+    expect(second.status).toBe(DocumentStatus.PROBING);
+    expect(second.probeGeneration).toBe(first.probeGeneration);
+    expect(await outbox.count({ where: { aggregateId: doc.id } })).toBe(1);
+  });
+
+  it('confirm media video verifies the physical media bucket before probing', async () => {
+    const owner = randomUUID();
+    const doc = await documents.save(
+      documents.create({
+        ownerId: owner,
+        type: DocumentType.VIDEO,
+        originalName: 'lecture.mp4',
+        storageRef: `media/${owner}/${randomUUID()}.mp4`,
+        sizeBytes: 1024,
+        status: DocumentStatus.UPLOADED,
+      }),
+    );
+
+    await expect(service.confirm(owner, doc.id)).resolves.toMatchObject({
+      status: DocumentStatus.PROBING,
+    });
+    expect(verifier.lastBucketKind).toBe('media');
+  });
+
+  it('rejects media confirmation when the object is missing from the media bucket', async () => {
+    const owner = randomUUID();
+    const doc = await seedUploadedMedia(owner);
+    verifier.setResult({ exists: false, sizeBytes: 0 });
+
+    await expect(service.confirm(owner, doc.id)).rejects.toMatchObject({ status: 400 });
+    expect(verifier.lastBucketKind).toBe('media');
+    expect(await outbox.count({ where: { aggregateId: doc.id } })).toBe(0);
+    expect((await documents.findOneByOrFail({ id: doc.id })).status).toBe(DocumentStatus.UPLOADED);
+  });
+
+  it('rejects media confirmation when storage versioning metadata is missing', async () => {
+    const owner = randomUUID();
+    const doc = await seedUploadedMedia(owner);
+    verifier.setResult({ versionId: undefined });
+
+    await expect(service.confirm(owner, doc.id)).rejects.toMatchObject({ status: 400 });
+    expect(await outbox.count({ where: { aggregateId: doc.id } })).toBe(0);
+    expect((await documents.findOneByOrFail({ id: doc.id })).status).toBe(DocumentStatus.UPLOADED);
+  });
+
+  it('confirm rejects a media document over its policy cap', async () => {
+    const owner = randomUUID();
+    const doc = await documents.save(
+      documents.create({
+        ownerId: owner,
+        type: DocumentType.AUDIO,
+        originalName: 'lecture.mp3',
+        storageRef: `${owner}/${randomUUID()}.mp3`,
+        sizeBytes: MAX_MP3_SIZE_BYTES + 1,
+        status: DocumentStatus.UPLOADED,
+      }),
+    );
+
+    await expect(service.confirm(owner, doc.id)).rejects.toMatchObject({ status: 400 });
+    expect(verifier.lastBucketKind).toBeUndefined();
   });
 });

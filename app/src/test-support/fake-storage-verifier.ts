@@ -2,6 +2,7 @@ import {
   ObjectVerification,
   StorageVerifier,
 } from '../storage/contracts/storage-verifier.port';
+import type { StorageBucketKind } from '../storage/contracts/storage-bucket.port';
 
 /**
  * Fake cho test: điều khiển kết quả verify mà không cần MinIO thật.
@@ -9,16 +10,32 @@ import {
  */
 export class FakeStorageVerifier implements StorageVerifier {
   private result: ObjectVerification = {
+    contentValidation: 'VALID',
     exists: true,
     sizeBytes: 1024,
+    versionId: 'version-1',
     magicBytesValid: true,
   };
 
-  setResult(partial: Partial<ObjectVerification>): void {
-    this.result = { ...this.result, ...partial };
+  lastBucketKind: StorageBucketKind | undefined;
+
+  setResult(partial: Partial<ObjectVerification> & { readonly magicBytesValid?: boolean }): void {
+    const contentValidation = partial.magicBytesValid === undefined
+      ? partial.contentValidation
+      : partial.magicBytesValid ? 'VALID' : 'INVALID';
+    this.result = {
+      ...this.result,
+      ...partial,
+      ...(contentValidation ? { contentValidation } : {}),
+    };
   }
 
-  async verify(_objectKey: string, _documentType: string): Promise<ObjectVerification> {
+  async verify(
+    _objectKey: string,
+    _documentType: string,
+    bucketKind: StorageBucketKind = 'documents',
+  ): Promise<ObjectVerification> {
+    this.lastBucketKind = bucketKind;
     return this.result;
   }
 }

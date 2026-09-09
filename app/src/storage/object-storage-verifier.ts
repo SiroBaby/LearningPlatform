@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { isUtf8 } from 'buffer';
 
-import {
+import type {
+  ContentValidation,
   ObjectVerification,
   StorageVerifier,
 } from './contracts/storage-verifier.port';
+import type { StorageBucketKind } from './contracts/storage-bucket.port';
 import { StorageService } from './storage.service';
 
 const MAGIC: Record<string, Buffer[]> = {
@@ -19,17 +21,35 @@ export class ObjectStorageVerifier implements StorageVerifier {
   async verify(
     objectKey: string,
     documentType: string,
+    bucketKind: StorageBucketKind = 'documents',
   ): Promise<ObjectVerification> {
     let sizeBytes = 0;
+    let versionId: string | undefined;
     try {
-      const stat = await this.storage.statObject(objectKey);
+      const stat = await this.storage.statObject(objectKey, bucketKind);
       sizeBytes = stat.size;
+      versionId = stat.versionId;
     } catch {
-      return { exists: false, sizeBytes: 0, magicBytesValid: false };
+      return { contentValidation: 'INVALID', exists: false, sizeBytes: 0 };
+    }
+
+    if (bucketKind === 'media') {
+      return {
+        contentValidation: 'DEFERRED',
+        exists: true,
+        sizeBytes,
+        ...(versionId ? { versionId } : {}),
+      };
     }
 
     const magicBytesValid = await this.checkMagic(objectKey, documentType);
-    return { exists: true, sizeBytes, magicBytesValid };
+    const contentValidation: ContentValidation = magicBytesValid ? 'VALID' : 'INVALID';
+    return {
+      contentValidation,
+      exists: true,
+      sizeBytes,
+      ...(versionId ? { versionId } : {}),
+    };
   }
 
   private async checkMagic(
@@ -39,7 +59,7 @@ export class ObjectStorageVerifier implements StorageVerifier {
     const signatures = MAGIC[documentType];
     if (!signatures) return false;
 
-    const head = await this.storage.readHead(objectKey, 4096);
+    const head = await this.storage.readHead(objectKey, 4096, 'documents');
     if (documentType === 'TEXT') {
       return isUtf8(head) && !head.includes(0);
     }

@@ -215,6 +215,186 @@ describe('ApplicationConfigService', () => {
     );
   });
 
+  it('defaults media uploads off in production without requiring media storage or a proxy', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      app: { env: 'production' },
+      storage: {
+        accessKey: 'access-key',
+        bucket: 'documents',
+        endpoint: 'storage.internal',
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'secret-key',
+        useSSL: true,
+      },
+    }));
+
+    expect(config.storage).toMatchObject({
+      bucket: 'documents',
+      mediaBucket: undefined,
+      mediaEnabled: false,
+    });
+  });
+
+  it('requires and exposes a separate media bucket only when media is enabled', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      app: { env: 'development' },
+      storage: {
+        accessKey: 'access-key',
+        bucket: 'documents',
+        mediaApiAccessKey: 'media-api-access-key',
+        mediaApiSecretKey: 'media-api-secret-key',
+        mediaEnabled: true,
+        mediaBucket: 'media-assets',
+        egressProxyUrl: undefined,
+        endpoint: 'storage.internal',
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'secret-key',
+        useSSL: false,
+      },
+    }));
+
+    expect(config.storage).toMatchObject({ bucket: 'documents', mediaBucket: 'media-assets' });
+    expect(() => new ApplicationConfigService(new ConfigService({
+      app: { env: 'development' },
+      storage: {
+        accessKey: 'access-key',
+        bucket: 'documents',
+        mediaEnabled: true,
+        endpoint: 'storage.internal',
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'secret-key',
+        useSSL: false,
+      },
+    })).storage).toThrow('OBJECT_STORAGE_MEDIA_BUCKET is required when media uploads are enabled');
+  });
+
+  it('requires dedicated media credentials when media uploads are enabled', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      app: { env: 'development' },
+      storage: {
+        accessKey: 'access-key',
+        bucket: 'documents',
+        mediaBucket: 'media-assets',
+        mediaEnabled: true,
+        endpoint: 'storage.internal',
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'secret-key',
+        useSSL: false,
+      },
+    }));
+
+    expect(() => config.storage).toThrow(
+      'OBJECT_STORAGE_API_MEDIA_ACCESS_KEY and OBJECT_STORAGE_API_MEDIA_SECRET_KEY are required when media uploads are enabled',
+    );
+  });
+
+  it('rejects a media bucket that equals the document bucket in development', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      app: { env: 'development' },
+      storage: {
+        accessKey: 'access-key',
+        bucket: 'documents',
+        mediaApiAccessKey: 'media-api-access-key',
+        mediaBucket: 'documents',
+        mediaEnabled: false,
+        mediaApiSecretKey: 'media-api-secret-key',
+        egressProxyUrl: undefined,
+        endpoint: 'storage.internal',
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'secret-key',
+        useSSL: false,
+      },
+    }));
+
+    expect(() => config.storage).toThrow(
+      'OBJECT_STORAGE_MEDIA_BUCKET must differ from OBJECT_STORAGE_BUCKET',
+    );
+  });
+
+  it('allows API production media uploads with the complete media storage contract', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      app: { env: 'production' },
+      storage: {
+        accessKey: 'document-access-key',
+        bucket: 'documents',
+        egressProxyUrl: 'http://proxy.internal:3128',
+        endpoint: 'storage.internal',
+        mediaApiAccessKey: 'media-api-access-key',
+        mediaApiSecretKey: 'media-api-secret-key',
+        mediaBucket: 'media-assets',
+        mediaEnabled: true,
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'document-secret-key',
+        useSSL: true,
+      },
+    }));
+
+    expect(config.storage).toMatchObject({
+      bucket: 'documents',
+      egressProxyUrl: 'http://proxy.internal:3128',
+      mediaApiAccessKey: 'media-api-access-key',
+      mediaBucket: 'media-assets',
+      mediaEnabled: true,
+    });
+  });
+
+  it('fails closed when API production media uploads are enabled without a dedicated identity', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      app: { env: 'production' },
+      storage: {
+        accessKey: 'document-access-key',
+        bucket: 'documents',
+        egressProxyUrl: 'http://proxy.internal:3128',
+        endpoint: 'storage.internal',
+        mediaBucket: 'media-assets',
+        mediaEnabled: true,
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'document-secret-key',
+        useSSL: true,
+      },
+    }));
+
+    expect(() => config.storage).toThrow(
+      'OBJECT_STORAGE_API_MEDIA_ACCESS_KEY and OBJECT_STORAGE_API_MEDIA_SECRET_KEY are required when media uploads are enabled',
+    );
+  });
+
+  it('requires the object-storage proxy when API production media uploads are enabled', () => {
+    const config = new ApplicationConfigService(new ConfigService({
+      app: { env: 'production' },
+      storage: {
+        accessKey: 'document-access-key',
+        bucket: 'documents',
+        endpoint: 'storage.internal',
+        mediaApiAccessKey: 'media-api-access-key',
+        mediaApiSecretKey: 'media-api-secret-key',
+        mediaBucket: 'media-assets',
+        mediaEnabled: true,
+        port: 9000,
+        presignExpiry: 300,
+        region: 'us-east-1',
+        secretKey: 'document-secret-key',
+        useSSL: true,
+      },
+    }));
+
+    expect(() => config.storage).toThrow('OBJECT_STORAGE_EGRESS_PROXY_URL is required in production');
+  });
+
   it('requires a host-only object storage endpoint alongside its port', () => {
     const config = (endpoint: string): ApplicationConfigService => new ApplicationConfigService(new ConfigService({
       app: { env: 'development' },
