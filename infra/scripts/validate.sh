@@ -563,11 +563,18 @@ check_application_edge_contract() {
   ' "${app_template}")"
   if ! grep -Fq 'name: media-egress-proxy-egress' <<<"${proxy_egress_block}" \
     || ! grep -Fq 'policyTypes: [Egress]' <<<"${proxy_egress_block}" \
-    || ! grep -Fq 'cidr: {{ media_probe_worker_dns_ip }}/32' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'namespaceSelector:' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'kubernetes.io/metadata.name: kube-system' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'podSelector:' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'k8s-app: kube-dns' <<<"${proxy_egress_block}" \
+    || grep -Fq 'ipBlock:' <<<"${proxy_egress_block}" \
+    || ! grep -Fq '        - protocol: UDP' <<<"${proxy_egress_block}" \
+    || ! grep -Fq '        - protocol: TCP' <<<"${proxy_egress_block}" \
+    || [ "$(grep -Fc '          port: 53' <<<"${proxy_egress_block}")" -ne 2 ] \
     || ! grep -Fq 'port: 443' <<<"${proxy_egress_block}" \
     || ! grep -Fq 'http_port 0.0.0.0:3128' "${app_template}" \
     || ! grep -Fq 'acl s3_endpoint dstdomain .s3.ap-southeast-1.amazonaws.com' "${app_template}"; then
-    fail 'The optional proxy must have an egress policy for CoreDNS and HTTPS, with Squid enforcing the S3 domain allowlist.'
+    fail 'The optional proxy must use the CoreDNS Pod identity for UDP/TCP 53 and allow only HTTPS egress, with Squid enforcing the S3 domain allowlist.'
   fi
 
   local worker_block

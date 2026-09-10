@@ -178,18 +178,30 @@
           - applications_proxy_egress_network_policies[0].spec.egress | length == 2
           - >-
             applications_proxy_egress_network_policies[0].spec.egress[0].to
-            == [{'ipBlock': {'cidr': '10.43.0.10/32'}}]
+            == [
+              {
+                'namespaceSelector': {
+                  'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}
+                },
+                'podSelector': {
+                  'matchLabels': {'k8s-app': 'kube-dns'}
+                }
+              }
+            ]
           - >-
             applications_proxy_egress_network_policies[0].spec.egress[0].ports
             == [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]
+          - applications_proxy_egress_network_policies[0].spec.egress[0].to[0].ipBlock is not defined
           - >-
             applications_proxy_egress_network_policies[0].spec.egress[1].ports
             == [{'protocol': 'TCP', 'port': 443}]
           - applications_proxy_egress_network_policies[0].spec.egress[1].to is not defined
           - applications_proxy_egress_network_policies[0].spec | to_json is not search('amazonaws.com/|s3_endpoint')
         fail_msg: >-
-          The proxy may resolve only CoreDNS and open only TCP 443; Squid's
-          regional S3 domain allowlist remains the destination control.
+          The proxy may resolve only CoreDNS Pods selected by their
+          kube-system identity on UDP/TCP 53 and open only TCP 443; it must
+          not depend on the CoreDNS Service ClusterIP. Squid's regional S3
+          domain allowlist remains the destination control.
 
     - name: Require proxy deployment to stay independent from runtime consumers
       ansible.builtin.assert:
