@@ -100,6 +100,9 @@
           - applications_proxy_deployments[0].spec.replicas == 1
           - applications_proxy_deployments[0].spec.strategy.type == 'Recreate'
           - applications_proxy_deployments[0].spec.strategy.rollingUpdate is none
+          - >-
+            applications_proxy_deployments[0].spec.template.metadata.annotations['learning-platform.io/rollout-revision']
+            == 'media-egress-proxy-v2'
           - applications_proxy_deployments[0].spec.template.spec.serviceAccountName == 'media-egress-proxy'
           - applications_proxy_deployments[0].spec.template.spec.automountServiceAccountToken == false
           - applications_proxy_deployments[0].spec.template.spec.securityContext.runAsNonRoot == true
@@ -134,7 +137,7 @@
     - name: Require the proxy configuration to allow only regional S3 CONNECT
       ansible.builtin.assert:
         that:
-          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^http_port 3128$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^http_port 0\.0\.0\.0:3128$')
           - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^acl s3_endpoint dstdomain \\.s3\\.ap-southeast-1\\.amazonaws\\.com$')
           - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^http_access allow CONNECT s3_endpoint SSL_ports$')
           - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^http_access deny all$')

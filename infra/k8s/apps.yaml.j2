@@ -436,7 +436,7 @@ data:
   squid.conf: |
     # This proxy is deliberately limited to HTTPS CONNECT for the regional S3 endpoint.
     visible_hostname media-egress-proxy
-    http_port 3128
+    http_port 0.0.0.0:3128
     acl proxy_localhost src 127.0.0.1/32
     acl CONNECT method CONNECT
     acl SSL_ports port 443
@@ -473,7 +473,8 @@ spec:
   template:
     metadata:
       annotations:
-        learning-platform.io/rollout-revision: media-egress-proxy-v1
+        # ConfigMap is mounted through subPath, so change this revision with every proxy config change.
+        learning-platform.io/rollout-revision: media-egress-proxy-v2
       labels:
         app.kubernetes.io/name: learning-platform
         app.kubernetes.io/component: media-egress-proxy

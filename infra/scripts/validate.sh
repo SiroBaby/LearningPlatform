@@ -565,6 +565,7 @@ check_application_edge_contract() {
     || ! grep -Fq 'policyTypes: [Egress]' <<<"${proxy_egress_block}" \
     || ! grep -Fq 'cidr: {{ media_probe_worker_dns_ip }}/32' <<<"${proxy_egress_block}" \
     || ! grep -Fq 'port: 443' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'http_port 0.0.0.0:3128' "${app_template}" \
     || ! grep -Fq 'acl s3_endpoint dstdomain .s3.ap-southeast-1.amazonaws.com' "${app_template}"; then
     fail 'The optional proxy must have an egress policy for CoreDNS and HTTPS, with Squid enforcing the S3 domain allowlist.'
   fi
