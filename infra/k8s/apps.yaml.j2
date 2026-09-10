@@ -425,7 +425,7 @@ spec:
       port: 3403
       targetPort: health
 {% endif %}
-{% if object_storage_egress_proxy_enabled | default(false) | bool %}
+{% if media_egress_proxy_enabled | default(false) | bool %}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -606,6 +606,32 @@ spec:
       ports:
         - protocol: TCP
           port: 3128
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-egress-proxy-egress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-egress-proxy
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ media_probe_worker_dns_ip }}/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # NetworkPolicy cannot safely encode the S3 hostname. Squid's dstdomain
+    # ACL is the destination allowlist; this rule only permits HTTPS egress.
+    - ports:
+        - protocol: TCP
+          port: 443
 {% endif %}
 {% if 'web' in deployment_targets or 'api' in deployment_targets %}
 ---

@@ -17,6 +17,7 @@
   tasks:
     - name: Render the proxy-disabled application manifest
       ansible.builtin.set_fact:
+        media_egress_proxy_enabled: false
         object_storage_egress_proxy_enabled: false
         applications_rendered_disabled_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2') | from_yaml_all | list }}
@@ -30,15 +31,17 @@
             | list | length == 0
           - >-
             applications_rendered_disabled_manifests
-            | selectattr('metadata.name', 'equalto', 'media-egress-proxy-ingress')
+            | selectattr('metadata.name', 'in', ['media-egress-proxy-ingress', 'media-egress-proxy-egress'])
             | list | length == 0
         fail_msg: >-
           The media egress proxy must not render any workload, Service, or
-          configuration resource while object storage proxy routing is disabled.
+          configuration resource while its deployment gate is disabled.
 
-    - name: Render the proxy-enabled application manifest
+    - name: Enable only the proxy workload gate
       ansible.builtin.set_fact:
-        object_storage_egress_proxy_enabled: true
+        deployment_targets: [web, api, worker]
+        media_egress_proxy_enabled: true
+        object_storage_egress_proxy_enabled: false
 
     - name: Render the proxy-enabled application manifest after enabling the flag
       ansible.builtin.set_fact:
@@ -72,6 +75,11 @@
              | selectattr('kind', 'equalto', 'NetworkPolicy')
              | selectattr('metadata.name', 'equalto', 'media-egress-proxy-ingress')
              | list }}
+        applications_proxy_egress_network_policies: >-
+          {{ applications_rendered_enabled_manifests
+             | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy-egress')
+             | list }}
 
     - name: Require one isolated proxy resource of each kind
       ansible.builtin.assert:
@@ -81,6 +89,7 @@
           - applications_proxy_service_accounts | length == 1
           - applications_proxy_services | length == 1
           - applications_proxy_network_policies | length == 1
+          - applications_proxy_egress_network_policies | length == 1
           - applications_proxy_deployments[0].metadata.namespace == learning_platform_namespace
           - applications_proxy_deployments[0].spec.replicas == 1
           - applications_proxy_deployments[0].spec.strategy.type == 'Recreate'
@@ -109,9 +118,12 @@
           - "applications_proxy_services[0].spec.ports == [{'name': 'proxy', 'port': 3128, 'targetPort': 'proxy'}]"
           - applications_proxy_network_policies[0].spec.policyTypes == ['Ingress']
           - applications_proxy_network_policies[0].spec | to_json is not search('0.0.0.0/0')
+          - applications_proxy_egress_network_policies[0].spec.policyTypes == ['Egress']
+          - applications_rendered_enabled_manifests | to_json is not search('OBJECT_STORAGE_EGRESS_PROXY_URL')
         fail_msg: >-
           The enabled media egress proxy must be a single, private, bounded,
-          non-root ClusterIP workload with an immutable image.
+          non-root ClusterIP workload with an immutable image and must not
+          inject the runtime proxy URL when consumers remain disabled.
 
     - name: Require the proxy configuration to allow only regional S3 CONNECT
       ansible.builtin.assert:
@@ -150,3 +162,54 @@
         fail_msg: >-
           The proxy must accept traffic only from the API, full-pipeline worker,
           and media-probe worker on TCP 3128.
+
+    - name: Require proxy egress to use CoreDNS and HTTPS only
+      ansible.builtin.assert:
+        that:
+          - applications_proxy_egress_network_policies[0].spec.egress | length == 2
+          - >-
+            applications_proxy_egress_network_policies[0].spec.egress[0].to
+            == [{'ipBlock': {'cidr': '10.43.0.10/32'}}]
+          - >-
+            applications_proxy_egress_network_policies[0].spec.egress[0].ports
+            == [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]
+          - >-
+            applications_proxy_egress_network_policies[0].spec.egress[1].ports
+            == [{'protocol': 'TCP', 'port': 443}]
+          - applications_proxy_egress_network_policies[0].spec.egress[1].to is not defined
+          - applications_proxy_egress_network_policies[0].spec | to_json is not search('amazonaws.com/|s3_endpoint')
+        fail_msg: >-
+          The proxy may resolve only CoreDNS and open only TCP 443; Squid's
+          regional S3 domain allowlist remains the destination control.
+
+    - name: Require proxy deployment to stay independent from runtime consumers
+      ansible.builtin.assert:
+        that:
+          - media_egress_proxy_enabled == true
+          - object_storage_egress_proxy_enabled == false
+          - >-
+            applications_rendered_enabled_manifests
+            | selectattr('kind', 'equalto', 'Deployment')
+            | selectattr('metadata.name', 'equalto', 'media-egress-proxy')
+            | list | length == 1
+          - applications_rendered_enabled_manifests | to_json is not search('OBJECT_STORAGE_EGRESS_PROXY_URL')
+        fail_msg: >-
+          The proxy workload must render with its own deployment gate while
+          runtime proxy routing remains disabled and must not require the
+          proxy URL parameter.
+
+    - name: Require the applications role to preserve the two proxy gates
+      ansible.builtin.set_fact:
+        applications_role_tasks_source: >-
+          {{ lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml') }}
+
+    - name: Assert runtime proxy consumers cannot bypass deployment gate
+      ansible.builtin.assert:
+        that:
+          - "'- name: Validate enabled media egress proxy deployment contract' in applications_role_tasks_source"
+          - "'- name: Require the proxy deployment gate for runtime proxy consumers' in applications_role_tasks_source"
+          - "'object_storage_egress_proxy_enabled | default(false) | bool' in applications_role_tasks_source"
+          - "'media_egress_proxy_enabled | default(false) | bool' in applications_role_tasks_source"
+        fail_msg: >-
+          The applications role must validate the deployment-only proxy gate
+          before allowing runtime proxy consumers.
