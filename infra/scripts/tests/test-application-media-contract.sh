@@ -6,7 +6,17 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 source "${ROOT_DIR}/infra/scripts/validate.sh"
 
 app_template="${ROOT_DIR}/infra/k8s/apps.yaml.j2"
-api_block="$(awk '/{% if '\''api'\'' in deployment_targets %}/{capture=1} capture {print} /{% endif %}/{if (capture) exit}' "${app_template}")"
+api_block="$(awk '
+  /{% if '\''api'\'' in deployment_targets %}/ { capture = 1 }
+  capture { print }
+  capture && /^          volumeMounts:/ { exit }
+' "${app_template}")"
+
+if ! grep -Fq "{% if media_egress_proxy_enabled | default(false) | bool %}" "${app_template}" \
+  || ! grep -Fq "{% if object_storage_egress_proxy_enabled | default(false) | bool %}" <<<"${api_block}"; then
+  printf '%s\n' 'Proxy workload and runtime proxy consumers must use separate gates.' >&2
+  exit 1
+fi
 
 if ! grep -Fq "{% if object_storage_egress_proxy_enabled | default(false) | bool %}" <<<"${api_block}" \
   || ! grep -Fq '            - name: OBJECT_STORAGE_EGRESS_PROXY_URL' <<<"${api_block}" \

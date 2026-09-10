@@ -385,6 +385,7 @@ check_application_edge_contract() {
     '^web_public_host: REPLACE_WITH_WEB_PUBLIC_HOST$' \
     '^api_public_host: REPLACE_WITH_API_PUBLIC_HOST$' \
     '^deployment_targets: \[web, api, worker\]$' \
+    '^media_egress_proxy_enabled: false$' \
     '^object_storage_egress_proxy_enabled: false$'; do
     if ! grep -qE "${required_pattern}" "${app_vars}"; then
       fail "Missing application contract variable matching ${required_pattern}."
@@ -547,6 +548,25 @@ check_application_edge_contract() {
     || ! grep -Fq '            - name: OBJECT_STORAGE_EGRESS_PROXY_URL' <<<"${api_block}" \
     || grep -Eq "'HTTP_PROXY'|'HTTPS_PROXY'" <<<"${api_block}"; then
     fail 'API media storage must be explicitly disabled by default and map media credentials/proxy only under their feature gates.'
+  fi
+
+  if [ "$(grep -Fc "{% if media_egress_proxy_enabled | default(false) | bool %}" "${app_template}")" -ne 1 ] \
+    || [ "$(grep -Fc "{% if object_storage_egress_proxy_enabled | default(false) | bool %}" "${app_template}")" -ne 2 ]; then
+    fail 'The proxy workload must have its own deployment gate; runtime proxy consumers must keep the separate routing gate.'
+  fi
+
+  local proxy_egress_block
+  proxy_egress_block="$(awk '
+    /name: media-egress-proxy-egress/ { capture = 1 }
+    capture { print }
+    capture && /^---$/ { exit }
+  ' "${app_template}")"
+  if ! grep -Fq 'name: media-egress-proxy-egress' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'policyTypes: [Egress]' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'cidr: {{ media_probe_worker_dns_ip }}/32' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'port: 443' <<<"${proxy_egress_block}" \
+    || ! grep -Fq 'acl s3_endpoint dstdomain .s3.ap-southeast-1.amazonaws.com' "${app_template}"; then
+    fail 'The optional proxy must have an egress policy for CoreDNS and HTTPS, with Squid enforcing the S3 domain allowlist.'
   fi
 
   local worker_block

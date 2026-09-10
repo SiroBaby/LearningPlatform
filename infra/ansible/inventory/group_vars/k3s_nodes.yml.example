@@ -103,7 +103,11 @@ web_public_host: REPLACE_WITH_WEB_PUBLIC_HOST
 api_public_host: REPLACE_WITH_API_PUBLIC_HOST
 ingress_tls_secret_name: ''
 deployment_targets: [web, api, worker]
+# Deploy the private proxy workload independently from runtime proxy consumers.
+media_egress_proxy_enabled: false
 object_storage_egress_proxy_enabled: false
+media_probe_worker_dns_ip: REPLACE_WITH_CLUSTER_DNS_IP
+media_probe_worker_egress_proxy_port: 3128
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}
