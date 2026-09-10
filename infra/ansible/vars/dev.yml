@@ -78,7 +78,7 @@ api_public_host: learningplatform-dev-api.sirobabycloud.io.vn
 ingress_tls_secret_name: ''
 deployment_targets: [web, api, worker]
 # Deploy the private proxy workload independently from runtime proxy consumers.
-media_egress_proxy_enabled: false
+media_egress_proxy_enabled: true
 object_storage_egress_proxy_enabled: false
 media_probe_worker_dns_ip: 10.43.0.10
 media_probe_worker_egress_proxy_port: 3128
