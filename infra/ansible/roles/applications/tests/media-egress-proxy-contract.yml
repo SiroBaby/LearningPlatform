@@ -20,7 +20,10 @@
         media_egress_proxy_enabled: false
         object_storage_egress_proxy_enabled: false
         applications_rendered_disabled_manifests: >-
-          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2') | from_yaml_all | list }}
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'media_egress_proxy_enabled': false,
+                            'object_storage_egress_proxy_enabled': false})
+             | from_yaml_all | list }}
 
     - name: Require the proxy resources to stay absent when disabled
       ansible.builtin.assert:
@@ -46,7 +49,10 @@
     - name: Render the proxy-enabled application manifest after enabling the flag
       ansible.builtin.set_fact:
         applications_rendered_enabled_manifests: >-
-          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2') | from_yaml_all | list }}
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'media_egress_proxy_enabled': true,
+                            'object_storage_egress_proxy_enabled': false})
+             | from_yaml_all | list }}
 
     - name: Select the rendered proxy resources
       ansible.builtin.set_fact:
