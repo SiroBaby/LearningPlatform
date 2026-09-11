@@ -163,6 +163,31 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
     });
     assert.equal(concurrentNotFoundRetry.status, 404);
 
+    const lateRefresh = await fetch(`${webOrigin}/home?case=late-refresh-a`, {
+      headers: { cookie: "lp_access=access-grace-expired; lp_refresh=refresh-concurrent-grace" },
+      redirect: "manual",
+    });
+    assert.equal(lateRefresh.status, 307);
+    assert.equal(lateRefresh.headers.get("location"), "/home?case=late-refresh-a");
+    const lateRefreshCookies = setCookieHeader(lateRefresh);
+    assertCookieContract(lateRefreshCookies, "lp_access", "access-grace-renewed", { secure: true });
+    assertCookieContract(lateRefreshCookies, "lp_refresh", "refresh-grace-rotated", { secure: true });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const lateRefreshRetry = await fetch(`${webOrigin}/home?case=late-refresh-b`, {
+      headers: { cookie: "lp_access=access-grace-expired; lp_refresh=refresh-concurrent-grace" },
+      redirect: "manual",
+    });
+    assert.equal(lateRefreshRetry.status, 307);
+    assert.equal(lateRefreshRetry.headers.get("location"), "/home?case=late-refresh-b");
+    const lateRefreshRetryCookies = setCookieHeader(lateRefreshRetry);
+    assertCookieContract(lateRefreshRetryCookies, "lp_access", "access-grace-renewed", { secure: true });
+    assertCookieContract(lateRefreshRetryCookies, "lp_refresh", "refresh-grace-rotated", { secure: true });
+    assert.equal(
+      backendRequests.filter((request) => request.path === "/internal/v1/auth/refresh" && request.authorization === "Bearer refresh-concurrent-grace").length,
+      1,
+    );
+
     const refresh = await fetch(`${webOrigin}/auth/refresh`, {
       headers: {
         cookie: "lp_refresh=refresh-callback",
@@ -218,6 +243,7 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
 });
 
 function createBackendServer(pki, requests) {
+  const refreshReplayCounts = new Map();
   return createServer({
     ca: readFileSync(pki.ca),
     cert: readFileSync(pki.serverCert),
@@ -254,7 +280,7 @@ function createBackendServer(pki, requests) {
     if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization === "Bearer refresh-failed") {
       return sendJson(response, 401, { code: "SESSION_INVALID" });
     }
-    if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization !== "Bearer refresh-callback" && request.headers.authorization !== "Bearer refresh-valid" && request.headers.authorization !== "Bearer refresh-malformed" && request.headers.authorization !== "Bearer refresh-concurrent") {
+    if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization !== "Bearer refresh-callback" && request.headers.authorization !== "Bearer refresh-valid" && request.headers.authorization !== "Bearer refresh-malformed" && request.headers.authorization !== "Bearer refresh-concurrent" && request.headers.authorization !== "Bearer refresh-concurrent-grace") {
       return sendJson(response, 401, { code: "UNAUTHORIZED" });
     }
     if (request.url === "/internal/v1/auth/logout" && request.headers.authorization !== "Bearer access-refresh") {
@@ -297,6 +323,17 @@ function createBackendServer(pki, requests) {
           refreshExpiresAt: "2026-02-01T00:15:00.000Z",
           refreshToken: "refresh-concurrent-rotated",
         }), 100);
+      }
+      if (request.headers.authorization === "Bearer refresh-concurrent-grace") {
+        const attempts = (refreshReplayCounts.get(request.headers.authorization) ?? 0) + 1;
+        refreshReplayCounts.set(request.headers.authorization, attempts);
+        if (attempts > 1) return sendJson(response, 401, { code: "REUSE_DETECTED" });
+        return sendJson(response, 200, {
+          accessExpiresAt: "2026-01-01T00:45:00.000Z",
+          accessToken: "access-grace-renewed",
+          refreshExpiresAt: "2026-02-01T00:15:00.000Z",
+          refreshToken: "refresh-grace-rotated",
+        });
       }
       return sendJson(response, 200, {
         accessExpiresAt: "2026-01-01T00:30:00.000Z",
