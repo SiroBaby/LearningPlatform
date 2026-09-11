@@ -14,6 +14,7 @@ interface RefreshedSession {
 
 type AccessSessionStatus = "missing" | "valid" | "invalid" | "unavailable";
 
+const REFRESH_SUCCESS_GRACE_MS = 5_000;
 const refreshFlights = new Map<string, Promise<RefreshedSession | null>>();
 
 async function getAccessSessionStatus(request: NextRequest): Promise<AccessSessionStatus> {
@@ -114,8 +115,18 @@ function getRefreshFlight(refreshToken: string): Promise<RefreshedSession | null
   const refresh = requestRefreshedSession(refreshToken);
   refreshFlights.set(key, refresh);
   refresh.then(
-    () => {
-      if (refreshFlights.get(key) === refresh) refreshFlights.delete(key);
+    (session) => {
+      if (refreshFlights.get(key) !== refresh) return;
+      if (!session) {
+        refreshFlights.delete(key);
+        return;
+      }
+      const cleanupTimer = setTimeout(() => {
+        if (refreshFlights.get(key) === refresh) refreshFlights.delete(key);
+      }, REFRESH_SUCCESS_GRACE_MS);
+      if (typeof cleanupTimer === "object" && cleanupTimer !== null && "unref" in cleanupTimer && typeof cleanupTimer.unref === "function") {
+        cleanupTimer.unref();
+      }
     },
     () => {
       if (refreshFlights.get(key) === refresh) refreshFlights.delete(key);
