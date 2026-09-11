@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource, IsNull } from 'typeorm';
+import { DataSource, In, IsNull } from 'typeorm';
 
 import { DateTimeUtil } from '../../../common/datetime.util';
 import { BaseRepository } from '../../../database/base.repository';
@@ -15,7 +15,11 @@ export class AiOutboxRepository extends BaseRepository<AiOutboxEvent> {
   async findUnpublishedProcessingResults(limit: number): Promise<AiOutboxEvent[]> {
     return this.find({
       where: {
-        eventType: DOCUMENT_PROCESSING_RESULT_EVENT,
+        eventType: In([
+          DOCUMENT_PROCESSING_RESULT_EVENT,
+          'DocumentProbeCompleted',
+          'DocumentProbeFailed',
+        ]),
         publishedAt: IsNull(),
       },
       order: { createdAt: 'ASC' },

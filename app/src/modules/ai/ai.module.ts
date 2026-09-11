@@ -10,6 +10,7 @@ import { JobPoller } from './job-poller.service';
 import { ExtractionJobProcessor } from './extraction-job-processor.service';
 import { ExtractionService, loadPdfJsModule, PDF_JS_MODULE } from './extraction.service';
 import { AiOutboxRepository } from './repositories/ai-outbox.repository';
+import { MediaProbeJobRepository } from './repositories/media-probe-job.repository';
 import { ProcessingJobRepository } from './repositories/processing-job.repository';
 import { StuckJobDetector } from './stuck-job-detector.service';
 import { ChunkService } from './chunk.service';
@@ -53,6 +54,7 @@ import { AiOperationalSnapshotRepository } from './repositories/ai-operational-s
   providers: [
     AiIngestionService,
     AiOutboxRepository,
+    MediaProbeJobRepository,
     ChunkRepository,
     GenerationCacheRepository,
     PromptVersionRepository,

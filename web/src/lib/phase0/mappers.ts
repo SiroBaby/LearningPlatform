@@ -65,8 +65,12 @@ function readDocumentType(value: unknown): Phase0DocumentType {
       return "PDF";
     case "TEXT":
       return "TEXT";
+    case "AUDIO":
+      return "AUDIO";
+    case "VIDEO":
+      return "VIDEO";
     default:
-      throw new TypeError("Expected document.type to be PDF or TEXT.");
+      throw new TypeError("Expected document.type to be PDF, TEXT, AUDIO, or VIDEO.");
   }
 }
 
@@ -74,6 +78,8 @@ function readDocumentStatus(value: unknown, field: string): Phase0DocumentStatus
   switch (readString(value, field)) {
     case "UPLOADED":
       return "UPLOADED";
+    case "PROBING":
+      return "PROBING";
     case "PROCESSING":
       return "PROCESSING";
     case "READY":

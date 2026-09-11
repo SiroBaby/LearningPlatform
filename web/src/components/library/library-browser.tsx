@@ -15,6 +15,7 @@ import type {
   Phase0DocumentStatus,
   Phase0DocumentType,
 } from "@/lib/phase0/contracts";
+import type { DocumentStatus, DocumentType } from "@/lib/types";
 import { getDocumentFailurePresentation } from "@/lib/phase0/document-failure";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
@@ -24,14 +25,14 @@ type SortKey = "recent" | "name" | "status" | "updated";
 
 type SearchUpdateMode = "push" | "replace";
 
-type DocumentTypeFilter = "all" | "PDF" | "TEXT";
+type DocumentTypeFilter = "all" | Phase0DocumentType;
 type DocumentStatusFilter = "all" | Phase0DocumentStatus;
 
 type Phase0DocumentPresentation = {
   id: string;
   originalName: string;
-  type: "pdf" | "text";
-  status: "uploaded" | "processing" | "ready" | "failed";
+  type: DocumentType;
+  status: DocumentStatus;
   sizeBytes: number;
   language: string | null;
   pageCount: number | null;
@@ -50,19 +51,31 @@ const SORT_OPTIONS: ReadonlyArray<{ value: SortKey; label: string }> = [
 
 const STATUS_ORDER: Readonly<Record<Phase0DocumentPresentation["status"], number>> = {
   ready: 0,
-  processing: 1,
-  uploaded: 2,
-  failed: 3,
+  probing: 1,
+  processing: 2,
+  uploaded: 3,
+  failed: 4,
 };
 
 function mapDocumentType(type: Phase0DocumentType): Phase0DocumentPresentation["type"] {
-  return type === "PDF" ? "pdf" : "text";
+  switch (type) {
+    case "PDF":
+      return "pdf";
+    case "TEXT":
+      return "text";
+    case "AUDIO":
+      return "audio";
+    case "VIDEO":
+      return "video";
+  }
 }
 
 function mapDocumentStatus(status: Phase0DocumentStatus): Phase0DocumentPresentation["status"] {
   switch (status) {
     case "UPLOADED":
       return "uploaded";
+    case "PROBING":
+      return "probing";
     case "PROCESSING":
       return "processing";
     case "READY":
@@ -122,11 +135,11 @@ function normalizeView(rawValue: string | null): LibraryView {
 }
 
 function normalizeTypeFilter(rawValue: string | null): DocumentTypeFilter {
-  return rawValue === "PDF" || rawValue === "TEXT" ? rawValue : "all";
+  return rawValue === "PDF" || rawValue === "TEXT" || rawValue === "AUDIO" || rawValue === "VIDEO" ? rawValue : "all";
 }
 
 function normalizeStatusFilter(rawValue: string | null): DocumentStatusFilter {
-  return rawValue === "UPLOADED" || rawValue === "PROCESSING" || rawValue === "READY" || rawValue === "FAILED"
+  return rawValue === "UPLOADED" || rawValue === "PROBING" || rawValue === "PROCESSING" || rawValue === "READY" || rawValue === "FAILED"
     ? rawValue
     : "all";
 }
@@ -169,7 +182,7 @@ function filterDocuments(
       document.id.toLowerCase().includes(normalizedSearch) ||
       (document.language ?? "").toLowerCase().includes(normalizedSearch);
 
-    const matchesType = typeFilter === "all" || (typeFilter === "PDF" ? document.type === "pdf" : document.type === "text");
+    const matchesType = typeFilter === "all" || document.type === typeFilter.toLowerCase();
     const matchesStatus = statusFilter === "all" || document.status === statusFilter.toLowerCase();
 
     return matchesSearch && matchesType && matchesStatus;
@@ -264,9 +277,11 @@ function LibraryDocumentCard({
             <SpecItem label="Số trang" value={document.pageCount !== null ? String(document.pageCount) : "Chưa có"} />
           </dl>
 
-          {document.status === "processing" ? (
+          {document.status === "probing" || document.status === "processing" ? (
             <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-3 text-sm text-brand-700">
-              Tài liệu này vẫn đang được xử lý. Mở chi tiết để theo dõi thêm.
+              {document.status === "probing"
+                ? "Tài liệu đang được kiểm tra trước khi xử lý. Mở chi tiết để theo dõi thêm."
+                : "Tài liệu này vẫn đang được xử lý. Mở chi tiết để theo dõi thêm."}
             </div>
           ) : null}
 
@@ -290,7 +305,7 @@ function LibraryDocumentCard({
               <LinkButton href={routes.document(document.id)} size="sm">
                 Xem chi tiết
               </LinkButton>
-              {document.status === "processing" ? (
+              {document.status === "probing" || document.status === "processing" ? (
                 <LinkButton href={routes.processing(document.id)} size="sm" variant="outline">
                   Theo dõi xử lý
                 </LinkButton>
@@ -394,6 +409,8 @@ export function LibraryBrowser() {
                 <option value="all">Mọi loại</option>
                 <option value="PDF">PDF</option>
                 <option value="TEXT">Văn bản</option>
+                <option value="AUDIO">MP3</option>
+                <option value="VIDEO">MP4</option>
               </select>
             </label>
 
@@ -407,6 +424,7 @@ export function LibraryBrowser() {
                 <option value="all">Mọi trạng thái</option>
                 <option value="READY">Sẵn sàng</option>
                 <option value="PROCESSING">Đang xử lý</option>
+                <option value="PROBING">Đang kiểm tra tệp</option>
                 <option value="UPLOADED">Đã tải lên</option>
                 <option value="FAILED">Xử lý chưa thành công</option>
               </select>

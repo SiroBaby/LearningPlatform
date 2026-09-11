@@ -5,17 +5,22 @@ import { DataSource, Repository } from 'typeorm';
 
 import { createTestDataSource } from '../../../test-support/test-data-source';
 import { startTestDb, type TestDb } from '../../../test-support/test-db';
+import { DocumentProcessingFailureCode } from '../contracts/document-processing-result';
 import { JobStatus } from '../enums/job-status.enum';
 import { JobType } from '../enums/job-type.enum';
 import { AiOutboxEvent } from '../entities/ai-outbox-event.entity';
 import { ProcessingJob } from '../entities/processing-job.entity';
 import { ProcessingJobRepository } from './processing-job.repository';
+import { Document } from '../../content/entities/document.entity';
+import { DocumentStatus } from '../../content/enums/document-status.enum';
+import { DocumentType } from '../../content/enums/document-type.enum';
 
 describe('ProcessingJobRepository account access revocation', () => {
   let db: TestDb;
   let dataSource: DataSource;
   let jobs: Repository<ProcessingJob>;
   let outbox: Repository<AiOutboxEvent>;
+  let documents: Repository<Document>;
   let repository: ProcessingJobRepository;
 
   beforeAll(async () => {
@@ -30,8 +35,9 @@ describe('ProcessingJobRepository account access revocation', () => {
     dataSource = await createTestDataSource(db.container);
     jobs = dataSource.getRepository(ProcessingJob);
     outbox = dataSource.getRepository(AiOutboxEvent);
+    documents = dataSource.getRepository(Document);
     repository = new ProcessingJobRepository(dataSource);
-    await db.client.query('TRUNCATE "ai"."account_access_revocations", "ai"."processing_jobs" CASCADE');
+    await db.client.query('TRUNCATE "course"."documents", "ai"."account_access_revocations", "ai"."processing_jobs" CASCADE');
   });
 
   it('cancels pending and running jobs in one AI transaction and is idempotent', async () => {
@@ -102,6 +108,15 @@ describe('ProcessingJobRepository account access revocation', () => {
   it('cancels a job enqueued before account access is revoked', async () => {
     const userId = randomUUID();
     const documentId = randomUUID();
+    await documents.save(documents.create({
+      id: documentId,
+      ownerId: userId,
+      type: DocumentType.TEXT,
+      originalName: 'fixture.txt',
+      storageRef: `fixtures/${documentId}.txt`,
+      sizeBytes: 1024,
+      status: DocumentStatus.PROCESSING,
+    }));
     await repository.enqueue({
       correlationId: randomUUID(),
       documentId,
@@ -160,6 +175,57 @@ describe('ProcessingJobRepository account access revocation', () => {
 
     const event = await outbox.findOneByOrFail({ aggregateId: job.id });
     expect(event.payload).toMatchObject({ attempt: 2, leaseId });
+  });
+
+  it('does not finalize an expired matching lease', async () => {
+    const ownerId = randomUUID();
+    const leaseId = randomUUID();
+    const job = await jobs.save({
+      attempts: 2,
+      correlationId: randomUUID(),
+      documentId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      jobType: JobType.FULL_PIPELINE,
+      leaseId,
+      leaseUntil: new Date(Date.now() - 1_000),
+      ownerId,
+      status: JobStatus.RUNNING,
+    });
+
+    await expect(repository.complete({ id: job.id, attempts: 2, leaseId })).resolves.toBe(false);
+    await expect(jobs.findOneByOrFail({ id: job.id })).resolves.toMatchObject({
+      id: job.id,
+      leaseId,
+      status: JobStatus.RUNNING,
+    });
+    await expect(outbox.countBy({ aggregateId: job.id })).resolves.toBe(0);
+  });
+
+  it('does not rearm a completed attempt', async () => {
+    const ownerId = randomUUID();
+    const leaseId = randomUUID();
+    const job = await jobs.save({
+      attempts: 2,
+      correlationId: randomUUID(),
+      documentId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      jobType: JobType.FULL_PIPELINE,
+      leaseId,
+      leaseUntil: new Date(Date.now() + 60_000),
+      ownerId,
+      status: JobStatus.RUNNING,
+    });
+
+    await expect(repository.complete({ id: job.id, attempts: 2, leaseId })).resolves.toBe(true);
+    await expect(repository.retryTechnical(
+      { id: job.id, attempts: 2, leaseId },
+      DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+    )).resolves.toBe(false);
+    await expect(jobs.findOneByOrFail({ id: job.id })).resolves.toMatchObject({
+      id: job.id,
+      status: JobStatus.COMPLETED,
+    });
+    await expect(outbox.countBy({ aggregateId: job.id })).resolves.toBe(1);
   });
 
   async function createJob(ownerId: string, status: JobStatus): Promise<ProcessingJob> {

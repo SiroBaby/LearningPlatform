@@ -3,7 +3,10 @@ import { DataSource } from 'typeorm';
 
 import { BaseRepository } from '../../../database/base.repository';
 import type { AccountAccessRevocation } from '../contracts/account-access-revocation.port';
-import { EnqueueCommand } from '../contracts/ai-ingestion.port';
+import type {
+  DocumentCancellationCommand,
+  FullPipelineEnqueueCommand,
+} from '../contracts/ai-ingestion.port';
 import {
   DOCUMENT_PROCESSING_RESULT_EVENT,
   DOCUMENT_PROCESSING_RESULT_VERSION,
@@ -13,6 +16,7 @@ import {
 import { AiOutboxEvent } from '../entities/ai-outbox-event.entity';
 import { ProcessingJob } from '../entities/processing-job.entity';
 import { JobStatus } from '../enums/job-status.enum';
+import { JobType } from '../enums/job-type.enum';
 import type { ProcessingJobModelSelection } from '../contracts/processing-job-model-selection.port';
 import type { ProcessingJobBudget } from '../contracts/processing-job-budget.port';
 
@@ -30,41 +34,93 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     super(ProcessingJob, dataSource);
   }
 
-  async enqueue(command: EnqueueCommand, idempotencyKey: string): Promise<void> {
-    await this.query(
-      `
-      INSERT INTO "ai"."processing_jobs"
-        ("document_id", "owner_id", "job_type", "status",
-         "idempotency_key", "correlation_id", "attempts", "model_selection_kind", "platform_model_id", "custom_model_config_id")
-      SELECT $1, $2, $3, 'PENDING', $4, $5, 0, $6, $7, $8
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM "ai"."account_access_revocations" AS "revocation"
-        WHERE "revocation"."user_id" = $2
-      )
-      ON CONFLICT ("document_id", "job_type") DO UPDATE
-        SET "status"     = 'PENDING',
-            "attempts"   = "processing_jobs"."attempts" + 1,
-            "technical_retry_count" = 0,
-            "updated_at" = now()
-        WHERE "processing_jobs"."status" = 'FAILED'
-          AND NOT EXISTS (
-            SELECT 1
-            FROM "ai"."account_access_revocations" AS "revocation"
-            WHERE "revocation"."user_id" = "processing_jobs"."owner_id"
-          )
-      `,
-      [
-        command.documentId,
-        command.ownerId,
-        command.jobType,
-        idempotencyKey,
-        command.correlationId,
-        command.selection?.kind ?? null,
-        command.selection?.platformModelId ?? null,
-        command.selection?.customModelConfigId ?? null,
-      ],
-    );
+  async enqueue(command: FullPipelineEnqueueCommand, idempotencyKey: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const expectedDeletionFence = command.deletionFence ?? 0;
+      if (
+        command.processingAttempt !== undefined &&
+        (!Number.isSafeInteger(command.processingAttempt) || command.processingAttempt < 1)
+      ) {
+        throw new Error('Invalid processing attempt');
+      }
+
+      const revocations: Array<{ readonly marker: number }> = await manager.query(
+        `SELECT 1 AS "marker"
+         FROM "ai"."account_access_revocations"
+         WHERE "user_id" = $1
+         LIMIT 1`,
+        [command.ownerId],
+      );
+      if (revocations.length > 0) return;
+
+      await manager.query(
+        `
+        INSERT INTO "ai"."processing_jobs"
+          ("id", "document_id", "owner_id", "job_type", "status",
+           "idempotency_key", "correlation_id", "attempts", "model_selection_kind", "platform_model_id", "custom_model_config_id",
+           "probe_generation", "policy_version", "deletion_fence", "probe_result_id")
+        SELECT COALESCE($1::uuid, gen_random_uuid()), $2, $3, 'FULL_PIPELINE', 'PENDING', $4, $5,
+               CASE WHEN $13::integer IS NULL THEN 0 ELSE $13::integer - 1 END,
+               $6, $7, $8, $9, $10, $11, $12
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM "ai"."account_access_revocations" AS "revocation"
+          WHERE "revocation"."user_id" = $3
+        )
+        ON CONFLICT ("document_id") WHERE "job_type" = 'FULL_PIPELINE' DO UPDATE
+          SET "status" = 'PENDING',
+              "attempts" = CASE
+                WHEN $13::integer IS NULL THEN "processing_jobs"."attempts" + 1
+                ELSE $13::integer - 1
+              END,
+              "technical_retry_count" = 0,
+              "correlation_id" = EXCLUDED."correlation_id",
+              "model_selection_kind" = EXCLUDED."model_selection_kind",
+              "platform_model_id" = EXCLUDED."platform_model_id",
+              "custom_model_config_id" = EXCLUDED."custom_model_config_id",
+              "probe_generation" = EXCLUDED."probe_generation",
+              "policy_version" = EXCLUDED."policy_version",
+              "deletion_fence" = EXCLUDED."deletion_fence",
+              "probe_result_id" = EXCLUDED."probe_result_id",
+              "failure_code" = NULL,
+              "error_message" = NULL,
+              "completed_at" = NULL,
+              "lease_id" = NULL,
+              "lease_until" = NULL,
+              "next_visible_at" = now(),
+              "updated_at" = now()
+          WHERE "processing_jobs"."idempotency_key" = EXCLUDED."idempotency_key"
+            AND "processing_jobs"."owner_id" = $3
+            AND "processing_jobs"."deletion_fence" = $11
+            AND "processing_jobs"."status" = 'FAILED'
+            AND "processing_jobs"."job_type" = 'FULL_PIPELINE'
+            AND (
+              $13::integer IS NULL
+              OR "processing_jobs"."attempts" < $13::integer
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM "ai"."account_access_revocations" AS "revocation"
+              WHERE "revocation"."user_id" = "processing_jobs"."owner_id"
+            )
+        `,
+        [
+          command.fullPipelineJobId ?? null,
+          command.documentId,
+          command.ownerId,
+          idempotencyKey,
+          command.correlationId,
+          command.selection?.kind ?? null,
+          command.selection?.platformModelId ?? null,
+          command.selection?.customModelConfigId ?? null,
+          command.probeGeneration ?? null,
+          command.policyVersion ?? null,
+          expectedDeletionFence,
+          command.probeResultId ?? null,
+          command.processingAttempt ?? null,
+        ],
+      );
+    });
   }
 
   async apply(input: Parameters<AccountAccessRevocation['apply']>[0]): Promise<void> {
@@ -111,15 +167,67 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
            AND "cancellation_marker_id" IS NULL`,
         [marker.id, input.reasonCode, input.userId],
       );
+      await manager.query(
+        `UPDATE "ai"."media_probe_jobs"
+         SET "status" = 'CANCELLED',
+             "lease_id" = NULL,
+             "lease_until" = NULL,
+             "updated_at" = now()
+         WHERE "owner_id" = $1 AND "status" IN ('PENDING', 'RUNNING')`,
+        [input.userId],
+      );
     });
   }
 
-  async claimPending(): Promise<ProcessingJob | null> {
+  async cancelDocument(command: DocumentCancellationCommand): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const cancellationResult: [Array<{ readonly id: string }>, number] = await manager.query(
+        `UPDATE "ai"."processing_jobs"
+         SET "status" = 'CANCELLED',
+             "cancellation_marker_id" = COALESCE("cancellation_marker_id", gen_random_uuid()),
+             "cancellation_reason" = COALESCE("cancellation_reason", $3),
+             "cancelled_at" = COALESCE("cancelled_at", now()),
+             "lease_id" = NULL,
+             "lease_until" = NULL,
+             "updated_at" = now()
+         WHERE "document_id" = $1
+           AND "owner_id" = $2
+           AND "job_type" = 'FULL_PIPELINE'
+           AND "status" NOT IN ('COMPLETED', 'CANCELLED')
+         RETURNING "id"`,
+        [command.documentId, command.ownerId, command.reason],
+      );
+      const [cancelled] = cancellationResult;
+      if (cancelled.length > 0) return;
+
+      // Keep an AI-owned tombstone when cancellation arrives before the
+      // forward relay creates the queue row. A later stale enqueue conflicts
+      // with this row and cannot re-arm work after the document fence wins.
+      await manager.query(
+        `INSERT INTO "ai"."processing_jobs"
+           ("document_id", "owner_id", "job_type", "status", "idempotency_key",
+            "correlation_id", "deletion_fence", "cancellation_marker_id",
+            "cancellation_reason", "cancelled_at")
+         VALUES ($1, $2, 'FULL_PIPELINE', 'CANCELLED', $3, gen_random_uuid(),
+                 $4, gen_random_uuid(), $5, now())
+         ON CONFLICT ("document_id") WHERE "job_type" = 'FULL_PIPELINE' DO NOTHING`,
+        [
+          command.documentId,
+          command.ownerId,
+          `document-cancel:${command.documentId}:FULL_PIPELINE`,
+          command.deletionFence,
+          command.reason,
+        ],
+      );
+    });
+  }
+
+  async claimPending(jobType: JobType = JobType.FULL_PIPELINE): Promise<ProcessingJob | null> {
     return this.dataSource.transaction(async (manager) => {
       const rows = await manager.query(
         `
-        SELECT "id" FROM "ai"."processing_jobs"
-        WHERE (
+      SELECT "id" FROM "ai"."processing_jobs"
+      WHERE (
           (("status" = 'PENDING' AND "next_visible_at" <= now())
             OR ("status" = 'RUNNING' AND "lease_until" <= now()))
           AND "cancellation_marker_id" IS NULL
@@ -128,11 +236,13 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
             FROM "ai"."account_access_revocations" AS "revocation"
             WHERE "revocation"."user_id" = "processing_jobs"."owner_id"
           )
+          AND "job_type" = $1
         )
         ORDER BY "created_at" ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
         `,
+        [jobType],
       );
 
       if (rows.length === 0) {
@@ -158,15 +268,17 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
             FROM "ai"."account_access_revocations" AS "revocation"
             WHERE "revocation"."user_id" = "processing_jobs"."owner_id"
           )
+            AND "job_type" = $2
         RETURNING "id", "attempts", "lease_id" AS "leaseId"
         `,
-        [id],
+        [id, jobType],
       );
       const attempt = claimed[0];
       if (!attempt) return null;
       const job = await manager.findOneByOrFail(ProcessingJob, {
         attempts: attempt.attempts,
         id: attempt.id,
+        jobType,
         leaseId: attempt.leaseId,
         status: JobStatus.RUNNING,
       });

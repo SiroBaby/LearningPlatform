@@ -21,6 +21,16 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 - Khi hoàn thành task, đăng comment `HOÀN THÀNH` kèm thay đổi, PR hoặc commit nếu có, lệnh kiểm tra và kết quả, bằng chứng manual/visual/operational liên quan cùng giới hạn còn lại. Chỉ chuyển `Status` sang `Done` khi hoạt động của ticket đã có kết luận và bằng chứng; ticket `HITL` vẫn cần human xác nhận trước khi đóng.
 - Chỉ được coi ticket là hoàn thành và đóng issue sau khi thay đổi đã commit/push, GitHub Actions sau push đã thành công, và trạng thái sau push đã được kiểm tra lại; thay đổi mới chỉ ở working tree không đủ điều kiện đóng ticket.
 - Nội dung ticket và comment phải dùng tiếng Việt cụ thể, nhất quán với ubiquitous language trong `CONTEXT.md`. Khi một English technical term xuất hiện lần đầu, giải thích ngắn bằng tiếng Việt ngay sau thuật ngữ; tránh từ mơ hồ, diễn đạt trừu tượng hoặc kết luận không có bằng chứng khiến human có thể hiểu sai.
+- Không tuyên bố một hành động đã bắt đầu hoặc đã thực hiện khi chưa có artifact và bằng chứng tương ứng; nếu chưa chạy hoặc chưa có kết quả thì phải nói rõ là chưa thực hiện.
+
+### Xác định ticket trước khi làm việc
+
+- Trước khi gọi tên task/ticket hoặc bắt đầu chỉnh sửa, phải đối chiếu GitHub issue (số, tiêu đề, trạng thái, parent/dependency), branch/PR và diff thực tế. Tên branch cũ không phải nguồn sự thật và không được dùng một mình để suy ra ticket hiện tại.
+- Nếu working tree chứa thay đổi của nhiều ticket, phải nêu rõ parent và từng ticket con, ánh xạ phạm vi thay đổi chính, đồng thời ghi ticket nào chưa làm hoặc chưa đủ bằng chứng. Không gọi chung là “task này”.
+- Mọi cập nhật trạng thái phải trả lời đủ: ticket số bao nhiêu, đã làm gì cụ thể, đã chạy kiểm tra nào và kết quả, còn thiếu hoặc bị chặn ở đâu. Không dùng các câu mơ hồ như “đã kiểm tra” nếu chưa nói rõ đối tượng và kết quả.
+- Mọi báo cáo hoàn tất hoặc cập nhật trạng thái bắt buộc có mục `Next step`, nêu hành động kế tiếp, ticket liên quan và điều kiện/blocker; nếu không còn bước nào, ghi rõ `Không còn bước tiếp theo`.
+- Trong lúc triển khai bình thường, không báo “đang làm”, “đã bắt đầu” hoặc báo cáo giữa chừng khi chưa có artifact và kết quả kiểm tra tương ứng. Chỉ báo khi ticket đã hoàn tất với bằng chứng mới, hoặc khi gặp blocker cụ thể cần owner hỗ trợ; ngoại lệ chỉ áp dụng khi owner yêu cầu cập nhật tiến độ.
+- Với batch implementation đã được owner ủy quyền, không gửi báo cáo rời rạc theo từng nửa bước hoặc lặp lại việc thông báo sẽ review/test. Tiếp tục tự xử lý toàn bộ phần triển khai, sửa lỗi và các bước kiểm chứng đã dự kiến; chỉ báo khi có kết quả hoàn chỉnh đã xác minh hoặc blocker cụ thể cần owner quyết định. Quy tắc này không thay thế yêu cầu cập nhật ticket và mục `Next step` ở trên.
 
 ## Chuẩn hóa Pull Request
 

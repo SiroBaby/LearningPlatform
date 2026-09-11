@@ -33,10 +33,12 @@
     "@nestjs/swagger": "11.4.6",
     "@nestjs/testing": "11.1.28",
     "@nestjs/typeorm": "11.0.3",
+    "@smithy/node-http-handler": "4.12.1",
     "class-transformer": "0.5.1",
     "class-validator": "0.14.4",
     "dotenv": "16.6.1",
     "google-auth-library": "11.0.2",
+    "https-proxy-agent": "7.0.6",
     "openai": "6.47.0",
     "pdfjs-dist": "5.4.296",
     "pg": "8.21.0",
@@ -64,13 +66,14 @@
     "browserslist": "4.28.8",
     "qs": "6.16.0",
     "fast-uri": "3.1.6",
-    "js-yaml": "4.3.1",
+    "js-yaml": "4.3.2",
     "@istanbuljs/load-nyc-config": {
-      "js-yaml": "3.15.1"
+      "js-yaml": "3.15.2"
     },
     "@nestjs/swagger": {
       "js-yaml": "5.2.3"
     },
+    "multer": "2.3.0",
     "minimatch@3.1.5": {
       "brace-expansion": "1.1.18"
     },

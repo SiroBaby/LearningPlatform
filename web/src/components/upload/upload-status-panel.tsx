@@ -7,6 +7,7 @@ import { UploadSpecRow } from "./upload-workspace-primitives";
 interface UploadStatusPanelProps {
   readonly step: UploadStep;
   readonly statusTone: "brand" | "success" | "warning";
+  readonly isMediaUploadEnabled: boolean;
   readonly createdAt: string | null;
   readonly confirmStatus: string | null;
   readonly selectedModelLabel: string | null;
@@ -22,6 +23,7 @@ interface UploadStatusPanelProps {
 export function UploadStatusPanel({
   step,
   statusTone,
+  isMediaUploadEnabled,
   createdAt,
   confirmStatus,
   selectedModelLabel,
@@ -100,7 +102,9 @@ export function UploadStatusPanel({
         ) : null}
 
         <div className="rounded-2xl border border-ink-100 bg-white p-4 text-sm leading-6 text-ink-700">
-          Hỗ trợ tệp <span className="font-semibold text-ink-900">PDF</span> và <span className="font-semibold text-ink-900">TXT</span>. Nếu có lỗi, bạn chỉ cần chọn lại tệp hoặc thử tải lên lần nữa.
+          {isMediaUploadEnabled
+            ? "Hỗ trợ tệp PDF, TXT, MP3 và MP4. MP3 tối đa 300 MiB, MP4 tối đa 500 MiB và media dài tối đa 2 giờ. Nếu upload lỗi, bạn cần tải lại từ đầu."
+            : "Hỗ trợ tệp PDF và TXT, tối đa 1 GiB mỗi tệp. Nếu upload lỗi, bạn cần tải lại từ đầu."}
         </div>
       </CardBody>
     </Card>

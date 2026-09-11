@@ -4,7 +4,9 @@ import {
   HeadObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import {
   Injectable,
   Logger,
@@ -12,10 +14,15 @@ import {
 } from '@nestjs/common';
 
 import { ApplicationConfigService } from '../config/application-config.service';
+import type { StorageSettings } from '../config/configuration.types';
+import type { StorageBucketKind } from './contracts/storage-bucket.port';
+import { normalizeStorageVersionId } from './storage-version-id';
 
-type StorageObjectStat = {
+export type StorageObjectStat = {
   readonly contentType?: string;
+  readonly etag?: string;
   readonly size: number;
+  readonly versionId?: string;
 };
 
 type AsyncByteStream = AsyncIterable<Uint8Array> & {
@@ -25,30 +32,59 @@ type AsyncByteStream = AsyncIterable<Uint8Array> & {
 @Injectable()
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
-  private readonly client: S3Client;
-  private readonly bucket: string;
+  private readonly clients: Readonly<Partial<Record<StorageBucketKind, S3Client>>>;
+  private readonly buckets: Readonly<Partial<Record<StorageBucketKind, string>>>;
   private readonly presignExpiry: number;
 
   constructor(config: ApplicationConfigService) {
     const storage = config.storage;
-    this.bucket = storage.bucket;
+    const buckets: Partial<Record<StorageBucketKind, string>> = { documents: storage.bucket };
+    const clients: Partial<Record<StorageBucketKind, S3Client>> = {
+      documents: this.createClient(storage.accessKey, storage.secretKey, storage),
+    };
+    if (storage.mediaEnabled && storage.mediaBucket) {
+      if (!storage.mediaApiAccessKey || !storage.mediaApiSecretKey) {
+        throw new Error('Dedicated media storage credentials are required when media uploads are enabled');
+      }
+      buckets.media = storage.mediaBucket;
+      clients.media = this.createClient(storage.mediaApiAccessKey, storage.mediaApiSecretKey, storage);
+    }
+    this.clients = clients;
+    this.buckets = buckets;
     this.presignExpiry = storage.presignExpiry;
+  }
 
-    this.client = new S3Client({
+  private createClient(
+    accessKey: string,
+    secretKey: string,
+    storage: StorageSettings,
+  ): S3Client {
+    const requestHandler = storage.egressProxyUrl
+      ? new NodeHttpHandler({
+        httpAgent: new HttpsProxyAgent(storage.egressProxyUrl),
+        httpsAgent: new HttpsProxyAgent(storage.egressProxyUrl),
+      })
+      : undefined;
+    return new S3Client({
       endpoint: `${storage.useSSL ? 'https' : 'http'}://${storage.endpoint}:${storage.port}`,
       forcePathStyle: true,
       region: storage.region,
+      ...(requestHandler ? { requestHandler } : {}),
       credentials: {
-        accessKeyId: storage.accessKey,
-        secretAccessKey: storage.secretKey,
+        accessKeyId: accessKey,
+        secretAccessKey: secretKey,
       },
     });
   }
 
   async onModuleInit(): Promise<void> {
     try {
-      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
-      this.logger.log(`Bucket "${this.bucket}" ready`);
+      // API startup validates the existing document bucket only. Media bucket
+      // provisioning and versioning are owned by IaC/capability checks so the
+      // API identity does not need bucket-level versioning permissions.
+      const bucket = this.getBucketName('documents');
+      await this.clientForBucket('documents').send(new HeadBucketCommand({ Bucket: bucket }));
+      this.logger.log(`Bucket "${bucket}" ready`);
     } catch (error) {
       const cause = error instanceof Error ? error : undefined;
       const sanitizedError = new Error('Object storage bucket is unavailable or misconfigured');
@@ -67,9 +103,10 @@ export class StorageService implements OnModuleInit {
     objectKey: string,
     contentType: string,
     sizeBytes: number,
+    bucketKind: StorageBucketKind = 'documents',
   ): Promise<{ formFields: Record<string, string>; url: string; expirySec: number }> {
-    const { fields, url } = await createPresignedPost(this.client, {
-      Bucket: this.bucket,
+    const { fields, url } = await createPresignedPost(this.clientForBucket(bucketKind), {
+      Bucket: this.getBucketName(bucketKind),
       Conditions: [['content-length-range', sizeBytes, sizeBytes]],
       Expires: this.presignExpiry,
       Fields: { 'Content-Type': contentType },
@@ -79,22 +116,32 @@ export class StorageService implements OnModuleInit {
   }
 
   /** Lấy metadata object (size, contentType) — dùng ở bước confirm sau này. */
-  async statObject(objectKey: string): Promise<StorageObjectStat> {
-    const response = await this.client.send(new HeadObjectCommand({
-      Bucket: this.bucket,
+  async statObject(
+    objectKey: string,
+    bucketKind: StorageBucketKind = 'documents',
+  ): Promise<StorageObjectStat> {
+    const response = await this.clientForBucket(bucketKind).send(new HeadObjectCommand({
+      Bucket: this.getBucketName(bucketKind),
       Key: objectKey,
     }));
+    const versionId = normalizeStorageVersionId(response.VersionId);
     return {
       contentType: response.ContentType,
+      ...(response.ETag ? { etag: response.ETag } : {}),
       size: response.ContentLength ?? 0,
+      ...(versionId ? { versionId } : {}),
     };
   }
 
   /** Đọc N byte đầu của object (cho magic-bytes verify). */
-  async readHead(objectKey: string, n: number): Promise<Buffer> {
+  async readHead(
+    objectKey: string,
+    n: number,
+    bucketKind: StorageBucketKind = 'documents',
+  ): Promise<Buffer> {
     if (n <= 0) return Buffer.alloc(0);
-    const response = await this.client.send(new GetObjectCommand({
-      Bucket: this.bucket,
+    const response = await this.clientForBucket(bucketKind).send(new GetObjectCommand({
+      Bucket: this.getBucketName(bucketKind),
       Key: objectKey,
       Range: `bytes=0-${n - 1}`,
     }));
@@ -102,9 +149,13 @@ export class StorageService implements OnModuleInit {
   }
 
   /** Reads at most maxBytes plus one sentinel byte to keep worker memory bounded. */
-  async readObject(objectKey: string, maxBytes: number): Promise<Buffer> {
-    const response = await this.client.send(new GetObjectCommand({
-      Bucket: this.bucket,
+  async readObject(
+    objectKey: string,
+    maxBytes: number,
+    bucketKind: StorageBucketKind = 'documents',
+  ): Promise<Buffer> {
+    const response = await this.clientForBucket(bucketKind).send(new GetObjectCommand({
+      Bucket: this.getBucketName(bucketKind),
       Key: objectKey,
     }));
     return this.readBody(response.Body, maxBytes);
@@ -135,7 +186,23 @@ export class StorageService implements OnModuleInit {
     return Buffer.concat(chunks, receivedBytes);
   }
 
-  getBucketName(): string {
-    return this.bucket;
+  getBucketName(bucketKind: StorageBucketKind = 'documents'): string {
+    const bucket = this.buckets[bucketKind];
+    if (!bucket) {
+      if (bucketKind === 'media') {
+        throw new Error('Media uploads are not enabled');
+      }
+      throw new Error(`Object storage bucket is disabled: ${bucketKind}`);
+    }
+    return bucket;
+  }
+
+  private clientForBucket(bucketKind: StorageBucketKind): S3Client {
+    this.getBucketName(bucketKind);
+    const client = this.clients[bucketKind];
+    if (!client) {
+      throw new Error(`Object storage client is disabled: ${bucketKind}`);
+    }
+    return client;
   }
 }

@@ -6,7 +6,11 @@ import { LinkButton } from "@/components/ui";
 import { getDeck } from "@/lib/mock-data";
 import { routes } from "@/lib/routes";
 
-export async function generateMetadata(props: PageProps<"/flashcards/[id]/review">): Promise<Metadata> {
+interface FlashcardReviewPageProps {
+  readonly params: Promise<{ id: string }>;
+}
+
+export async function generateMetadata(props: FlashcardReviewPageProps): Promise<Metadata> {
   const { id } = await props.params;
   const deck = getDeck(id);
 
@@ -22,7 +26,7 @@ export async function generateMetadata(props: PageProps<"/flashcards/[id]/review
   };
 }
 
-export default async function FlashcardReviewPage(props: PageProps<"/flashcards/[id]/review">) {
+export default async function FlashcardReviewPage(props: FlashcardReviewPageProps) {
   const { id } = await props.params;
   const deck = getDeck(id);
 

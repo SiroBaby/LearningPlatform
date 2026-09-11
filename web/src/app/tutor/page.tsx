@@ -8,12 +8,16 @@ interface TutorSearchParams {
   readonly context?: string | string[];
 }
 
+interface TutorPageProps {
+  readonly searchParams: Promise<TutorSearchParams>;
+}
+
 export const metadata: Metadata = {
   title: "Trợ giảng",
   description: "Đặt câu hỏi về tài liệu và nhận lời giải thích có trích dẫn rõ ràng.",
 };
 
-export default async function TutorPage(props: PageProps<"/tutor">) {
+export default async function TutorPage(props: TutorPageProps) {
   const searchParams = (await props.searchParams) as TutorSearchParams;
   const selectedContextKey = getFirstString(searchParams.context);
 

@@ -219,9 +219,19 @@ export class ApplicationConfigService {
   }
 
   get storage(): StorageSettings {
+    const environment = this.required<string>(CONFIG_PATH.app.environment);
+    const configuredMediaBucket = this.config.get<string>(CONFIG_PATH.storage.mediaBucket);
+    const configuredMediaApiAccessKey = this.config.get<string>(CONFIG_PATH.storage.mediaApiAccessKey);
+    const configuredMediaApiSecretKey = this.config.get<string>(CONFIG_PATH.storage.mediaApiSecretKey);
+    const configuredEgressProxyUrl = this.config.get<string>(CONFIG_PATH.storage.egressProxyUrl)?.trim() || undefined;
     const storage = {
       accessKey: this.required<string>(CONFIG_PATH.storage.accessKey),
       bucket: this.required<string>(CONFIG_PATH.storage.bucket),
+      mediaApiAccessKey: configuredMediaApiAccessKey?.trim() || undefined,
+      mediaApiSecretKey: configuredMediaApiSecretKey?.trim() || undefined,
+      mediaBucket: configuredMediaBucket?.trim() || undefined,
+      mediaEnabled: this.config.get<boolean>(CONFIG_PATH.storage.mediaEnabled) ?? false,
+      egressProxyUrl: configuredEgressProxyUrl,
       endpoint: this.storageEndpoint(),
       port: this.required<number>(CONFIG_PATH.storage.port),
       presignExpiry: this.required<number>(CONFIG_PATH.storage.presignExpiry),
@@ -229,7 +239,7 @@ export class ApplicationConfigService {
       secretKey: this.required<string>(CONFIG_PATH.storage.secretKey),
       useSSL: this.required<boolean>(CONFIG_PATH.storage.useSSL),
     };
-    this.assertProductionStorage(storage);
+    this.assertProductionStorage(storage, configuredMediaBucket, environment);
     return storage;
   }
 
@@ -377,8 +387,32 @@ export class ApplicationConfigService {
     return value;
   }
 
-  private assertProductionStorage(storage: StorageSettings): void {
-    if (this.required<string>(CONFIG_PATH.app.environment) !== 'production') return;
+  private assertProductionStorage(
+    storage: StorageSettings,
+    configuredMediaBucket: string | undefined,
+    environment: string,
+  ): void {
+    const hasMediaConfiguration = Boolean(
+      storage.mediaEnabled || configuredMediaBucket?.trim() || storage.mediaApiAccessKey || storage.mediaApiSecretKey,
+    );
+    if (hasMediaConfiguration && !configuredMediaBucket?.trim()) {
+      throw new Error('OBJECT_STORAGE_MEDIA_BUCKET is required when media uploads are enabled');
+    }
+    if (hasMediaConfiguration && storage.mediaBucket === storage.bucket) {
+      throw new Error('OBJECT_STORAGE_MEDIA_BUCKET must differ from OBJECT_STORAGE_BUCKET');
+    }
+    if (storage.mediaEnabled && (!storage.mediaApiAccessKey || !storage.mediaApiSecretKey)) {
+      throw new Error(
+        'OBJECT_STORAGE_API_MEDIA_ACCESS_KEY and OBJECT_STORAGE_API_MEDIA_SECRET_KEY are required when media uploads are enabled',
+      );
+    }
+    if (storage.egressProxyUrl) {
+      this.assertProxyUrl('OBJECT_STORAGE_EGRESS_PROXY_URL', storage.egressProxyUrl);
+    }
+    if (environment !== 'production') return;
+    if (storage.mediaEnabled && !storage.egressProxyUrl) {
+      throw new Error('OBJECT_STORAGE_EGRESS_PROXY_URL is required in production');
+    }
     if (!storage.useSSL) {
       throw new Error('OBJECT_STORAGE_USE_SSL must be true in production');
     }
@@ -398,5 +432,25 @@ export class ApplicationConfigService {
       );
     }
     return endpoint;
+  }
+
+  private assertProxyUrl(name: string, raw: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw new Error(`${name} must be an absolute HTTP or HTTPS URL`);
+    }
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+      !parsed.hostname ||
+      parsed.username ||
+      parsed.password ||
+      (parsed.pathname !== '' && parsed.pathname !== '/') ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new Error(`${name} must be an absolute HTTP or HTTPS URL without credentials, path, query, or fragment`);
+    }
   }
 }

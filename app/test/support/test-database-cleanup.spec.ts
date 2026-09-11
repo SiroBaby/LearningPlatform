@@ -54,6 +54,13 @@ describe('document flow database fixture', () => {
 
     expect(await countRows('ai', 'account_access_revocations')).toBe(0);
 
+    await db.client.query(
+      `INSERT INTO "course"."documents"
+         ("id", "owner_id", "type", "original_name", "storage_ref", "size_bytes", "status")
+       VALUES ($1, $2, 'TEXT', 'fixture.txt', $3, 1024, 'PROCESSING')`,
+      [documentId, ownerId, `fixtures/${documentId}.txt`],
+    );
+
     await processingJobs.enqueue(
       {
         correlationId: randomUUID(),

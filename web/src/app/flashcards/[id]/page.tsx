@@ -19,7 +19,12 @@ interface DeckFilters {
   readonly due?: Flashcard["dueState"];
 }
 
-export async function generateMetadata(props: PageProps<"/flashcards/[id]">): Promise<Metadata> {
+interface FlashcardDeckPageProps {
+  readonly params: Promise<{ id: string }>;
+  readonly searchParams: Promise<DeckSearchParams>;
+}
+
+export async function generateMetadata(props: FlashcardDeckPageProps): Promise<Metadata> {
   const { id } = await props.params;
   const deck = getDeck(id);
 
@@ -35,7 +40,7 @@ export async function generateMetadata(props: PageProps<"/flashcards/[id]">): Pr
   };
 }
 
-export default async function FlashcardDeckPage(props: PageProps<"/flashcards/[id]">) {
+export default async function FlashcardDeckPage(props: FlashcardDeckPageProps) {
   const { id } = await props.params;
   const searchParams = (await props.searchParams) as DeckSearchParams;
   const deck = getDeck(id);

@@ -161,11 +161,463 @@ describe('ReturnRelay', () => {
     logger.mockRestore();
   });
 
+  it('projects DocumentProbeCompleted atomically, reserves once, and creates the processing request', async () => {
+    const ownerId = randomUUID();
+    const probeGeneration = randomUUID();
+    const fullPipelineJobId = randomUUID();
+    const document = await documents.save(
+      documents.create({
+        estimatedCredits: 80,
+        modelSelectionKind: 'PLAN',
+        ownerId,
+        originalName: 'lecture.mp4',
+        platformModelId: randomUUID(),
+        sizeBytes: 100,
+        status: DocumentStatus.PROBING,
+        storageRef: `media/${randomUUID()}.mp4`,
+        type: DocumentType.VIDEO,
+        probeGeneration,
+        probePolicyVersion: 'media-v1',
+        processingAttempt: 1,
+        mediaSourceBucket: 'media',
+        mediaSourceVersionId: 'version-1',
+        mediaSourceEtag: 'etag-1',
+        mediaSourceContentLength: 100,
+        deletionFence: 0,
+      }),
+    );
+    await courseOutbox.save(courseOutbox.create({
+      aggregateId: document.id,
+      eventType: 'DocumentProbeRequested',
+      payload: {
+        deletionFence: 0,
+        documentId: document.id,
+        fullPipelineJobId,
+        jobType: 'MEDIA_PROBE',
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        sourceBucket: 'media',
+        sourceKey: document.storageRef,
+        sourceVersionId: 'version-1',
+        sourceEtag: 'etag-1',
+        sourceContentLength: 100,
+      },
+      publishedAt: null,
+    }));
+    await db.client.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 100)',
+      [ownerId],
+    );
+    const probeResultId = randomUUID();
+    const completionPayload = {
+      deletionFence: 0,
+      documentId: document.id,
+      durationSec: 3600,
+      fullPipelineJobId,
+      probeResultId,
+      locator: {
+        bucket: 'media',
+        contentLength: 100,
+        deletionFence: 0,
+        etag: 'etag-1',
+        key: document.storageRef,
+        policyVersion: 'media-v1',
+        versionId: 'version-1',
+      },
+      ownerId,
+      policyVersion: 'media-v1',
+      probeGeneration,
+      version: 1,
+    };
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProbeCompleted',
+      payload: completionPayload,
+    }));
+    const duplicateEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProbeCompleted',
+      payload: completionPayload,
+    }));
+
+    await relay.pump(10);
+    await relay.pump(10);
+
+    const projected = await documents.findOneByOrFail({ id: document.id });
+    expect(projected.status).toBe(DocumentStatus.PROCESSING);
+    expect(projected.durationSec).toBe(3600);
+    expect(projected.budgetStatus).toBe('RESERVED');
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+    expect((await outbox.findOneByOrFail({ id: duplicateEvent.id })).publishedAt).not.toBeNull();
+    const requests = await courseOutbox.find({ where: { aggregateId: document.id, eventType: 'DocumentReadyForProcessing' } });
+    expect(requests).toHaveLength(1);
+    expect(requests.filter((request) => request.payload.probeGeneration === probeGeneration)).toHaveLength(1);
+    expect((await db.client.query(
+      'SELECT "available_credits", "reserved_credits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1',
+      [ownerId],
+    )).rows).toEqual([{ available_credits: '20', reserved_credits: '80' }]);
+    expect((await db.client.query(
+      'SELECT "business_key", "job_attempt", "credits" FROM "course"."credit_ledger_entries" WHERE "job_id" = $1',
+      [fullPipelineJobId],
+    )).rows).toEqual([{ business_key: `reserve:${fullPipelineJobId}:1`, job_attempt: 1, credits: '80' }]);
+  });
+
+  it('acknowledges a completion from a different full-pipeline job without changing the current probe', async () => {
+    const ownerId = randomUUID();
+    const probeGeneration = randomUUID();
+    const issuedFullPipelineJobId = randomUUID();
+    const unissuedFullPipelineJobId = randomUUID();
+    const document = await documents.save(documents.create({
+      estimatedCredits: 80,
+      modelSelectionKind: 'PLAN',
+      ownerId,
+      originalName: 'lecture.mp4',
+      platformModelId: randomUUID(),
+      sizeBytes: 100,
+      status: DocumentStatus.PROBING,
+      storageRef: `media/${randomUUID()}.mp4`,
+      type: DocumentType.VIDEO,
+      probeGeneration,
+      probePolicyVersion: 'media-v1',
+      deletionFence: 0,
+    }));
+    await courseOutbox.save(courseOutbox.create({
+      aggregateId: document.id,
+      eventType: 'DocumentProbeRequested',
+      payload: {
+        deletionFence: 0,
+        documentId: document.id,
+        fullPipelineJobId: issuedFullPipelineJobId,
+        jobType: 'MEDIA_PROBE',
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        sourceBucket: 'media',
+        sourceKey: document.storageRef,
+        sourceVersionId: 'version-conflict',
+        sourceEtag: 'etag-for-conflict',
+        sourceContentLength: 100,
+      },
+      publishedAt: null,
+    }));
+    await db.client.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 100)',
+      [ownerId],
+    );
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProbeCompleted',
+      payload: {
+        deletionFence: 0,
+        documentId: document.id,
+        durationSec: 3600,
+        fullPipelineJobId: unissuedFullPipelineJobId,
+        locator: {
+          bucket: 'media',
+          contentLength: 100,
+          deletionFence: 0,
+          etag: 'etag-for-conflict',
+          key: document.storageRef,
+          policyVersion: 'media-v1',
+          versionId: 'version-conflict',
+        },
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        probeResultId: randomUUID(),
+        version: 1,
+      },
+    }));
+
+    await relay.pump(10);
+
+    const unchanged = await documents.findOneByOrFail({ id: document.id });
+    expect(unchanged.status).toBe(DocumentStatus.PROBING);
+    expect(unchanged.durationSec).toBeNull();
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+    expect(await courseOutbox.count({
+      where: { aggregateId: document.id, eventType: 'DocumentReadyForProcessing' },
+    })).toBe(0);
+    expect((await db.client.query(
+      'SELECT "available_credits", "reserved_credits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1',
+      [ownerId],
+    )).rows).toEqual([{ available_credits: '100', reserved_credits: '0' }]);
+  });
+
+  it('keeps a completion missing probeResultId unpublished and leaves the document in PROBING', async () => {
+    const ownerId = randomUUID();
+    const probeGeneration = randomUUID();
+    const fullPipelineJobId = randomUUID();
+    const document = await documents.save(documents.create({
+      ownerId,
+      originalName: 'lecture.mp4',
+      sizeBytes: 100,
+      status: DocumentStatus.PROBING,
+      storageRef: `media/${randomUUID()}.mp4`,
+      type: DocumentType.VIDEO,
+      probeGeneration,
+      probePolicyVersion: 'media-v1',
+      deletionFence: 0,
+    }));
+    await courseOutbox.save(courseOutbox.create({
+      aggregateId: document.id,
+      eventType: 'DocumentProbeRequested',
+      payload: {
+        deletionFence: 0,
+        documentId: document.id,
+        fullPipelineJobId,
+        jobType: 'MEDIA_PROBE',
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        sourceBucket: 'media',
+        sourceKey: document.storageRef,
+        sourceVersionId: 'version-missing-result',
+        sourceEtag: 'etag-missing-result',
+        sourceContentLength: 100,
+      },
+      publishedAt: null,
+    }));
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProbeCompleted',
+      payload: {
+        deletionFence: 0,
+        documentId: document.id,
+        durationSec: 3600,
+        fullPipelineJobId,
+        locator: {
+          bucket: 'media',
+          contentLength: 100,
+          deletionFence: 0,
+          etag: 'etag-missing-result',
+          key: document.storageRef,
+          policyVersion: 'media-v1',
+          versionId: 'version-missing-result',
+        },
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        version: 1,
+      },
+    }));
+
+    await expect(relay.pump(10)).rejects.toThrow(
+      'Invalid media probe completion outbox payload',
+    );
+
+    expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(
+      DocumentStatus.PROBING,
+    );
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();
+    expect(await courseOutbox.count({
+      where: { aggregateId: document.id, eventType: 'DocumentReadyForProcessing' },
+    })).toBe(0);
+  });
+
+  it('keeps probe completion pending and rolls back when credit reservation fails', async () => {
+    const ownerId = randomUUID();
+    const probeGeneration = randomUUID();
+    const fullPipelineJobId = randomUUID();
+    const document = await documents.save(
+      documents.create({
+        estimatedCredits: 80,
+        modelSelectionKind: 'PLAN',
+        ownerId,
+        originalName: 'lecture.mp4',
+        platformModelId: randomUUID(),
+        sizeBytes: 100,
+        status: DocumentStatus.PROBING,
+        storageRef: `media/${randomUUID()}.mp4`,
+        type: DocumentType.VIDEO,
+        probeGeneration,
+        probePolicyVersion: 'media-v1',
+        processingAttempt: 1,
+        mediaSourceBucket: 'media',
+        mediaSourceVersionId: 'version-1',
+        mediaSourceEtag: 'etag-1',
+        mediaSourceContentLength: 100,
+        deletionFence: 0,
+      }),
+    );
+    await db.client.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 10)',
+      [ownerId],
+    );
+    await courseOutbox.save(courseOutbox.create({
+      aggregateId: document.id,
+      eventType: 'DocumentProbeRequested',
+      payload: {
+        deletionFence: 0,
+        documentId: document.id,
+        fullPipelineJobId,
+        jobType: 'MEDIA_PROBE',
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        sourceBucket: 'media',
+        sourceKey: document.storageRef,
+        sourceVersionId: 'version-1',
+        sourceEtag: 'etag-1',
+        sourceContentLength: 100,
+      },
+      publishedAt: null,
+    }));
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProbeCompleted',
+      payload: {
+        deletionFence: 0,
+        documentId: document.id,
+        durationSec: 3600,
+        fullPipelineJobId,
+        probeResultId: randomUUID(),
+        locator: {
+          bucket: 'media',
+          contentLength: 100,
+          deletionFence: 0,
+          etag: 'etag-1',
+          key: document.storageRef,
+          policyVersion: 'media-v1',
+          versionId: 'version-1',
+        },
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        version: 1,
+      },
+    }));
+
+    await expect(relay.pump(10)).rejects.toThrow('BUDGET_EXHAUSTED');
+
+    expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(DocumentStatus.PROBING);
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();
+    expect(await courseOutbox.count({
+      where: { aggregateId: document.id, eventType: 'DocumentProbeRequested' },
+    })).toBe(1);
+    expect((await db.client.query(
+      'SELECT "available_credits", "reserved_credits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1',
+      [ownerId],
+    )).rows).toEqual([{ available_credits: '10', reserved_credits: '0' }]);
+  });
+
+  it('projects a terminal media probe failure without reserving credit or creating a pipeline request', async () => {
+    const ownerId = randomUUID();
+    const probeGeneration = randomUUID();
+    const document = await documents.save(documents.create({
+      estimatedCredits: 80,
+      modelSelectionKind: 'PLAN',
+      ownerId,
+      originalName: 'lecture.mp4',
+      platformModelId: randomUUID(),
+      sizeBytes: 100,
+      status: DocumentStatus.PROBING,
+      storageRef: `media/${randomUUID()}.mp4`,
+      type: DocumentType.VIDEO,
+      probeGeneration,
+      probePolicyVersion: 'media-v1',
+      deletionFence: 0,
+    }));
+    await db.client.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 100)',
+      [ownerId],
+    );
+    const event = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: {
+        attempt: 1,
+        deletionFence: 0,
+        documentId: document.id,
+        errorCode: DocumentProcessingFailureCode.PROCESSING_FAILED,
+        errorMessage: 'Processing failed',
+        jobType: 'MEDIA_PROBE',
+        leaseId: randomUUID(),
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        status: DocumentStatus.FAILED,
+        version: 1,
+      },
+    }));
+
+    await relay.pump(10);
+    const replayEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: event.payload,
+    }));
+    await relay.pump(10);
+
+    const failed = await documents.findOneByOrFail({ id: document.id });
+    expect(failed.status).toBe(DocumentStatus.FAILED);
+    expect(failed.errorCode).toBe(DocumentProcessingFailureCode.PROCESSING_FAILED);
+    expect(failed.errorMessage).toBe('Processing failed');
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+    expect((await outbox.findOneByOrFail({ id: replayEvent.id })).publishedAt).not.toBeNull();
+    expect(await courseOutbox.count({ where: { aggregateId: document.id } })).toBe(0);
+    expect((await db.client.query(
+      'SELECT "available_credits", "reserved_credits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1',
+      [ownerId],
+    )).rows).toEqual([{ available_credits: '100', reserved_credits: '0' }]);
+  });
+
+  it('acknowledges replayed and stale media probe failures without changing the current probe', async () => {
+    const ownerId = randomUUID();
+    const currentGeneration = randomUUID();
+    const staleGeneration = randomUUID();
+    const document = await documents.save(documents.create({
+      ownerId,
+      originalName: 'lecture.mp4',
+      sizeBytes: 100,
+      status: DocumentStatus.PROBING,
+      storageRef: `media/${randomUUID()}.mp4`,
+      type: DocumentType.VIDEO,
+      probeGeneration: currentGeneration,
+      probePolicyVersion: 'media-v2',
+      deletionFence: 3,
+    }));
+    const stalePayload = {
+      attempt: 1,
+      deletionFence: 3,
+      documentId: document.id,
+      errorCode: DocumentProcessingFailureCode.PROCESSING_FAILED,
+      errorMessage: 'Processing failed',
+      jobType: 'MEDIA_PROBE',
+      leaseId: randomUUID(),
+      ownerId,
+      policyVersion: 'media-v1',
+      probeGeneration: staleGeneration,
+      status: DocumentStatus.FAILED,
+      version: 1,
+    };
+    const staleEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: stalePayload,
+    }));
+    const duplicateEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProcessingResult',
+      payload: stalePayload,
+    }));
+
+    await relay.pump(10);
+
+    expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(DocumentStatus.PROBING);
+    expect((await outbox.findOneByOrFail({ id: staleEvent.id })).publishedAt).not.toBeNull();
+    expect((await outbox.findOneByOrFail({ id: duplicateEvent.id })).publishedAt).not.toBeNull();
+    expect(await courseOutbox.count({ where: { aggregateId: document.id } })).toBe(0);
+  });
+
   it('idempotently projects FAILED after a projection failure retry', async () => {
     const document = await seedProcessingDocument();
     const event = await seedResult(document, DocumentStatus.FAILED);
     const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
     const failingProjection: DocumentStatusProjection = {
+      completeProbe: async () => 'IGNORED',
+      failProbe: async () => 'IGNORED',
       project: async (_command: DocumentStatusProjectionCommand) => {
         throw new Error('content unavailable: raw document storage reference');
       },

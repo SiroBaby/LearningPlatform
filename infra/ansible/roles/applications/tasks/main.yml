@@ -60,6 +60,52 @@
       deployment_targets must contain only web, api, and worker, and GHCR/
       ingress configuration must be explicit.
 
+- name: Validate enabled media egress proxy deployment contract
+  ansible.builtin.assert:
+    that:
+      - media_egress_proxy_enabled | default(false) | bool
+      - media_probe_worker_dns_ip is string
+      - media_probe_worker_dns_ip is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
+      - media_probe_worker_dns_ip is not search('REPLACE_WITH')
+      - media_probe_worker_egress_proxy_port is number
+      - media_probe_worker_egress_proxy_port | int == 3128
+    fail_msg: >-
+      An enabled media egress proxy requires an explicit cluster DNS address
+      and the fixed in-cluster proxy port; it does not require the runtime
+      object-storage proxy URL or any consumer credentials.
+  when: media_egress_proxy_enabled | default(false) | bool
+
+- name: Require the proxy deployment gate for runtime proxy consumers
+  ansible.builtin.assert:
+    that:
+      - media_egress_proxy_enabled | default(false) | bool
+    fail_msg: >-
+      Runtime proxy consumers cannot be enabled until the private media egress
+      proxy deployment is enabled.
+  when: object_storage_egress_proxy_enabled | default(false) | bool
+
+- name: Validate enabled API media storage contract
+  ansible.builtin.assert:
+    that:
+      - ssm_parameter_keys.object_storage_media_bucket is string
+      - ssm_parameter_keys.object_storage_api_media_access_key is string
+      - ssm_parameter_keys.object_storage_api_media_secret_key is string
+      - ssm_parameter_keys.object_storage_egress_proxy_url is string
+      - ssm_parameter_keys.object_storage_media_bucket is search('^/')
+      - ssm_parameter_keys.object_storage_api_media_access_key is search('^/')
+      - ssm_parameter_keys.object_storage_api_media_secret_key is search('^/')
+      - ssm_parameter_keys.object_storage_egress_proxy_url is search('^/')
+      - ssm_parameter_keys.object_storage_media_bucket is not search('REPLACE_WITH')
+      - ssm_parameter_keys.object_storage_api_media_access_key is not search('REPLACE_WITH')
+      - ssm_parameter_keys.object_storage_api_media_secret_key is not search('REPLACE_WITH')
+      - ssm_parameter_keys.object_storage_egress_proxy_url is not search('REPLACE_WITH')
+      - object_storage_egress_proxy_enabled | default(false) | bool
+    fail_msg: >-
+      Enabled API media storage requires the canonical media bucket, dedicated
+      API media credentials, and an explicitly enabled approved object-storage
+      egress proxy SSM path; media-probe credentials must not be reused.
+  when: api_media_enabled | default(false) | bool
+
 - name: Discover existing Learning Platform workload deployments
   kubernetes.core.k8s_info:
     kubeconfig: /etc/rancher/k3s/k3s.yaml

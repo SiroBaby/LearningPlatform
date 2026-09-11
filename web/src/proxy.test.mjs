@@ -11,6 +11,12 @@ test("validates private-route cookies through the mTLS backend client", () => {
   assert.match(source, /authorization: `Bearer \$\{accessToken\}`/u);
   assert.match(source, /path: "\/internal\/v1\/auth\/me"/u);
   assert.match(source, /response\.status === 401/u);
+  assert.match(source, /matcher: \[\s*"\/api\/:path\*"/u);
+  assert.match(source, /"\/auth\/me"/u);
+  assert.match(source, /"\/auth\/profile"/u);
+  assert.match(source, /isApiRequest/u);
+  assert.match(source, /sessionInvalidApiResponse/u);
+  assert.match(source, /authBackendUnavailableApiResponse/u);
   assert.match(source, /createHash\("sha256"\)/u);
   assert.match(source, /Number\.isFinite\(new Date\(value\)\.getTime\(\)\)/u);
   assert.doesNotMatch(source, /fetch\(new URL\("\/api\/v1\/auth\/me"/u);

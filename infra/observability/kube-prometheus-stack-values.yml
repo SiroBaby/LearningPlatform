@@ -21,6 +21,46 @@ defaultRules:
   rules:
     windows: false
 
+additionalPrometheusRulesMap:
+  learning-platform-application:
+    groups:
+      - name: learning-platform.application
+        rules:
+          - alert: LearningPlatformPodNotReady
+            expr: >-
+              kube_pod_status_ready{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*",condition="true"} == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Learning Platform pod is not ready
+          - alert: LearningPlatformContainerCrashLoop
+            expr: >-
+              kube_pod_container_status_waiting_reason{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*",reason="CrashLoopBackOff"} == 1
+              or
+              sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*"}[15m])) > 3
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Learning Platform worker container is restarting
+          - alert: LearningPlatformDeploymentUnavailable
+            expr: >-
+              kube_deployment_status_replicas_unavailable{namespace="learning-platform-dev",deployment=~"web|api|worker"} > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Learning Platform deployment has unavailable replicas
+          - alert: LearningPlatformWorkerUnhealthy
+            expr: >-
+              kube_pod_container_status_ready{namespace="learning-platform-dev",pod=~"worker-.*",container=~"worker|go-worker"} == 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: Learning Platform worker is unhealthy
+
 kubeApiServer:
   enabled: false
 
@@ -187,6 +227,43 @@ grafana:
           editable: false
           options:
             path: /var/lib/grafana/dashboards/nodes
+        - name: application-pod
+          orgId: 1
+          folder: Applications
+          type: file
+          disableDeletion: true
+          editable: false
+          options:
+            path: /var/lib/grafana/dashboards/application-pod
+  dashboards:
+    application-pod:
+      application-pod:
+        json: |
+          {
+            "annotations": {"list": []},
+            "editable": false,
+            "panels": [
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0}, "id": 1, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(kube_pod_status_ready{namespace=~\"$namespace\",pod=~\"$pod\",condition=\"true\"})", "refId": "A"}], "title": "Pod ready", "type": "stat"},
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0}, "id": 2, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(kube_pod_container_status_ready{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"})", "refId": "A"}], "title": "Container ready", "type": "stat"},
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}, "id": 9, "targets": [{"expr": "sum by (phase) (kube_pod_status_phase{namespace=~\"$namespace\",pod=~\"$pod\",phase=~\"Running|Pending|Failed\"} == 1)", "legendFormat": "{{phase}}", "refId": "A"}], "title": "Pod phase", "type": "timeseries"},
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0}, "id": 3, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"}[1h]))", "refId": "A"}], "title": "Restarts (1h)", "type": "stat"},
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0}, "id": 4, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}, "targets": [{"expr": "sum(kube_pod_container_status_waiting_reason{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",reason=\"CrashLoopBackOff\"})", "refId": "A"}], "title": "CrashLoopBackOff", "type": "stat"},
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}, "id": 5, "targets": [{"expr": "kube_deployment_spec_replicas{namespace=~\"$namespace\",deployment=~\"$workload\"}", "legendFormat": "desired {{deployment}}", "refId": "A"}, {"expr": "kube_deployment_status_replicas_available{namespace=~\"$namespace\",deployment=~\"$workload\"}", "legendFormat": "available {{deployment}}", "refId": "B"}], "title": "Deployment replicas", "type": "timeseries"},
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "cores"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14}, "id": 6, "targets": [{"expr": "sum by (pod, container) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",container!=\"\"}[5m]))", "legendFormat": "{{pod}} / {{container}}", "refId": "A"}], "title": "CPU", "type": "timeseries"},
+              {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14}, "id": 7, "targets": [{"expr": "sum by (pod, container) (container_memory_working_set_bytes{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\",container!=\"\"})", "legendFormat": "{{pod}} / {{container}}", "refId": "A"}], "title": "Memory", "type": "timeseries"},
+              {"datasource": "Loki", "gridPos": {"h": 10, "w": 24, "x": 0, "y": 22}, "id": 8, "targets": [{"expr": "{namespace=~\"$namespace\",pod=~\"$pod\",container=~\"$container\"}", "refId": "A"}], "title": "Log drilldown", "type": "logs"}
+            ],
+            "schemaVersion": 41,
+            "templating": {"list": [
+              {"current": {"text": "learning-platform-dev", "value": "learning-platform-dev"}, "hide": 0, "label": "Namespace", "name": "namespace", "options": [{"selected": true, "text": "learning-platform-dev", "value": "learning-platform-dev"}], "query": "learning-platform-dev", "type": "custom"},
+              {"current": {"text": ".*", "value": ".*"}, "hide": 0, "label": "Workload", "name": "workload", "options": [], "query": "label_values(kube_deployment_spec_replicas{namespace=~\"$namespace\"}, deployment)", "type": "query"},
+              {"current": {"text": ".*", "value": ".*"}, "hide": 0, "label": "Pod", "name": "pod", "options": [], "query": "label_values(kube_pod_status_ready{namespace=~\"$namespace\",pod=~\"$workload.*\"}, pod)", "type": "query"},
+              {"current": {"text": ".*", "value": ".*"}, "hide": 0, "label": "Container", "name": "container", "options": [], "query": "label_values(kube_pod_container_status_ready{namespace=~\"$namespace\",pod=~\"$pod\"}, container)", "type": "query"}
+            ]},
+            "time": {"from": "now-6h", "to": "now"},
+            "title": "Application / Pod",
+            "uid": "application-pod"
+          }
   dashboardsConfigMaps:
     k8s-resources-cluster: learning-platform-monitori-k8s-resources-cluster
     k8s-resources-node: learning-platform-monitori-k8s-resources-node

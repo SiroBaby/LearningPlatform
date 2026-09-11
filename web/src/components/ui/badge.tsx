@@ -47,6 +47,7 @@ const statusMap: Record<
   { tone: Tone; label: string; dot: string }
 > = {
   uploaded: { tone: "neutral", label: "Đã tải lên", dot: "bg-ink-400" },
+  probing: { tone: "brand", label: "Đang kiểm tra tệp", dot: "bg-brand-500" },
   processing: { tone: "brand", label: "Đang xử lý", dot: "bg-brand-500" },
   ready: { tone: "success", label: "Sẵn sàng", dot: "bg-success-500" },
   failed: { tone: "error", label: "Thất bại", dot: "bg-error-500" },

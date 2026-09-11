@@ -1,0 +1,236 @@
+---
+- name: Verify media egress proxy render contract
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    deployment_targets: []
+    ghcr_pull_secret_name: learning-platform-dev-ghcr
+    media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  tasks:
+    - name: Render the proxy-disabled application manifest
+      ansible.builtin.set_fact:
+        media_egress_proxy_enabled: false
+        object_storage_egress_proxy_enabled: false
+        applications_rendered_disabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'media_egress_proxy_enabled': false,
+                            'object_storage_egress_proxy_enabled': false})
+             | from_yaml_all | list }}
+
+    - name: Require the proxy resources to stay absent when disabled
+      ansible.builtin.assert:
+        that:
+          - >-
+            applications_rendered_disabled_manifests
+            | selectattr('metadata.name', 'in', ['media-egress-proxy', 'media-egress-proxy-config'])
+            | list | length == 0
+          - >-
+            applications_rendered_disabled_manifests
+            | selectattr('metadata.name', 'in', ['media-egress-proxy-ingress', 'media-egress-proxy-egress'])
+            | list | length == 0
+        fail_msg: >-
+          The media egress proxy must not render any workload, Service, or
+          configuration resource while its deployment gate is disabled.
+
+    - name: Enable only the proxy workload gate
+      ansible.builtin.set_fact:
+        deployment_targets: [web, api, worker]
+        media_egress_proxy_enabled: true
+        object_storage_egress_proxy_enabled: false
+
+    - name: Render the proxy-enabled application manifest after enabling the flag
+      ansible.builtin.set_fact:
+        applications_rendered_enabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'media_egress_proxy_enabled': true,
+                            'object_storage_egress_proxy_enabled': false})
+             | from_yaml_all | list }}
+
+    - name: Select the rendered proxy resources
+      ansible.builtin.set_fact:
+        applications_proxy_configmaps: >-
+          {{ applications_rendered_enabled_manifests
+             | selectattr('kind', 'equalto', 'ConfigMap')
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy-config')
+             | list }}
+        applications_proxy_deployments: >-
+          {{ applications_rendered_enabled_manifests
+             | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy')
+             | list }}
+        applications_proxy_service_accounts: >-
+          {{ applications_rendered_enabled_manifests
+             | selectattr('kind', 'equalto', 'ServiceAccount')
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy')
+             | list }}
+        applications_proxy_services: >-
+          {{ applications_rendered_enabled_manifests
+             | selectattr('kind', 'equalto', 'Service')
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy')
+             | list }}
+        applications_proxy_network_policies: >-
+          {{ applications_rendered_enabled_manifests
+             | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy-ingress')
+             | list }}
+        applications_proxy_egress_network_policies: >-
+          {{ applications_rendered_enabled_manifests
+             | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy-egress')
+             | list }}
+
+    - name: Require one isolated proxy resource of each kind
+      ansible.builtin.assert:
+        that:
+          - applications_proxy_configmaps | length == 1
+          - applications_proxy_deployments | length == 1
+          - applications_proxy_service_accounts | length == 1
+          - applications_proxy_services | length == 1
+          - applications_proxy_network_policies | length == 1
+          - applications_proxy_egress_network_policies | length == 1
+          - applications_proxy_deployments[0].metadata.namespace == learning_platform_namespace
+          - applications_proxy_deployments[0].spec.replicas == 1
+          - applications_proxy_deployments[0].spec.strategy.type == 'Recreate'
+          - applications_proxy_deployments[0].spec.strategy.rollingUpdate is none
+          - >-
+            applications_proxy_deployments[0].spec.template.metadata.annotations['learning-platform.io/rollout-revision']
+            == 'media-egress-proxy-v2'
+          - applications_proxy_deployments[0].spec.template.spec.serviceAccountName == 'media-egress-proxy'
+          - applications_proxy_deployments[0].spec.template.spec.automountServiceAccountToken == false
+          - applications_proxy_deployments[0].spec.template.spec.securityContext.runAsNonRoot == true
+          - applications_proxy_deployments[0].spec.template.spec.securityContext.runAsUser == 13
+          - applications_proxy_deployments[0].spec.template.spec.securityContext.runAsGroup == 13
+          - applications_proxy_deployments[0].spec.template.spec.securityContext.seccompProfile.type == 'RuntimeDefault'
+          - applications_proxy_deployments[0].spec.template.spec.containers | length == 1
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].name == 'media-egress-proxy'
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].image == 'ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029'
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].command == ['/usr/sbin/squid']
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].args == ['-f', '/etc/squid/squid.conf', '-NYC']
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation == false
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].securityContext.capabilities.drop == ['ALL']
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].resources.requests['ephemeral-storage'] == '80Mi'
+          - applications_proxy_deployments[0].spec.template.spec.containers[0].resources.limits['ephemeral-storage'] == '80Mi'
+          - applications_proxy_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'squid-cache') | map(attribute='emptyDir.sizeLimit') | list == ['64Mi']
+          - applications_proxy_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'squid-logs') | map(attribute='emptyDir.sizeLimit') | list == ['16Mi']
+          - applications_proxy_deployments[0].spec.template.spec.volumes | selectattr('name', 'equalto', 'squid-runtime') | map(attribute='emptyDir.sizeLimit') | list == ['16Mi']
+          - applications_proxy_service_accounts[0].automountServiceAccountToken == false
+          - applications_proxy_services[0].spec.type == 'ClusterIP'
+          - "applications_proxy_services[0].spec.ports == [{'name': 'proxy', 'port': 3128, 'targetPort': 'proxy'}]"
+          - applications_proxy_network_policies[0].spec.policyTypes == ['Ingress']
+          - applications_proxy_network_policies[0].spec | to_json is not search('0.0.0.0/0')
+          - applications_proxy_egress_network_policies[0].spec.policyTypes == ['Egress']
+          - applications_rendered_enabled_manifests | to_json is not search('OBJECT_STORAGE_EGRESS_PROXY_URL')
+        fail_msg: >-
+          The enabled media egress proxy must be a single, private, bounded,
+          non-root ClusterIP workload with an immutable image and must not
+          inject the runtime proxy URL when consumers remain disabled.
+
+    - name: Require the proxy configuration to allow only regional S3 CONNECT
+      ansible.builtin.assert:
+        that:
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^http_port 0\.0\.0\.0:3128$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^acl s3_endpoint dstdomain \\.s3\\.ap-southeast-1\\.amazonaws\\.com$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^http_access allow CONNECT s3_endpoint SSL_ports$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^http_access deny all$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^connect_timeout 30 seconds$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^request_timeout 30 seconds$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^read_timeout 5 minutes$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^cache deny all$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^access_log none$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^cache_store_log none$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^cache_log none$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^pid_filename /tmp/squid\\.pid$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is search('(?m)^coredump_dir /var/spool/squid$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is not search('(?m)^http_access allow all$')
+          - applications_proxy_configmaps[0].data['squid.conf'] is not search('(?m)^http_access allow CONNECT (?!s3_endpoint)')
+        fail_msg: >-
+          Squid must allow only HTTPS CONNECT to the regional S3 endpoint and
+          must not retain request or cache logs.
+
+    - name: Require proxy ingress from only in-cluster server-side callers
+      ansible.builtin.assert:
+        that:
+          - >-
+            (applications_proxy_network_policies[0].spec.ingress[0].from
+             | map(attribute='podSelector.matchLabels') | list)
+            == [
+              {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'api'},
+              {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'worker'},
+              {'app.kubernetes.io/name': 'learning-platform', 'app.kubernetes.io/component': 'media-probe-worker'}
+            ]
+          - "applications_proxy_network_policies[0].spec.ingress[0].ports == [{'protocol': 'TCP', 'port': 3128}]"
+        fail_msg: >-
+          The proxy must accept traffic only from the API, full-pipeline worker,
+          and media-probe worker on TCP 3128.
+
+    - name: Require proxy egress to use CoreDNS and HTTPS only
+      ansible.builtin.assert:
+        that:
+          - applications_proxy_egress_network_policies[0].spec.egress | length == 2
+          - >-
+            applications_proxy_egress_network_policies[0].spec.egress[0].to
+            == [
+              {
+                'namespaceSelector': {
+                  'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}
+                },
+                'podSelector': {
+                  'matchLabels': {'k8s-app': 'kube-dns'}
+                }
+              }
+            ]
+          - >-
+            applications_proxy_egress_network_policies[0].spec.egress[0].ports
+            == [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]
+          - applications_proxy_egress_network_policies[0].spec.egress[0].to[0].ipBlock is not defined
+          - >-
+            applications_proxy_egress_network_policies[0].spec.egress[1].ports
+            == [{'protocol': 'TCP', 'port': 443}]
+          - applications_proxy_egress_network_policies[0].spec.egress[1].to is not defined
+          - applications_proxy_egress_network_policies[0].spec | to_json is not search('amazonaws.com/|s3_endpoint')
+        fail_msg: >-
+          The proxy may resolve only CoreDNS Pods selected by their
+          kube-system identity on UDP/TCP 53 and open only TCP 443; it must
+          not depend on the CoreDNS Service ClusterIP. Squid's regional S3
+          domain allowlist remains the destination control.
+
+    - name: Require proxy deployment to stay independent from runtime consumers
+      ansible.builtin.assert:
+        that:
+          - media_egress_proxy_enabled == true
+          - object_storage_egress_proxy_enabled == false
+          - >-
+            applications_rendered_enabled_manifests
+            | selectattr('kind', 'equalto', 'Deployment')
+            | selectattr('metadata.name', 'equalto', 'media-egress-proxy')
+            | list | length == 1
+          - applications_rendered_enabled_manifests | to_json is not search('OBJECT_STORAGE_EGRESS_PROXY_URL')
+        fail_msg: >-
+          The proxy workload must render with its own deployment gate while
+          runtime proxy routing remains disabled and must not require the
+          proxy URL parameter.
+
+    - name: Require the applications role to preserve the two proxy gates
+      ansible.builtin.set_fact:
+        applications_role_tasks_source: >-
+          {{ lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml') }}
+
+    - name: Assert runtime proxy consumers cannot bypass deployment gate
+      ansible.builtin.assert:
+        that:
+          - "'- name: Validate enabled media egress proxy deployment contract' in applications_role_tasks_source"
+          - "'- name: Require the proxy deployment gate for runtime proxy consumers' in applications_role_tasks_source"
+          - "'object_storage_egress_proxy_enabled | default(false) | bool' in applications_role_tasks_source"
+          - "'media_egress_proxy_enabled | default(false) | bool' in applications_role_tasks_source"
+        fail_msg: >-
+          The applications role must validate the deployment-only proxy gate
+          before allowing runtime proxy consumers.

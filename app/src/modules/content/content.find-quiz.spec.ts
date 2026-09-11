@@ -26,7 +26,7 @@ describe('ContentService.findQuiz', () => {
     expect(quizzes.lookups).toEqual([]);
   });
 
-  it.each([DocumentStatus.UPLOADED, DocumentStatus.PROCESSING])(
+  it.each([DocumentStatus.UPLOADED, DocumentStatus.PROBING, DocumentStatus.PROCESSING])(
     'returns QUIZ_NOT_READY when an owned %s Document has no Quiz',
     async (status) => {
       const repository = new RecordingContentRepository(createDocument(status, null));
@@ -173,6 +173,22 @@ describe('ContentService.findQuiz', () => {
     const service = new ContentService(repository as never, null as never, null as never, quizzes);
 
     await expect(service.findQuiz('owner-1', 'document-1')).resolves.toEqual(quiz);
+  });
+
+  it('does not serve a Quiz after the Document deletion fence is committed', async () => {
+    const repository = new RecordingContentRepository(createDocument(DocumentStatus.DELETING, null));
+    const quizzes = new RecordingQuizDiscovery({ documentId: 'document-1', questionCount: 1, quizId: 'quiz-1' });
+    const service = new ContentService(repository as never, null as never, null as never, quizzes);
+
+    await expectQuizException(
+      service.findQuiz('owner-1', 'document-1'),
+      404,
+      {
+        code: 'DOCUMENT_NOT_FOUND',
+        message: 'Document document-1 not found',
+      },
+    );
+    expect(quizzes.lookups).toEqual([]);
   });
 });
 
