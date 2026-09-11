@@ -547,6 +547,22 @@ VALUES (:'"'"'owner_id'"'"', gen_random_uuid(), '"'"'ACCESS'"'"', :'"'"'token_ha
     >/dev/null 2>&1
 }
 
+seed_media_probe_role() {
+  local role_exists
+  role_exists=$(docker exec "$postgres_container" psql \
+    --no-psqlrc --tuples-only --no-align --quiet \
+    --set=ON_ERROR_STOP=1 \
+    --username=learning --dbname=learning \
+    --command "SELECT 1 FROM pg_roles WHERE rolname = 'learning_platform_media_probe';")
+  if [[ "$role_exists" != "1" ]]; then
+    docker exec "$postgres_container" psql \
+      --no-psqlrc --quiet \
+      --set=ON_ERROR_STOP=1 \
+      --username=learning --dbname=learning \
+      --command 'CREATE ROLE learning_platform_media_probe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;'
+  fi
+}
+
 run_s3_round_trip() {
   (
     cd "$root/app"
@@ -822,6 +838,8 @@ emit_phase storage-round-trip
 run_s3_round_trip
 
 emit_phase node
+emit_phase seed-media-probe-role
+seed_media_probe_role
 emit_phase start-node-api
 start_node_api
 emit_phase wait-node-api
