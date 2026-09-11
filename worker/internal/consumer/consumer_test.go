@@ -355,7 +355,7 @@ func TestProcessOneHandlesPersistenceFailureWithSafeRetryLog(t *testing.T) {
 	}
 
 	entry := decodeLogEntry(t, output.String())
-	if entry["level"] != "WARN" || entry["event"] != "worker.processing.retry.scheduled" || entry["phase"] != "retry" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProcessingFailed) {
+	if entry["level"] != "WARN" || entry["event"] != "worker.processing.retry.scheduled" || entry["phase"] != "retry" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProcessingFailed) || entry["failure_component"] != string(failureComponentPersistence) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	assertLogDoesNotExposeJobData(t, output.String())
@@ -383,12 +383,38 @@ func TestProcessOneDoesNotRetryAmbiguousPersistenceFailure(t *testing.T) {
 	}
 
 	entry := decodeLogEntry(t, output.String())
-	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "persist" || entry["attempt"] != float64(3) || entry["category"] != string(processing.ProcessingFailed) {
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "persist" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(3) || entry["category"] != string(processing.ProcessingFailed) || entry["failure_component"] != string(failureComponentPersistence) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	assertLogDoesNotExposeJobData(t, output.String())
 	if strings.Contains(output.String(), "commit outcome unavailable") {
 		t.Fatalf("log exposed persistence error: %s", output.String())
+	}
+}
+
+func TestProcessOneLogsSafeFinalFailurePersistenceError(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{
+		job:        &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", CorrelationID: "correlation-secret", LeaseID: "lease-secret", Attempt: 4},
+		source:     processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		failErr:    errors.New("raw finalization database failure"),
+		failResult: boolPtr(false),
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.OutputInvalid, Reason: processing.EmptyStem}}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err == nil || !strings.Contains(err.Error(), "raw finalization database failure") {
+		t.Fatalf("processOne() error = %v, want raw finalization database failure", err)
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.failure.persistence_failed" || entry["phase"] != "finalize" || entry["job_id"] != "job-secret" || entry["correlation_id"] != "correlation-secret" || entry["failure_component"] != string(failureComponentPersistence) {
+		t.Fatalf("log entry = %#v", entry)
+	}
+	for _, forbidden := range []string{"raw finalization database failure", "owners/secret-document.txt", "document-secret", "owner-secret", "lease-secret", "document text"} {
+		if strings.Contains(output.String(), forbidden) {
+			t.Fatalf("log exposed %q: %s", forbidden, output.String())
+		}
 	}
 }
 
@@ -411,7 +437,7 @@ func TestProcessOneLogsAmbiguousRetryFinalization(t *testing.T) {
 	}
 
 	entry := decodeLogEntry(t, output.String())
-	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "retry" || entry["attempt"] != float64(4) || entry["category"] != string(processing.ProviderUnavailable) {
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "retry" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(4) || entry["category"] != string(processing.ProviderUnavailable) || entry["failure_component"] != string(failureComponentPersistence) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	assertLogDoesNotExposeJobData(t, output.String())
@@ -436,7 +462,7 @@ func TestProcessOneLogsAmbiguousScheduledRetryCommit(t *testing.T) {
 	}
 
 	entry := decodeLogEntry(t, output.String())
-	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "retry" || entry["attempt"] != float64(1) || entry["category"] != string(processing.ProviderUnavailable) {
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "retry" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(1) || entry["category"] != string(processing.ProviderUnavailable) || entry["failure_component"] != string(failureComponentPersistence) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	assertLogDoesNotExposeJobData(t, output.String())
@@ -464,7 +490,7 @@ func TestProcessOneLogsAmbiguousFinalization(t *testing.T) {
 	}
 
 	entry := decodeLogEntry(t, output.String())
-	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "finalize" || entry["attempt"] != float64(2) || entry["category"] != string(processing.OutputInvalid) {
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.persistence_ambiguous" || entry["phase"] != "finalize" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(2) || entry["category"] != string(processing.OutputInvalid) || entry["failure_component"] != string(failureComponentPersistence) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	assertLogDoesNotExposeJobData(t, output.String())
@@ -492,7 +518,7 @@ func TestProcessOneLogsMalformedRetryResultMetadata(t *testing.T) {
 			}
 
 			entry := decodeLogEntry(t, output.String())
-			if entry["level"] != "ERROR" || entry["event"] != "worker.processing.retry.contract_violation" || entry["phase"] != "retry" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProviderUnavailable) {
+			if entry["level"] != "ERROR" || entry["event"] != "worker.processing.retry.contract_violation" || entry["phase"] != "retry" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProviderUnavailable) || entry["failure_component"] != string(failureComponentProvider) {
 				t.Fatalf("log entry = %#v", entry)
 			}
 			assertLogDoesNotExposeJobData(t, output.String())
@@ -515,7 +541,7 @@ func TestProcessOneLogsSafeProviderRetry(t *testing.T) {
 	}
 
 	entry := decodeLogEntry(t, output.String())
-	if entry["level"] != "WARN" || entry["event"] != "worker.processing.retry.scheduled" || entry["phase"] != "retry" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProviderUnavailable) {
+	if entry["level"] != "WARN" || entry["event"] != "worker.processing.retry.scheduled" || entry["phase"] != "retry" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(2) || entry["category"] != string(processing.ProviderUnavailable) || entry["failure_component"] != string(failureComponentProvider) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	if _, present := entry["reason"]; present {
@@ -538,7 +564,7 @@ func TestProcessOneLogsSafeParserReason(t *testing.T) {
 	}
 
 	entry := decodeLogEntry(t, output.String())
-	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.failed" || entry["phase"] != "finalize" || entry["attempt"] != float64(2) || entry["category"] != string(processing.OutputInvalid) || entry["reason"] != string(processing.EmptyStem) {
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.failed" || entry["phase"] != "finalize" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(2) || entry["category"] != string(processing.OutputInvalid) || entry["failure_component"] != string(failureComponentProvider) || entry["reason"] != string(processing.EmptyStem) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	if _, present := entry["choice_count"]; present {
@@ -593,7 +619,7 @@ func TestProcessOneLogsSafeDLQFailure(t *testing.T) {
 	}
 
 	entry := decodeLogEntry(t, output.String())
-	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.failed" || entry["phase"] != "dlq" || entry["attempt"] != float64(4) || entry["category"] != string(processing.ProviderUnavailable) {
+	if entry["level"] != "ERROR" || entry["event"] != "worker.processing.failed" || entry["phase"] != "dlq" || entry["job_id"] != "job-secret" || entry["attempt"] != float64(4) || entry["category"] != string(processing.ProviderUnavailable) || entry["failure_component"] != string(failureComponentProvider) {
 		t.Fatalf("log entry = %#v", entry)
 	}
 	assertLogDoesNotExposeJobData(t, output.String())
@@ -615,6 +641,45 @@ func TestLifecycleLogIncludesQueueAgeAndProcessingLatency(t *testing.T) {
 	}
 }
 
+func TestLifecycleFailureLogIncludesJobAndComponent(t *testing.T) {
+	var output bytes.Buffer
+	worker := &Bootstrap{
+		logger:  slog.New(slog.NewJSONHandler(&output, nil)),
+		options: normalizeOptions(Options{Concurrency: 2}),
+	}
+	worker.logLifecycle("worker.processing.failed", processing.Job{ID: "job-123", Attempt: 1}, 0, 0, failureComponentStorage)
+	entry := decodeLogEntry(t, output.String())
+	if entry["job_id"] != "job-123" || entry["failure_component"] != string(failureComponentStorage) {
+		t.Fatalf("lifecycle failure log = %#v", entry)
+	}
+}
+
+func TestFailureComponentForMapsKnownCodesAndExplicitStages(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		component failureComponent
+		code      processing.FailureCode
+		want      failureComponent
+	}{
+		{name: "generic storage failure uses storage stage", component: failureComponentStorage, code: processing.ProcessingFailed, want: failureComponentStorage},
+		{name: "generic extraction failure uses extraction stage", component: failureComponentExtraction, code: processing.ProcessingFailed, want: failureComponentExtraction},
+		{name: "generic provider failure uses provider stage", component: failureComponentProvider, code: processing.ProcessingFailed, want: failureComponentProvider},
+		{name: "generic persistence failure uses persistence stage", component: failureComponentPersistence, code: processing.ProcessingFailed, want: failureComponentPersistence},
+		{name: "known storage code maps without stage", component: failureComponentUnknown, code: processing.ObjectNotFound, want: failureComponentStorage},
+		{name: "known extraction code maps without stage", component: failureComponentUnknown, code: processing.PDFInvalid, want: failureComponentExtraction},
+		{name: "known provider code maps without stage", component: failureComponentUnknown, code: processing.ProviderUnavailable, want: failureComponentProvider},
+		{name: "unknown code remains unknown", component: failureComponentUnknown, code: processing.ProcessingFailed, want: failureComponentUnknown},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := failureComponentFor(test.component, test.code); got != test.want {
+				t.Fatalf("failureComponentFor(%q, %q) = %q, want %q", test.component, test.code, got, test.want)
+			}
+		})
+	}
+}
+
 func decodeLogEntry(t *testing.T, output string) map[string]any {
 	t.Helper()
 	var entry map[string]any
@@ -626,7 +691,7 @@ func decodeLogEntry(t *testing.T, output string) map[string]any {
 
 func assertLogDoesNotExposeJobData(t *testing.T, output string) {
 	t.Helper()
-	for _, forbidden := range []string{"job-secret", "document-secret", "owner-secret", "lease-secret", "owners/secret-document.txt", "document text"} {
+	for _, forbidden := range []string{"document-secret", "owner-secret", "lease-secret", "owners/secret-document.txt", "document text"} {
 		if strings.Contains(output, forbidden) {
 			t.Fatalf("log leaked %q: %s", forbidden, output)
 		}
