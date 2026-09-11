@@ -8,6 +8,7 @@ import type {
 } from './contracts/storage-verifier.port';
 import type { StorageBucketKind } from './contracts/storage-bucket.port';
 import { StorageService } from './storage.service';
+import { normalizeStorageVersionId } from './storage-version-id';
 
 const MAGIC: Record<string, Buffer[]> = {
   PDF: [Buffer.from('%PDF')],
@@ -25,10 +26,12 @@ export class ObjectStorageVerifier implements StorageVerifier {
   ): Promise<ObjectVerification> {
     let sizeBytes = 0;
     let versionId: string | undefined;
+    let etag: string | undefined;
     try {
       const stat = await this.storage.statObject(objectKey, bucketKind);
       sizeBytes = stat.size;
-      versionId = stat.versionId;
+      versionId = normalizeStorageVersionId(stat.versionId);
+      etag = stat.etag;
     } catch {
       return { contentValidation: 'INVALID', exists: false, sizeBytes: 0 };
     }
@@ -39,6 +42,7 @@ export class ObjectStorageVerifier implements StorageVerifier {
         exists: true,
         sizeBytes,
         ...(versionId ? { versionId } : {}),
+        ...(etag ? { etag } : {}),
       };
     }
 
@@ -49,6 +53,7 @@ export class ObjectStorageVerifier implements StorageVerifier {
       exists: true,
       sizeBytes,
       ...(versionId ? { versionId } : {}),
+      ...(etag ? { etag } : {}),
     };
   }
 

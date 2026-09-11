@@ -9,8 +9,8 @@ describe('ObjectStorageVerifier', () => {
   ])('checks the physical media bucket for %s and defers media validation', async (documentType, objectKey) => {
     const storage = {
       readHead: jest.fn<(key: string, bytes: number, bucket: 'documents' | 'media') => Promise<Buffer>>(),
-      statObject: jest.fn<(key: string, bucket: 'documents' | 'media') => Promise<{ size: number; versionId?: string }>>()
-        .mockResolvedValue({ size: 1024, versionId: 'version-1' }),
+      statObject: jest.fn<(key: string, bucket: 'documents' | 'media') => Promise<{ size: number; versionId?: string; etag?: string }>>()
+        .mockResolvedValue({ size: 1024, versionId: 'version-1', etag: 'etag-1' }),
     };
     const verifier = new ObjectStorageVerifier(storage as never);
 
@@ -19,6 +19,7 @@ describe('ObjectStorageVerifier', () => {
       exists: true,
       sizeBytes: 1024,
       versionId: 'version-1',
+      etag: 'etag-1',
     });
     expect(storage.statObject).toHaveBeenCalledWith(objectKey, 'media');
     expect(storage.readHead).not.toHaveBeenCalled();
@@ -28,8 +29,8 @@ describe('ObjectStorageVerifier', () => {
     const storage = {
       readHead: jest.fn<(key: string, bytes: number, bucket: 'documents' | 'media') => Promise<Buffer>>()
         .mockResolvedValue(Buffer.from('%PDF-1.7')),
-      statObject: jest.fn<(key: string, bucket: 'documents' | 'media') => Promise<{ size: number; versionId?: string }>>()
-        .mockResolvedValue({ size: 1024, versionId: 'version-1' }),
+      statObject: jest.fn<(key: string, bucket: 'documents' | 'media') => Promise<{ size: number; versionId?: string; etag?: string }>>()
+        .mockResolvedValue({ size: 1024, versionId: 'version-1', etag: 'etag-1' }),
     };
     const verifier = new ObjectStorageVerifier(storage as never);
 
@@ -38,6 +39,7 @@ describe('ObjectStorageVerifier', () => {
       exists: true,
       sizeBytes: 1024,
       versionId: 'version-1',
+      etag: 'etag-1',
     });
     expect(storage.statObject).toHaveBeenCalledWith('owner/lesson.pdf', 'documents');
     expect(storage.readHead).toHaveBeenCalledWith('owner/lesson.pdf', 4096, 'documents');
@@ -46,7 +48,7 @@ describe('ObjectStorageVerifier', () => {
   it('returns an invalid result when the object is unavailable', async () => {
     const storage = {
       readHead: jest.fn<(key: string, bytes: number, bucket: 'documents' | 'media') => Promise<Buffer>>(),
-      statObject: jest.fn<(key: string, bucket: 'documents' | 'media') => Promise<{ size: number; versionId?: string }>>()
+      statObject: jest.fn<(key: string, bucket: 'documents' | 'media') => Promise<{ size: number; versionId?: string; etag?: string }>>()
         .mockRejectedValue(new Error('not found')),
     };
     const verifier = new ObjectStorageVerifier(storage as never);
@@ -55,6 +57,22 @@ describe('ObjectStorageVerifier', () => {
       contentValidation: 'INVALID',
       exists: false,
       sizeBytes: 0,
+    });
+  });
+
+  it.each(['null', ' NULL ', 'NuLl'])('does not expose placeholder VersionId %j as an immutable locator', async (versionId) => {
+    const storage = {
+      readHead: jest.fn<(key: string, bytes: number, bucket: 'documents' | 'media') => Promise<Buffer>>(),
+      statObject: jest.fn<(key: string, bucket: 'documents' | 'media') => Promise<{ size: number; versionId?: string; etag?: string }>>()
+        .mockResolvedValue({ size: 1024, versionId, etag: 'etag-1' }),
+    };
+    const verifier = new ObjectStorageVerifier(storage as never);
+
+    await expect(verifier.verify('media/owner/lecture.mp4', 'VIDEO', 'media')).resolves.toEqual({
+      contentValidation: 'DEFERRED',
+      exists: true,
+      sizeBytes: 1024,
+      etag: 'etag-1',
     });
   });
 });

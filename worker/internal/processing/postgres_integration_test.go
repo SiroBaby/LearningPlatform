@@ -330,6 +330,24 @@ func startPostgresIntegration(t *testing.T, ctx context.Context) *postgresIntegr
 	if err != nil {
 		t.Fatalf("connect migration runner: %v", err)
 	}
+	if _, err := connection.Exec(ctx, `
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_roles WHERE rolname = 'learning_platform_media_probe'
+			) THEN
+				CREATE ROLE learning_platform_media_probe
+					NOLOGIN
+					NOSUPERUSER
+					NOCREATEDB
+					NOCREATEROLE
+					NOINHERIT;
+			END IF;
+		END
+		$$;
+	`); err != nil {
+		t.Fatalf("create media-probe database role: %v", err)
+	}
 	if err := migrations.Run(ctx, connection, migrationDirectory(t)); err != nil {
 		t.Fatalf("run tracked migrations: %v", err)
 	}

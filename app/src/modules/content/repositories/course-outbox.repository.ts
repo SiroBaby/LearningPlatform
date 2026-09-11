@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource, IsNull } from 'typeorm';
+import { DataSource, IsNull, Not } from 'typeorm';
 
 import { DateTimeUtil } from '../../../common/datetime.util';
 import { BaseRepository } from '../../../database/base.repository';
@@ -13,7 +13,10 @@ export class CourseOutboxRepository extends BaseRepository<OutboxEvent> {
 
   async findUnpublished(limit: number): Promise<OutboxEvent[]> {
     return this.find({
-      where: { publishedAt: IsNull() },
+      // Purge events belong to the future physical-purge consumer. Leaving
+      // them pending keeps the handoff durable without feeding them to the
+      // content -> AI forward relay.
+      where: { eventType: Not('DocumentPurgeRequested'), publishedAt: IsNull() },
       order: { createdAt: 'ASC' },
       take: limit,
     });

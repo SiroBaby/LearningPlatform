@@ -7,6 +7,7 @@ import { AiIngestionService } from '../modules/ai/ai-ingestion.service';
 import { ACCOUNT_ACCESS_REVOCATION } from '../modules/ai/contracts/account-access-revocation.port';
 import { AI_INGESTION } from '../modules/ai/contracts/ai-ingestion.port';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
+import { MediaProbeJobRepository } from '../modules/ai/repositories/media-probe-job.repository';
 import { ProcessingJobRepository } from '../modules/ai/repositories/processing-job.repository';
 import {
   QUIZ_GENERATION_HANDOFF,
@@ -38,6 +39,7 @@ import { AuthOutboxRepository } from '../modules/auth/repositories/auth-outbox.r
     AuthOutboxRepository,
     AiIngestionService,
     AiOutboxRepository,
+    MediaProbeJobRepository,
     ContentRepository,
     CourseOutboxRepository,
     DocumentStatusProjectionService,

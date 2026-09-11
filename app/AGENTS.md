@@ -29,6 +29,7 @@
 
 - Schema ownership: content/course -> `course`, AI processing -> `ai`, assessment -> `quiz`.
 - Không cross-schema query hoặc transaction. Một transaction chỉ thay đổi schema mà module đó sở hữu. Go AI worker chỉ đọc source descriptor tối thiểu (`id`, `owner_id`, `type`, `storage_ref`, `size_bytes`, `status`) từ `course.documents` theo `id` + `owner_id`; không được query `course.outbox` hay mutate bất kỳ dữ liệu `course` nào.
+- Ngoại lệ hẹp: luồng xóa Document được phép dùng một transaction tường minh qua `course` và `ai` để ghi deletion fence, tombstone hủy AI, hủy job hiện tại và các outbox của `course`. Ngoại lệ này chỉ dành cho deletion coordinator, không mở rộng cho luồng xử lý thông thường, không dùng SQL function/RLS.
 - Mọi query resource-facing bắt buộc filter `owner_id`.
 - `content -> ai`: `course.outbox` -> relay -> `AiIngestion`; content không ghi `ai.*`.
 - `ai -> content`: dùng `ai.outbox` return seam; AI không ghi trực tiếp `course.documents`.

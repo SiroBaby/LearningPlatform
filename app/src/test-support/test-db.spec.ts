@@ -30,6 +30,7 @@ describe('test database environment lifecycle', () => {
     const migrateClient = {
       connect: jest.fn(async () => undefined),
       end: jest.fn(async () => undefined),
+      query: jest.fn(async () => ({ rows: [] })),
     };
     const postgresContainerConstructor = PostgreSqlContainer as unknown as jest.Mock;
     const clientConstructor = Client as unknown as jest.Mock;

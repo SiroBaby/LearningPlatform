@@ -1,0 +1,3 @@
+-- This reconciliation is intentionally not reversible: dropping these
+-- tables could destroy probe jobs created after the repair. The canonical
+-- queue migration owns their rollback.

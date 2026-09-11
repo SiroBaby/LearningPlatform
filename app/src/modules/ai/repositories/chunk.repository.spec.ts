@@ -28,7 +28,13 @@ describe('ChunkRepository', () => {
     chunks = new ChunkRepository(dataSource, {
       worker: { chunkInsertBatchSize: 2 },
     } as ApplicationConfigService);
-    await db.client.query('TRUNCATE "ai"."chunks", "ai"."processing_jobs" CASCADE');
+    await db.client.query('TRUNCATE "course"."documents", "ai"."chunks", "ai"."processing_jobs" CASCADE');
+    await db.client.query(
+      `INSERT INTO "course"."documents"
+        ("id", "owner_id", "type", "original_name", "storage_ref", "size_bytes", "status", "deletion_fence")
+       VALUES ($1, $2, 'TEXT', 'fixture.txt', $3, 128, 'PROCESSING', 0)`,
+      [documentId, ownerId, `fixtures/${documentId}.txt`],
+    );
     job = await dataSource.getRepository(ProcessingJob).save({
       attempts: 1,
       correlationId: randomUUID(),

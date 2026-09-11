@@ -8,6 +8,8 @@ export interface ObjectVerification {
   sizeBytes: number;
   /** Version returned by HeadObject; media confirmation requires it. */
   versionId?: string;
+  /** ETag returned by HeadObject; media confirmation persists it with the version. */
+  etag?: string;
   /** Kept as a compatibility seam for existing test doubles during rollout. */
   magicBytesValid?: boolean;
 }

@@ -11,12 +11,16 @@ import { JobType } from '../enums/job-type.enum';
 import { AiOutboxEvent } from '../entities/ai-outbox-event.entity';
 import { ProcessingJob } from '../entities/processing-job.entity';
 import { ProcessingJobRepository } from './processing-job.repository';
+import { Document } from '../../content/entities/document.entity';
+import { DocumentStatus } from '../../content/enums/document-status.enum';
+import { DocumentType } from '../../content/enums/document-type.enum';
 
 describe('ProcessingJobRepository account access revocation', () => {
   let db: TestDb;
   let dataSource: DataSource;
   let jobs: Repository<ProcessingJob>;
   let outbox: Repository<AiOutboxEvent>;
+  let documents: Repository<Document>;
   let repository: ProcessingJobRepository;
 
   beforeAll(async () => {
@@ -31,8 +35,9 @@ describe('ProcessingJobRepository account access revocation', () => {
     dataSource = await createTestDataSource(db.container);
     jobs = dataSource.getRepository(ProcessingJob);
     outbox = dataSource.getRepository(AiOutboxEvent);
+    documents = dataSource.getRepository(Document);
     repository = new ProcessingJobRepository(dataSource);
-    await db.client.query('TRUNCATE "ai"."account_access_revocations", "ai"."processing_jobs" CASCADE');
+    await db.client.query('TRUNCATE "course"."documents", "ai"."account_access_revocations", "ai"."processing_jobs" CASCADE');
   });
 
   it('cancels pending and running jobs in one AI transaction and is idempotent', async () => {
@@ -103,6 +108,15 @@ describe('ProcessingJobRepository account access revocation', () => {
   it('cancels a job enqueued before account access is revoked', async () => {
     const userId = randomUUID();
     const documentId = randomUUID();
+    await documents.save(documents.create({
+      id: documentId,
+      ownerId: userId,
+      type: DocumentType.TEXT,
+      originalName: 'fixture.txt',
+      storageRef: `fixtures/${documentId}.txt`,
+      sizeBytes: 1024,
+      status: DocumentStatus.PROCESSING,
+    }));
     await repository.enqueue({
       correlationId: randomUUID(),
       documentId,
