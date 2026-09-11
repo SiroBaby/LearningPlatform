@@ -14,10 +14,12 @@ export class FakeStorageVerifier implements StorageVerifier {
     exists: true,
     sizeBytes: 1024,
     versionId: 'version-1',
+    etag: 'etag-1',
     magicBytesValid: true,
   };
 
   lastBucketKind: StorageBucketKind | undefined;
+  verifyCalls = 0;
 
   setResult(partial: Partial<ObjectVerification> & { readonly magicBytesValid?: boolean }): void {
     const contentValidation = partial.magicBytesValid === undefined
@@ -35,6 +37,7 @@ export class FakeStorageVerifier implements StorageVerifier {
     _documentType: string,
     bucketKind: StorageBucketKind = 'documents',
   ): Promise<ObjectVerification> {
+    this.verifyCalls += 1;
     this.lastBucketKind = bucketKind;
     return this.result;
   }

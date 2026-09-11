@@ -13,7 +13,10 @@ import type { ModelSelectionKind } from '../contracts/model-selection.contracts'
 
 @Entity({ schema: 'ai', name: 'processing_jobs' })
 @Index('uq_job_idempotency_key', ['idempotencyKey'], { unique: true })
-@Index('uq_job_document_type', ['documentId', 'jobType'], { unique: true })
+@Index('uq_processing_jobs_full_pipeline_document', ['documentId'], {
+  unique: true,
+  where: '"job_type" = \'FULL_PIPELINE\'',
+})
 export class ProcessingJob {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -70,6 +73,18 @@ export class ProcessingJob {
 
   @Column({ name: 'custom_model_config_id', type: 'uuid', nullable: true })
   customModelConfigId!: string | null;
+
+  @Column({ name: 'probe_generation', type: 'uuid', nullable: true })
+  probeGeneration!: string | null;
+
+  @Column({ name: 'policy_version', type: 'varchar', length: 80, nullable: true })
+  policyVersion!: string | null;
+
+  @Column({ name: 'deletion_fence', type: 'bigint', default: 0 })
+  deletionFence!: number;
+
+  @Column({ name: 'probe_result_id', type: 'uuid', nullable: true })
+  probeResultId!: string | null;
 
   @Column({ name: 'cancellation_marker_id', type: 'uuid', nullable: true })
   cancellationMarkerId!: string | null;

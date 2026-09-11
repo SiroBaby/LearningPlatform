@@ -12,13 +12,15 @@ import {
 
 import { ApplicationConfigService } from '../../config/application-config.service';
 import { StorageService } from '../../storage/storage.service';
+import { normalizeStorageVersionId } from '../../storage/storage-version-id';
 import {
   QUIZ_DISCOVERY,
   type QuizDiscovery,
 } from '../assessment/contracts/quiz-discovery.port';
 import {
   STORAGE_VERIFIER,
-  StorageVerifier,
+  type ObjectVerification,
+  type StorageVerifier,
 } from '../../storage/contracts/storage-verifier.port';
 import { CreateUploadUrlCommand } from './contracts/create-upload-url.command';
 import { DocumentQuizResult } from './contracts/document-quiz.result';
@@ -31,10 +33,14 @@ import {
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { MEDIA_PROBE_POLICY_VERSION } from './contracts/media-probe-policy';
 import { Document } from './entities/document.entity';
+import type { DocumentPurgeLocator } from './entities/document-purge-manifest.entity';
 import { DocumentStatus } from './enums/document-status.enum';
 import { DocumentType } from './enums/document-type.enum';
 import { isDocumentProcessingFailureRetryable } from '../ai/contracts/document-processing-result';
-import { ContentRepository } from './repositories/content.repository';
+import {
+  ContentRepository,
+  type DocumentStorageBuckets,
+} from './repositories/content.repository';
 import {
   MODEL_CATALOG,
   type DocumentModelSelection,
@@ -148,6 +154,140 @@ export class ContentService {
     return this.contentRepository.findAllByOwnerId(ownerId);
   }
 
+  async delete(ownerId: string, id: string): Promise<Document> {
+    const document = await this.contentRepository.findByOwnerId(ownerId, id);
+    if (!document) {
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: `Document ${id} not found`,
+      });
+    }
+
+    const isMediaDocument = document.type === DocumentType.AUDIO || document.type === DocumentType.VIDEO;
+    const documentsBucket = this.storage.getBucketName('documents');
+    const mediaBucket = isMediaDocument ? this.storage.getBucketName('media') : '';
+
+    const buckets: DocumentStorageBuckets = {
+      documents: documentsBucket,
+      media: mediaBucket,
+    };
+    const mediaLocator = document.status !== DocumentStatus.DELETING &&
+      isMediaDocument &&
+      !this.hasPersistedMediaSourceIdentity(document, mediaBucket)
+      ? await this.resolveMediaPurgeLocator(document, mediaBucket)
+      : undefined;
+    const deleted = await this.contentRepository.deleteOwnedDocument(
+      ownerId,
+      id,
+      buckets,
+      mediaLocator,
+    );
+    if (!deleted) {
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: `Document ${id} not found`,
+      });
+    }
+    return deleted;
+  }
+
+  private hasPersistedMediaSourceIdentity(document: Document, mediaBucket: string): boolean {
+    return this.getPersistedMediaSourceLocator(
+      document,
+      mediaBucket,
+    ) !== null;
+  }
+
+  private hasPartialMediaSourceIdentity(document: Document): boolean {
+    return Boolean(
+      document.mediaSourceBucket?.trim() ||
+      document.mediaSourceVersionId?.trim() ||
+      document.mediaSourceEtag?.trim() ||
+      (document.mediaSourceContentLength !== null &&
+        document.mediaSourceContentLength !== undefined),
+    );
+  }
+
+  private getPersistedMediaSourceLocator(
+    document: Document,
+    mediaBucket: string,
+  ): DocumentPurgeLocator | null {
+    const versionId = normalizeStorageVersionId(document.mediaSourceVersionId);
+    const etag = document.mediaSourceEtag?.trim();
+    const contentLength = document.mediaSourceContentLength === null ||
+      document.mediaSourceContentLength === undefined
+      ? null
+      : Number(document.mediaSourceContentLength);
+    if (
+      document.mediaSourceBucket?.trim() !== mediaBucket ||
+      !versionId ||
+      !etag ||
+      contentLength === null ||
+      !Number.isSafeInteger(contentLength) ||
+      contentLength < 0 ||
+      contentLength !== Number(document.sizeBytes)
+    ) {
+      return null;
+    }
+    return {
+      bucket: mediaBucket,
+      key: document.storageRef,
+      versionId,
+      etag,
+      contentLength,
+    };
+  }
+
+  private mediaSourceIdentityUnavailable(): ConflictException {
+    return new ConflictException({
+      code: 'MEDIA_SOURCE_IDENTITY_UNAVAILABLE',
+      message: 'Media source identity is incomplete. Please upload the file again.',
+      retryable: false,
+    });
+  }
+
+  private async resolveMediaPurgeLocator(
+    document: Document,
+    mediaBucket: string,
+  ): Promise<DocumentPurgeLocator> {
+    let verification: ObjectVerification;
+    try {
+      verification = await this.verifier.verify(document.storageRef, document.type, 'media');
+    } catch {
+      throw this.mediaPurgeMetadataUnavailable();
+    }
+
+    const versionId = normalizeStorageVersionId(verification.versionId);
+    const etag = verification.etag?.trim();
+    const contentLength = verification.sizeBytes;
+    if (
+      !verification.exists ||
+      !Number.isSafeInteger(contentLength) ||
+      contentLength < 0 ||
+      contentLength !== Number(document.sizeBytes) ||
+      !versionId ||
+      !etag
+    ) {
+      throw this.mediaPurgeMetadataUnavailable();
+    }
+
+    return {
+      bucket: mediaBucket,
+      key: document.storageRef,
+      versionId,
+      etag,
+      contentLength,
+    };
+  }
+
+  private mediaPurgeMetadataUnavailable(): ConflictException {
+    return new ConflictException({
+      code: 'DOCUMENT_PURGE_METADATA_UNAVAILABLE',
+      message: 'Media metadata is temporarily unavailable. Please try deleting the Document again.',
+      retryable: true,
+    });
+  }
+
   async estimateBeforeUpload(
     ownerId: string,
     input: { readonly sizeBytes: number; readonly type: DocumentType; readonly selection: DocumentModelSelection },
@@ -167,6 +307,12 @@ export class ContentService {
   async findQuiz(ownerId: string, documentId: string): Promise<DocumentQuizResult> {
     const document = await this.contentRepository.findByOwnerId(ownerId, documentId);
     if (!document) {
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: `Document ${documentId} not found`,
+      });
+    }
+    if (document.status === DocumentStatus.DELETING) {
       throw new NotFoundException({
         code: 'DOCUMENT_NOT_FOUND',
         message: `Document ${documentId} not found`,
@@ -262,6 +408,12 @@ export class ContentService {
     document: Document,
     mode: ProcessingStartMode,
   ): Promise<Document> {
+    if (document.status === DocumentStatus.DELETING) {
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: `Document ${id} not found`,
+      });
+    }
     const policy = resolveDocumentUploadPolicy(document.type, document.originalName);
     const declaredSizeBytes = Number(document.sizeBytes);
     assertDocumentUploadSize(policy, declaredSizeBytes);
@@ -273,14 +425,41 @@ export class ContentService {
       return document;
     }
 
-    const v = await this.verifier.verify(document.storageRef, document.type, policy.bucket);
-    if (
-      !v.exists ||
-      v.sizeBytes !== declaredSizeBytes ||
-      v.contentValidation === 'INVALID' ||
-      (policy.bucket === 'media' && !v.versionId?.trim())
-    ) {
-      throw new BadRequestException('Uploaded file failed verification');
+    const mediaBucket = policy.bucket === 'media'
+      ? this.storage.getBucketName('media')
+      : undefined;
+    const persistedMediaLocator = mediaBucket
+      ? this.getPersistedMediaSourceLocator(document, mediaBucket)
+      : null;
+    if (mediaBucket && this.hasPartialMediaSourceIdentity(document) && !persistedMediaLocator) {
+      throw this.mediaSourceIdentityUnavailable();
+    }
+
+    let mediaLocator: DocumentPurgeLocator | undefined;
+    if (persistedMediaLocator) {
+      // A retry reuses the exact version captured by the first confirmation.
+      // Never re-read the mutable latest key after that identity is persisted.
+      mediaLocator = persistedMediaLocator;
+    } else {
+      const v = await this.verifier.verify(document.storageRef, document.type, policy.bucket);
+      if (
+        !v.exists ||
+        v.sizeBytes !== declaredSizeBytes ||
+        v.contentValidation === 'INVALID' ||
+        (policy.bucket === 'media' && (!normalizeStorageVersionId(v.versionId) || !v.etag?.trim()))
+      ) {
+        throw new BadRequestException('Uploaded file failed verification');
+      }
+
+      mediaLocator = policy.bucket === 'media'
+        ? {
+          bucket: mediaBucket!,
+          key: document.storageRef,
+          versionId: normalizeStorageVersionId(v.versionId)!,
+          etag: v.etag!.trim(),
+          contentLength: v.sizeBytes,
+        }
+        : undefined;
     }
 
     const selection: DocumentModelSelection = {
@@ -294,7 +473,7 @@ export class ContentService {
         id,
         selection,
         MEDIA_PROBE_POLICY_VERSION,
-        this.storage.getBucketName('media'),
+        mediaLocator!,
       )
       : mode === 'RETRY'
         ? await this.contentRepository.retryProcessing(ownerId, id, selection)

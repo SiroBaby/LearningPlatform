@@ -201,12 +201,14 @@ describe('StorageService object-storage operations', () => {
     mockSend.mockResolvedValue({
       ContentLength: 22,
       ContentType: 'application/pdf',
+      ETag: 'etag-1',
       VersionId: 'version-1',
     });
     const service = createService();
 
     await expect(service.statObject('owner/object.pdf')).resolves.toEqual({
       contentType: 'application/pdf',
+      etag: 'etag-1',
       size: 22,
       versionId: 'version-1',
     });

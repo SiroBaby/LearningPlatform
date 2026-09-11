@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { Mapper } from '@automapper/core';
 import {
@@ -126,6 +126,19 @@ export class ContentController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<ConfirmDocumentResponseDto> {
     const document = await this.content.retry(ownerId, id);
+    return this.mapper.map(document, Document, ConfirmDocumentResponseDto);
+  }
+
+  @Delete(':id')
+  @HttpCode(202)
+  @ApiOperation({ summary: 'Delete an owned Document and queue its physical purge.' })
+  @ApiAcceptedResponse({ type: ConfirmDocumentResponseDto })
+  @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner.' })
+  async delete(
+    @CurrentUser() ownerId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<ConfirmDocumentResponseDto> {
+    const document = await this.content.delete(ownerId, id);
     return this.mapper.map(document, Document, ConfirmDocumentResponseDto);
   }
 

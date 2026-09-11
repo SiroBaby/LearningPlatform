@@ -9,8 +9,52 @@ export type DocumentStatusProjectionOutcome =
   | 'IGNORED'
   | 'UNVERIFIED_LEGACY';
 
+export type DocumentProbeCompletionOutcome =
+  | 'APPLIED'
+  | 'ALREADY_APPLIED'
+  | 'IGNORED';
+
+export type DocumentProbeFailureOutcome = DocumentProbeCompletionOutcome;
+
 export interface DocumentStatusProjection {
+  completeProbe(command: DocumentProbeCompletionCommand): Promise<DocumentProbeCompletionOutcome>;
+  failProbe(command: DocumentProbeFailureCommand): Promise<DocumentProbeFailureOutcome>;
   project(command: DocumentStatusProjectionCommand): Promise<DocumentStatusProjectionOutcome>;
+}
+
+export interface DocumentProbeCompletionCommand {
+  readonly deletionFence: number;
+  readonly documentId: string;
+  readonly durationSec: number;
+  readonly eventCreatedAt: Date;
+  readonly fullPipelineJobId: string;
+  readonly ownerId: string;
+  readonly policyVersion: string;
+  readonly probeResultId: string;
+  readonly probeGeneration: string;
+  readonly locator: DocumentProbeLocator;
+}
+
+/** Immutable storage identity carried by the AI return handoff. */
+export interface DocumentProbeLocator {
+  readonly bucket: string;
+  readonly contentLength: number;
+  readonly etag: string;
+  readonly key: string;
+  readonly versionId: string;
+}
+
+export interface DocumentProbeFailureCommand {
+  readonly attempt: number;
+  readonly deletionFence: number;
+  readonly documentId: string;
+  readonly errorCode: DocumentProcessingFailureCode;
+  readonly errorMessage: string | null;
+  readonly eventCreatedAt: Date;
+  readonly leaseId: string;
+  readonly ownerId: string;
+  readonly policyVersion: string;
+  readonly probeGeneration: string;
 }
 
 export interface DocumentStatusProjectionCommand {

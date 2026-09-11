@@ -16,9 +16,11 @@ import {
 import { ApplicationConfigService } from '../config/application-config.service';
 import type { StorageSettings } from '../config/configuration.types';
 import type { StorageBucketKind } from './contracts/storage-bucket.port';
+import { normalizeStorageVersionId } from './storage-version-id';
 
 export type StorageObjectStat = {
   readonly contentType?: string;
+  readonly etag?: string;
   readonly size: number;
   readonly versionId?: string;
 };
@@ -122,10 +124,12 @@ export class StorageService implements OnModuleInit {
       Bucket: this.getBucketName(bucketKind),
       Key: objectKey,
     }));
+    const versionId = normalizeStorageVersionId(response.VersionId);
     return {
       contentType: response.ContentType,
+      ...(response.ETag ? { etag: response.ETag } : {}),
       size: response.ContentLength ?? 0,
-      ...(response.VersionId ? { versionId: response.VersionId } : {}),
+      ...(versionId ? { versionId } : {}),
     };
   }
 

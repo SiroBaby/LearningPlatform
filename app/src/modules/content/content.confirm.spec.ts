@@ -5,6 +5,12 @@ import { startTestDb, TestDb } from '../../test-support/test-db';
 import { createTestDataSource } from '../../test-support/test-data-source';
 import { FakeStorageVerifier } from '../../test-support/fake-storage-verifier';
 import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
+import { MediaProbeJob } from '../ai/entities/media-probe-job.entity';
+import { MediaProbeResult } from '../ai/entities/media-probe-result.entity';
+import { ProcessingJob } from '../ai/entities/processing-job.entity';
+import { MediaProbeJobStatus } from '../ai/enums/media-probe-job-status.enum';
+import { JobStatus } from '../ai/enums/job-status.enum';
+import { JobType } from '../ai/enums/job-type.enum';
 import { ContentService } from './content.service';
 import { MAX_MP3_SIZE_BYTES } from './contracts/document-upload-policy';
 import { Document } from './entities/document.entity';
@@ -19,6 +25,9 @@ describe('ContentService.confirm', () => {
   let service: ContentService;
   let documents: Repository<Document>;
   let outbox: Repository<OutboxEvent>;
+  let mediaProbeJobs: Repository<MediaProbeJob>;
+  let mediaProbeResults: Repository<MediaProbeResult>;
+  let processingJobs: Repository<ProcessingJob>;
   let verifier: FakeStorageVerifier;
   let storage: { getBucketName: (bucketKind: 'documents' | 'media') => string };
 
@@ -36,6 +45,9 @@ describe('ContentService.confirm', () => {
     dataSource = await createTestDataSource(db.container);
     documents = dataSource.getRepository(Document);
     outbox = dataSource.getRepository(OutboxEvent);
+    mediaProbeJobs = dataSource.getRepository(MediaProbeJob);
+    mediaProbeResults = dataSource.getRepository(MediaProbeResult);
+    processingJobs = dataSource.getRepository(ProcessingJob);
     verifier = new FakeStorageVerifier();
     storage = {
       getBucketName: (bucketKind) => bucketKind === 'media' ? 'learning-platform-dev-media-custom' : 'learning-platform-dev-documents',
@@ -46,7 +58,9 @@ describe('ContentService.confirm', () => {
       verifier,
       null as never,
     );
-    await db.client.query('TRUNCATE "course"."documents", "course"."outbox"');
+    await db.client.query(
+      'TRUNCATE "ai"."media_probe_results", "ai"."media_probe_jobs", "ai"."processing_jobs", "course"."document_probe_receipts", "course"."documents", "course"."outbox" CASCADE',
+    );
   });
 
   async function seedUploaded(ownerId: string): Promise<Document> {
@@ -202,7 +216,216 @@ describe('ContentService.confirm', () => {
       policyVersion: 'media-v1',
       probeGeneration: reloaded.probeGeneration,
       sourceBucket: 'learning-platform-dev-media-custom',
+      sourceKey: doc.storageRef,
+      sourceVersionId: 'version-1',
+      sourceEtag: 'etag-1',
+      sourceContentLength: 1024,
     });
+  });
+
+  it('re-probe reuses the existing canonical FULL_PIPELINE job id', async () => {
+    const owner = randomUUID();
+    const retainedJobId = randomUUID();
+    const doc = await documents.save(documents.create({
+      errorCode: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+      errorMessage: 'Document processing is temporarily unavailable.',
+      ownerId: owner,
+      type: DocumentType.AUDIO,
+      originalName: 'lecture.mp3',
+      storageRef: `${owner}/${randomUUID()}.mp3`,
+      sizeBytes: 1024,
+      status: DocumentStatus.FAILED,
+      fullPipelineJobId: retainedJobId,
+    }));
+    await processingJobs.save(processingJobs.create({
+      id: retainedJobId,
+      documentId: doc.id,
+      ownerId: owner,
+      correlationId: randomUUID(),
+      jobType: JobType.FULL_PIPELINE,
+      status: JobStatus.FAILED,
+      idempotencyKey: randomUUID(),
+    }));
+
+    await service.confirm(owner, doc.id);
+
+    const [probeRequest] = await outbox.find({ where: { aggregateId: doc.id } });
+    expect(probeRequest.payload.fullPipelineJobId).toBe(retainedJobId);
+    expect(probeRequest.payload.processingAttempt).toBe(1);
+  });
+
+  it('re-probe giữ canonical job id qua event, result, receipt và processing request', async () => {
+    const owner = randomUUID();
+    const retainedJobId = randomUUID();
+    const doc = await documents.save(documents.create({
+      errorCode: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+      errorMessage: 'Document processing is temporarily unavailable.',
+      ownerId: owner,
+      type: DocumentType.AUDIO,
+      originalName: 'lecture.mp3',
+      storageRef: `${owner}/${randomUUID()}.mp3`,
+      sizeBytes: 1024,
+      status: DocumentStatus.FAILED,
+      fullPipelineJobId: retainedJobId,
+    }));
+    await processingJobs.save(processingJobs.create({
+      id: retainedJobId,
+      documentId: doc.id,
+      ownerId: owner,
+      correlationId: randomUUID(),
+      jobType: JobType.FULL_PIPELINE,
+      status: JobStatus.FAILED,
+      idempotencyKey: randomUUID(),
+    }));
+
+    const repository = new ContentRepository(dataSource);
+    const first = await service.confirm(owner, doc.id);
+    const firstGeneration = first.probeGeneration!;
+    const firstLocator = {
+      bucket: 'learning-platform-dev-media-custom',
+      key: doc.storageRef,
+      versionId: 'version-1',
+      etag: 'etag-1',
+      contentLength: 1024,
+    } as const;
+    const [firstRequest] = await outbox.find({ where: { aggregateId: doc.id, eventType: 'DocumentProbeRequested' } });
+    expect(firstRequest.payload.fullPipelineJobId).toBe(retainedJobId);
+    expect(firstRequest.payload.processingAttempt).toBe(1);
+    const firstProbeJob = await mediaProbeJobs.save(mediaProbeJobs.create({
+      documentId: doc.id,
+      ownerId: owner,
+      correlationId: randomUUID(),
+      probeGeneration: firstGeneration,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId: retainedJobId,
+      sourceBucket: firstLocator.bucket,
+      sourceKey: firstLocator.key,
+      sourceVersionId: firstLocator.versionId,
+      sourceEtag: firstLocator.etag,
+      sourceContentLength: firstLocator.contentLength,
+      status: MediaProbeJobStatus.COMPLETED,
+      idempotencyKey: randomUUID(),
+    }));
+    const firstResultId = randomUUID();
+    await mediaProbeResults.save(mediaProbeResults.create({
+      id: firstResultId,
+      mediaProbeJobId: firstProbeJob.id,
+      documentId: doc.id,
+      ownerId: owner,
+      probeGeneration: firstGeneration,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      durationSec: 120,
+      bucket: firstLocator.bucket,
+      objectKey: firstLocator.key,
+      versionId: firstLocator.versionId,
+      etag: firstLocator.etag,
+      contentLength: firstLocator.contentLength,
+      fullPipelineJobId: retainedJobId,
+    }));
+    await expect(repository.completeProbe({
+      deletionFence: 0,
+      documentId: doc.id,
+      durationSec: 120,
+      eventCreatedAt: new Date(),
+      fullPipelineJobId: retainedJobId,
+      ownerId: owner,
+      policyVersion: 'media-v1',
+      probeResultId: firstResultId,
+      probeGeneration: firstGeneration,
+      locator: firstLocator,
+    })).resolves.toBe('APPLIED');
+
+    await documents.update(
+      { id: doc.id },
+      {
+        errorCode: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE,
+        errorMessage: 'Document processing is temporarily unavailable.',
+        status: DocumentStatus.FAILED,
+      },
+    );
+    verifier.setResult({ versionId: 'version-2', etag: 'etag-2' });
+
+    const second = await service.confirm(owner, doc.id);
+    const secondGeneration = second.probeGeneration!;
+    expect(secondGeneration).not.toBe(firstGeneration);
+    const secondLocator = firstLocator;
+    expect(verifier.verifyCalls).toBe(1);
+    const secondRequest = (await outbox.find({ where: { aggregateId: doc.id, eventType: 'DocumentProbeRequested' } }))
+      .find((request) => request.payload.probeGeneration === secondGeneration)!;
+    expect(secondRequest.payload.fullPipelineJobId).toBe(retainedJobId);
+    expect(secondRequest.payload.processingAttempt).toBe(2);
+    const secondProbeJob = await mediaProbeJobs.save(mediaProbeJobs.create({
+      documentId: doc.id,
+      ownerId: owner,
+      correlationId: randomUUID(),
+      probeGeneration: secondGeneration,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId: retainedJobId,
+      sourceBucket: secondLocator.bucket,
+      sourceKey: secondLocator.key,
+      sourceVersionId: secondLocator.versionId,
+      sourceEtag: secondLocator.etag,
+      sourceContentLength: secondLocator.contentLength,
+      status: MediaProbeJobStatus.COMPLETED,
+      idempotencyKey: randomUUID(),
+    }));
+    const secondResultId = randomUUID();
+    await mediaProbeResults.save(mediaProbeResults.create({
+      id: secondResultId,
+      mediaProbeJobId: secondProbeJob.id,
+      documentId: doc.id,
+      ownerId: owner,
+      probeGeneration: secondGeneration,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      durationSec: 180,
+      bucket: secondLocator.bucket,
+      objectKey: secondLocator.key,
+      versionId: secondLocator.versionId,
+      etag: secondLocator.etag,
+      contentLength: secondLocator.contentLength,
+      fullPipelineJobId: retainedJobId,
+    }));
+    await expect(repository.completeProbe({
+      deletionFence: 0,
+      documentId: doc.id,
+      durationSec: 180,
+      eventCreatedAt: new Date(),
+      fullPipelineJobId: retainedJobId,
+      ownerId: owner,
+      policyVersion: 'media-v1',
+      probeResultId: secondResultId,
+      probeGeneration: secondGeneration,
+      locator: secondLocator,
+    })).resolves.toBe('APPLIED');
+
+    const persistedJobs = await processingJobs.findBy({ documentId: doc.id });
+    expect(persistedJobs).toHaveLength(1);
+    expect(persistedJobs[0].id).toBe(retainedJobId);
+    expect((await mediaProbeResults.findBy({ documentId: doc.id }))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: firstResultId, fullPipelineJobId: retainedJobId }),
+        expect.objectContaining({ id: secondResultId, fullPipelineJobId: retainedJobId }),
+      ]),
+    );
+    const receiptRows = await db.client.query<{ readonly fullPipelineJobId: string; readonly probeResultId: string }>(
+      'SELECT "full_pipeline_job_id" AS "fullPipelineJobId", "probe_result_id" AS "probeResultId" FROM "course"."document_probe_receipts" WHERE "document_id" = $1',
+      [doc.id],
+    );
+    expect(receiptRows.rows).toEqual(expect.arrayContaining([
+      { fullPipelineJobId: retainedJobId, probeResultId: firstResultId },
+      { fullPipelineJobId: retainedJobId, probeResultId: secondResultId },
+    ]));
+    const processingRequests = await outbox.find({ where: { aggregateId: doc.id, eventType: 'DocumentReadyForProcessing' } });
+    expect(processingRequests).toHaveLength(2);
+    expect(processingRequests.map((request) => request.payload.fullPipelineJobId)).toEqual([
+      retainedJobId,
+      retainedJobId,
+    ]);
+    expect(processingRequests.map((request) => request.payload.processingAttempt)).toEqual([1, 2]);
   });
 
   it('confirm media lặp lại là no-op, không tạo probe outbox thứ hai', async () => {

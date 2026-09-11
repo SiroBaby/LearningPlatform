@@ -7,6 +7,7 @@ import {
   DocumentProcessingResult,
   DocumentProcessingResultStatus,
 } from '../modules/ai/contracts/document-processing-result';
+import { MEDIA_PROBE_JOB_TYPE } from '../modules/ai/contracts/ai-ingestion.port';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
 import {
   QUIZ_GENERATION_HANDOFF,
@@ -18,9 +19,13 @@ import {
 } from '../modules/assessment/domain/assessment.error';
 import {
   DOCUMENT_STATUS_PROJECTION,
+} from '../modules/content/contracts/document-status-projection.port';
+import type {
+  DocumentProbeFailureCommand,
   DocumentStatusProjection,
 } from '../modules/content/contracts/document-status-projection.port';
 import { DocumentStatus } from '../modules/content/enums/document-status.enum';
+import { normalizeStorageVersionId } from '../storage/storage-version-id';
 
 /**
  * Transport for the return seam. Delivery is at-least-once: projection first,
@@ -59,6 +64,85 @@ export class ReturnRelay {
       try {
         const startedAt = performance.now();
         const queueWaitMs = Math.max(0, Date.now() - row.createdAt.getTime());
+
+        if (row.eventType === 'DocumentProbeCompleted') {
+          stage = 'probe-project';
+          const probe = this.parseProbeCompletion(row.payload);
+          const projectionStartedAt = performance.now();
+          const projectionOutcome = await this.projection.completeProbe({
+            deletionFence: probe.deletionFence,
+            documentId: probe.documentId,
+            durationSec: probe.durationSec,
+            eventCreatedAt: row.createdAt,
+            fullPipelineJobId: probe.fullPipelineJobId,
+            ownerId: probe.ownerId,
+            policyVersion: probe.policyVersion,
+            probeResultId: probe.probeResultId,
+            probeGeneration: probe.probeGeneration,
+            locator: {
+              bucket: probe.locator.bucket,
+              contentLength: probe.locator.contentLength,
+              etag: probe.locator.etag,
+              key: probe.locator.key,
+              versionId: probe.locator.versionId,
+            },
+          });
+          const projectionDurationMs = elapsedMilliseconds(projectionStartedAt);
+          const publishStartedAt = performance.now();
+          stage = 'outbox-publish';
+          await this.outbox.markPublished(row.id);
+          this.logger.log({
+            documentId: probe.documentId,
+            durationMs: elapsedMilliseconds(startedAt),
+            event: 'ai.job.return.probe_projected',
+            jobId: row.aggregateId,
+            outcome: projectionOutcome,
+            publishDurationMs: elapsedMilliseconds(publishStartedAt),
+            projectionDurationMs,
+            queueWaitMs,
+            runtime: 'worker',
+          });
+          continue;
+        }
+
+        if (
+          row.eventType === 'DocumentProbeFailed' ||
+          (row.eventType === 'DocumentProcessingResult' &&
+            row.payload.jobType === MEDIA_PROBE_JOB_TYPE)
+        ) {
+          stage = 'probe-failure-project';
+          const probeFailure = this.parseProbeFailure(row.payload);
+          const projectionStartedAt = performance.now();
+          const projectionOutcome = await this.projection.failProbe({
+            attempt: probeFailure.attempt,
+            deletionFence: probeFailure.deletionFence,
+            documentId: probeFailure.documentId,
+            errorCode: probeFailure.errorCode,
+            errorMessage: probeFailure.errorMessage,
+            eventCreatedAt: row.createdAt,
+            leaseId: probeFailure.leaseId,
+            ownerId: probeFailure.ownerId,
+            policyVersion: probeFailure.policyVersion,
+            probeGeneration: probeFailure.probeGeneration,
+          });
+          const projectionDurationMs = elapsedMilliseconds(projectionStartedAt);
+          const publishStartedAt = performance.now();
+          stage = 'outbox-publish';
+          await this.outbox.markPublished(row.id);
+          this.logger.log({
+            documentId: probeFailure.documentId,
+            durationMs: elapsedMilliseconds(startedAt),
+            event: 'ai.job.return.probe_failed',
+            jobId: row.aggregateId,
+            outcome: projectionOutcome,
+            publishDurationMs: elapsedMilliseconds(publishStartedAt),
+            projectionDurationMs,
+            queueWaitMs,
+            runtime: 'worker',
+          });
+          continue;
+        }
+
         payload = this.parseResult(row.payload);
         const projectionStartedAt = performance.now();
         stage = 'document-project';
@@ -240,6 +324,134 @@ export class ReturnRelay {
     };
   }
 
+  private parseProbeCompletion(payload: Record<string, unknown>): ProbeCompletionPayload {
+    const locator = this.parseProbeLocator(payload.locator);
+    if (
+      payload.version !== 1 ||
+      typeof payload.documentId !== 'string' ||
+      !isUuid(payload.documentId) ||
+      typeof payload.ownerId !== 'string' ||
+      !isUuid(payload.ownerId) ||
+      typeof payload.probeGeneration !== 'string' ||
+      !isUuid(payload.probeGeneration) ||
+      typeof payload.policyVersion !== 'string' ||
+      payload.policyVersion.trim() === '' ||
+      typeof payload.deletionFence !== 'number' ||
+      !Number.isSafeInteger(payload.deletionFence) ||
+      payload.deletionFence < 0 ||
+      typeof payload.durationSec !== 'number' ||
+      !Number.isSafeInteger(payload.durationSec) ||
+      payload.durationSec <= 0 ||
+      typeof payload.fullPipelineJobId !== 'string' ||
+      !isUuid(payload.fullPipelineJobId) ||
+      typeof payload.probeResultId !== 'string' ||
+      !isUuid(payload.probeResultId) ||
+      locator === undefined ||
+      locator.policyVersion !== payload.policyVersion ||
+      locator.deletionFence !== payload.deletionFence ||
+      payload.durationSec > 7200
+    ) {
+      throw new Error('Invalid media probe completion outbox payload');
+    }
+
+    return {
+      deletionFence: payload.deletionFence,
+      documentId: payload.documentId,
+      durationSec: payload.durationSec,
+      fullPipelineJobId: payload.fullPipelineJobId,
+      ownerId: payload.ownerId,
+      policyVersion: payload.policyVersion,
+      probeResultId: payload.probeResultId,
+      probeGeneration: payload.probeGeneration,
+      locator,
+    };
+  }
+
+  private parseProbeFailure(payload: Record<string, unknown>): ProbeFailurePayload {
+    const errorCode = this.parseFailureCode(payload.errorCode);
+    const errorMessage = payload.errorMessage ?? null;
+    if (
+      payload.version !== 1 ||
+      (payload.jobType !== undefined && payload.jobType !== MEDIA_PROBE_JOB_TYPE) ||
+      payload.status !== DocumentProcessingResultStatus.FAILED ||
+      typeof payload.documentId !== 'string' ||
+      !isUuid(payload.documentId) ||
+      typeof payload.ownerId !== 'string' ||
+      !isUuid(payload.ownerId) ||
+      typeof payload.attempt !== 'number' ||
+      !Number.isInteger(payload.attempt) ||
+      payload.attempt < 1 ||
+      typeof payload.leaseId !== 'string' ||
+      !isUuid(payload.leaseId) ||
+      typeof payload.probeGeneration !== 'string' ||
+      !isUuid(payload.probeGeneration) ||
+      typeof payload.policyVersion !== 'string' ||
+      payload.policyVersion.trim() === '' ||
+      typeof payload.deletionFence !== 'number' ||
+      !Number.isSafeInteger(payload.deletionFence) ||
+      payload.deletionFence < 0 ||
+      errorCode === undefined ||
+      errorCode === null ||
+      (errorMessage !== null && typeof errorMessage !== 'string')
+    ) {
+      throw new Error('Invalid media probe failure outbox payload');
+    }
+
+    return {
+      attempt: payload.attempt,
+      deletionFence: payload.deletionFence,
+      documentId: payload.documentId,
+      errorCode,
+      errorMessage,
+      leaseId: payload.leaseId,
+      ownerId: payload.ownerId,
+      policyVersion: payload.policyVersion,
+      probeGeneration: payload.probeGeneration,
+    };
+  }
+
+  private parseProbeLocator(value: unknown): ProbeLocatorPayload | undefined {
+    if (typeof value !== 'object' || value === null) return undefined;
+    const locator = value as Record<string, unknown>;
+    const bucket = typeof locator.bucket === 'string' ? locator.bucket : undefined;
+    const key = typeof locator.key === 'string' ? locator.key : undefined;
+    const versionId = normalizeStorageVersionId(locator.versionId);
+    const etag = typeof locator.etag === 'string' ? locator.etag : undefined;
+    const contentLength = locator.contentLength;
+    const policyVersion = typeof locator.policyVersion === 'string'
+      ? locator.policyVersion
+      : undefined;
+    const deletionFence = locator.deletionFence;
+    if (
+      bucket === undefined ||
+      bucket.trim() === '' ||
+      key === undefined ||
+      key.trim() === '' ||
+      versionId === undefined ||
+      etag === undefined ||
+      etag.trim() === '' ||
+      typeof contentLength !== 'number' ||
+      !Number.isSafeInteger(contentLength) ||
+      contentLength < 0 ||
+      policyVersion === undefined ||
+      policyVersion.trim() === '' ||
+      typeof deletionFence !== 'number' ||
+      !Number.isSafeInteger(deletionFence) ||
+      deletionFence < 0
+    ) {
+      return undefined;
+    }
+    return {
+      bucket,
+      contentLength,
+      deletionFence,
+      etag,
+      key,
+      policyVersion,
+      versionId,
+    };
+  }
+
   private parseQuestions(
     value: unknown,
   ): DocumentProcessingResult['questions'] | undefined {
@@ -288,9 +500,35 @@ export class LegacyUnfencedResultError extends Error {
 type ReturnRelayFailureStage =
   | 'outbox-read'
   | 'parse'
+  | 'probe-project'
+  | 'probe-failure-project'
   | 'quiz-persist'
   | 'document-project'
   | 'outbox-publish';
+
+interface ProbeCompletionPayload {
+  readonly deletionFence: number;
+  readonly documentId: string;
+  readonly durationSec: number;
+  readonly fullPipelineJobId: string;
+  readonly ownerId: string;
+  readonly policyVersion: string;
+  readonly probeResultId: string;
+  readonly probeGeneration: string;
+  readonly locator: ProbeLocatorPayload;
+}
+
+interface ProbeFailurePayload extends Omit<DocumentProbeFailureCommand, 'eventCreatedAt'> {}
+
+interface ProbeLocatorPayload {
+  readonly bucket: string;
+  readonly contentLength: number;
+  readonly deletionFence: number;
+  readonly etag: string;
+  readonly key: string;
+  readonly policyVersion: string;
+  readonly versionId: string;
+}
 
 function elapsedMilliseconds(startedAt: number): number {
   return Math.max(0, Math.round(performance.now() - startedAt));

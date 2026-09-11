@@ -43,6 +43,7 @@ export async function startTestDatabase(): Promise<TestDb> {
 
     migrateClient = new Client({ connectionString: container.getConnectionUri() });
     await migrateClient.connect();
+    await ensureMediaProbeDatabaseRole(migrateClient);
     await runUp(migrateClient);
     await migrateClient.end();
     migrateClient = undefined;
@@ -102,6 +103,25 @@ export async function startTestDatabase(): Promise<TestDb> {
     if (cleanupError) throw new AggregateError([error, cleanupError], 'Test database cleanup failed');
     throw error;
   }
+}
+
+async function ensureMediaProbeDatabaseRole(client: Client): Promise<void> {
+  await client.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'learning_platform_media_probe'
+      ) THEN
+        CREATE ROLE learning_platform_media_probe
+          NOLOGIN
+          NOSUPERUSER
+          NOCREATEDB
+          NOCREATEROLE
+          NOINHERIT;
+      END IF;
+    END
+    $$;
+  `);
 }
 
 /** Stop a test database and restore the caller's database environment. */

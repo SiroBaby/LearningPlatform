@@ -42,6 +42,14 @@ export class Document {
   @AutoMap()
   sizeBytes!: number;
 
+  /** Stable identity of the FULL_PIPELINE job shared by all retries. */
+  @Column({ name: 'full_pipeline_job_id', type: 'uuid', default: () => 'gen_random_uuid()' })
+  fullPipelineJobId!: string;
+
+  /** Logical processing attempt reserved for the next FULL_PIPELINE run. */
+  @Column({ name: 'processing_attempt', type: 'int', default: 0 })
+  processingAttempt!: number;
+
   @Column({ type: 'varchar', length: 10, nullable: true })
   @AutoMap()
   language!: string | null;
@@ -87,6 +95,19 @@ export class Document {
 
   @Column({ name: 'probe_policy_version', type: 'varchar', length: 80, nullable: true })
   probePolicyVersion!: string | null;
+
+  /** Immutable media object metadata captured by confirm's HeadObject. */
+  @Column({ name: 'media_source_bucket', type: 'varchar', length: 255, nullable: true })
+  mediaSourceBucket!: string | null;
+
+  @Column({ name: 'media_source_version_id', type: 'varchar', length: 255, nullable: true })
+  mediaSourceVersionId!: string | null;
+
+  @Column({ name: 'media_source_etag', type: 'varchar', length: 255, nullable: true })
+  mediaSourceEtag!: string | null;
+
+  @Column({ name: 'media_source_content_length', type: 'bigint', nullable: true })
+  mediaSourceContentLength!: number | null;
 
   @Column({ name: 'deletion_fence', type: 'bigint', default: 0 })
   deletionFence!: number;
