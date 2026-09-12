@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const targetChars = 1200
@@ -39,6 +40,7 @@ func ChunkText(documentID, ownerID string, segments []struct {
 					end = limit
 				}
 			}
+			end = moveToRuneBoundary(text, end)
 			value := strings.TrimSpace(text[start:end])
 			if value != "" {
 				total += len(value)
@@ -58,7 +60,7 @@ func ChunkText(documentID, ownerID string, segments []struct {
 			if end == len(text) {
 				break
 			}
-			next := end - overlapChars
+			next := moveToRuneBoundary(text, end-overlapChars)
 			if next <= start {
 				next = end
 			}
@@ -66,4 +68,14 @@ func ChunkText(documentID, ownerID string, segments []struct {
 		}
 	}
 	return chunks, nil
+}
+
+func moveToRuneBoundary(text string, index int) int {
+	if index >= len(text) {
+		return len(text)
+	}
+	for index > 0 && !utf8.RuneStart(text[index]) {
+		index--
+	}
+	return index
 }

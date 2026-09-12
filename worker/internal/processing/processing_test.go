@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/minio/minio-go/v7"
 )
@@ -129,6 +130,26 @@ func TestChunkTextUsesMaxCharsWhenNoBoundaryFollowsTarget(t *testing.T) {
 	}
 	if len(chunks) != 2 || len(chunks[0].Text) != maxChars {
 		t.Fatalf("chunks = %#v, want first chunk length %d", chunks, maxChars)
+	}
+}
+
+func TestChunkTextDoesNotSplitUTF8Rune(t *testing.T) {
+	segments := []struct {
+		Text    string
+		Locator Locator
+	}{{Text: strings.Repeat("a", targetChars-1) + "\u1ebf" + strings.Repeat("b", 100), Locator: Locator{Kind: "text-range"}}}
+
+	chunks, err := ChunkText("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", segments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, chunk := range chunks {
+		if !utf8.ValidString(chunk.Text) {
+			t.Fatalf("chunk %d contains invalid UTF-8", index)
+		}
+		if len(chunk.Text) > maxChars {
+			t.Fatalf("chunk %d byte length = %d, want <= %d", index, len(chunk.Text), maxChars)
+		}
 	}
 }
 

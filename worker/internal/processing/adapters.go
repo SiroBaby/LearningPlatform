@@ -76,7 +76,7 @@ func Extract(source Source, input []byte) ([]struct {
 	Locator Locator
 }, error) {
 	if source.Type == "TEXT" {
-		text := strings.TrimSpace(string(input))
+		text := normalizeExtractedText(string(input))
 		if text == "" {
 			return nil, Failure{Code: PDFTextNotFound}
 		}
@@ -115,7 +115,7 @@ func Extract(source Source, input []byte) ([]struct {
 		if err != nil {
 			return nil, Failure{Code: PDFInvalid}
 		}
-		text = strings.TrimSpace(text)
+		text = normalizeExtractedText(text)
 		if text != "" {
 			result = append(result, struct {
 				Text    string
@@ -128,6 +128,11 @@ func Extract(source Source, input []byte) ([]struct {
 	}
 	return result, nil
 }
+
+func normalizeExtractedText(text string) string {
+	return strings.TrimSpace(strings.ToValidUTF8(text, " "))
+}
+
 func pageText(reader *pdf.Reader, page int) (string, error) {
 	document := reader.Page(page)
 	if document.V.IsNull() {
