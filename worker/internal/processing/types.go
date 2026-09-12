@@ -75,6 +75,29 @@ type Citation struct {
 }
 type FailureCode string
 
+type FailureOperation string
+
+const (
+	FailureOperationUnknown                  FailureOperation = "unknown"
+	FailureOperationClaim                    FailureOperation = "claim"
+	FailureOperationSourceDescriptorRead     FailureOperation = "source_descriptor_read"
+	FailureOperationChunkReplacement         FailureOperation = "chunk_replacement"
+	FailureOperationDocumentCompletionUpdate FailureOperation = "document_completion_update"
+	FailureOperationOutboxInsert             FailureOperation = "outbox_insert"
+	FailureOperationTransactionCommit        FailureOperation = "transaction_commit"
+	FailureOperationRetrySchedule            FailureOperation = "retry_schedule"
+	FailureOperationDLQInsert                FailureOperation = "dlq_insert"
+)
+
+func (operation FailureOperation) Valid() bool {
+	switch operation {
+	case FailureOperationUnknown, FailureOperationClaim, FailureOperationSourceDescriptorRead, FailureOperationChunkReplacement, FailureOperationDocumentCompletionUpdate, FailureOperationOutboxInsert, FailureOperationTransactionCommit, FailureOperationRetrySchedule, FailureOperationDLQInsert:
+		return true
+	default:
+		return false
+	}
+}
+
 // ParserReason is a bounded, in-memory diagnostic for invalid generated output.
 type ParserReason string
 
@@ -118,9 +141,56 @@ type Failure struct {
 	Reason      ParserReason
 	ChoiceCount int
 	Technical   bool
+	Operation   FailureOperation
 }
 
 func (failure Failure) Error() string { return string(failure.Code) }
+
+// PersistenceError keeps the original error for control flow while exposing
+// only bounded failure metadata through errors.As.
+type PersistenceError struct {
+	Failure Failure
+	Err     error
+}
+
+func NewPersistenceError(operation FailureOperation, err error) error {
+	if err == nil {
+		return nil
+	}
+	if !operation.Valid() {
+		operation = FailureOperationUnknown
+	}
+	return PersistenceError{
+		Failure: Failure{Code: ProcessingFailed, Technical: true, Operation: operation},
+		Err:     err,
+	}
+}
+
+func (failure PersistenceError) Error() string {
+	return string(ProcessingFailed)
+}
+
+func (failure PersistenceError) Unwrap() error { return failure.Err }
+
+func (failure PersistenceError) As(target any) bool {
+	value, ok := target.(*Failure)
+	if !ok {
+		return false
+	}
+	*value = failure.Failure
+	return true
+}
+
+func FailureOperationOf(err error) FailureOperation {
+	if err == nil {
+		return FailureOperationUnknown
+	}
+	var failure Failure
+	if errors.As(err, &failure) && failure.Operation.Valid() {
+		return failure.Operation
+	}
+	return FailureOperationUnknown
+}
 
 type RetryResult struct {
 	Scheduled bool

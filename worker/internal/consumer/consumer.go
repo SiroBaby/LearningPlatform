@@ -232,7 +232,7 @@ func (bootstrap *Bootstrap) dispatch(ctx context.Context) (bool, error) {
 			return
 		}
 		if err != nil {
-			bootstrap.logLifecycle("worker.processing.failed", job, active, time.Since(started), component)
+			bootstrap.logLifecycleWithOperation("worker.processing.failed", job, active, time.Since(started), component, processing.FailureOperationOf(err))
 			return
 		}
 		if outcome == processOutcomeCompleted {
@@ -289,7 +289,7 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	}
 	if persisted {
 		// A commit error leaves the final state uncertain; retrying could duplicate the result.
-		bootstrap.logFailure("worker.processing.persistence_ambiguous", "persist", job, processing.Failure{Code: processing.ProcessingFailed, Technical: true}, failureComponentPersistence)
+		bootstrap.logFailure("worker.processing.persistence_ambiguous", "persist", job, processing.Failure{Code: processing.ProcessingFailed, Technical: true, Operation: processing.FailureOperationOf(err)}, failureComponentPersistence)
 		return processOutcomeUnknown, err, failureComponentPersistence
 	}
 	return bootstrap.finish(ctx, job, err, failureComponentPersistence)
@@ -315,14 +315,16 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 	if failure.Technical {
 		result, retryErr := bootstrap.store.Retry(persistCtx, job, failure.Code)
 		if retryErr != nil {
+			persistenceFailure := failure
+			persistenceFailure.Operation = processing.FailureOperationOf(retryErr)
 			if errors.Is(retryErr, processing.ErrJobFenceLost) {
 				return processOutcomeFenced, processing.ErrJobFenceLost, failureComponentUnknown
 			}
 			if result.Scheduled || result.Finalized {
-				bootstrap.logFailure("worker.processing.persistence_ambiguous", "retry", job, failure, failureComponentPersistence)
+				bootstrap.logFailure("worker.processing.persistence_ambiguous", "retry", job, persistenceFailure, failureComponentPersistence)
 				return processOutcomeUnknown, retryErr, failureComponentPersistence
 			}
-			bootstrap.logFailure("worker.processing.retry.persistence_failed", "retry", job, failure, failureComponentPersistence)
+			bootstrap.logFailure("worker.processing.retry.persistence_failed", "retry", job, persistenceFailure, failureComponentPersistence)
 			return processOutcomeUnknown, retryErr, failureComponentPersistence
 		}
 		switch {
@@ -342,13 +344,15 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 	}
 	finalized, failErr := bootstrap.store.Fail(persistCtx, job, failure)
 	if failErr != nil {
+		persistenceFailure := failure
+		persistenceFailure.Operation = processing.FailureOperationOf(failErr)
 		if errors.Is(failErr, processing.ErrJobFenceLost) {
 			return processOutcomeFenced, processing.ErrJobFenceLost, failureComponentUnknown
 		}
 		if finalized {
-			bootstrap.logFailure("worker.processing.persistence_ambiguous", "finalize", job, failure, failureComponentPersistence)
+			bootstrap.logFailure("worker.processing.persistence_ambiguous", "finalize", job, persistenceFailure, failureComponentPersistence)
 		} else {
-			bootstrap.logFailure("worker.processing.failure.persistence_failed", "finalize", job, failure, failureComponentPersistence)
+			bootstrap.logFailure("worker.processing.failure.persistence_failed", "finalize", job, persistenceFailure, failureComponentPersistence)
 		}
 	} else if finalized {
 		bootstrap.logFailure("worker.processing.failed", "finalize", job, failure, component)
@@ -361,6 +365,14 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 }
 
 func (bootstrap *Bootstrap) logLifecycle(event string, job processing.Job, active int64, duration time.Duration, component ...failureComponent) {
+	selected := failureComponentUnknown
+	if len(component) > 0 {
+		selected = component[0]
+	}
+	bootstrap.logLifecycleWithOperation(event, job, active, duration, selected, processing.FailureOperationUnknown)
+}
+
+func (bootstrap *Bootstrap) logLifecycleWithOperation(event string, job processing.Job, active int64, duration time.Duration, component failureComponent, operation processing.FailureOperation) {
 	if bootstrap.logger == nil {
 		return
 	}
@@ -376,11 +388,15 @@ func (bootstrap *Bootstrap) logLifecycle(event string, job processing.Job, activ
 		attributes = append(attributes, "duration_ms", duration.Milliseconds())
 	}
 	if event == "worker.processing.failed" {
-		selected := failureComponentUnknown
-		if len(component) > 0 {
-			selected = failureComponentFor(component[0], processing.ProcessingFailed)
-		}
+		selected := failureComponentFor(component, processing.ProcessingFailed)
 		attributes = append(attributes, "failure_component", string(selected))
+		if selected == failureComponentPersistence {
+			selectedOperation := processing.FailureOperationUnknown
+			if operation.Valid() {
+				selectedOperation = operation
+			}
+			attributes = append(attributes, "failure_operation", string(selectedOperation))
+		}
 	}
 	bootstrap.logger.Log(context.Background(), slog.LevelInfo, event, attributes...)
 }
@@ -433,6 +449,7 @@ func (bootstrap *Bootstrap) logFailure(event, phase string, job processing.Job, 
 	if bootstrap.logger == nil {
 		return
 	}
+	selectedComponent := failureComponentFor(component, failure.Code)
 	attributes := []any{
 		"event", event,
 		"phase", phase,
@@ -440,7 +457,14 @@ func (bootstrap *Bootstrap) logFailure(event, phase string, job processing.Job, 
 		"correlation_id", job.CorrelationID,
 		"attempt", job.Attempt,
 		"category", string(failure.Code),
-		"failure_component", string(failureComponentFor(component, failure.Code)),
+		"failure_component", string(selectedComponent),
+	}
+	if selectedComponent == failureComponentPersistence {
+		operation := failure.Operation
+		if !operation.Valid() {
+			operation = processing.FailureOperationUnknown
+		}
+		attributes = append(attributes, "failure_operation", string(operation))
 	}
 	if failure.Code == processing.OutputInvalid && failure.Reason.Valid() {
 		attributes = append(attributes, "reason", string(failure.Reason))
