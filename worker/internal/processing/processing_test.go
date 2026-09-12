@@ -153,6 +153,30 @@ func TestClassifyObjectReadErrorOnlyFinalizesMissingObjects(t *testing.T) {
 		})
 	}
 }
+
+func TestPersistenceErrorKeepsSafeErrorAndUnwrapsCause(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("database detail must stay out of the public error")
+	for _, operation := range []FailureOperation{FailureOperationChunkDelete, FailureOperationChunkInsert} {
+		t.Run(string(operation), func(t *testing.T) {
+			err := NewPersistenceError(operation, cause)
+			if err.Error() != string(ProcessingFailed) {
+				t.Fatalf("public error = %q, want %q", err, ProcessingFailed)
+			}
+			if !errors.Is(err, cause) {
+				t.Fatal("persistence error did not preserve its underlying cause")
+			}
+			var failure Failure
+			if !errors.As(err, &failure) || failure.Code != ProcessingFailed || failure.Operation != operation {
+				t.Fatalf("failure metadata = %#v, want PROCESSING_FAILED with %q", failure, operation)
+			}
+			if strings.Contains(err.Error(), cause.Error()) {
+				t.Fatalf("public error exposed persistence detail: %q", err)
+			}
+		})
+	}
+}
+
 func TestOpenAIGenerateClassifiesInvalidOutputReasons(t *testing.T) {
 	validQuestion := `{"questions":[{"stem":"stem","explanation":"explanation","options":[{"content":"A","isCorrect":true},{"content":"B","isCorrect":false},{"content":"C","isCorrect":false},{"content":"D","isCorrect":false}]}]}`
 	tests := []struct {

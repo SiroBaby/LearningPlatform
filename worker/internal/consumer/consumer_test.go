@@ -405,26 +405,37 @@ func TestProcessOneHandlesPersistenceFailureWithSafeRetryLog(t *testing.T) {
 }
 
 func TestProcessOneLogsSafePersistenceOperation(t *testing.T) {
-	persistenceErr := processing.NewPersistenceError(processing.FailureOperationTransactionCommit, errors.New("commit failed: INSERT INTO secret_table"))
-	store := &storeMock{
-		job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
-		source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
-		persistErr:  persistenceErr,
-		retryResult: processing.RetryResult{Scheduled: true},
-	}
-	var output bytes.Buffer
-	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(&output, nil)))
+	for _, test := range []struct {
+		name      string
+		operation processing.FailureOperation
+		cause     string
+	}{
+		{name: "chunk delete", operation: processing.FailureOperationChunkDelete, cause: "delete failed: DELETE FROM ai.chunks"},
+		{name: "chunk insert", operation: processing.FailureOperationChunkInsert, cause: "insert failed: INSERT INTO ai.chunks"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			persistenceErr := processing.NewPersistenceError(test.operation, errors.New(test.cause))
+			store := &storeMock{
+				job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
+				source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+				persistErr:  persistenceErr,
+				retryResult: processing.RetryResult{Scheduled: true},
+			}
+			var output bytes.Buffer
+			worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(&output, nil)))
 
-	if err := worker.processOne(context.Background()); err != nil {
-		t.Fatalf("processOne() error = %v", err)
-	}
+			if err := worker.processOne(context.Background()); err != nil {
+				t.Fatalf("processOne() error = %v", err)
+			}
 
-	entry := decodeLogEntry(t, output.String())
-	if entry["failure_operation"] != string(processing.FailureOperationTransactionCommit) {
-		t.Fatalf("log failure_operation = %#v, want %q", entry["failure_operation"], processing.FailureOperationTransactionCommit)
-	}
-	if strings.Contains(output.String(), "commit failed") || strings.Contains(output.String(), "INSERT INTO secret_table") {
-		t.Fatalf("log exposed persistence error details: %s", output.String())
+			entry := decodeLogEntry(t, output.String())
+			if entry["failure_operation"] != string(test.operation) {
+				t.Fatalf("log failure_operation = %#v, want %q", entry["failure_operation"], test.operation)
+			}
+			if strings.Contains(output.String(), test.cause) {
+				t.Fatalf("log exposed persistence error details: %s", output.String())
+			}
+		})
 	}
 }
 

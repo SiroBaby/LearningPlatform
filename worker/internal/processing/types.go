@@ -82,6 +82,8 @@ const (
 	FailureOperationClaim                    FailureOperation = "claim"
 	FailureOperationSourceDescriptorRead     FailureOperation = "source_descriptor_read"
 	FailureOperationChunkReplacement         FailureOperation = "chunk_replacement"
+	FailureOperationChunkDelete              FailureOperation = "chunk_delete"
+	FailureOperationChunkInsert              FailureOperation = "chunk_insert"
 	FailureOperationDocumentCompletionUpdate FailureOperation = "document_completion_update"
 	FailureOperationOutboxInsert             FailureOperation = "outbox_insert"
 	FailureOperationTransactionCommit        FailureOperation = "transaction_commit"
@@ -91,7 +93,7 @@ const (
 
 func (operation FailureOperation) Valid() bool {
 	switch operation {
-	case FailureOperationUnknown, FailureOperationClaim, FailureOperationSourceDescriptorRead, FailureOperationChunkReplacement, FailureOperationDocumentCompletionUpdate, FailureOperationOutboxInsert, FailureOperationTransactionCommit, FailureOperationRetrySchedule, FailureOperationDLQInsert:
+	case FailureOperationUnknown, FailureOperationClaim, FailureOperationSourceDescriptorRead, FailureOperationChunkReplacement, FailureOperationChunkDelete, FailureOperationChunkInsert, FailureOperationDocumentCompletionUpdate, FailureOperationOutboxInsert, FailureOperationTransactionCommit, FailureOperationRetrySchedule, FailureOperationDLQInsert:
 		return true
 	default:
 		return false

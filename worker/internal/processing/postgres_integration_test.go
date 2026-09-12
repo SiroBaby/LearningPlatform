@@ -289,6 +289,64 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("classifies chunk delete and insert failures separately", func(t *testing.T) {
+		t.Run("delete", func(t *testing.T) {
+			documentID, ownerID := database.insertDocumentAndJob(t, ctx)
+			job := database.claim(t, ctx)
+			if _, err := database.admin.Exec(ctx, `INSERT INTO ai.chunks(id,document_id,owner_id,chunk_index,text,locator,content_hash) VALUES($1,$2,$3,0,'existing chunk','{"kind":"text-range","start":0,"end":14}','existing-hash')`, "44444444-4444-4444-8444-444444444444", documentID, ownerID); err != nil {
+				t.Fatalf("insert existing chunk: %v", err)
+			}
+			if _, err := database.admin.Exec(ctx, `CREATE FUNCTION ai.fail_chunk_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced chunk delete failure'; END; $$; CREATE TRIGGER fail_chunk_delete BEFORE DELETE ON ai.chunks FOR EACH ROW EXECUTE FUNCTION ai.fail_chunk_delete()`); err != nil {
+				t.Fatalf("create chunk delete failure trigger: %v", err)
+			}
+			t.Cleanup(func() {
+				if _, err := database.admin.Exec(ctx, "DROP TRIGGER IF EXISTS fail_chunk_delete ON ai.chunks; DROP FUNCTION IF EXISTS ai.fail_chunk_delete()"); err != nil {
+					t.Errorf("drop chunk delete failure trigger: %v", err)
+				}
+			})
+
+			persisted, err := database.store.PersistAndComplete(ctx, *job, nil, nil)
+			if err == nil || persisted {
+				t.Fatalf("chunk delete failure = (%t, %v), want (false, error)", persisted, err)
+			}
+			assertFailureOperation(t, err, FailureOperationChunkDelete)
+			if err.Error() != string(ProcessingFailed) {
+				t.Fatalf("chunk delete public error = %q, want %q", err, ProcessingFailed)
+			}
+			var databaseErr *pgconn.PgError
+			if !errors.As(err, &databaseErr) {
+				t.Fatal("chunk delete failure did not preserve its database cause")
+			}
+		})
+
+		t.Run("insert", func(t *testing.T) {
+			database.insertDocumentAndJob(t, ctx)
+			job := database.claim(t, ctx)
+			if _, err := database.admin.Exec(ctx, `CREATE FUNCTION ai.fail_chunk_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced chunk insert failure'; END; $$; CREATE TRIGGER fail_chunk_insert BEFORE INSERT ON ai.chunks FOR EACH ROW EXECUTE FUNCTION ai.fail_chunk_insert()`); err != nil {
+				t.Fatalf("create chunk insert failure trigger: %v", err)
+			}
+			t.Cleanup(func() {
+				if _, err := database.admin.Exec(ctx, "DROP TRIGGER IF EXISTS fail_chunk_insert ON ai.chunks; DROP FUNCTION IF EXISTS ai.fail_chunk_insert()"); err != nil {
+					t.Errorf("drop chunk insert failure trigger: %v", err)
+				}
+			})
+
+			chunks := []Chunk{{ID: "55555555-5555-4555-8555-555555555555", Index: 0, Text: "inserted chunk", ContentHash: "insert-hash", Locator: Locator{Kind: "text-range", End: 14}}}
+			persisted, err := database.store.PersistAndComplete(ctx, *job, chunks, nil)
+			if err == nil || persisted {
+				t.Fatalf("chunk insert failure = (%t, %v), want (false, error)", persisted, err)
+			}
+			assertFailureOperation(t, err, FailureOperationChunkInsert)
+			if err.Error() != string(ProcessingFailed) {
+				t.Fatalf("chunk insert public error = %q, want %q", err, ProcessingFailed)
+			}
+			var databaseErr *pgconn.PgError
+			if !errors.As(err, &databaseErr) {
+				t.Fatal("chunk insert failure did not preserve its database cause")
+			}
+		})
+	})
+
 	t.Run("rolls back chunks and finalization when the outbox write fails", func(t *testing.T) {
 		documentID, _ := database.insertDocumentAndJob(t, ctx)
 		job := database.claim(t, ctx)

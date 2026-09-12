@@ -137,7 +137,7 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
 	if _, err = tx.Exec(ctx, `DELETE FROM ai.chunks WHERE document_id=$1 AND owner_id=$2`, job.DocumentID, job.OwnerID); err != nil {
-		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
+		return false, NewPersistenceError(FailureOperationChunkDelete, err)
 	}
 	for _, chunk := range chunks {
 		locator, marshalErr := json.Marshal(chunk.Locator)
@@ -145,7 +145,7 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 			return false, marshalErr
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO ai.chunks(id,document_id,owner_id,chunk_index,text,locator,page_number,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, chunk.ID, job.DocumentID, job.OwnerID, chunk.Index, chunk.Text, locator, nullPage(chunk.Locator), chunk.ContentHash); err != nil {
-			return false, NewPersistenceError(FailureOperationChunkReplacement, err)
+			return false, NewPersistenceError(FailureOperationChunkInsert, err)
 		}
 	}
 	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='COMPLETED',failure_code=NULL,error_message=NULL,lease_id=NULL,lease_until=NULL,completed_at=now(),updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID)
