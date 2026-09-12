@@ -92,6 +92,13 @@ cleanup() {
   fi
   PHASE=cleanup-temp
   if [[ -d "$temp_dir" && "$temp_dir" == "${tmp_root}/${run_id}."* ]]; then
+    if (( exit_code != 0 )); then
+      for log_file in "$api_log" "$relay_log" "$go_log"; do
+        if [[ -f "$log_file" ]]; then
+          tail -80 "$log_file"
+        fi
+      done
+    fi
     rm -rf -- "$temp_dir" >/dev/null 2>&1
   fi
   if [[ "$result_emitted" == false ]]; then
@@ -282,6 +289,13 @@ start_node_api() {
   (
     cd "$root/app"
     export NODE_ENV=development
+    export IDENTITY_MODE=stub
+    # The local fixture must not inherit developer mTLS paths from app/.env.
+    export INTERNAL_MTLS_CA_PATH=
+    export INTERNAL_MTLS_CERT_PATH=
+    export INTERNAL_MTLS_KEY_PATH=
+    export INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI=
+    export INTERNAL_MTLS_EXPECTED_WEB_BFF_SPIFFE_URI=
     export PORT="$api_port"
     export AI_LLM_PROVIDER=fake
     export AI_CREDENTIAL_ENCRYPTION_MODE=local
@@ -305,18 +319,19 @@ start_node_api() {
     export OBJECT_STORAGE_ACCESS_KEY=minioadmin
     export OBJECT_STORAGE_SECRET_KEY=minioadmin
     export OBJECT_STORAGE_BUCKET=documents
+    export OBJECT_STORAGE_PRESIGN_EXPIRY=300
     exec ./node_modules/.bin/ts-node -T -e '
 const mainPath = process.argv[1];
 
 function classifyBootstrapFailure(error) {
   const message = error instanceof Error ? error.message : String(error);
-  if (/cannot find module|module not found|ERR_MODULE_NOT_FOUND/i.test(message)) return 'module';
-  if (/migration|migrat(e|ion|ions|ed)/i.test(message)) return 'migration';
-  if (/storage|s3|minio|bucket|object.?storage/i.test(message)) return 'storage';
-  if (/EADDRINUSE|EACCES|listen|port/i.test(message)) return 'port';
-  if (/database|postgres|pg_|typeorm|connection refused|ECONNREFUSED/i.test(message)) return 'database';
-  if (/configuration|config|environment|env(ironment)? variable|invalid.*(value|port)/i.test(message)) return 'configuration';
-  return 'unknown';
+  if (/cannot find module|module not found|ERR_MODULE_NOT_FOUND/i.test(message)) return "module";
+  if (/migration|migrat(e|ion|ions|ed)/i.test(message)) return "migration";
+  if (/storage|s3|minio|bucket|object.?storage/i.test(message)) return "storage";
+  if (/EADDRINUSE|EACCES|listen|port/i.test(message)) return "port";
+  if (/database|postgres|pg_|typeorm|connection refused|ECONNREFUSED/i.test(message)) return "database";
+  if (/configuration|config|environment|env(ironment)? variable|invalid.*(value|port)/i.test(message)) return "configuration";
+  return "unknown";
 }
 
 void (async () => {
@@ -324,6 +339,7 @@ void (async () => {
     const { bootstrapApi } = require(mainPath);
     await bootstrapApi();
   } catch (error) {
+    process.stderr.write(`BOOTSTRAP_ERROR=${error instanceof Error ? error.message : String(error)}\n`);
     process.stderr.write(`BOOTSTRAP_CATEGORY=${classifyBootstrapFailure(error)}\n`);
     process.exitCode = 1;
   }
@@ -338,6 +354,12 @@ start_node_relay() {
   (
     cd "$root/app"
     export NODE_ENV=development
+    export IDENTITY_MODE=stub
+    export INTERNAL_MTLS_CA_PATH=
+    export INTERNAL_MTLS_CERT_PATH=
+    export INTERNAL_MTLS_KEY_PATH=
+    export INTERNAL_MTLS_EXPECTED_CLIENT_SPIFFE_URI=
+    export INTERNAL_MTLS_EXPECTED_WEB_BFF_SPIFFE_URI=
     export PORT="$relay_health_port"
     export AI_LLM_PROVIDER=fake
     export AI_CREDENTIAL_ENCRYPTION_MODE=local
@@ -360,6 +382,7 @@ start_node_relay() {
     export OBJECT_STORAGE_ACCESS_KEY=minioadmin
     export OBJECT_STORAGE_SECRET_KEY=minioadmin
     export OBJECT_STORAGE_BUCKET=documents
+    export OBJECT_STORAGE_PRESIGN_EXPIRY=300
     exec ./node_modules/.bin/ts-node -T src/worker.ts
   ) >"$relay_log" 2>&1 &
   relay_pid=$!
@@ -403,7 +426,14 @@ run_document_flow() {
 const apiBaseUrl = process.argv[2];
 const ownerId = process.argv[3];
 const accessToken = process.argv[4];
-const input = 'A bounded E2E document checks one learning concept.';
+const fs = require('node:fs');
+const inputPath = process.env.LOCAL_DOCUMENT_E2E_INPUT_PATH;
+const input = inputPath
+  ? fs.readFileSync(inputPath)
+  : Buffer.from('A bounded E2E document checks one learning concept.');
+const inputType = inputPath ? 'PDF' : 'TEXT';
+const originalName = inputPath ? 'document-e2e.pdf' : 'document-e2e.txt';
+const contentType = inputPath ? 'application/pdf' : 'text/plain';
 const requestTimeoutMs = 10_000;
 const pollDeadlineMs = 180_000;
 const pollIntervalMs = 1_000;
@@ -451,10 +481,10 @@ async function main() {
     headers,
     body: JSON.stringify({
       modelSelectionKind: 'PLAN',
-      originalName: 'document-e2e.txt',
+      originalName,
       platformModelId: 'platform-default',
-      sizeBytes: Buffer.byteLength(input),
-      type: 'TEXT',
+      sizeBytes: input.length,
+      type: inputType,
     }),
   });
   requireMarker(
@@ -467,7 +497,7 @@ async function main() {
 
   const form = new FormData();
   for (const [key, value] of Object.entries(upload.uploadFields)) form.set(key, String(value));
-  form.set('file', new Blob([input], { type: 'text/plain' }), 'document-e2e.txt');
+  form.set('file', new Blob([input], { type: contentType }), originalName);
   phase = 'presigned-upload';
   await request(upload.uploadUrl, { method: 'POST', body: form });
 
