@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,9 @@ func TestPostgresStoreRetryPreservesScheduledOutcomeWhenCommitFails(t *testing.T
 	result, err := store.Retry(context.Background(), Job{ID: "job", Attempt: 1, LeaseID: "lease"}, ProviderUnavailable)
 	if !result.Scheduled || result.Finalized || !errors.Is(err, commitErr) {
 		t.Fatalf("retry after commit error = (%#v, %v), want ({Scheduled:true}, commit error)", result, err)
+	}
+	if err.Error() != string(ProcessingFailed) {
+		t.Fatalf("retry error = %q, want stable redacted failure", err)
 	}
 	if !transaction.execCalled || !transaction.commitCalled {
 		t.Fatalf("retry transaction calls = (exec=%t, commit=%t), want both after update", transaction.execCalled, transaction.commitCalled)
@@ -103,9 +107,10 @@ func (row retryRowMock) Scan(dest ...any) error {
 }
 
 type postgresIntegration struct {
-	admin     *pgxpool.Pool
-	container testcontainers.Container
-	store     *PostgresStore
+	admin       *pgxpool.Pool
+	container   testcontainers.Container
+	store       *PostgresStore
+	databaseURL string
 }
 
 func TestPostgresStoreIntegration(t *testing.T) {
@@ -129,6 +134,38 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		}
 		if source.StorageRef != "owners/source.txt" || source.Type != "TEXT" {
 			t.Fatalf("source = %#v", source)
+		}
+	})
+
+	t.Run("preserves source operation for a database failure", func(t *testing.T) {
+		database.insertDocumentAndJob(t, ctx)
+		job := database.claim(t, ctx)
+		const role = "source_failure_probe"
+		if _, err := database.admin.Exec(ctx, "CREATE ROLE "+role+" LOGIN PASSWORD 'source_failure_probe'"); err != nil {
+			t.Fatalf("create source failure role: %v", err)
+		}
+		var probeStore *PostgresStore
+		t.Cleanup(func() {
+			if probeStore != nil {
+				probeStore.Close()
+			}
+			if _, err := database.admin.Exec(ctx, "REASSIGN OWNED BY "+role+" TO postgres; DROP OWNED BY "+role+"; DROP ROLE IF EXISTS "+role); err != nil {
+				t.Errorf("drop source failure role: %v", err)
+			}
+		})
+		if _, err := database.admin.Exec(ctx, "GRANT USAGE ON SCHEMA course TO "+role); err != nil {
+			t.Fatalf("grant source failure role schema access: %v", err)
+		}
+		probeURL := strings.Replace(database.databaseURL, "postgres:postgres@", "source_failure_probe:source_failure_probe@", 1)
+		var err error
+		probeStore, err = NewPostgresStore(ctx, probeURL)
+		if err != nil {
+			t.Fatalf("connect source failure store: %v", err)
+		}
+		_, err = probeStore.Source(ctx, *job)
+		assertFailureOperation(t, err, FailureOperationSourceDescriptorRead)
+		if err.Error() != string(ProcessingFailed) {
+			t.Fatalf("source database error = %q, want stable redacted failure", err)
 		}
 	})
 
@@ -268,6 +305,7 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		if err == nil || persisted {
 			t.Fatalf("outbox-denied persistence = (%t, %v), want (false, error)", persisted, err)
 		}
+		assertFailureOperation(t, err, FailureOperationOutboxInsert)
 		if countRows(t, ctx, database.admin, "SELECT count(*) FROM ai.chunks WHERE document_id=$1", documentID) != 0 {
 			t.Fatal("failed transaction must not leave chunks")
 		}
@@ -356,7 +394,7 @@ func startPostgresIntegration(t *testing.T, ctx context.Context) *postgresIntegr
 	if err != nil {
 		t.Fatalf("connect PostgreSQL store: %v", err)
 	}
-	return &postgresIntegration{admin: admin, container: container, store: store}
+	return &postgresIntegration{admin: admin, container: container, store: store, databaseURL: adminURL}
 }
 
 func migrationDirectory(t *testing.T) string {
@@ -397,6 +435,14 @@ func assertFailure(t *testing.T, err error, code FailureCode, technical bool) {
 	var failure Failure
 	if !errors.As(err, &failure) || failure.Code != code || failure.Technical != technical {
 		t.Fatalf("error = %#v, want failure (%s, technical=%t)", err, code, technical)
+	}
+}
+
+func assertFailureOperation(t *testing.T, err error, operation FailureOperation) {
+	t.Helper()
+	var failure Failure
+	if !errors.As(err, &failure) || failure.Operation != operation {
+		t.Fatalf("error = %#v, want failure operation %s", err, operation)
 	}
 }
 

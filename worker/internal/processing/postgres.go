@@ -31,7 +31,7 @@ func (store *PostgresStore) Close() { store.pool.Close() }
 func (store *PostgresStore) Claim(ctx context.Context) (*Job, error) {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, NewPersistenceError(FailureOperationClaim, err)
 	}
 	defer tx.Rollback(ctx)
 	var id string
@@ -40,7 +40,7 @@ func (store *PostgresStore) Claim(ctx context.Context) (*Job, error) {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, NewPersistenceError(FailureOperationClaim, err)
 	}
 	var job Job
 	err = tx.QueryRow(ctx, `UPDATE ai.processing_jobs SET attempts=attempts+1,lease_id=gen_random_uuid(),lease_until=now()+interval '15 minutes',status='RUNNING',updated_at=now() WHERE id=$1 AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations WHERE user_id=ai.processing_jobs.owner_id) RETURNING id,document_id,owner_id,correlation_id,attempts,lease_id,created_at`, id).Scan(&job.ID, &job.DocumentID, &job.OwnerID, &job.CorrelationID, &job.Attempt, &job.LeaseID, &job.CreatedAt)
@@ -48,10 +48,10 @@ func (store *PostgresStore) Claim(ctx context.Context) (*Job, error) {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, NewPersistenceError(FailureOperationClaim, err)
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, NewPersistenceError(FailureOperationTransactionCommit, err)
 	}
 	return &job, nil
 }
@@ -62,25 +62,25 @@ func (store *PostgresStore) Source(ctx context.Context, job Job) (Source, error)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Source{}, Failure{Code: ObjectNotFound}
 		}
-		return Source{}, Failure{Code: ProcessingFailed, Technical: true}
+		return Source{}, NewPersistenceError(FailureOperationSourceDescriptorRead, err)
 	}
 	return source, nil
 }
 func (store *PostgresStore) ReplaceChunks(ctx context.Context, job Job, chunks []Chunk) (bool, error) {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
 	defer tx.Rollback(ctx)
 	present, err := lockActiveJob(ctx, tx, job)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
 	if !present {
 		return false, nil
 	}
 	if _, err = tx.Exec(ctx, `DELETE FROM ai.chunks WHERE document_id=$1 AND owner_id=$2`, job.DocumentID, job.OwnerID); err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
 	for _, chunk := range chunks {
 		locator, err := json.Marshal(chunk.Locator)
@@ -88,17 +88,20 @@ func (store *PostgresStore) ReplaceChunks(ctx context.Context, job Job, chunks [
 			return false, err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO ai.chunks(id,document_id,owner_id,chunk_index,text,locator,page_number,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, chunk.ID, job.DocumentID, job.OwnerID, chunk.Index, chunk.Text, locator, nullPage(chunk.Locator), chunk.ContentHash); err != nil {
-			return false, err
+			return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 		}
 	}
 	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET updated_at=updated_at WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
 	if tag.RowsAffected() != 1 {
 		return false, ErrJobFenceLost
 	}
-	return true, tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return true, NewPersistenceError(FailureOperationTransactionCommit, err)
+	}
+	return true, nil
 }
 func nullPage(locator Locator) any {
 	if locator.Kind == "page" {
@@ -126,15 +129,15 @@ func (store *PostgresStore) Complete(ctx context.Context, job Job) (bool, error)
 func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chunks []Chunk, questions []Question) (bool, error) {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
 	defer tx.Rollback(ctx)
 	present, err := lockActiveJob(ctx, tx, job)
 	if err != nil || !present {
-		return false, err
+		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
 	if _, err = tx.Exec(ctx, `DELETE FROM ai.chunks WHERE document_id=$1 AND owner_id=$2`, job.DocumentID, job.OwnerID); err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
 	for _, chunk := range chunks {
 		locator, marshalErr := json.Marshal(chunk.Locator)
@@ -142,12 +145,12 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 			return false, marshalErr
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO ai.chunks(id,document_id,owner_id,chunk_index,text,locator,page_number,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, chunk.ID, job.DocumentID, job.OwnerID, chunk.Index, chunk.Text, locator, nullPage(chunk.Locator), chunk.ContentHash); err != nil {
-			return false, err
+			return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 		}
 	}
 	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='COMPLETED',failure_code=NULL,error_message=NULL,lease_id=NULL,lease_until=NULL,completed_at=now(),updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
 	if tag.RowsAffected() != 1 {
 		return false, ErrJobFenceLost
@@ -157,9 +160,12 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 		return false, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO ai.outbox(aggregate_id,event_type,payload) VALUES($1,'DocumentProcessingResult',$2)`, job.ID, payload); err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationOutboxInsert, err)
 	}
-	return true, tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return true, NewPersistenceError(FailureOperationTransactionCommit, err)
+	}
+	return true, nil
 }
 func (store *PostgresStore) Fail(ctx context.Context, job Job, failure Failure) (bool, error) {
 	return store.finalize(ctx, job, "FAILED", "FAILED", string(failure.Code))
@@ -167,12 +173,12 @@ func (store *PostgresStore) Fail(ctx context.Context, job Job, failure Failure) 
 func (store *PostgresStore) finalize(ctx context.Context, job Job, status, result, code string) (bool, error) {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status=$4,failure_code=NULLIF($5,''),error_message=NULL,lease_id=NULL,lease_until=NULL,completed_at=now(),updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, status, code)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
 	if tag.RowsAffected() != 1 {
 		return false, ErrJobFenceLost
@@ -183,9 +189,12 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO ai.outbox(aggregate_id,event_type,payload) VALUES($1,'DocumentProcessingResult',$2)`, job.ID, payload)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationOutboxInsert, err)
 	}
-	return true, tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return true, NewPersistenceError(FailureOperationTransactionCommit, err)
+	}
+	return true, nil
 }
 func nilIfEmpty(value string) any {
 	if value == "" {
@@ -201,7 +210,7 @@ func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode
 	}
 	tx, err := begin(ctx)
 	if err != nil {
-		return RetryResult{}, err
+		return RetryResult{}, NewPersistenceError(FailureOperationRetrySchedule, err)
 	}
 	defer tx.Rollback(ctx)
 	var retry int
@@ -210,26 +219,26 @@ func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RetryResult{}, ErrJobFenceLost
 		}
-		return RetryResult{}, err
+		return RetryResult{}, NewPersistenceError(FailureOperationRetrySchedule, err)
 	}
 	if retry >= len(delays) {
 		// finalizeWithDLQ obtains its own transaction; release this row lock first.
 		if err = tx.Rollback(ctx); err != nil {
-			return RetryResult{}, err
+			return RetryResult{}, NewPersistenceError(FailureOperationRetrySchedule, err)
 		}
 		finalized, finalizeErr := store.finalizeWithDLQ(ctx, job, code)
 		return RetryResult{Finalized: finalized}, finalizeErr
 	}
 	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='PENDING',technical_retry_count=technical_retry_count+1,failure_code=$4,lease_id=NULL,lease_until=NULL,next_visible_at=now()+$5::interval,updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, code, delays[retry])
 	if err != nil {
-		return RetryResult{}, err
+		return RetryResult{}, NewPersistenceError(FailureOperationRetrySchedule, err)
 	}
 	if tag.RowsAffected() != 1 {
 		return RetryResult{}, ErrJobFenceLost
 	}
 	if err = tx.Commit(ctx); err != nil {
 		// The update may have committed even when the client cannot confirm it.
-		return RetryResult{Scheduled: true}, err
+		return RetryResult{Scheduled: true}, NewPersistenceError(FailureOperationTransactionCommit, err)
 	}
 	return RetryResult{Scheduled: true}, nil
 }
@@ -237,25 +246,28 @@ func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode
 func (store *PostgresStore) finalizeWithDLQ(ctx context.Context, job Job, code FailureCode) (bool, error) {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='FAILED', failure_code=$4, error_message=NULL, lease_id=NULL, lease_until=NULL, completed_at=now(), updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, code)
 	if err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
 	if tag.RowsAffected() != 1 {
 		return false, ErrJobFenceLost
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO ai.processing_job_dlq(job_id,document_id,owner_id,correlation_id,idempotency_key,last_attempt,reason_code) SELECT id,document_id,owner_id,correlation_id,idempotency_key,attempts,$2 FROM ai.processing_jobs WHERE id=$1`, job.ID, code); err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationDLQInsert, err)
 	}
 	payload, err := json.Marshal(map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
 	if err != nil {
 		return false, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO ai.outbox(aggregate_id,event_type,payload) VALUES($1,'DocumentProcessingResult',$2)`, job.ID, payload); err != nil {
-		return false, err
+		return false, NewPersistenceError(FailureOperationOutboxInsert, err)
 	}
-	return true, tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return true, NewPersistenceError(FailureOperationTransactionCommit, err)
+	}
+	return true, nil
 }

@@ -270,6 +270,46 @@ func TestDispatchLogsFailureWhenFinalizationPersistenceFails(t *testing.T) {
 	}
 }
 
+func TestDispatchLifecycleFailureIncludesSafePersistenceOperation(t *testing.T) {
+	output := make(chan []byte, 8)
+	persistenceErr := processing.NewPersistenceError(processing.FailureOperationTransactionCommit, errors.New("commit failed: UPDATE ai.processing_jobs"))
+	store := &storeMock{
+		job:        &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 1},
+		source:     processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		failErr:    persistenceErr,
+		failResult: boolPtr(false),
+	}
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{err: processing.Failure{Code: processing.OutputInvalid}}, slog.New(slog.NewJSONHandler(logChannelWriter{output: output}, nil)))
+	worker.slots = make(chan struct{}, 1)
+	worked, err := worker.dispatch(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("dispatch() = (%t, %v), want (true, nil)", worked, err)
+	}
+
+	var lifecycleEntry map[string]any
+	var logs strings.Builder
+	deadline := time.After(time.Second)
+	for lifecycleEntry == nil {
+		select {
+		case entry := <-output:
+			logs.Write(entry)
+			decoded := decodeLogEntry(t, string(entry))
+			if decoded["event"] == "worker.processing.failed" {
+				lifecycleEntry = decoded
+			}
+		case <-deadline:
+			t.Fatalf("lifecycle failure log not emitted: %s", logs.String())
+		}
+	}
+	worker.workers.Wait()
+	if lifecycleEntry["failure_operation"] != string(processing.FailureOperationTransactionCommit) {
+		t.Fatalf("lifecycle failure_operation = %#v, want %q", lifecycleEntry["failure_operation"], processing.FailureOperationTransactionCommit)
+	}
+	if strings.Contains(logs.String(), "commit failed") || strings.Contains(logs.String(), "UPDATE ai.processing_jobs") {
+		t.Fatalf("lifecycle logs exposed persistence error details: %s", logs.String())
+	}
+}
+
 func TestProcessOneTreatsFalseNilFinalizationAsFenceLoss(t *testing.T) {
 	t.Parallel()
 	store := &storeMock{
@@ -361,6 +401,30 @@ func TestProcessOneHandlesPersistenceFailureWithSafeRetryLog(t *testing.T) {
 	assertLogDoesNotExposeJobData(t, output.String())
 	if strings.Contains(output.String(), "raw provider/database failure") {
 		t.Fatalf("log exposed persistence error: %s", output.String())
+	}
+}
+
+func TestProcessOneLogsSafePersistenceOperation(t *testing.T) {
+	persistenceErr := processing.NewPersistenceError(processing.FailureOperationTransactionCommit, errors.New("commit failed: INSERT INTO secret_table"))
+	store := &storeMock{
+		job:         &processing.Job{ID: "job-secret", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 2},
+		source:      processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+		persistErr:  persistenceErr,
+		retryResult: processing.RetryResult{Scheduled: true},
+	}
+	var output bytes.Buffer
+	worker := newWithLogger(store, objectMock{bytes: []byte("document text")}, generatorMock{}, slog.New(slog.NewJSONHandler(&output, nil)))
+
+	if err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+
+	entry := decodeLogEntry(t, output.String())
+	if entry["failure_operation"] != string(processing.FailureOperationTransactionCommit) {
+		t.Fatalf("log failure_operation = %#v, want %q", entry["failure_operation"], processing.FailureOperationTransactionCommit)
+	}
+	if strings.Contains(output.String(), "commit failed") || strings.Contains(output.String(), "INSERT INTO secret_table") {
+		t.Fatalf("log exposed persistence error details: %s", output.String())
 	}
 }
 
