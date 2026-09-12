@@ -66,6 +66,33 @@ const (
 
 var errInvalidRetryResult = errors.New("invalid retry result")
 
+type failureComponent string
+
+const (
+	failureComponentUnknown     failureComponent = "unknown"
+	failureComponentStorage     failureComponent = "storage"
+	failureComponentExtraction  failureComponent = "extraction"
+	failureComponentProvider    failureComponent = "provider"
+	failureComponentPersistence failureComponent = "persistence"
+)
+
+func failureComponentFor(component failureComponent, code processing.FailureCode) failureComponent {
+	switch component {
+	case failureComponentStorage, failureComponentExtraction, failureComponentProvider, failureComponentPersistence:
+		return component
+	}
+	switch code {
+	case processing.ObjectNotFound, processing.ObjectTooLarge:
+		return failureComponentStorage
+	case processing.PDFInvalid, processing.PDFTextNotFound, processing.ChunkLimit:
+		return failureComponentExtraction
+	case processing.OutputInvalid, processing.OutputTruncated, processing.ProviderIncompatible, processing.ProviderUnavailable:
+		return failureComponentProvider
+	default:
+		return failureComponentUnknown
+	}
+}
+
 func NewBootstrap() *Bootstrap {
 	return &Bootstrap{options: normalizeOptions(Options{})}
 }
@@ -191,7 +218,7 @@ func (bootstrap *Bootstrap) dispatch(ctx context.Context) (bool, error) {
 		active := bootstrap.active.Add(1)
 		bootstrap.logLifecycle("worker.processing.started", job, active, 0)
 		started := time.Now()
-		outcome, err := bootstrap.processClaimed(jobCtx, job)
+		outcome, err, component := bootstrap.processClaimed(jobCtx, job)
 		active = bootstrap.active.Add(-1)
 		if outcome == processOutcomeRetryScheduled || outcome == processOutcomeFinalized {
 			return
@@ -205,7 +232,7 @@ func (bootstrap *Bootstrap) dispatch(ctx context.Context) (bool, error) {
 			return
 		}
 		if err != nil {
-			bootstrap.logLifecycle("worker.processing.failed", job, active, time.Since(started))
+			bootstrap.logLifecycle("worker.processing.failed", job, active, time.Since(started), component)
 			return
 		}
 		if outcome == processOutcomeCompleted {
@@ -220,32 +247,32 @@ func (bootstrap *Bootstrap) processOne(ctx context.Context) error {
 	if err != nil || job == nil {
 		return err
 	}
-	_, err = bootstrap.processClaimed(ctx, *job)
+	_, err, _ = bootstrap.processClaimed(ctx, *job)
 	return err
 }
 
-func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.Job) (processOutcome, error) {
+func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.Job) (processOutcome, error, failureComponent) {
 	source, err := bootstrap.store.Source(ctx, job)
 	if err != nil {
-		return bootstrap.finish(ctx, job, err)
+		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
 	bytes, err := bootstrap.objects.Read(ctx, source.StorageRef, 20*1024*1024)
 	if err != nil {
-		return bootstrap.finish(ctx, job, err)
+		return bootstrap.finish(ctx, job, err, failureComponentStorage)
 	}
 	segments, err := processing.Extract(source, bytes)
 	if err != nil {
-		return bootstrap.finish(ctx, job, err)
+		return bootstrap.finish(ctx, job, err, failureComponentExtraction)
 	}
 	chunks, err := processing.ChunkText(job.DocumentID, job.OwnerID, segments)
 	if err != nil {
-		return bootstrap.finish(ctx, job, err)
+		return bootstrap.finish(ctx, job, err, failureComponentExtraction)
 	}
 	questions := make([]processing.Question, 0, len(chunks))
 	for index, chunk := range chunks {
 		question, err := bootstrap.generator.Generate(ctx, chunk.Text)
 		if err != nil {
-			return bootstrap.finish(ctx, job, err)
+			return bootstrap.finish(ctx, job, err, failureComponentProvider)
 		}
 		question.ChunkID = chunk.ID
 		question.ChunkIndex = chunk.Index
@@ -256,24 +283,24 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	persisted, err := bootstrap.store.PersistAndComplete(ctx, job, chunks, questions)
 	if err == nil {
 		if !persisted {
-			return processOutcomeFenced, processing.ErrJobFenceLost
+			return processOutcomeFenced, processing.ErrJobFenceLost, failureComponentUnknown
 		}
-		return processOutcomeCompleted, nil
+		return processOutcomeCompleted, nil, failureComponentUnknown
 	}
 	if persisted {
 		// A commit error leaves the final state uncertain; retrying could duplicate the result.
-		bootstrap.logFailure("worker.processing.persistence_ambiguous", "persist", job, processing.Failure{Code: processing.ProcessingFailed, Technical: true})
-		return processOutcomeUnknown, err
+		bootstrap.logFailure("worker.processing.persistence_ambiguous", "persist", job, processing.Failure{Code: processing.ProcessingFailed, Technical: true}, failureComponentPersistence)
+		return processOutcomeUnknown, err, failureComponentPersistence
 	}
-	return bootstrap.finish(ctx, job, err)
+	return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 }
 
-func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err error) (processOutcome, error) {
+func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err error, component failureComponent) (processOutcome, error, failureComponent) {
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return processOutcomeUnknown, ctx.Err()
+		return processOutcomeUnknown, ctx.Err(), failureComponentUnknown
 	}
 	if errors.Is(err, processing.ErrJobFenceLost) {
-		return processOutcomeFenced, processing.ErrJobFenceLost
+		return processOutcomeFenced, processing.ErrJobFenceLost, failureComponentUnknown
 	}
 	persistCtx := ctx
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -289,51 +316,51 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 		result, retryErr := bootstrap.store.Retry(persistCtx, job, failure.Code)
 		if retryErr != nil {
 			if errors.Is(retryErr, processing.ErrJobFenceLost) {
-				return processOutcomeFenced, processing.ErrJobFenceLost
+				return processOutcomeFenced, processing.ErrJobFenceLost, failureComponentUnknown
 			}
 			if result.Scheduled || result.Finalized {
-				bootstrap.logFailure("worker.processing.persistence_ambiguous", "retry", job, failure)
-				return processOutcomeUnknown, retryErr
+				bootstrap.logFailure("worker.processing.persistence_ambiguous", "retry", job, failure, failureComponentPersistence)
+				return processOutcomeUnknown, retryErr, failureComponentPersistence
 			}
-			bootstrap.logFailure("worker.processing.retry.persistence_failed", "retry", job, failure)
-			return processOutcomeUnknown, retryErr
+			bootstrap.logFailure("worker.processing.retry.persistence_failed", "retry", job, failure, failureComponentPersistence)
+			return processOutcomeUnknown, retryErr, failureComponentPersistence
 		}
 		switch {
 		case result.Scheduled && result.Finalized:
-			bootstrap.logFailure("worker.processing.retry.contract_violation", "retry", job, failure)
-			return processOutcomeUnknown, errInvalidRetryResult
+			bootstrap.logFailure("worker.processing.retry.contract_violation", "retry", job, failure, component)
+			return processOutcomeUnknown, errInvalidRetryResult, component
 		case result.Scheduled:
-			bootstrap.logFailure("worker.processing.retry.scheduled", "retry", job, failure)
-			return processOutcomeRetryScheduled, nil
+			bootstrap.logFailure("worker.processing.retry.scheduled", "retry", job, failure, component)
+			return processOutcomeRetryScheduled, nil, component
 		case result.Finalized:
-			bootstrap.logFailure("worker.processing.failed", "dlq", job, failure)
-			return processOutcomeFinalized, nil
+			bootstrap.logFailure("worker.processing.failed", "dlq", job, failure, component)
+			return processOutcomeFinalized, nil, component
 		default:
-			bootstrap.logFailure("worker.processing.retry.contract_violation", "retry", job, failure)
-			return processOutcomeUnknown, errInvalidRetryResult
+			bootstrap.logFailure("worker.processing.retry.contract_violation", "retry", job, failure, component)
+			return processOutcomeUnknown, errInvalidRetryResult, component
 		}
 	}
 	finalized, failErr := bootstrap.store.Fail(persistCtx, job, failure)
 	if failErr != nil {
 		if errors.Is(failErr, processing.ErrJobFenceLost) {
-			return processOutcomeFenced, processing.ErrJobFenceLost
+			return processOutcomeFenced, processing.ErrJobFenceLost, failureComponentUnknown
 		}
 		if finalized {
-			bootstrap.logFailure("worker.processing.persistence_ambiguous", "finalize", job, failure)
+			bootstrap.logFailure("worker.processing.persistence_ambiguous", "finalize", job, failure, failureComponentPersistence)
 		} else {
-			bootstrap.logFailure("worker.processing.failure.persistence_failed", "finalize", job, failure)
+			bootstrap.logFailure("worker.processing.failure.persistence_failed", "finalize", job, failure, failureComponentPersistence)
 		}
 	} else if finalized {
-		bootstrap.logFailure("worker.processing.failed", "finalize", job, failure)
-		return processOutcomeFinalized, nil
+		bootstrap.logFailure("worker.processing.failed", "finalize", job, failure, component)
+		return processOutcomeFinalized, nil, component
 	}
 	if failErr == nil {
-		return processOutcomeFenced, processing.ErrJobFenceLost
+		return processOutcomeFenced, processing.ErrJobFenceLost, failureComponentUnknown
 	}
-	return processOutcomeUnknown, failErr
+	return processOutcomeUnknown, failErr, failureComponentPersistence
 }
 
-func (bootstrap *Bootstrap) logLifecycle(event string, job processing.Job, active int64, duration time.Duration) {
+func (bootstrap *Bootstrap) logLifecycle(event string, job processing.Job, active int64, duration time.Duration, component ...failureComponent) {
 	if bootstrap.logger == nil {
 		return
 	}
@@ -347,6 +374,13 @@ func (bootstrap *Bootstrap) logLifecycle(event string, job processing.Job, activ
 	}
 	if duration > 0 {
 		attributes = append(attributes, "duration_ms", duration.Milliseconds())
+	}
+	if event == "worker.processing.failed" {
+		selected := failureComponentUnknown
+		if len(component) > 0 {
+			selected = failureComponentFor(component[0], processing.ProcessingFailed)
+		}
+		attributes = append(attributes, "failure_component", string(selected))
 	}
 	bootstrap.logger.Log(context.Background(), slog.LevelInfo, event, attributes...)
 }
@@ -395,15 +429,18 @@ func normalizeOptions(options Options) Options {
 	return options
 }
 
-func (bootstrap *Bootstrap) logFailure(event, phase string, job processing.Job, failure processing.Failure) {
+func (bootstrap *Bootstrap) logFailure(event, phase string, job processing.Job, failure processing.Failure, component failureComponent) {
 	if bootstrap.logger == nil {
 		return
 	}
 	attributes := []any{
 		"event", event,
 		"phase", phase,
+		"job_id", job.ID,
+		"correlation_id", job.CorrelationID,
 		"attempt", job.Attempt,
 		"category", string(failure.Code),
+		"failure_component", string(failureComponentFor(component, failure.Code)),
 	}
 	if failure.Code == processing.OutputInvalid && failure.Reason.Valid() {
 		attributes = append(attributes, "reason", string(failure.Reason))
