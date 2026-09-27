@@ -4,8 +4,7 @@ set -Eeuo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 run_id="local-document-e2e-$$"
-minio_image="quay.io/minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
-minio_mc_image="quay.io/minio/mc@sha256:470f5546b596e16c7816b9c3fa7a78ce4076bb73c2c73f7faeec0c8043923123"
+minio_image="minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 tmp_root=${TMPDIR:-/tmp}
 PHASE=initialization
 temp_dir=""
@@ -741,6 +740,46 @@ NODE
   )
 }
 
+configure_minio_buckets() {
+  (
+    cd "$root/app"
+    node - "$minio_port" <<'NODE'
+const {
+  CreateBucketCommand,
+  GetBucketVersioningCommand,
+  PutBucketVersioningCommand,
+  S3Client,
+} = require('@aws-sdk/client-s3');
+
+const port = process.argv[2];
+const client = new S3Client({
+  credentials: { accessKeyId: 'minioadmin', secretAccessKey: 'minioadmin' },
+  endpoint: `http://127.0.0.1:${port}`,
+  forcePathStyle: true,
+  region: 'us-east-1',
+});
+
+async function main() {
+  await client.send(new CreateBucketCommand({ Bucket: 'documents' }));
+  await client.send(new CreateBucketCommand({ Bucket: 'media' }));
+  await client.send(new PutBucketVersioningCommand({
+    Bucket: 'media',
+    VersioningConfiguration: { Status: 'Enabled' },
+  }));
+  const versioning = await client.send(new GetBucketVersioningCommand({ Bucket: 'media' }));
+  if (versioning.Status !== 'Enabled') {
+    throw new Error('MinIO media bucket versioning is not enabled');
+  }
+}
+
+void main().catch((error) => {
+  process.stderr.write(`${error.name || 'Error'}: MinIO bucket configuration failed\n`);
+  process.exitCode = 1;
+});
+NODE
+  )
+}
+
 classify_pipeline_stage() {
   local stage
   if ! stage=$(docker exec "$postgres_container" psql \
@@ -857,12 +896,7 @@ done
 emit_phase wait-minio
 wait_for_http "http://127.0.0.1:${minio_port}/minio/health/live" "" >/dev/null
 emit_phase configure-minio
-docker run --rm \
-  --name "${run_id}-minio-mc" \
-  --network "$network_name" \
-  --entrypoint /bin/sh \
-  "$minio_mc_image" \
-  -c 'mc alias set local http://'"$minio_container"':9000 minioadmin minioadmin >/dev/null 2>&1 && mc mb --ignore-existing local/documents >/dev/null 2>&1' >/dev/null 2>&1
+configure_minio_buckets
 
 emit_phase storage-round-trip
 run_s3_round_trip
