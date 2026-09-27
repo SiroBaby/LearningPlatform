@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 run_id="local-document-e2e-$$"
-minio_image="minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+minio_image="bitnamilegacy/minio@sha256:8343eea75f4f7ef6394e3e1f1a5447706bac719bf8b0731cbbf4c473f3050712"
 tmp_root=${TMPDIR:-/tmp}
 PHASE=initialization
 temp_dir=""
@@ -876,8 +876,8 @@ docker run --detach \
   -p 127.0.0.1::9000 \
   --env MINIO_ROOT_USER=minioadmin \
   --env MINIO_ROOT_PASSWORD=minioadmin \
-  --volume "$minio_volume:/data" \
-  "$minio_image" server /data --console-address ':9001' >/dev/null 2>&1
+  --volume "$minio_volume:/bitnami/minio/data" \
+  "$minio_image" /opt/bitnami/scripts/minio/run.sh >/dev/null 2>&1
 minio_container_created=true
 
 emit_phase allocate-postgres-port
