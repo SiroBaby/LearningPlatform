@@ -130,26 +130,27 @@ func Extract(source Source, input []byte) ([]struct {
 }
 
 func normalizeExtractedText(text string) string {
-	return strings.TrimSpace(strings.ToValidUTF8(text, " "))
+	return strings.Join(strings.Fields(strings.ToValidUTF8(text, " ")), " ")
 }
 
-func pageText(reader *pdf.Reader, page int) (string, error) {
+func pageText(reader *pdf.Reader, page int) (text string, err error) {
 	document := reader.Page(page)
 	if document.V.IsNull() {
 		return "", nil
 	}
-	rows, err := document.GetTextByRow()
+	defer func() {
+		if recover() != nil {
+			text = ""
+			err = fmt.Errorf("parse PDF page content")
+		}
+	}()
+	plainText, err := document.GetPlainText(nil)
 	if err != nil {
 		return "", err
 	}
-	var output strings.Builder
-	for _, row := range rows {
-		for _, word := range row.Content {
-			output.WriteString(word.S)
-		}
-		output.WriteByte('\n')
-	}
-	return output.String(), nil
+	// GetPlainText follows content-stream order. It does not infer missing
+	// spaces from visual coordinates or reorder text by page geometry.
+	return plainText, nil
 }
 
 type OpenAI struct {
