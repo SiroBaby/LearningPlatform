@@ -40,10 +40,10 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: worker/go.mod
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - name: Audit high-severity dependencies
         run: timeout 180s node ../deploy/dev/audit-high.js
-      - run: npm test -- --runInBand
+      - run: npm test -- --maxWorkers=2
       - run: npm run test:e2e -- --runInBand
       - run: npm run build
       - run: npx tsc -p tsconfig.spec.json --noEmit
@@ -53,7 +53,7 @@ jobs:
         run: bash ../worker/scripts/local-document-e2e.sh
       - name: Verify production dependency graph
         run: |
-          npm ci --omit=dev
+          npm ci --omit=dev --no-audit --no-fund
           npm ls --omit=dev --all --json > \
             "$RUNNER_TEMP/learningplatform-production-dependencies.json"
           npm run test:production-dependencies -- \

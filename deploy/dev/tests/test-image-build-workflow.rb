@@ -9,10 +9,23 @@ root = File.expand_path('../../..', __dir__)
 workflow = YAML.safe_load(File.read(File.join(root, '.github/workflows/deploy-dev.yml')), aliases: true)
 reusable = YAML.safe_load(File.read(File.join(root, '.github/workflows/build-image.yml')), aliases: true)
 jobs = workflow.fetch('jobs')
+backend_ci = YAML.safe_load(File.read(File.join(root, '.github/workflows/backend-ci.yml')), aliases: true)
 
 def assert(condition, message)
   abort "FAIL #{message}" unless condition
 end
+
+quality_jobs = [jobs.fetch('backend-quality'), backend_ci.fetch('jobs').fetch('quality')]
+quality_jobs.each do |job|
+  commands = job.fetch('steps').filter_map { |step| step['run'] }
+  assert(commands.include?('npm ci --no-audit --no-fund'), 'installation must not duplicate the explicit audit')
+  assert(commands.include?('timeout 180s node ../deploy/dev/audit-high.js'), 'explicit fail-closed audit must retain a bounded runtime')
+  assert(commands.include?('npm test -- --maxWorkers=2'), 'run the full suite with two bounded, isolated Jest workers')
+  assert(commands.include?('npm run test:e2e -- --runInBand'), 'dedicated E2E verification must remain serial')
+  assert(commands.include?('npm run build') && commands.include?('npx tsc -p tsconfig.spec.json --noEmit'), 'retain build and spec type-check')
+end
+frontend_commands = jobs.fetch('frontend-quality').fetch('steps').filter_map { |step| step['run'] }
+assert(frontend_commands.include?('npm ci --no-audit --no-fund') && frontend_commands.include?('timeout 180s node ../deploy/dev/audit-high.js'), 'frontend must keep its explicit bounded audit after suppressing duplicate install audit')
 
 builds = { 'build-api' => ['api', 'backend'], 'build-web' => ['web', 'web'], 'build-go-worker' => ['go-worker', 'go_worker'] }
 builds.each do |name, (runtime, output)|

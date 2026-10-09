@@ -31,6 +31,8 @@ actionlint -shellcheck=
 
 Windows checkout có CRLF cần bản sao kiểm thử LF cho Bash Linux. Không cần sửa định dạng toàn repository để chạy kiểm thử.
 
+Điều tra lịch sử job/step và tuning quality được ghi tại `CI_TIMINGS.md`. CI dùng hai Jest worker cho toàn bộ `npm test`, giữ E2E chuyên biệt tuần tự; install tắt audit lặp nhưng audit tường minh vẫn chạy với timeout 180 giây và chặn build khi thất bại.
+
 ## Xác nhận sau rollout
 
 Chỉ sau PR được merge vào `develop`, workflow triển khai mới áp dụng cấu trúc build này. Kiểm tra các build được chọn chạy song song, cache hit/miss, manifest digest được truyền nguyên vẹn vào Ansible và các rollout được chọn healthy. Target chưa được chọn phải được bỏ qua. Không dispatch deploy thủ công chỉ để kiểm tra task này.
