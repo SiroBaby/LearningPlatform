@@ -116,7 +116,8 @@ def main() -> int:
     except (OSError, SelectionError) as error:
         print(f"GHCR retention selection failed closed: {error}", file=sys.stderr)
         return 1
-    print(*version_ids, sep="\n")
+    # An empty selection is a zero-byte file, not one invalid blank ID.
+    sys.stdout.write("".join(f"{version_id}\n" for version_id in version_ids))
     return 0
 
 

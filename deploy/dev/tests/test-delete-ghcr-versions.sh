@@ -31,17 +31,19 @@ EOF
   [[ ! -s "${temp_dir}/curl.log" ]] || fail 'manual dry-run invoked DELETE'
 
   CANDIDATE_DIR="${candidates}" EVENT_NAME=schedule GITHUB_TOKEN=test-token \
+    OWNER=SiroBaby \
     CURL_LOG="${temp_dir}/curl.log" PATH="${mock_bin}:${PATH}" \
     bash "${DELETE_SCRIPT}"
-  grep -Fq 'https://api.github.com/user/packages/container/learningplatform-api/versions/101' "${temp_dir}/curl.log" \
+  grep -Fq 'https://api.github.com/users/SiroBaby/packages/container/learningplatform-api/versions/101' "${temp_dir}/curl.log" \
     || fail 'scheduled API deletion did not use the exact version endpoint'
-  grep -Fq 'https://api.github.com/user/packages/container/learningplatform-web/versions/202' "${temp_dir}/curl.log" \
+  grep -Fq 'https://api.github.com/users/SiroBaby/packages/container/learningplatform-web/versions/202' "${temp_dir}/curl.log" \
     || fail 'scheduled web deletion did not use the exact version endpoint'
   [[ "$(grep -Fc -- '-X DELETE' "${temp_dir}/curl.log")" == 2 ]] \
     || fail 'scheduled cleanup did not issue exactly two DELETE requests'
 
   printf '%s\n' '../bad' > "${candidates}/learningplatform-api-delete-ids"
   if CANDIDATE_DIR="${candidates}" EVENT_NAME=schedule GITHUB_TOKEN=test-token \
+    OWNER=SiroBaby \
     CURL_LOG="${temp_dir}/curl.log" PATH="${mock_bin}:${PATH}" \
     bash "${DELETE_SCRIPT}" >/dev/null 2>&1; then
     fail 'invalid selector output did not fail closed'
