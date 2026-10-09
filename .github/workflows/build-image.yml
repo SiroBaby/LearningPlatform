@@ -1,0 +1,63 @@
+name: Build one runtime image
+
+on:
+  workflow_call:
+    inputs:
+      runtime:
+        required: true
+        type: string
+    outputs:
+      digest:
+        description: Immutable GHCR manifest digest after successful publication.
+        value: ${{ jobs.image.outputs.digest }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - id: runtime
+        env:
+          RUNTIME: ${{ inputs.runtime }}
+        run: |
+          case "$RUNTIME" in
+            api) context=app; dockerfile=app/Dockerfile; image=learningplatform-api ;;
+            web) context=web; dockerfile=web/Dockerfile; image=learningplatform-web ;;
+            go-worker) context=.; dockerfile=worker/Dockerfile; image=learningplatform-ai-worker ;;
+            *) printf '%s\n' 'unsupported image runtime' >&2; exit 1 ;;
+          esac
+          printf 'context=%s\ndockerfile=%s\nimage=ghcr.io/sirobaby/%s:sha-%s\n' "$context" "$dockerfile" "$image" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      # docker/setup-buildx-action v3, verified against refs/tags/v3 on 2026-10-10.
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and cache without registry publication
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: ${{ steps.runtime.outputs.context }}
+          file: ${{ steps.runtime.outputs.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          tags: ${{ steps.runtime.outputs.image }}
+          provenance: mode=min,inline-only=true
+          # BuildKit keys include Dockerfile instructions and COPY content.
+          # Runtime scopes avoid overwrites; bump v1 for a cache policy change.
+          cache-from: type=gha,version=2,scope=dev-${{ inputs.runtime }}-v1
+          cache-to: type=gha,version=2,scope=dev-${{ inputs.runtime }}-v1,mode=max
+      - name: Publish cached image with bounded registry retry
+        id: publish
+        env:
+          BUILD_CONTEXT: ${{ steps.runtime.outputs.context }}
+          DOCKERFILE: ${{ steps.runtime.outputs.dockerfile }}
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: bash deploy/dev/publish-image.sh

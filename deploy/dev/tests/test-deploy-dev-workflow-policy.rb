@@ -114,7 +114,7 @@ assert(failures, ansible_tags(step_by_name(jobs.fetch('deploy'), 'Apply selected
 application_roles = playbook.fetch('roles').select { |role| (role.fetch('tags') & %w[cert_manager applications]).any? }.map { |role| role.fetch('role') }
 assert(failures, application_roles == %w[cert_manager applications],
         'application deployment tags must select cert-manager before applications')
-build_images = jobs.fetch('build-images')
+build_images = jobs.fetch('image-quality-gate')
 deploy = jobs.fetch('deploy')
 assert(failures, jobs.fetch('worker-quality').fetch('if') == "needs.changes.outputs.go_worker == 'true'",
        'worker quality must run only for worker/** changes')

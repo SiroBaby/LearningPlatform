@@ -144,51 +144,80 @@ jobs:
       - name: Validate deployment workflow target policy
         run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
 
-  build-images:
-    name: Build and push images
+  image-quality-gate:
+    name: Approve selected image builds
     needs: [changes, backend-quality, frontend-quality, infra-quality, worker-quality]
     if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.worker-quality.result == 'success' || needs.worker-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped') && (needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: write
-    outputs:
-      api_digest: ${{ steps.api-build.outputs.digest }}
-      web_digest: ${{ steps.web-build.outputs.digest }}
-      go_worker_digest: ${{ steps.go-worker-build.outputs.digest }}
     steps:
-      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # docker/login-action v3, verified against refs/tags/v3 on 2026-07-18.
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # docker/build-push-action v6, verified against refs/tags/v6 on 2026-07-18.
-      - id: api-build
-        if: needs.changes.outputs.backend == 'true'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: app
-          push: true
-          tags: ghcr.io/sirobaby/learningplatform-api:sha-${{ github.sha }}
-      # docker/build-push-action v6, verified against refs/tags/v6 on 2026-07-18.
-      - id: web-build
-        if: needs.changes.outputs.web == 'true'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: web
-          push: true
-          tags: ghcr.io/sirobaby/learningplatform-web:sha-${{ github.sha }}
-      - id: go-worker-build
-        if: needs.changes.outputs.go_worker == 'true'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: .
-          file: worker/Dockerfile
-          push: true
-          tags: ghcr.io/sirobaby/learningplatform-ai-worker:sha-${{ github.sha }}
+      - run: 'true'
+
+  build-api:
+    name: Build api image
+    needs: [changes, image-quality-gate]
+    if: needs.changes.outputs.backend == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      runtime: api
+
+  build-web:
+    name: Build web image
+    needs: [changes, image-quality-gate]
+    if: needs.changes.outputs.web == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      runtime: web
+
+  build-go-worker:
+    name: Build go-worker image
+    needs: [changes, image-quality-gate]
+    if: needs.changes.outputs.go_worker == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      runtime: go-worker
+
+  build-images:
+    name: Collect selected image digests
+    needs: [changes, image-quality-gate, build-api, build-web, build-go-worker]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.image-quality-gate.result == 'success' && (needs.build-api.result == 'success' || needs.build-api.result == 'skipped') && (needs.build-web.result == 'success' || needs.build-web.result == 'skipped') && (needs.build-go-worker.result == 'success' || needs.build-go-worker.result == 'skipped')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      api_digest: ${{ needs.build-api.outputs.digest }}
+      web_digest: ${{ needs.build-web.outputs.digest }}
+      go_worker_digest: ${{ needs.build-go-worker.outputs.digest }}
+    steps:
+      - name: Validate every selected manifest digest
+        env:
+          SELECT_BACKEND: ${{ needs.changes.outputs.backend }}
+          SELECT_WEB: ${{ needs.changes.outputs.web }}
+          SELECT_GO_WORKER: ${{ needs.changes.outputs.go_worker }}
+          BACKEND_DIGEST: ${{ needs.build-api.outputs.digest }}
+          WEB_DIGEST: ${{ needs.build-web.outputs.digest }}
+          GO_WORKER_DIGEST: ${{ needs.build-go-worker.outputs.digest }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import sys
+
+          for runtime in ('BACKEND', 'WEB', 'GO_WORKER'):
+              if os.environ[f'SELECT_{runtime}'] == 'true':
+                  if not re.fullmatch(r'sha256:[a-f0-9]{64}', os.environ[f'{runtime}_DIGEST']):
+                      sys.exit(f'{runtime} selected image has no immutable manifest digest')
+          PY
 
   deploy:
     name: Deploy immutable digests to K3s

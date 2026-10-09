@@ -1,0 +1,38 @@
+name: Deployment workflow CI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - deploy/dev/**
+      - infra/ansible/playbooks/site.yml
+      - infra/ansible/roles/k3s/templates/nginx-learning-platform.conf.j2
+      - infra/k8s/apps.yaml.j2
+  push:
+    paths:
+      - .github/workflows/**
+      - deploy/dev/**
+      - infra/ansible/playbooks/site.yml
+      - infra/ansible/roles/k3s/templates/nginx-learning-platform.conf.j2
+      - infra/k8s/apps.yaml.j2
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Workflow and registry retry regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Validate workflow expressions and reusable calls
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -shellcheck=
+      - name: Validate publish shell
+        run: shellcheck deploy/dev/publish-image.sh
+      - name: Verify production workflow and classification contracts
+        run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
+      - name: Verify bounded registry failures and immutable outputs
+        run: python3 deploy/dev/tests/test-publish-image.py
