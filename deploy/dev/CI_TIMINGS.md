@@ -30,7 +30,29 @@ Thay đổi sau điều tra: `npm ci --no-audit --no-fund` tránh request audit/
 
 Baseline Backend CI tại đúng application source `89ba004bc514ea0aef40a70eba3ae8f9afd71fcf`: [36312294024](https://github.com/SiroBaby/LearningPlatform/actions/runs/36312294024), `npm test -- --runInBand` 223 giây, install 24 giây, audit 2 giây, E2E 13 giây và MinIO 53 giây. Run này là đối chiếu lịch sử, không phải benchmark (thí nghiệm đo hiệu năng) cùng điều kiện runner/network.
 
-Kết quả hai worker sẽ được ghi từ Actions trên commit mới sau push. Chưa claim thời gian giảm trước khi có kết quả; tốc độ build song song/cache và rollout dev vẫn cần quan sát sau merge PR #184 vào develop.
+### Kết quả hai worker trên Actions (10/10/2026)
+
+PR #184 ở SHA `ffb12cc` (đã merge develop `3c39192`, gồm #188). Cùng một run Backend CI [38031322160](https://github.com/SiroBaby/LearningPlatform/actions/runs/38031322160), chạy hai lần (attempt):
+
+| Attempt | Install | Audit | `npm test -- --maxWorkers=2` | E2E | MinIO | Job backend |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 (job 114152694000) | 30 | 1 | 169 (Jest báo 168,6 giây) | 12 | 28 | 302 |
+| 2 (job 114153755291) | 19 | 1 | 122 (Jest báo 121,6 giây) | 9 | 22 | 234 |
+
+Cả hai lần: 98/98 suite, 614/614 test PASS, không có test flaky. Attempt 2 được chạy lại chủ động để có mẫu thứ hai, không phải do lỗi.
+
+Đối chiếu `--runInBand` trên cùng ngày, cùng loại runner:
+
+| Run | SHA | Jest `--runInBand` | Job backend |
+| --- | --- | ---: | ---: |
+| [38031098420](https://github.com/SiroBaby/LearningPlatform/actions/runs/38031098420) (develop, cùng application source với `ffb12cc`) | `3c39192` | 175 | 275 |
+| [38030570432](https://github.com/SiroBaby/LearningPlatform/actions/runs/38030570432) | `f9641b6` | 175 | 266 |
+| [38029580980](https://github.com/SiroBaby/LearningPlatform/actions/runs/38029580980) | `1aef364` | 225 | 336 |
+| [38027585932](https://github.com/SiroBaby/LearningPlatform/actions/runs/38027585932) | `b2d72b6` | 234 | 368 |
+| [38023847423](https://github.com/SiroBaby/LearningPlatform/actions/runs/38023847423) | `8e8245b` | 252 | 417 |
+| [38023460848](https://github.com/SiroBaby/LearningPlatform/actions/runs/38023460848) | `1eb25d3` | 170 | 267 |
+
+Nhận xét: hai worker cho 122–169 giây (trung bình 146 giây). Sáu run `--runInBand` cùng ngày cho 170–252 giây (trung vị 200 giây); trung vị lịch sử build-deploy là 191 giây. So với run develop cùng source (175 giây), mức giảm là 6–53 giây. Kết luận: có xu hướng giảm khoảng 25–30% thời gian Jest, nhưng mẫu nhỏ (2 lần) và biên nhiễu của runner lớn (riêng `--runInBand` dao động 82 giây), nên chưa phải benchmark chắc chắn. Install và audit không đổi đáng kể (`npm ci` dao động 13–49 giây theo network). Tốc độ build song song/cache và rollout dev chỉ đo được sau khi PR #184 merge vào develop, vì workflow `deploy-dev.yml` không chạy trên pull request.
 
 ## Cleanup GHCR — ticket #185
 
@@ -40,4 +62,4 @@ Cleanup chạy từ default branch (nhánh mặc định) main; build-deploy ch�
 
 ## Next step
 
-Ghi số đo/test count hai worker từ CI trên đúng commit; review/merge PR #184 vào develop rồi quan sát build/cache thực tế. #185 kiểm chứng bằng fixture và CI riêng trước merge main; không chạy DELETE thật để thử.
+Owner review/merge PR #184 vào develop, rồi quan sát build song song/cache, job `build-media-probe` và Jest hai worker ở vài run build-deploy đầu tiên. #185 kiểm chứng bằng fixture và CI riêng trước merge main; không chạy DELETE thật để thử.
