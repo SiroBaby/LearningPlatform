@@ -7,7 +7,6 @@ import {
 } from '../ai/contracts/ai-ingestion.port';
 import { JobType } from '../ai/enums/job-type.enum';
 import type { DocumentModelSelection } from '../ai/contracts/model-selection.contracts';
-import { normalizeStorageVersionId } from '../../storage/storage-version-id';
 import { ContentRepository } from './repositories/content.repository';
 import { CourseOutboxRepository } from './repositories/course-outbox.repository';
 import { DocumentStatus } from './enums/document-status.enum';
@@ -102,19 +101,13 @@ export class ForwardRelay {
 
       // Bước 1: enqueue idempotent vào đúng bảng AI của loại công việc.
       if (payload.jobType === MEDIA_PROBE_JOB_TYPE) {
-        const sourceVersionId = normalizeStorageVersionId(payload.sourceVersionId);
         if (
           !payload.fullPipelineJobId ||
           !payload.probeGeneration ||
           !payload.policyVersion ||
           payload.deletionFence === undefined ||
           !payload.sourceBucket ||
-          !payload.sourceKey ||
-          sourceVersionId === undefined ||
-          !payload.sourceEtag ||
-          payload.sourceContentLength === undefined ||
-          !Number.isSafeInteger(payload.sourceContentLength) ||
-          payload.sourceContentLength < 0
+          !payload.sourceKey
         ) {
           throw new Error('Invalid media probe request payload');
         }
@@ -129,7 +122,7 @@ export class ForwardRelay {
           probeGeneration: payload.probeGeneration,
           sourceBucket: payload.sourceBucket,
           sourceKey: payload.sourceKey,
-          sourceVersionId,
+          sourceVersionId: payload.sourceVersionId,
           sourceEtag: payload.sourceEtag,
           sourceContentLength: payload.sourceContentLength,
         });

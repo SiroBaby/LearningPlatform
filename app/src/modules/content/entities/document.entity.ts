@@ -96,7 +96,7 @@ export class Document {
   @Column({ name: 'probe_policy_version', type: 'varchar', length: 80, nullable: true })
   probePolicyVersion!: string | null;
 
-  /** Immutable media object metadata captured by confirm's HeadObject. */
+  /** Immutable media object metadata captured by the media-probe worker. */
   @Column({ name: 'media_source_bucket', type: 'varchar', length: 255, nullable: true })
   mediaSourceBucket!: string | null;
 

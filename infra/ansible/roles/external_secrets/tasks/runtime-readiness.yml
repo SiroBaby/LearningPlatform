@@ -1,0 +1,110 @@
+- name: Verify the existing ExternalSecret CRD before selected application reconciliation
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: externalsecrets.external-secrets.io
+  register: external_secrets_runtime_crd
+
+- name: Require the existing ExternalSecret CRD
+  ansible.builtin.assert:
+    that:
+      - external_secrets_runtime_crd.resources | length == 1
+    fail_msg: >-
+      External Secrets Operator is not installed. Application deployment only
+      reconciles selected runtime Secrets and will not install baseline infrastructure.
+
+- name: Wait for the existing External Secrets Operator deployment
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ external_secrets_operator_namespace }}'
+    name: external-secrets
+  register: external_secrets_runtime_operator
+  retries: 30
+  delay: 2
+  until: >-
+    external_secrets_runtime_operator.resources | length == 1 and
+    (external_secrets_runtime_operator.resources[0].status.availableReplicas | default(0) | int) > 0
+
+- name: Render selected namespace-scoped runtime ExternalSecrets once
+  ansible.builtin.set_fact:
+    external_secrets_runtime_expected_names: >-
+      {{ ['aws-parameter-store']
+         + (['learning-platform-api-runtime'] if 'api' in deployment_targets else [])
+         + (['learning-platform-go-worker-runtime', 'learning-platform-worker-runtime']
+            + (['learning-platform-media-probe-runtime'] if media_probe_worker_enabled | default(false) | bool else [])
+            if 'worker' in deployment_targets else []) }}
+    external_secrets_runtime_documents: >-
+      {{ lookup('template', 'external-secrets.yaml.j2') | from_yaml_all | list }}
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Require the selected runtime ExternalSecret document contract
+  ansible.builtin.assert:
+    fail_msg: Selected runtime ExternalSecret manifest does not match the deployment target contract.
+    that:
+      - external_secrets_runtime_documents | length == external_secrets_runtime_expected_names | length
+      - external_secrets_runtime_documents | map(attribute='metadata.name') | list == external_secrets_runtime_expected_names
+      - external_secrets_runtime_documents | map(attribute='kind') | list == ['SecretStore'] + (['ExternalSecret'] * (external_secrets_runtime_expected_names | length - 1))
+      - external_secrets_runtime_documents | map(attribute='metadata.namespace') | list == ([learning_platform_namespace] * (external_secrets_runtime_expected_names | length))
+      - >-
+        external_secrets_runtime_documents[1:]
+        | map(attribute='spec.data')
+        | flatten
+        | map(attribute='remoteRef.key')
+        | list
+        | difference(ssm_parameter_keys.values() | list)
+        | length == 0
+      - >-
+        external_secrets_runtime_documents[1:]
+        | map(attribute='spec.data')
+        | flatten
+        | map(attribute='remoteRef.key')
+        | select('match', '^/')
+        | list
+        | length == external_secrets_runtime_documents[1:]
+          | map(attribute='spec.data')
+          | flatten
+          | map(attribute='remoteRef.key')
+          | list
+          | length
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Create application namespace after validating selected runtime resources
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: '{{ learning_platform_namespace }}'
+
+- name: Reconcile only selected namespace-scoped runtime ExternalSecrets
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition: '{{ external_secrets_runtime_documents }}'
+  no_log: true
+
+- name: Wait for the selected application's AWS Parameter Store SecretStore
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: external-secrets.io/v1beta1
+    kind: SecretStore
+    namespace: '{{ learning_platform_namespace }}'
+    name: aws-parameter-store
+  register: external_secrets_runtime_store
+  retries: 30
+  delay: 2
+  until: >-
+    external_secrets_runtime_store.resources | length == 1 and
+    (external_secrets_runtime_store.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1

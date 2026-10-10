@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 
 import { DataSource, Repository } from 'typeorm';
 
@@ -145,9 +147,6 @@ describe('ContentRepository.deleteOwnedDocument', () => {
         probeGeneration: randomUUID(),
         sourceBucket: 'learning-platform-dev-media',
         sourceKey: document.storageRef,
-        sourceVersionId: 'version-race',
-        sourceEtag: 'etag-race',
-        sourceContentLength: 1024,
       }, randomUUID()),
       processingJobRepository.enqueue({
         correlationId: randomUUID(),
@@ -183,27 +182,15 @@ describe('ContentRepository.deleteOwnedDocument', () => {
     expect(processingRows[0].status).toBe(JobStatus.CANCELLED);
   });
 
-  it('canonicalizes whitespace around a persisted media VersionId', async () => {
+  it('canonicalizes whitespace around a persisted media VersionId during purge', async () => {
     const ownerId = randomUUID();
-    const document = await seedDocument(ownerId, DocumentType.VIDEO);
-    const locator = {
+    const document = await seedDocument(ownerId, DocumentType.VIDEO, {
       bucket: 'learning-platform-dev-media',
-      key: document.storageRef,
       versionId: '  version-canonical  ',
       etag: '  etag-canonical  ',
       contentLength: 1024,
-    } as const;
-
-    await repository.confirmMediaProbe(ownerId, document.id, {
-      customModelConfigId: null,
-      kind: 'PLAN',
-      platformModelId: 'platform-default',
-    }, 'media-v1', locator);
-
-    await expect(documents.findOneByOrFail({ id: document.id })).resolves.toMatchObject({
-      mediaSourceVersionId: 'version-canonical',
-      mediaSourceEtag: 'etag-canonical',
     });
+
     await repository.deleteOwnedDocument(ownerId, document.id, {
       documents: 'learning-platform-dev-documents',
       media: 'learning-platform-dev-media',
@@ -213,33 +200,26 @@ describe('ContentRepository.deleteOwnedDocument', () => {
     });
   });
 
-  it('uses the locator persisted by confirm when deletion happens before probe receipt', async () => {
+  it('does not invent a media locator when deletion happens before probe receipt', async () => {
     const ownerId = randomUUID();
     const document = await seedDocument(ownerId, DocumentType.VIDEO);
-    const locator = {
-      bucket: 'learning-platform-dev-media',
-      key: document.storageRef,
-      versionId: 'version-confirmed',
-      etag: 'etag-confirmed',
-      contentLength: 1024,
-    } as const;
 
     await repository.confirmMediaProbe(ownerId, document.id, {
       customModelConfigId: null,
       kind: 'PLAN',
       platformModelId: 'platform-default',
-    }, 'media-v1', locator);
+    }, 'media-v1', 'learning-platform-dev-media');
     await repository.deleteOwnedDocument(ownerId, document.id, {
       documents: 'learning-platform-dev-documents',
       media: 'learning-platform-dev-media',
     });
 
     await expect(manifests.findOneByOrFail({ documentId: document.id })).resolves.toMatchObject({
-      locators: [locator],
+      locators: [],
     });
   });
 
-  it('rejects a different media locator after the source identity is persisted', async () => {
+  it('keeps the persisted media locator when a later preflight disagrees', async () => {
     const ownerId = randomUUID();
     const document = await seedDocument(ownerId, DocumentType.VIDEO, {
       bucket: 'learning-platform-dev-media',
@@ -248,24 +228,20 @@ describe('ContentRepository.deleteOwnedDocument', () => {
       contentLength: 1024,
     });
 
-    await expect(repository.confirmMediaProbe(ownerId, document.id, {
-      customModelConfigId: null,
-      kind: 'PLAN',
-      platformModelId: 'platform-default',
-    }, 'media-v1', {
+    await repository.deleteOwnedDocument(ownerId, document.id, {
+      documents: 'learning-platform-dev-documents',
+      media: 'learning-platform-dev-media',
+    }, {
       bucket: 'learning-platform-dev-media',
       key: document.storageRef,
       versionId: 'version-overwritten',
       etag: 'etag-overwritten',
       contentLength: 1024,
-    })).rejects.toThrow('Media source locator changed after persistence');
-
-    await expect(documents.findOneByOrFail({ id: document.id })).resolves.toMatchObject({
-      status: DocumentStatus.UPLOADED,
-      mediaSourceVersionId: 'version-confirmed',
-      mediaSourceEtag: 'etag-confirmed',
     });
-    await expect(outbox.countBy({ aggregateId: document.id })).resolves.toBe(0);
+
+    await expect(manifests.findOneByOrFail({ documentId: document.id })).resolves.toMatchObject({
+      locators: [{ versionId: 'version-confirmed', etag: 'etag-confirmed' }],
+    });
   });
 
   it('ignores stale preflight metadata after processing has persisted a source identity', async () => {
@@ -336,6 +312,302 @@ describe('ContentRepository.deleteOwnedDocument', () => {
       etag: 'etag-42',
       contentLength: 1024,
     }]);
+  });
+
+  it('includes the first-claim locator captured by a probe job alongside the current upload version', async () => {
+    const ownerId = randomUUID();
+    const document = await seedDocument(ownerId, DocumentType.VIDEO, {
+      bucket: 'learning-platform-dev-media',
+      versionId: 'version-overwritten',
+      etag: 'etag-overwritten',
+      contentLength: 1024,
+    });
+    await mediaProbeJobs.save(mediaProbeJobs.create({
+      documentId: document.id,
+      ownerId,
+      correlationId: randomUUID(),
+      probeGeneration: randomUUID(),
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId: document.fullPipelineJobId,
+      sourceBucket: 'learning-platform-dev-media',
+      sourceKey: document.storageRef,
+      sourceVersionId: 'version-first-claim',
+      sourceEtag: 'etag-first-claim',
+      sourceContentLength: 1024,
+      status: MediaProbeJobStatus.RUNNING,
+      idempotencyKey: randomUUID(),
+    }));
+
+    await repository.deleteOwnedDocument(ownerId, document.id, {
+      documents: 'learning-platform-dev-documents',
+      media: 'learning-platform-dev-media',
+    }, {
+      bucket: 'learning-platform-dev-media',
+      key: document.storageRef,
+      versionId: 'version-overwritten',
+      etag: 'etag-overwritten',
+      contentLength: 1024,
+    });
+
+    const manifest = await manifests.findOneByOrFail({ documentId: document.id });
+    expect(manifest.locators.map((locator) => locator.versionId).sort()).toEqual([
+      'version-first-claim',
+      'version-overwritten',
+    ]);
+    expect(manifest.locators).toHaveLength(2);
+  });
+
+  it('serializes deletion with first locator persistence and retains both versions', async () => {
+    const ownerId = randomUUID();
+    const document = await seedDocument(ownerId, DocumentType.VIDEO);
+    const generation = randomUUID();
+    const probeJob = await mediaProbeJobs.save(mediaProbeJobs.create({
+      documentId: document.id,
+      ownerId,
+      correlationId: randomUUID(),
+      probeGeneration: generation,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId: document.fullPipelineJobId,
+      sourceBucket: 'learning-platform-dev-media',
+      sourceKey: document.storageRef,
+      status: MediaProbeJobStatus.RUNNING,
+      attempts: 1,
+      leaseId: randomUUID(),
+      leaseUntil: new Date(Date.now() + 60_000),
+      idempotencyKey: randomUUID(),
+    }));
+    const worker = dataSource.createQueryRunner();
+    await worker.connect();
+    await worker.startTransaction();
+    try {
+      await worker.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
+        [`media-probe:${document.id}:${ownerId}`],
+      );
+      const deletion = repository.deleteOwnedDocument(ownerId, document.id, {
+        documents: 'learning-platform-dev-documents',
+        media: 'learning-platform-dev-media',
+      }, {
+        bucket: 'learning-platform-dev-media',
+        key: document.storageRef,
+        versionId: 'version-overwritten',
+        etag: 'etag-overwritten',
+        contentLength: 1024,
+      });
+
+      let deletionWaitingOnProbeLock = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const [waiter] = await db.client.query<{ readonly waiting: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_locks AS lock
+             JOIN pg_stat_activity AS activity USING (pid)
+             WHERE lock.locktype = 'advisory'
+               AND NOT lock.granted
+               AND activity.query ILIKE '%pg_advisory_xact_lock%'
+           ) AS waiting`,
+        ).then((result) => result.rows);
+        if (waiter.waiting) {
+          deletionWaitingOnProbeLock = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(deletionWaitingOnProbeLock).toBe(true);
+
+      await worker.query(
+        `UPDATE "ai"."media_probe_jobs"
+         SET "source_version_id" = 'version-first-claim',
+             "source_etag" = 'etag-first-claim',
+             "source_content_length" = 1024
+         WHERE "id" = $1 AND "document_id" = $2 AND "owner_id" = $3
+           AND "probe_generation" = $4 AND "policy_version" = 'media-v1'
+           AND "deletion_fence" = 0 AND "status" = 'RUNNING'
+           AND "source_version_id" IS NULL`,
+        [probeJob.id, document.id, ownerId, generation],
+      );
+      await worker.commitTransaction();
+      await deletion;
+
+      const manifest = await manifests.findOneByOrFail({ documentId: document.id });
+      expect(manifest.locators.map((locator) => locator.versionId).sort()).toEqual([
+        'version-first-claim',
+        'version-overwritten',
+      ]);
+      await expect(mediaProbeJobs.findOneByOrFail({ id: probeJob.id })).resolves.toMatchObject({
+        status: MediaProbeJobStatus.CANCELLED,
+      });
+    } finally {
+      if (worker.isTransactionActive) await worker.rollbackTransaction();
+      await worker.release();
+    }
+  });
+
+  it('takes the media probe lock before the document row so an in-flight enqueue cannot deadlock deletion', async () => {
+    const ownerId = randomUUID();
+    const document = await seedDocument(ownerId, DocumentType.VIDEO);
+    const enqueue = dataSource.createQueryRunner();
+    await enqueue.connect();
+    await enqueue.startTransaction();
+    try {
+      // Same order as MediaProbeJobRepository.enqueue: advisory lock, then an
+      // INSERT whose document foreign key check needs FOR KEY SHARE on the row.
+      await enqueue.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
+        [`media-probe:${document.id}:${ownerId}`],
+      );
+      const deletion = repository.deleteOwnedDocument(ownerId, document.id, {
+        documents: 'learning-platform-dev-documents',
+        media: 'learning-platform-dev-media',
+      });
+
+      let deletionWaitingOnProbeLock = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const [waiter] = await db.client.query<{ readonly waiting: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_locks AS lock
+             JOIN pg_stat_activity AS activity USING (pid)
+             WHERE lock.locktype = 'advisory'
+               AND NOT lock.granted
+               AND activity.query ILIKE '%pg_advisory_xact_lock%'
+           ) AS waiting`,
+        ).then((result) => result.rows);
+        if (waiter.waiting) {
+          deletionWaitingOnProbeLock = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(deletionWaitingOnProbeLock).toBe(true);
+
+      const [enqueued] = await enqueue.query(
+        `INSERT INTO "ai"."media_probe_jobs"
+           ("document_id", "owner_id", "correlation_id", "probe_generation",
+            "policy_version", "deletion_fence", "full_pipeline_job_id",
+            "source_bucket", "source_key", "status", "idempotency_key")
+         VALUES ($1, $2, $3, $4, 'media-v1', 0, $5,
+                 'learning-platform-dev-media', $6, 'PENDING', $7)
+         RETURNING "id"`,
+        [document.id, ownerId, randomUUID(), randomUUID(), document.fullPipelineJobId, document.storageRef, randomUUID()],
+      ) as Array<{ readonly id: string }>;
+      await enqueue.commitTransaction();
+      await expect(deletion).resolves.toMatchObject({ status: DocumentStatus.DELETING });
+
+      await expect(mediaProbeJobs.findOneByOrFail({ id: enqueued.id })).resolves.toMatchObject({
+        status: MediaProbeJobStatus.CANCELLED,
+      });
+    } finally {
+      if (enqueue.isTransactionActive) await enqueue.rollbackTransaction();
+      await enqueue.release();
+    }
+  });
+
+  it('keeps a stale Go first-claim persistence fenced behind deletion on PostgreSQL', async () => {
+    const ownerId = randomUUID();
+    const document = await seedDocument(ownerId, DocumentType.VIDEO);
+    const generation = randomUUID();
+    const probeJob = await mediaProbeJobs.save(mediaProbeJobs.create({
+      documentId: document.id,
+      ownerId,
+      correlationId: randomUUID(),
+      probeGeneration: generation,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId: document.fullPipelineJobId,
+      sourceBucket: 'learning-platform-dev-media',
+      sourceKey: document.storageRef,
+      status: MediaProbeJobStatus.RUNNING,
+      attempts: 1,
+      leaseId: randomUUID(),
+      leaseUntil: new Date(Date.now() + 60_000),
+      idempotencyKey: randomUUID(),
+    }));
+    const workerDir = resolve(__dirname, '../../../../worker');
+    const warmupEnv = { ...process.env };
+    delete warmupEnv.MEDIA_PROBE_TEST_DATABASE_URL;
+    delete warmupEnv.MEDIA_PROBE_TEST_JOB_ID;
+    const warmup = spawnSync('go', [
+      'test', './internal/mediaprobe', '-run', '^TestPersistLocatorWaitsForDeletionFence$', '-count=1',
+    ], { cwd: workerDir, encoding: 'utf8', env: warmupEnv });
+    if (warmup.status !== 0) {
+      throw new Error(`Go locator persistence test warmup failed: ${warmup.stdout}${warmup.stderr}`);
+    }
+    const deletion = dataSource.createQueryRunner();
+    await deletion.connect();
+    await deletion.startTransaction();
+    try {
+      // Same lock order as deleteOwnedDocument: advisory lock, then the Document row.
+      await deletion.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
+        [`media-probe:${document.id}:${ownerId}`],
+      );
+      await deletion.query('SELECT "id" FROM "course"."documents" WHERE "id" = $1 FOR UPDATE', [document.id]);
+      await deletion.query(
+        `UPDATE "ai"."media_probe_jobs"
+         SET "status" = 'CANCELLED', "lease_id" = NULL, "lease_until" = NULL
+         WHERE "id" = $1 AND "document_id" = $2 AND "owner_id" = $3
+           AND "deletion_fence" <= 1 AND "status" = 'RUNNING'`,
+        [probeJob.id, document.id, ownerId],
+      );
+
+      const goTest = new Promise<{ readonly code: number | null; readonly output: string }>((resolveGoTest, reject) => {
+        const child = spawn('go', [
+          'test', './internal/mediaprobe', '-run', '^TestPersistLocatorWaitsForDeletionFence$', '-count=1',
+        ], {
+          cwd: workerDir,
+          env: {
+            ...process.env,
+            MEDIA_PROBE_TEST_DATABASE_URL: db.container.getConnectionUri(),
+            MEDIA_PROBE_TEST_JOB_ID: probeJob.id,
+            PGAPPNAME: 'media-probe-persist-test',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let output = '';
+        child.stdout.setEncoding('utf8').on('data', (chunk: string) => { output += chunk; });
+        child.stderr.setEncoding('utf8').on('data', (chunk: string) => { output += chunk; });
+        child.once('error', reject);
+        child.once('close', (code) => resolveGoTest({ code, output }));
+      });
+
+      let goWorkerWaitingOnDeletionLock = false;
+      for (let attempt = 0; attempt < 3000; attempt += 1) {
+        const [waiter] = await db.client.query<{ readonly waiting: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_locks AS lock
+             JOIN pg_stat_activity AS activity USING (pid)
+             WHERE lock.locktype = 'advisory'
+               AND NOT lock.granted
+               AND activity.application_name = 'media-probe-persist-test'
+               AND activity.query ILIKE '%pg_advisory_xact_lock%'
+           ) AS waiting`,
+        ).then((result) => result.rows);
+        if (waiter.waiting) {
+          goWorkerWaitingOnDeletionLock = true;
+          break;
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+      }
+      if (!goWorkerWaitingOnDeletionLock) {
+        await deletion.commitTransaction();
+        const result = await goTest;
+        throw new Error(`Go locator persistence did not wait on advisory lock: ${result.output}`);
+      }
+      await deletion.commitTransaction();
+      const result = await goTest;
+      expect(result).toMatchObject({ code: 0 });
+      const persistedJob = await mediaProbeJobs.findOneByOrFail({ id: probeJob.id });
+      expect(persistedJob).toMatchObject({
+        status: MediaProbeJobStatus.CANCELLED,
+        sourceVersionId: null,
+        sourceEtag: null,
+        sourceContentLength: null,
+      });
+    } finally {
+      if (deletion.isTransactionActive) await deletion.rollbackTransaction();
+      await deletion.release();
+    }
   });
 
   it('unions and deduplicates every locator across two probe generations', async () => {

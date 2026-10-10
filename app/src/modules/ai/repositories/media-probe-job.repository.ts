@@ -17,14 +17,6 @@ export class MediaProbeJobRepository extends BaseRepository<MediaProbeJob> {
   }
 
   async enqueue(command: MediaProbeEnqueueCommand, idempotencyKey: string): Promise<void> {
-    const sourceVersionId = normalizeStorageVersionId(command.sourceVersionId);
-    const sourceEtag = command.sourceEtag.trim();
-    if (sourceVersionId === undefined) {
-      throw new Error('Media probe source version is unavailable');
-    }
-    if (sourceEtag === '') {
-      throw new Error('Media probe source ETag is unavailable');
-    }
     await this.dataSource.transaction(async (manager) => {
       await this.lockDocument(manager, command.documentId, command.ownerId);
 
@@ -69,9 +61,9 @@ export class MediaProbeJobRepository extends BaseRepository<MediaProbeJob> {
              AND "media_probe_jobs"."full_pipeline_job_id" = EXCLUDED."full_pipeline_job_id"
              AND "media_probe_jobs"."source_bucket" = EXCLUDED."source_bucket"
              AND "media_probe_jobs"."source_key" = EXCLUDED."source_key"
-             AND "media_probe_jobs"."source_version_id" = EXCLUDED."source_version_id"
-             AND "media_probe_jobs"."source_etag" = EXCLUDED."source_etag"
-             AND "media_probe_jobs"."source_content_length" = EXCLUDED."source_content_length"
+             AND "media_probe_jobs"."source_version_id" IS NOT DISTINCT FROM EXCLUDED."source_version_id"
+             AND "media_probe_jobs"."source_etag" IS NOT DISTINCT FROM EXCLUDED."source_etag"
+             AND "media_probe_jobs"."source_content_length" IS NOT DISTINCT FROM EXCLUDED."source_content_length"
          RETURNING "id"`,
         [
           command.documentId,
@@ -83,9 +75,9 @@ export class MediaProbeJobRepository extends BaseRepository<MediaProbeJob> {
           command.fullPipelineJobId,
           command.sourceBucket,
           command.sourceKey,
-          sourceVersionId,
-          sourceEtag,
-          command.sourceContentLength,
+          normalizeStorageVersionId(command.sourceVersionId) ?? null,
+          command.sourceEtag?.trim() ?? null,
+          command.sourceContentLength ?? null,
           idempotencyKey,
         ],
       );

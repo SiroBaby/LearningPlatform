@@ -31,6 +31,10 @@ import { DocumentStatus } from '../modules/content/enums/document-status.enum';
 import { DocumentType } from '../modules/content/enums/document-type.enum';
 import { OutboxEvent } from '../modules/content/entities/outbox-event.entity';
 import { ContentRepository } from '../modules/content/repositories/content.repository';
+import { ProcessingJob } from '../modules/ai/entities/processing-job.entity';
+import { JobStatus } from '../modules/ai/enums/job-status.enum';
+import { JobType } from '../modules/ai/enums/job-type.enum';
+import { ContentService } from '../modules/content/content.service';
 import { QuestionEntity } from '../modules/assessment/entities/question.entity';
 import { QuizEntity } from '../modules/assessment/entities/quiz.entity';
 import { QuizRepository } from '../modules/assessment/repositories/quiz.repository';
@@ -416,7 +420,7 @@ describe('ReturnRelay', () => {
     })).toBe(0);
   });
 
-  it('keeps probe completion pending and rolls back when credit reservation fails', async () => {
+  it('acknowledges probe completion when budget is exhausted and allows later returns to be pumped', async () => {
     const ownerId = randomUUID();
     const probeGeneration = randomUUID();
     const fullPipelineJobId = randomUUID();
@@ -489,20 +493,119 @@ describe('ReturnRelay', () => {
       },
     }));
 
-    await expect(relay.pump(10)).rejects.toThrow('BUDGET_EXHAUSTED');
+    await relay.pump(10);
 
-    expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(DocumentStatus.PROBING);
-    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).toBeNull();
+    expect(await documents.findOneByOrFail({ id: document.id })).toMatchObject({
+      status: DocumentStatus.FAILED,
+      errorCode: DocumentProcessingFailureCode.BUDGET_EXHAUSTED,
+      budgetStatus: 'EXHAUSTED',
+      mediaSourceVersionId: 'version-1',
+      mediaSourceEtag: 'etag-1',
+      mediaSourceContentLength: '100',
+    });
+    expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
     expect(await courseOutbox.count({
-      where: { aggregateId: document.id, eventType: 'DocumentProbeRequested' },
-    })).toBe(1);
+      where: { aggregateId: document.id, eventType: 'DocumentReadyForProcessing' },
+    })).toBe(0);
     expect((await db.client.query(
       'SELECT "available_credits", "reserved_credits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1',
       [ownerId],
     )).rows).toEqual([{ available_credits: '10', reserved_credits: '0' }]);
+
+    const duplicateEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProbeCompleted',
+      payload: event.payload,
+    }));
+    await relay.pump(10);
+    expect((await outbox.findOneByOrFail({ id: duplicateEvent.id })).publishedAt).not.toBeNull();
+
+    const nextGeneration = randomUUID();
+    const nextDocument = await documents.save(documents.create({
+      estimatedCredits: 80,
+      modelSelectionKind: 'PLAN',
+      ownerId: randomUUID(),
+      originalName: 'next.mp4',
+      platformModelId: randomUUID(),
+      sizeBytes: 100,
+      status: DocumentStatus.PROBING,
+      storageRef: `media/${randomUUID()}.mp4`,
+      type: DocumentType.VIDEO,
+      probeGeneration: nextGeneration,
+      probePolicyVersion: 'media-v1',
+      processingAttempt: 1,
+      mediaSourceBucket: 'media',
+      mediaSourceVersionId: 'version-next',
+      mediaSourceEtag: 'etag-next',
+      mediaSourceContentLength: 100,
+      deletionFence: 0,
+    }));
+    const nextOwnerId = nextDocument.ownerId;
+    await db.client.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 100)',
+      [nextOwnerId],
+    );
+    const nextFullPipelineJobId = randomUUID();
+    await courseOutbox.save(courseOutbox.create({
+      aggregateId: nextDocument.id,
+      eventType: 'DocumentProbeRequested',
+      payload: {
+        deletionFence: 0,
+        documentId: nextDocument.id,
+        fullPipelineJobId: nextFullPipelineJobId,
+        jobType: 'MEDIA_PROBE',
+        ownerId: nextOwnerId,
+        policyVersion: 'media-v1',
+        probeGeneration: nextGeneration,
+        sourceBucket: 'media',
+        sourceKey: nextDocument.storageRef,
+        sourceVersionId: 'version-next',
+        sourceEtag: 'etag-next',
+        sourceContentLength: 100,
+      },
+      publishedAt: null,
+    }));
+    const processingJobs = ds.getRepository(ProcessingJob);
+    await processingJobs.save(processingJobs.create({
+      id: nextFullPipelineJobId,
+      documentId: nextDocument.id,
+      ownerId: nextOwnerId,
+      correlationId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      status: JobStatus.PENDING,
+      attempts: 0,
+      deletionFence: 0,
+      jobType: JobType.FULL_PIPELINE,
+      probeGeneration: nextGeneration,
+      policyVersion: 'media-v1',
+    }));
+    const nextEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProbeCompleted',
+      payload: {
+        ...event.payload,
+        documentId: nextDocument.id,
+        ownerId: nextOwnerId,
+        probeGeneration: nextGeneration,
+        fullPipelineJobId: nextFullPipelineJobId,
+        probeResultId: randomUUID(),
+        locator: {
+          bucket: 'media',
+          contentLength: 100,
+          deletionFence: 0,
+          etag: 'etag-next',
+          key: nextDocument.storageRef,
+          policyVersion: 'media-v1',
+          versionId: 'version-next',
+        },
+      },
+    }));
+    await relay.pump(10);
+    expect((await outbox.findOneByOrFail({ id: nextEvent.id })).publishedAt).not.toBeNull();
+    expect((await documents.findOneByOrFail({ id: nextDocument.id })).status).toBe(DocumentStatus.PROCESSING);
   });
 
-  it('projects a terminal media probe failure without reserving credit or creating a pipeline request', async () => {
+  it('projects MEDIA_OBJECT_TOO_LARGE without reserving credit or creating a pipeline request', async () => {
     const ownerId = randomUUID();
     const probeGeneration = randomUUID();
     const document = await documents.save(documents.create({
@@ -530,7 +633,7 @@ describe('ReturnRelay', () => {
         attempt: 1,
         deletionFence: 0,
         documentId: document.id,
-        errorCode: DocumentProcessingFailureCode.PROCESSING_FAILED,
+        errorCode: DocumentProcessingFailureCode.MEDIA_OBJECT_TOO_LARGE,
         errorMessage: 'Processing failed',
         jobType: 'MEDIA_PROBE',
         leaseId: randomUUID(),
@@ -552,7 +655,7 @@ describe('ReturnRelay', () => {
 
     const failed = await documents.findOneByOrFail({ id: document.id });
     expect(failed.status).toBe(DocumentStatus.FAILED);
-    expect(failed.errorCode).toBe(DocumentProcessingFailureCode.PROCESSING_FAILED);
+    expect(failed.errorCode).toBe(DocumentProcessingFailureCode.MEDIA_OBJECT_TOO_LARGE);
     expect(failed.errorMessage).toBe('Processing failed');
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
     expect((await outbox.findOneByOrFail({ id: replayEvent.id })).publishedAt).not.toBeNull();
@@ -561,6 +664,109 @@ describe('ReturnRelay', () => {
       'SELECT "available_credits", "reserved_credits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1',
       [ownerId],
     )).rows).toEqual([{ available_credits: '100', reserved_credits: '0' }]);
+  });
+
+  it('retains the captured locator on a retryable terminal probe failure and retries idempotently', async () => {
+    const ownerId = randomUUID();
+    const probeGeneration = randomUUID();
+    const fullPipelineJobId = randomUUID();
+    const sourceBucket = 'learning-platform-dev-media';
+    const document = await documents.save(documents.create({
+      modelSelectionKind: 'PLAN',
+      ownerId,
+      originalName: 'lecture.mp4',
+      platformModelId: randomUUID(),
+      sizeBytes: 100,
+      status: DocumentStatus.PROBING,
+      storageRef: `media/${randomUUID()}.mp4`,
+      type: DocumentType.VIDEO,
+      probeGeneration,
+      probePolicyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId,
+      processingAttempt: 1,
+    }));
+    const locator = {
+      bucket: sourceBucket,
+      contentLength: 100,
+      deletionFence: 0,
+      etag: 'etag-captured',
+      key: document.storageRef,
+      policyVersion: 'media-v1',
+      versionId: 'version-captured',
+    };
+    await courseOutbox.save(courseOutbox.create({
+      aggregateId: document.id,
+      eventType: 'DocumentProbeRequested',
+      payload: {
+        documentId: document.id,
+        fullPipelineJobId,
+        jobType: 'MEDIA_PROBE',
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        deletionFence: 0,
+        sourceBucket,
+        sourceKey: document.storageRef,
+      },
+    }));
+    const failedEvent = await outbox.save(outbox.create({
+      aggregateId: randomUUID(),
+      eventType: 'DocumentProbeFailed',
+      payload: {
+        attempt: 1,
+        deletionFence: 0,
+        documentId: document.id,
+        errorCode: DocumentProcessingFailureCode.MEDIA_PROBE_STORAGE_TEMPORARY,
+        errorMessage: 'Media storage is temporarily unavailable.',
+        jobType: 'MEDIA_PROBE',
+        leaseId: randomUUID(),
+        locator,
+        ownerId,
+        policyVersion: 'media-v1',
+        probeGeneration,
+        status: 'FAILED',
+        version: 1,
+      },
+    }));
+
+    await relay.pump(10);
+    const failed = await documents.findOneByOrFail({ id: document.id });
+    expect(failed).toMatchObject({
+      status: DocumentStatus.FAILED,
+      errorCode: DocumentProcessingFailureCode.MEDIA_PROBE_STORAGE_TEMPORARY,
+      mediaSourceBucket: sourceBucket,
+      mediaSourceVersionId: locator.versionId,
+      mediaSourceEtag: locator.etag,
+    });
+    expect(Number(failed.mediaSourceContentLength)).toBe(locator.contentLength);
+
+    const service = new ContentService(
+      new ContentRepository(ds),
+      { getBucketName: () => sourceBucket } as never,
+      null as never,
+      null as never,
+    );
+    const retries = await Promise.all([
+      service.retry(ownerId, document.id),
+      service.retry(ownerId, document.id),
+    ]);
+    expect(retries.map((result) => result.probeGeneration).filter((value) => value === failed.probeGeneration)).toHaveLength(0);
+    expect(retries[0].probeGeneration).toBe(retries[1].probeGeneration);
+    expect(retries[0].status).toBe(DocumentStatus.PROBING);
+    const retryRequests = await courseOutbox.find({
+      where: { aggregateId: document.id, eventType: 'DocumentProbeRequested' },
+    });
+    expect(retryRequests).toHaveLength(2);
+    expect(retryRequests.find((request) => request.payload.probeGeneration === retries[0].probeGeneration)?.payload)
+      .toMatchObject({
+        sourceBucket,
+        sourceKey: locator.key,
+        sourceVersionId: locator.versionId,
+        sourceEtag: locator.etag,
+        sourceContentLength: locator.contentLength,
+      });
+    expect((await outbox.findOneByOrFail({ id: failedEvent.id })).publishedAt).not.toBeNull();
   });
 
   it('acknowledges replayed and stale media probe failures without changing the current probe', async () => {

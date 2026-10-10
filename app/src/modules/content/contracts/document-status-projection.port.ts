@@ -55,6 +55,7 @@ export interface DocumentProbeFailureCommand {
   readonly ownerId: string;
   readonly policyVersion: string;
   readonly probeGeneration: string;
+  readonly locator?: DocumentProbeLocator;
 }
 
 export interface DocumentStatusProjectionCommand {

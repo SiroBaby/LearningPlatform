@@ -139,7 +139,21 @@ func run() error {
 		return newBootstrapFailure(bootstrapDatabase)
 	}
 	defer store.Close()
-	objects, err := processing.NewS3Reader(workerConfig.Storage.Endpoint, workerConfig.Storage.AccessKey, workerConfig.Storage.SecretKey, workerConfig.Storage.Bucket)
+	var objects *processing.S3Reader
+	if workerConfig.MediaStorage.Bucket != "" {
+		objects, err = processing.NewS3ReaderWithMedia(
+			workerConfig.Storage.Endpoint,
+			workerConfig.Storage.AccessKey,
+			workerConfig.Storage.SecretKey,
+			workerConfig.Storage.Bucket,
+			workerConfig.MediaStorage.AccessKey,
+			workerConfig.MediaStorage.SecretKey,
+			workerConfig.MediaStorage.Bucket,
+			workerConfig.ObjectStorageProxyURL,
+		)
+	} else {
+		objects, err = processing.NewS3Reader(workerConfig.Storage.Endpoint, workerConfig.Storage.AccessKey, workerConfig.Storage.SecretKey, workerConfig.Storage.Bucket)
+	}
 	if err != nil {
 		return newBootstrapFailure(bootstrapStorage)
 	}

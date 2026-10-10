@@ -13,10 +13,13 @@ import (
 
 const (
 	healthAddressEnvironment              = "AI_WORKER_HEALTH_ADDRESS"
+	mediaProbeHealthAddressEnvironment    = "MEDIA_PROBE_HEALTH_ADDRESS"
 	databaseHostEnvironment               = "DB_HOST"
 	databasePortEnvironment               = "DB_PORT"
 	databaseUserEnvironment               = "DB_USER"
 	databasePasswordEnvironment           = "DB_PASSWORD"
+	mediaProbeDatabaseUserEnvironment     = "MEDIA_PROBE_DB_USER"
+	mediaProbeDatabasePasswordEnvironment = "MEDIA_PROBE_DB_PASSWORD"
 	databaseNameEnvironment               = "DB_NAME"
 	storageEndpointEnvironment            = "OBJECT_STORAGE_ENDPOINT"
 	storageAccessKeyEnvironment           = "OBJECT_STORAGE_ACCESS_KEY"
@@ -89,23 +92,37 @@ type Probe struct {
 // any AI-provider credential. Probe credentials and ffprobe bounds are kept
 // separate from the full-pipeline worker configuration.
 func LoadMediaProbe(lookup LookupEnv) (Config, error) {
-	for _, key := range []string{mediaBucketEnvironment, mediaProbeAccessKeyEnvironment, mediaProbeSecretKeyEnvironment} {
+	for _, key := range []string{
+		mediaBucketEnvironment,
+		mediaProbeAccessKeyEnvironment,
+		mediaProbeSecretKeyEnvironment,
+		mediaProbeDatabaseUserEnvironment,
+		mediaProbeDatabasePasswordEnvironment,
+	} {
 		if _, err := required(lookup, key); err != nil {
 			return Config{}, err
 		}
 	}
 	loaded, err := Load(func(key string) (string, bool) {
+		if key == healthAddressEnvironment {
+			return value(lookup, mediaProbeHealthAddressEnvironment, "127.0.0.1:3404"), true
+		}
 		if key == llmProviderEnvironment {
 			return "fake", true
 		}
 		switch key {
+		case databaseUserEnvironment:
+			return lookup(mediaProbeDatabaseUserEnvironment)
+		case databasePasswordEnvironment:
+			return lookup(mediaProbeDatabasePasswordEnvironment)
 		case storageBucketEnvironment:
 			return lookup(mediaBucketEnvironment)
 		case storageAccessKeyEnvironment:
 			return lookup(mediaProbeAccessKeyEnvironment)
 		case storageSecretKeyEnvironment:
 			return lookup(mediaProbeSecretKeyEnvironment)
-		case mediaBucketEnvironment, mediaProbeAccessKeyEnvironment, mediaProbeSecretKeyEnvironment:
+		case mediaBucketEnvironment, mediaProbeAccessKeyEnvironment, mediaProbeSecretKeyEnvironment,
+			fullPipelineMediaAccessKeyEnvironment, fullPipelineMediaSecretKeyEnvironment:
 			return "", false
 		}
 		return lookup(key)
@@ -117,9 +134,13 @@ func LoadMediaProbe(lookup LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	timeout, err := boundedDuration(lookup, probeTimeoutEnvironment, 10*time.Minute, time.Millisecond, 15*time.Minute)
+	timeout, err := boundedDuration(lookup, probeTimeoutEnvironment, 2*time.Minute, time.Millisecond, 10*time.Minute)
 	if err != nil {
 		return Config{}, err
+	}
+	// A probe timeout at or above the job timeout would surface as a retryable job deadline.
+	if timeout >= loaded.JobTimeout {
+		return Config{}, fmt.Errorf("%s must be shorter than %s", probeTimeoutEnvironment, jobTimeoutEnvironment)
 	}
 	outputBytes, err := boundedInt64(lookup, probeOutputBytesEnvironment, 1024*1024, 1024, 16*1024*1024)
 	if err != nil {
@@ -143,7 +164,7 @@ func LoadMediaProbe(lookup LookupEnv) (Config, error) {
 		LLM:                   loaded.LLM,
 		Probe: Probe{
 			BinaryPath:      value(lookup, probeBinaryPathEnvironment, "/usr/local/bin/ffprobe"),
-			ExpectedVersion: value(lookup, probeVersionEnvironment, "6.1.2"),
+			ExpectedVersion: value(lookup, probeVersionEnvironment, "8.1"),
 			Timeout:         timeout,
 			OutputMaxBytes:  outputBytes,
 			TempDir:         value(lookup, probeTempDirEnvironment, "/tmp/media-probe"),

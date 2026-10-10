@@ -40,6 +40,8 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: worker/go.mod
+      - name: Verify backend CI fixture dependency
+        run: bash ../deploy/dev/tests/test-backend-ci-workflow.sh
       - run: npm ci
       - name: Audit high-severity dependencies
         run: timeout 180s node ../deploy/dev/audit-high.js
@@ -49,6 +51,12 @@ jobs:
       - run: npx tsc -p tsconfig.spec.json --noEmit
       - name: Prepare local worker fixture
         run: cp ../worker/.env.example ../worker/.env
+      - name: Install ffmpeg for local media fixture
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes ffmpeg
+          fi
       - name: Run real MinIO S3-compatible round trip
         run: bash ../worker/scripts/local-document-e2e.sh
       - name: Verify production dependency graph

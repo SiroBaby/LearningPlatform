@@ -775,7 +775,8 @@ type storeMock struct {
 	replaced, completed, failed, retried bool
 }
 
-func (store *storeMock) Claim(context.Context) (*processing.Job, error) { return store.job, nil }
+func (store *storeMock) Claim(context.Context) (*processing.Job, error)    { return store.job, nil }
+func (store *storeMock) CheckActive(context.Context, processing.Job) error { return nil }
 func (store *storeMock) Source(context.Context, processing.Job) (processing.Source, error) {
 	return store.source, nil
 }
@@ -841,6 +842,8 @@ func (store *poolStore) Claim(context.Context) (*processing.Job, error) {
 	jobID := store.job.Add(1)
 	return &processing.Job{ID: "job-" + strconv.FormatInt(jobID, 10), DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1}, nil
 }
+
+func (store *poolStore) CheckActive(context.Context, processing.Job) error { return nil }
 
 func (store *poolStore) Source(context.Context, processing.Job) (processing.Source, error) {
 	return processing.Source{StorageRef: "document.txt", Type: "TEXT"}, nil

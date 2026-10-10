@@ -198,16 +198,6 @@ export class ContentService {
     ) !== null;
   }
 
-  private hasPartialMediaSourceIdentity(document: Document): boolean {
-    return Boolean(
-      document.mediaSourceBucket?.trim() ||
-      document.mediaSourceVersionId?.trim() ||
-      document.mediaSourceEtag?.trim() ||
-      (document.mediaSourceContentLength !== null &&
-        document.mediaSourceContentLength !== undefined),
-    );
-  }
-
   private getPersistedMediaSourceLocator(
     document: Document,
     mediaBucket: string,
@@ -355,6 +345,9 @@ export class ContentService {
         message: `Document ${id} not found`,
       });
     }
+    if (document.status === DocumentStatus.PROBING) {
+      return document;
+    }
     if (document.status !== DocumentStatus.FAILED) {
       throw new ConflictException({
         code: 'DOCUMENT_RETRY_NOT_ALLOWED',
@@ -375,10 +368,9 @@ export class ContentService {
   }
 
   /**
-   * Confirm upload xong: verify file trên storage, rồi trong MỘT transaction
-   * chỉ chạm schema `course` (ADR-0010): CAS status UPLOADED/FAILED -> PROCESSING
-   * + ghi outbox(DocumentReadyForProcessing) mang owner_id (ADR-0005/0018).
-   * Idempotent qua CAS: re-confirm không tạo outbox thứ hai.
+   * Confirm upload xong: text/document files are verified immediately. Media
+   * files enter PROBING so the isolated probe worker can capture the exact
+   * version before any processing credit is reserved.
    */
   async confirm(ownerId: string, id: string): Promise<Document> {
     const document = await this.contentRepository.findByOwnerId(ownerId, id);
@@ -428,38 +420,23 @@ export class ContentService {
     const mediaBucket = policy.bucket === 'media'
       ? this.storage.getBucketName('media')
       : undefined;
-    const persistedMediaLocator = mediaBucket
-      ? this.getPersistedMediaSourceLocator(document, mediaBucket)
-      : null;
-    if (mediaBucket && this.hasPartialMediaSourceIdentity(document) && !persistedMediaLocator) {
+    if (
+      mediaBucket &&
+      document.status === DocumentStatus.FAILED &&
+      this.getPersistedMediaSourceLocator(document, mediaBucket) === null
+    ) {
+      // Without a first-claim locator, retrying could probe a replaced object.
       throw this.mediaSourceIdentityUnavailable();
     }
-
-    let mediaLocator: DocumentPurgeLocator | undefined;
-    if (persistedMediaLocator) {
-      // A retry reuses the exact version captured by the first confirmation.
-      // Never re-read the mutable latest key after that identity is persisted.
-      mediaLocator = persistedMediaLocator;
-    } else {
+    if (!mediaBucket) {
       const v = await this.verifier.verify(document.storageRef, document.type, policy.bucket);
       if (
         !v.exists ||
         v.sizeBytes !== declaredSizeBytes ||
-        v.contentValidation === 'INVALID' ||
-        (policy.bucket === 'media' && (!normalizeStorageVersionId(v.versionId) || !v.etag?.trim()))
+        v.contentValidation === 'INVALID'
       ) {
         throw new BadRequestException('Uploaded file failed verification');
       }
-
-      mediaLocator = policy.bucket === 'media'
-        ? {
-          bucket: mediaBucket!,
-          key: document.storageRef,
-          versionId: normalizeStorageVersionId(v.versionId)!,
-          etag: v.etag!.trim(),
-          contentLength: v.sizeBytes,
-        }
-        : undefined;
     }
 
     const selection: DocumentModelSelection = {
@@ -473,7 +450,7 @@ export class ContentService {
         id,
         selection,
         MEDIA_PROBE_POLICY_VERSION,
-        mediaLocator!,
+        mediaBucket!,
       )
       : mode === 'RETRY'
         ? await this.contentRepository.retryProcessing(ownerId, id, selection)

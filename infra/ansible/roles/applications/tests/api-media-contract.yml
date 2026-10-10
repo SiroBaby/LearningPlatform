@@ -101,6 +101,16 @@
              | selectattr('secretKey', 'equalto', 'OBJECT_STORAGE_MEDIA_BUCKET')
              | map(attribute='remoteRef.key') | list)
             == [ssm_parameter_keys.object_storage_media_bucket]
+          - >-
+            (applications_enabled_api_runtime.spec.data
+             | selectattr('secretKey', 'equalto', 'OBJECT_STORAGE_API_MEDIA_ACCESS_KEY')
+             | map(attribute='remoteRef.key') | list)
+            == [ssm_parameter_keys.object_storage_api_media_access_key]
+          - >-
+            (applications_enabled_api_runtime.spec.data
+             | selectattr('secretKey', 'equalto', 'OBJECT_STORAGE_API_MEDIA_SECRET_KEY')
+             | map(attribute='remoteRef.key') | list)
+            == [ssm_parameter_keys.object_storage_api_media_secret_key]
           - applications_enabled_api_deployments[0].spec.template.spec.containers[0].env | to_json is not search('learning-platform-media-probe-runtime')
         fail_msg: >-
           A valid API media rollout must enable the feature and source the

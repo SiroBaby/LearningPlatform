@@ -29,10 +29,10 @@ export interface MediaProbeEnqueueCommand {
   readonly probeGeneration: string;
   readonly sourceBucket: string;
   readonly sourceKey: string;
-  /** Immutable object identity captured during media confirmation. */
-  readonly sourceVersionId: string;
-  readonly sourceEtag: string;
-  readonly sourceContentLength: number;
+  /** Present only when retrying a probe with its previously captured locator. */
+  readonly sourceVersionId?: string;
+  readonly sourceEtag?: string;
+  readonly sourceContentLength?: number;
 }
 
 export interface DocumentCancellationCommand {

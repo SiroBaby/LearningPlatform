@@ -21,6 +21,14 @@ export class ContentMappingProfile {
       UploadUrlResult,
       UploadUrlResponseDto,
       forMember(
+        (destination) => destination.documentId,
+        mapFrom((source) => source.documentId),
+      ),
+      forMember(
+        (destination) => destination.uploadUrl,
+        mapFrom((source) => source.uploadUrl),
+      ),
+      forMember(
         (destination) => destination.uploadFields,
         mapFrom((source) => source.uploadFields),
       ),
@@ -44,6 +52,10 @@ export class ContentMappingProfile {
       mapper,
       Document,
       DocumentResponseDto,
+      forMember(
+        (destination) => destination.type,
+        mapFrom((source) => source.type),
+      ),
       forMember(
         (destination) => destination.status,
         mapFrom((source) => source.status),
