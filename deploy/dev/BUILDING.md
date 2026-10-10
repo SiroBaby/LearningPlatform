@@ -6,9 +6,9 @@ Workflow `deploy-dev.yml` vẫn nhận push trên `develop` và các target th�
 
 `image-quality-gate` giữ nguyên điều kiện kiểm tra chất lượng trước đây: mọi job kiểm tra phải thành công hoặc được bỏ qua theo phân loại. Sau gate, `build-api`, `build-web`, `build-go-worker` và `build-media-probe` chạy song song khi runtime tương ứng được chọn; hai image Go dùng chung `worker/Dockerfile` nhưng build đúng target `ai-worker` và `media-probe`. API và worker NestJS tiếp tục dùng chung image backend.
 
-Ba job gọi `build-image.yml`. Job `build-images` thu thập và kiểm tra digest (mã băm manifest bất biến) cho mọi image được chọn trước khi cung cấp đúng các đầu ra `api_digest`, `web_digest`, `go_worker_digest` cho deploy. Build thất bại, bị hủy hoặc thiếu digest đều chặn deploy.
+Bốn job gọi `build-image.yml`. Job `build-images` thu thập và kiểm tra digest (mã băm manifest bất biến) cho mọi image được chọn trước khi cung cấp đúng các đầu ra `api_digest`, `web_digest`, `go_worker_digest`, `media_probe_digest` cho deploy. Build thất bại, bị hủy hoặc thiếu digest đều chặn deploy.
 
-Context và Dockerfile giữ nguyên: `app`/`app/Dockerfile`, `web`/`web/Dockerfile`, `.`/`worker/Dockerfile`. Kiến trúc là `linux/amd64`, tương ứng runner Ubuntu hiện có; manifest tiếp tục có provenance (thông tin nguồn gốc build) tối thiểu. Tag vẫn là `sha-<commit SHA>` và triển khai vẫn dùng `image@sha256:...`.
+Context và Dockerfile giữ nguyên: `app`/`app/Dockerfile`, `web`/`web/Dockerfile`, `.`/`worker/Dockerfile` (build hai target `ai-worker` và `media-probe`). Kiến trúc là `linux/amd64`, tương ứng runner Ubuntu hiện có; manifest tiếp tục có provenance (thông tin nguồn gốc build) tối thiểu. Tag vẫn là `sha-<commit SHA>` và triển khai vẫn dùng `image@sha256:...`.
 
 ## Cache và publish
 
