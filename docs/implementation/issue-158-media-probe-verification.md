@@ -226,11 +226,10 @@ từ branch hoặc working tree.
   phía sau của issue #160. Các dữ kiện không giải thích lỗi `EPIPE` trước đó
   và không phải nguyên nhân gốc đã được tìm ra: lỗi ấy từng xuất hiện khoảng
   `3 ms` và hiện chưa được tái hiện. Không có sửa đổi mã ứng dụng.
-- Kết luận issue #158 vẫn là `PARTIAL`: các cohort này không tái hiện lỗi, không
-  chứng minh nguyên nhân đã được loại trừ, và không xác định Node 25 là thủ
-  phạm. **Next step:** chờ/thu một lần bắt lỗi `EPIPE` có trace phía nhận trong
-  cùng cửa sổ request để xác định peer đóng kết nối; giữ issue mở cho tới khi có
-  bằng chứng đó. Chưa có sửa lỗi, deploy hay publish.
+- Kết luận tại thời điểm ghi nhận phần này là `PARTIAL`: cohort khi đó không tái
+  hiện lỗi và không xác định Node 25 là thủ phạm. Các lượt có capture mới hơn ở
+  phần bổ sung cuối tài liệu thay thế nhận định về tình trạng tái hiện `EPIPE`;
+  chúng vẫn chưa xác định peer đóng kết nối. Chưa có deploy.
 
 ## Follow-up relay và giới hạn credit - 2026-10-10
 
@@ -350,3 +349,45 @@ từ branch hoặc working tree.
   peer đóng socket chưa rõ. **Next step:** giữ issue #158 mở cho đến khi có trace
   phía nhận trong đúng cửa sổ lỗi, đồng thời hoàn tất proxy/network và rendered
   deployment contract theo các mục chưa đánh dấu. Không deploy nhánh review này.
+
+## Bổ sung kiểm chứng nhánh review - 2026-10-10
+
+- Harness tracked hỗ trợ `LOCAL_DOCUMENT_E2E_MEDIA_PROBE_IMAGE` để chạy chính
+  image Linux của media-probe trên mạng fixture riêng; API vẫn gửi presigned
+  multipart POST tới MinIO như trước. Kiểm tra này dùng Node `v22.22.2` native
+  Darwin arm64, chế độ provider fake cho AI worker, và image
+  `learningplatform-media-probe:issue-158-current` có image ID
+  `sha256:eebab8babbec037cf128c78ff8ba640cc2deacad23b14a06d7d64b42e66f8113`.
+  Image báo ffprobe `8.1.3-16-ge0a878dd70-20261009`; health và readiness đều pass.
+- Lượt chạy có receiver capture kết thúc `PASS`: Document `PROCESSING`, probe
+  `COMPLETED`, VersionId lưu trong probe khớp VersionId receipt, một job
+  `FULL_PIPELINE` ở `PENDING`. MinIO trace đã sanitize ghi policy POST `204`,
+  `HeadObject 200` và `GetObject 200`. Artifact:
+  `/tmp/lp158-node22-receiver.GluGCp/harness-output-pass.txt` SHA-256
+  `99a5b6d9f1c88536dc963d8cd1f524ad043137a2063f5d9d29b4d8fd43e82022`;
+  `/tmp/lp158-node22-receiver.GluGCp/minio-trace.jsonl` SHA-256
+  `23d59a3b1fe7125265b141ce042be849ac90bb451d0651755d02f97d3d30e9bb`.
+  Receiver capture control sẵn sàng; TCP flags JSONL rỗng nên không chứng minh
+  FIN/RST hay peer đóng socket.
+- Một lượt Node `v22.22.2` khác với cùng image mode dừng tại presigned upload:
+  client trả marker đã sanitize `TypeError`, `code=EPIPE`,
+  `causeCode=UNKNOWN`; artifact
+  `/tmp/lp158-media-probe-image-e2e-node22-20261010.txt` SHA-256
+  `c378e10e0cd94fea8b0112305a6455787c1bcd5b615b139719603f2db9be7104`.
+  Như vậy local upload `EPIPE` vẫn tái hiện không ổn định; lượt pass chứng minh
+  đường nghiệp vụ hoạt động trong một lần, không xác định nguyên nhân và không
+  chứng minh lỗi đã được sửa.
+- Trên SHA tích hợp cuối cùng `ea53c93872362ce104a98e9280ccfe64788b6643`, chín
+  Jest suite mục tiêu pass với 126 test; `npm run build` pass và xác minh 68
+  migration assets; `go test ./...`, `go test -race ./internal/mediaprobe`,
+  kiểm tra workflow/classifier, application media contract và
+  `bash infra/scripts/validate.sh` đều pass. Bản ghi tổng hợp kiểm tra mục tiêu:
+  `/tmp/lp158-final-sha-test-results-20261010.txt` SHA-256
+  `7c3518d3707ce52a4a8744318fe84fcde7b5abe9694aa7be6b4a5e24a8d7192a`;
+  log hạ tầng đầy đủ:
+  `/tmp/lp158-integration-infra-validation-20261010.log` SHA-256
+  `cf8500958e197db83bdcbbb6e36c1bcb0d566db2a0e47b7b35ad4c5ff276f908`.
+- Issue #158 vẫn `PARTIAL`: bằng chứng runtime chỉ local với provider fake và
+  image probe đã pin; chưa deploy hoặc kiểm chứng trên VPS, chưa hoàn tất các
+  cổng D1-D10. **Next step:** review PR và tiếp tục giữ ticket mở; nguyên nhân
+  gốc của `EPIPE` và bằng chứng topology VPS còn thiếu.
