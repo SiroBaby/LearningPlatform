@@ -69,6 +69,23 @@ Thay đổi: mọi job cần ffmpeg/ffprobe gọi `worker/scripts/install-media-
 
 Job Backend giảm 538 giây (khoảng 9 phút) trong cặp run này; Jest hai worker ở run sau là 153 giây, nằm trong dải đã đo ở trên. Giới hạn: artifact tải từ GitHub Release của BtbN; nếu release bị xóa thì cả build image media-probe lẫn CI sẽ fail-closed, cần nâng pin trong `worker/Dockerfile`.
 
+## Build song song sau merge (10/10/2026)
+
+Merge PR #184 (`e6b79ad`), run [38045911082](https://github.com/SiroBaby/LearningPlatform/actions/runs/38045911082), FAIL tại `Collect selected image digests`. Lần push đó không đổi web nên `Frontend quality` bị skip hợp lệ. `success()` ngầm định của các job `build-*` xét mọi ancestor bắc cầu, nên cả bốn build bị skip và collector fail-closed (dừng an toàn); không có deploy. PR #195 (`d53552c`) sửa bằng `always() && needs.image-quality-gate.result == 'success'`. Push của #195 chỉ đổi workflow, nên run [38046678853](https://github.com/SiroBaby/LearningPlatform/actions/runs/38046678853) không chọn runtime nào.
+
+Owner cho phép chạy `workflow_dispatch` target `worker` trên `d53552c`, run [38046820045](https://github.com/SiroBaby/LearningPlatform/actions/runs/38046820045): `web=false`, `backend=true`, `go_worker=true`, tức tái hiện đúng ca `Frontend quality` bị skip. Kết quả: SUCCESS; ba build chạy song song, mỗi build publish GHCR thành công ở lần thử đầu; collector PASS; `deployment "worker" successfully rolled out`.
+
+| Job | Bắt đầu–kết thúc (UTC) | Giây | Ghi chú |
+| --- | --- | ---: | --- |
+| Backend quality | 10:59:50–11:02:32 | 162 | Jest hai worker 113 giây |
+| Worker quality | 10:59:50–11:02:02 | 132 | cài ffmpeg/ffprobe pin 12 giây (apt cũ: 17–603 giây) |
+| Build api | 11:02:40–11:04:18 | 98 | build 76 giây |
+| Build go-worker | 11:02:40–11:04:03 | 83 | build 62 giây |
+| Build media-probe | 11:02:40–11:04:21 | 101 | build 80 giây |
+| Deploy | 11:04:31–11:09:36 | 305 | Ansible 237 giây, rollout 54 giây |
+
+Pha build kéo dài 101 giây (11:02:40–11:04:21) cho ba image, thay vì tổng 282 giây nếu chạy tuần tự. Trung vị lịch sử của bước build/push tuần tự là 125 giây (với ít image hơn); đây là một mẫu, không phải benchmark. Run này là cold cache (bộ nhớ đệm trống): log có `importing cache manifest from gha` nhưng không có lớp `CACHED` nào, vì đây là lần đầu ghi scope `dev-<runtime>-v1`. Mức lợi của cache cần đo ở các run sau. Toàn workflow mất 600 giây, trong đó deploy chiếm 305 giây; #94 không đổi phần deploy.
+
 ## Cleanup GHCR — ticket #185
 
 Bốn lịch chạy tự động thất bại [30735309780](https://github.com/SiroBaby/LearningPlatform/actions/runs/30735309780), [31294348527](https://github.com/SiroBaby/LearningPlatform/actions/runs/31294348527), [31925249729](https://github.com/SiroBaby/LearningPlatform/actions/runs/31925249729), [32616484622](https://github.com/SiroBaby/LearningPlatform/actions/runs/32616484622) đều ở `Delete selected version IDs`, với `selector emitted invalid version ID`; job chỉ mất 12–15 giây. Đây là lỗi hợp đồng candidate, không phải timeout hay build chậm. Các lịch từ 30/8 đến 4/10 thành công không chứng minh mọi nhánh dữ liệu đã đúng.
@@ -77,4 +94,4 @@ Cleanup chạy từ default branch (nhánh mặc định) main; build-deploy ch�
 
 ## Next step
 
-Owner review/merge PR #184 vào develop, rồi quan sát build song song/cache, job `build-media-probe` và Jest hai worker ở vài run build-deploy đầu tiên. #185 kiểm chứng bằng fixture và CI riêng trước merge main; không chạy DELETE thật để thử.
+Quan sát cache hit của build và Jest hai worker (#194) ở các run build-deploy tiếp theo. #185 kiểm chứng bằng fixture và CI riêng trước merge main; không chạy DELETE thật để thử.
