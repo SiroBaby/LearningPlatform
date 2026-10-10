@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 import { DataSource, Repository } from 'typeorm';
@@ -464,6 +464,16 @@ describe('ContentRepository.deleteOwnedDocument', () => {
       leaseUntil: new Date(Date.now() + 60_000),
       idempotencyKey: randomUUID(),
     }));
+    const workerDir = resolve(__dirname, '../../../../worker');
+    const warmupEnv = { ...process.env };
+    delete warmupEnv.MEDIA_PROBE_TEST_DATABASE_URL;
+    delete warmupEnv.MEDIA_PROBE_TEST_JOB_ID;
+    const warmup = spawnSync('go', [
+      'test', './internal/mediaprobe', '-run', '^TestPersistLocatorWaitsForDeletionFence$', '-count=1',
+    ], { cwd: workerDir, encoding: 'utf8', env: warmupEnv });
+    if (warmup.status !== 0) {
+      throw new Error(`Go locator persistence test warmup failed: ${warmup.stdout}${warmup.stderr}`);
+    }
     const deletion = dataSource.createQueryRunner();
     await deletion.connect();
     await deletion.startTransaction();
@@ -485,7 +495,7 @@ describe('ContentRepository.deleteOwnedDocument', () => {
         const child = spawn('go', [
           'test', './internal/mediaprobe', '-run', '^TestPersistLocatorWaitsForDeletionFence$', '-count=1',
         ], {
-          cwd: resolve(__dirname, '../../../../worker'),
+          cwd: workerDir,
           env: {
             ...process.env,
             MEDIA_PROBE_TEST_DATABASE_URL: db.container.getConnectionUri(),
@@ -502,7 +512,7 @@ describe('ContentRepository.deleteOwnedDocument', () => {
       });
 
       let goWorkerWaitingOnDeletionLock = false;
-      for (let attempt = 0; attempt < 500; attempt += 1) {
+      for (let attempt = 0; attempt < 3000; attempt += 1) {
         const [waiter] = await db.client.query<{ readonly waiting: boolean }>(
           `SELECT EXISTS (
              SELECT 1 FROM pg_locks AS lock
