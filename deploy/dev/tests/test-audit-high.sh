@@ -13,7 +13,7 @@ cat > "${TEMP_DIR}/tree.json" <<'JSON'
 JSON
 
 cat > "${TEMP_DIR}/patched.json" <<'JSON'
-{"vulnerabilities":{"brace-expansion":{"name":"brace-expansion","via":[{"url":"https://github.com/advisories/GHSA-mh99-v99m-4gvg"},{"url":"https://github.com/advisories/GHSA-rgw5-rvv9-x895"}]},"minimatch":{"name":"minimatch","via":["brace-expansion"]}}}
+{"vulnerabilities":{"brace-expansion":{"name":"brace-expansion","severity":"high","via":[{"url":"https://github.com/advisories/GHSA-mh99-v99m-4gvg"},{"url":"https://github.com/advisories/GHSA-rgw5-rvv9-x895"}]},"minimatch":{"name":"minimatch","severity":"high","via":["brace-expansion"]}}}
 JSON
 
 node "${AUDIT_SCRIPT}" "${TEMP_DIR}/patched.json" "${TEMP_DIR}/tree.json"
@@ -28,7 +28,7 @@ if node "${AUDIT_SCRIPT}" "${TEMP_DIR}/patched.json" "${TEMP_DIR}/old-tree.json"
 fi
 
 cat > "${TEMP_DIR}/new-advisory.json" <<'JSON'
-{"vulnerabilities":{"brace-expansion":{"name":"brace-expansion","via":[{"url":"https://github.com/advisories/GHSA-rgw5-rvv9-x895"}]}}}
+{"vulnerabilities":{"brace-expansion":{"name":"brace-expansion","severity":"high","via":[{"url":"https://github.com/advisories/GHSA-rgw5-rvv9-x895"}]}}}
 JSON
 
 if node "${AUDIT_SCRIPT}" "${TEMP_DIR}/new-advisory.json" "${TEMP_DIR}/old-tree.json"; then
@@ -37,7 +37,7 @@ if node "${AUDIT_SCRIPT}" "${TEMP_DIR}/new-advisory.json" "${TEMP_DIR}/old-tree.
 fi
 
 cat > "${TEMP_DIR}/unexpected-brace-advisory.json" <<'JSON'
-{"vulnerabilities":{"brace-expansion":{"name":"brace-expansion","via":[{"url":"https://github.com/advisories/example"}]}}}
+{"vulnerabilities":{"brace-expansion":{"name":"brace-expansion","severity":"high","via":[{"url":"https://github.com/advisories/example"}]}}}
 JSON
 
 if node "${AUDIT_SCRIPT}" "${TEMP_DIR}/unexpected-brace-advisory.json" "${TEMP_DIR}/tree.json"; then
@@ -46,11 +46,26 @@ if node "${AUDIT_SCRIPT}" "${TEMP_DIR}/unexpected-brace-advisory.json" "${TEMP_D
 fi
 
 cat > "${TEMP_DIR}/unresolved.json" <<'JSON'
-{"vulnerabilities":{"next":{"name":"next","via":[{"url":"https://github.com/advisories/example"}]}}}
+{"vulnerabilities":{"next":{"name":"next","severity":"high","via":[{"url":"https://github.com/advisories/example"}]}}}
 JSON
 
 if node "${AUDIT_SCRIPT}" "${TEMP_DIR}/unresolved.json" "${TEMP_DIR}/tree.json"; then
   printf '%s\n' 'audit test failed: an unrelated advisory was accepted' >&2
+  exit 1
+fi
+
+cat > "${TEMP_DIR}/moderate.json" <<'JSON'
+{"vulnerabilities":{"next":{"name":"next","severity":"moderate","via":[{"url":"https://github.com/advisories/example"}]}}}
+JSON
+
+node "${AUDIT_SCRIPT}" "${TEMP_DIR}/moderate.json" "${TEMP_DIR}/tree.json"
+
+cat > "${TEMP_DIR}/critical.json" <<'JSON'
+{"vulnerabilities":{"next":{"name":"next","severity":"critical","via":[{"url":"https://github.com/advisories/example"}]}}}
+JSON
+
+if node "${AUDIT_SCRIPT}" "${TEMP_DIR}/critical.json" "${TEMP_DIR}/tree.json"; then
+  printf '%s\n' 'audit test failed: a critical advisory was accepted' >&2
   exit 1
 fi
 

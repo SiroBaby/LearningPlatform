@@ -62,7 +62,11 @@ function unresolvedVulnerabilities(audit, dependencyTree) {
     return false;
   };
 
-  return Object.keys(vulnerabilities).filter((name) => !isIgnored(name));
+  return Object.keys(vulnerabilities).filter((name) => {
+    const severity = vulnerabilities[name].severity;
+    if (severity === 'high' || severity === 'critical') return !isIgnored(name);
+    return severity !== 'low' && severity !== 'moderate' && severity !== 'info';
+  });
 }
 
 function main() {
