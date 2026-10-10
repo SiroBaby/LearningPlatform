@@ -28,10 +28,7 @@ jobs:
         with:
           go-version-file: worker/go.mod
       - name: Install ffprobe for the demuxer allowlist regression
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
-          ffprobe -version | head -n 1
+        run: bash scripts/install-media-tools.sh
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...

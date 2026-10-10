@@ -65,7 +65,7 @@ matrix = {
   ]
 }
 
-%w[build-images deploy].each do |job_name|
+%w[image-quality-gate build-images deploy].each do |job_name|
   assert(jobs.fetch(job_name).fetch('if').include?('always()'), "#{job_name} must retain always() so skipped quality needs are evaluated")
 end
 
@@ -75,7 +75,15 @@ selected_roles = playbook.fetch('roles').select { |role| (role.fetch('tags') & %
 assert(selected_roles == %w[k3s external_secrets observability], 'observability dispatch tags must exclude applications and migration role paths')
 
 matrix.each do |name, (outputs, results, build_expected, deploy_expected)|
+  results = results.merge(
+    'image-quality-gate' => build_expected ? 'success' : 'skipped',
+    'build-api' => outputs['backend'] == 'true' && build_expected ? 'success' : 'skipped',
+    'build-web' => outputs['web'] == 'true' && build_expected ? 'success' : 'skipped',
+    'build-go-worker' => 'skipped',
+    'build-media-probe' => 'skipped'
+  )
   context = workflow_context(outputs: outputs, results: results)
+  assert(workflow_job_runs?(jobs, 'image-quality-gate', context) == build_expected, "#{name}: original quality gate must be preserved")
   assert(workflow_job_runs?(jobs, 'build-images', context) == build_expected, "#{name}: build-images must evaluate its YAML if expression")
   assert(workflow_job_runs?(jobs, 'deploy', context) == deploy_expected, "#{name}: deploy must evaluate its YAML if expression")
 end

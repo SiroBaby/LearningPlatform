@@ -132,14 +132,13 @@ assert(failures, ansible_tags(step_by_name(jobs.fetch('deploy'), 'Apply selected
 application_roles = playbook.fetch('roles').select { |role| (role.fetch('tags') & %w[cert_manager applications]).any? }.map { |role| role.fetch('role') }
 assert(failures, application_roles == %w[cert_manager applications],
         'application deployment tags must select cert-manager before applications')
-build_images = jobs.fetch('build-images')
+build_images = jobs.fetch('image-quality-gate')
 deploy = jobs.fetch('deploy')
-go_worker_build = build_images.fetch('steps').find { |step| step['id'] == 'go-worker-build' }
-media_probe_build = build_images.fetch('steps').find { |step| step['id'] == 'media-probe-build' }
-assert(failures, go_worker_build.dig('with', 'target') == 'ai-worker' && go_worker_build.dig('with', 'tags').include?('learningplatform-ai-worker:'),
-       'AI worker image must explicitly build the ai-worker target')
-assert(failures, media_probe_build.dig('with', 'target') == 'media-probe' && media_probe_build.dig('with', 'tags').include?('learningplatform-media-probe:'),
-       'media probe image must explicitly build the media-probe target')
+media_probe_build = jobs.fetch('build-media-probe')
+assert(failures, media_probe_build.fetch('uses') == './.github/workflows/build-image.yml' && media_probe_build.fetch('with') == { 'runtime' => 'media-probe' },
+       'media probe image must be built through the canonical image builder')
+assert(failures, jobs.fetch('build-images').dig('outputs', 'media_probe_digest') == '${{ needs.build-media-probe.outputs.digest }}',
+       'deploy must receive the media probe digest from its dedicated build')
 rollout_wait = step_by_name(deploy, 'Wait for selected K3s rollouts').fetch('run')
 assert(failures, jobs.fetch('worker-quality').fetch('if') == "needs.changes.outputs.go_worker == 'true'",
        'worker quality must run only for worker/** changes')
@@ -149,7 +148,7 @@ worker_ci_steps = safe_yaml_load(File.read(File.join(root, '.github', 'workflows
   install_position = steps.index { |step| step['name'] == 'Install ffprobe for the demuxer allowlist regression' }
   go_test_position = steps.index { |step| step['run'] == 'go test ./...' }
   assert(failures, !install_position.nil? && !go_test_position.nil? && install_position < go_test_position &&
-                   steps[install_position]['run'].include?('apt-get install --yes --no-install-recommends ffmpeg'),
+                   steps[install_position]['run'] == 'bash scripts/install-media-tools.sh',
          "#{label} must install ffprobe before go test ./...")
 end
 worker_ci_install = worker_ci_steps.find { |step| step['name'] == 'Install ffprobe for the demuxer allowlist regression' }
@@ -159,7 +158,7 @@ assert(failures, !worker_ci_install.nil? && !deploy_install.nil? && worker_ci_in
 backend_steps = jobs.fetch('backend-quality').fetch('steps')
 backend_checkout_position = backend_steps.index { |step| step['uses'] == 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5' }
 backend_go_setup_position = backend_steps.index { |step| step['uses'] == 'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16' }
-backend_npm_test_position = backend_steps.index { |step| step['run'] == 'npm test -- --runInBand' }
+backend_npm_test_position = backend_steps.index { |step| step['run'] == 'npm test -- --maxWorkers=2' }
 assert(failures, !backend_go_setup_position.nil? && backend_go_setup_position > backend_checkout_position && backend_go_setup_position < backend_npm_test_position &&
                  backend_steps[backend_go_setup_position].dig('with', 'go-version-file') == 'worker/go.mod',
        'backend quality must install the pinned Go toolchain before cross-runtime tests')

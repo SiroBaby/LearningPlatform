@@ -42,26 +42,22 @@ jobs:
           go-version-file: worker/go.mod
       - name: Verify backend CI fixture dependency
         run: bash ../deploy/dev/tests/test-backend-ci-workflow.sh
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - name: Audit high-severity dependencies
         run: timeout 180s node ../deploy/dev/audit-high.js
-      - run: npm test -- --runInBand
+      - run: npm test -- --maxWorkers=2
       - run: npm run test:e2e -- --runInBand
       - run: npm run build
       - run: npx tsc -p tsconfig.spec.json --noEmit
       - name: Prepare local worker fixture
         run: cp ../worker/.env.example ../worker/.env
-      - name: Install ffmpeg for local media fixture
-        run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes ffmpeg
-          fi
+      - name: Install pinned ffmpeg/ffprobe artifact for local media fixture
+        run: bash ../worker/scripts/install-media-tools.sh
       - name: Run real MinIO S3-compatible round trip
         run: bash ../worker/scripts/local-document-e2e.sh
       - name: Verify production dependency graph
         run: |
-          npm ci --omit=dev
+          npm ci --omit=dev --no-audit --no-fund
           npm ls --omit=dev --all --json > \
             "$RUNNER_TEMP/learningplatform-production-dependencies.json"
           npm run test:production-dependencies -- \

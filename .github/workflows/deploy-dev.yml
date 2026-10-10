@@ -78,9 +78,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - run: npm ci
-      - run: node ../deploy/dev/audit-high.js
-      - run: npm test -- --runInBand
+      - run: npm ci --no-audit --no-fund
+      - run: timeout 180s node ../deploy/dev/audit-high.js
+      - run: npm test -- --maxWorkers=2
       - run: npm run test:e2e -- --runInBand
       - run: npm run build
       - run: npx tsc -p tsconfig.spec.json --noEmit
@@ -102,10 +102,7 @@ jobs:
           go-version-file: worker/go.mod
       # Keep in sync with worker-ci.yml: worker tests need a real ffprobe.
       - name: Install ffprobe for the demuxer allowlist regression
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
-          ffprobe -version | head -n 1
+        run: bash scripts/install-media-tools.sh
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
@@ -116,26 +113,10 @@ jobs:
     name: Frontend quality
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-24.04
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # actions/setup-node v4, verified against refs/tags/v4 on 2026-07-18.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - run: node ../deploy/dev/audit-high.js
-      - run: npm run lint
-      - run: npm run build
-      - run: npm run test:runtime
+    # Same job definition as the pull request web CI.
+    uses: ./.github/workflows/web-quality.yml
 
   infra-quality:
     name: Infrastructure and observability policy
@@ -157,62 +138,94 @@ jobs:
         if: needs.changes.outputs.observability == 'true'
         run: bash infra/scripts/test-real-render-observability.sh
 
-  build-images:
-    name: Build and push images
+  image-quality-gate:
+    name: Approve selected image builds
     needs: [changes, backend-quality, frontend-quality, infra-quality, worker-quality]
     if: always() && needs.changes.outputs.deploy_any == 'true' && (needs.backend-quality.result == 'success' || needs.backend-quality.result == 'skipped') && (needs.worker-quality.result == 'success' || needs.worker-quality.result == 'skipped') && (needs.frontend-quality.result == 'success' || needs.frontend-quality.result == 'skipped') && (needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: write
-    outputs:
-      api_digest: ${{ steps.api-build.outputs.digest }}
-      web_digest: ${{ steps.web-build.outputs.digest }}
-      go_worker_digest: ${{ steps.go-worker-build.outputs.digest }}
-      media_probe_digest: ${{ steps.media-probe-build.outputs.digest }}
     steps:
-      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # docker/login-action v3, verified against refs/tags/v3 on 2026-07-18.
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # docker/build-push-action v6, verified against refs/tags/v6 on 2026-07-18.
-      - id: api-build
-        if: needs.changes.outputs.backend == 'true'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: app
-          push: true
-          tags: ghcr.io/sirobaby/learningplatform-api:sha-${{ github.sha }}
-      # docker/build-push-action v6, verified against refs/tags/v6 on 2026-07-18.
-      - id: web-build
-        if: needs.changes.outputs.web == 'true'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: web
-          push: true
-          tags: ghcr.io/sirobaby/learningplatform-web:sha-${{ github.sha }}
-      - id: go-worker-build
-        if: needs.changes.outputs.go_worker == 'true'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: .
-          file: worker/Dockerfile
-          target: ai-worker
-          push: true
-          tags: ghcr.io/sirobaby/learningplatform-ai-worker:sha-${{ github.sha }}
-      - id: media-probe-build
-        if: needs.changes.outputs.go_worker == 'true'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: .
-          file: worker/Dockerfile
-          target: media-probe
-          push: true
-          tags: ghcr.io/sirobaby/learningplatform-media-probe:sha-${{ github.sha }}
+      - run: 'true'
+
+  build-api:
+    name: Build api image
+    needs: [changes, image-quality-gate]
+    if: needs.changes.outputs.backend == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      runtime: api
+
+  build-web:
+    name: Build web image
+    needs: [changes, image-quality-gate]
+    if: needs.changes.outputs.web == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      runtime: web
+
+  build-go-worker:
+    name: Build go-worker image
+    needs: [changes, image-quality-gate]
+    if: needs.changes.outputs.go_worker == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      runtime: go-worker
+
+  build-media-probe:
+    name: Build media-probe image
+    needs: [changes, image-quality-gate]
+    if: needs.changes.outputs.go_worker == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      runtime: media-probe
+
+  build-images:
+    name: Collect selected image digests
+    needs: [changes, image-quality-gate, build-api, build-web, build-go-worker, build-media-probe]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.image-quality-gate.result == 'success' && (needs.build-api.result == 'success' || needs.build-api.result == 'skipped') && (needs.build-web.result == 'success' || needs.build-web.result == 'skipped') && (needs.build-go-worker.result == 'success' || needs.build-go-worker.result == 'skipped') && (needs.build-media-probe.result == 'success' || needs.build-media-probe.result == 'skipped')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      api_digest: ${{ needs.build-api.outputs.digest }}
+      web_digest: ${{ needs.build-web.outputs.digest }}
+      go_worker_digest: ${{ needs.build-go-worker.outputs.digest }}
+      media_probe_digest: ${{ needs.build-media-probe.outputs.digest }}
+    steps:
+      - name: Validate every selected manifest digest
+        env:
+          SELECT_BACKEND: ${{ needs.changes.outputs.backend }}
+          SELECT_WEB: ${{ needs.changes.outputs.web }}
+          SELECT_GO_WORKER: ${{ needs.changes.outputs.go_worker }}
+          SELECT_MEDIA_PROBE: ${{ needs.changes.outputs.go_worker }}
+          BACKEND_DIGEST: ${{ needs.build-api.outputs.digest }}
+          WEB_DIGEST: ${{ needs.build-web.outputs.digest }}
+          GO_WORKER_DIGEST: ${{ needs.build-go-worker.outputs.digest }}
+          MEDIA_PROBE_DIGEST: ${{ needs.build-media-probe.outputs.digest }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import sys
+
+          for runtime in ('BACKEND', 'WEB', 'GO_WORKER', 'MEDIA_PROBE'):
+              if os.environ[f'SELECT_{runtime}'] == 'true':
+                  if not re.fullmatch(r'sha256:[a-f0-9]{64}', os.environ[f'{runtime}_DIGEST']):
+                      sys.exit(f'{runtime} selected image has no immutable manifest digest')
+          PY
 
   deploy:
     name: Deploy immutable digests to K3s

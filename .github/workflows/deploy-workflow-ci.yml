@@ -1,0 +1,57 @@
+name: Deployment workflow CI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - deploy/dev/**
+      - infra/ansible/playbooks/site.yml
+      - infra/ansible/roles/k3s/templates/nginx-learning-platform.conf.j2
+      - infra/k8s/apps.yaml.j2
+      - worker/Dockerfile
+      - worker/scripts/install-media-tools.sh
+  push:
+    paths:
+      - .github/workflows/**
+      - deploy/dev/**
+      - infra/ansible/playbooks/site.yml
+      - infra/ansible/roles/k3s/templates/nginx-learning-platform.conf.j2
+      - infra/k8s/apps.yaml.j2
+      - worker/Dockerfile
+      - worker/scripts/install-media-tools.sh
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Workflow and registry retry regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Validate workflow expressions and reusable calls
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -shellcheck=
+      - name: Validate publish shell
+        run: shellcheck deploy/dev/publish-image.sh
+      - name: Validate media tools installer and its contract test
+        run: shellcheck worker/scripts/install-media-tools.sh deploy/dev/tests/test-media-tools-ci.sh
+      - name: Verify production workflow and classification contracts
+        run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
+      - name: Verify bounded registry failures and immutable outputs
+        run: python3 deploy/dev/tests/test-publish-image.py
+      - name: Run remaining deploy/dev regression tests
+        run: |
+          for test_script in \
+            deploy/dev/tests/test-audit-high.sh \
+            deploy/dev/tests/test-backend-ci-workflow.sh \
+            deploy/dev/tests/test-cleanup-ghcr-workflow.sh \
+            deploy/dev/tests/test-delete-ghcr-versions.sh \
+            deploy/dev/tests/test-deploy-state.sh \
+            deploy/dev/tests/test-media-tools-ci.sh \
+            deploy/dev/tests/test-select-ghcr-versions.sh; do
+            bash "$test_script"
+          done
+          python3 deploy/dev/tests/test-ghcr-cleanup-execution.py

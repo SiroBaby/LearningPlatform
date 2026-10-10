@@ -35,7 +35,7 @@ main() {
   readonly DIAGNOSTICS_BLOCK
 
   require_match 'ansible-core==2\.21\.2'
-  require_match 'node \.\./deploy/dev/audit-high\.js'
+  require_match 'timeout 180s node \.\./deploy/dev/audit-high\.js'
   require_match 'ansible-galaxy.*collection install -r infra/ansible/requirements\.yml'
   require_match 'site\.yml --tags cert_manager,external_secrets_runtime,applications'
   reject_match 'DEV_K3S_ANSIBLE_VARS_B64|ANSIBLE_VARS_B64|base64 --decode'
@@ -72,6 +72,7 @@ main() {
   reject_match 'database-migrate|migration-diagnostics|job-name='
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-policy.rb"
   ruby "${ROOT_DIR}/deploy/dev/tests/test-deploy-dev-workflow-execution.rb"
+  ruby "${ROOT_DIR}/deploy/dev/tests/test-image-build-workflow.rb"
   bash "${ROOT_DIR}/deploy/dev/tests/test-classify-changes.sh"
   bash "${ROOT_DIR}/deploy/dev/tests/test-observability-health.sh"
   printf '%s\n' 'deploy workflow static tests passed'
