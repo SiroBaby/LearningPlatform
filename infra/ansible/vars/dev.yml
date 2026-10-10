@@ -81,6 +81,9 @@ media_egress_proxy_enabled: true
 # API media uploads require their runtime to reach S3 only through the
 # in-cluster proxy, so enabling api_media_enabled also routes every API object
 # storage call (document bucket included) through media-egress-proxy (#158).
+# The API runs HeadBucket through the proxy at startup and uses Recreate, so a
+# broken proxy path leaves the API not Ready. Roll back by setting this flag,
+# api_media_enabled and media_probe_worker_enabled all to false together.
 object_storage_egress_proxy_enabled: true
 # Owner enabled media on dev after #199 merged (#158). Uploads create
 # MEDIA_PROBE jobs, so api_media_enabled requires media_probe_worker_enabled.

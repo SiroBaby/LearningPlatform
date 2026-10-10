@@ -13,6 +13,12 @@
 # A Ready media-probe-worker is the database evidence: it becomes Ready only
 # after its pgx Ping succeeds through the forwarder with verified TLS (#198).
 #
+# A check counts as blocked only when the in-pod command itself reports the
+# blocked exit code; any kubectl exec, timeout or unexpected failure is FAIL.
+# Check Pods left behind by an interrupted run are deleted at the start of the
+# next run. To clean them up by hand:
+#   sudo k3s kubectl delete pod -n learning-platform-dev -l learning-platform.io/egress-check=true
+#
 # Usage: VPS_HOST=<host> VPS_USER=<user> deploy/dev/verify-media-probe-egress.sh
 set -Eeuo pipefail
 
@@ -37,30 +43,41 @@ readonly DATABASE_HOST="$1"
 readonly DATABASE_PORT="$2"
 readonly CHECK_POD="media-probe-egress-check-$3"
 # Same pinned image as media-egress-proxy, so the node pulls nothing new.
+# Kept equal to infra/k8s/apps.yaml.j2 by test-verify-media-probe-egress.sh.
 readonly CHECK_IMAGE=ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
 readonly S3_ENDPOINT=s3.ap-southeast-1.amazonaws.com
 readonly NOT_ALLOWLISTED_HOST=example.com
 readonly INTERNET_IP=1.1.1.1
+readonly CHECK_LABEL=learning-platform.io/egress-check=true
+# In-pod exit codes; distinct from kubectl (1), timeout (124) and shell (126+).
+readonly CONNECTED=0
+readonly DNS_FAILED=43
+readonly BLOCKED=42
+readonly PROXY_FORBIDDEN=10
 failures=0
 
-kubectl_bounded() { timeout 60s sudo k3s kubectl "$@"; }
-cleanup() { kubectl_bounded delete pod "$CHECK_POD" --namespace "$NAMESPACE" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
+# kubectl_bounded <outer-limit> <kubectl args...>; the outer limit must exceed
+# any --timeout passed to kubectl itself.
+kubectl_bounded() { local limit="$1"; shift; timeout "$limit" sudo k3s kubectl "$@"; }
+cleanup() { kubectl_bounded 60s delete pod "$CHECK_POD" --namespace "$NAMESPACE" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-trap 'exit 130' HUP INT TERM
+# A dropped SSH session surfaces as SIGPIPE on the next report line, not SIGHUP.
+trap 'exit 130' HUP INT TERM PIPE
 
 report() {
   printf '%s %s\n' "$1" "$2"
   if [[ "$1" != PASS ]]; then failures=$((failures + 1)); fi
 }
 
-# Exit codes inside the check Pod: 0 connected, 3 DNS failure, other blocked.
-readonly DIRECT_CONNECT='ip="$(getent ahostsv4 "$0" | awk "NR==1 {print \$1}")"; [ -n "$ip" ] || exit 3; exec timeout 8 bash -c "exec 3<>/dev/tcp/\$0/\$1" "$ip" "$1"'
+# Exit codes inside the check Pod: 0 connected, 43 DNS failure, 42 refused or
+# timed out, 44 anything else.
+readonly DIRECT_CONNECT='ip="$(getent ahostsv4 "$0" | awk "NR==1 {print \$1}")"; [ -n "$ip" ] || exit 43; status=0; timeout 8 bash -c "exec 3<>/dev/tcp/\$0/\$1" "$ip" "$1" 2>/dev/null || status=$?; case "$status" in 0) exit 0 ;; 1|124) exit 42 ;; *) exit 44 ;; esac'
 # Exit codes: 0 Squid returned 200, 10 Squid returned 403, other unexpected.
 readonly PROXY_CONNECT='exec 3<>/dev/tcp/media-egress-proxy/3128 || exit 4; printf "CONNECT %s:%s HTTP/1.1\r\nHost: %s:%s\r\n\r\n" "$0" "$1" "$0" "$1" >&3; IFS= read -r -t 15 status_line <&3 || exit 5; case "$status_line" in "HTTP/1."?" 200"*) exit 0 ;; "HTTP/1."?" 403"*) exit 10 ;; *) exit 6 ;; esac'
 
 run_check() {
   local script="$1" host="$2" port="$3" status=0
-  kubectl_bounded exec --namespace "$NAMESPACE" "$CHECK_POD" -- bash -c "$script" "$host" "$port" >/dev/null 2>&1 || status=$?
+  kubectl_bounded 60s exec --namespace "$NAMESPACE" "$CHECK_POD" -- bash -c "$script" "$host" "$port" >/dev/null 2>&1 || status=$?
   printf '%s\n' "$status"
 }
 
@@ -68,9 +85,10 @@ expect_blocked() {
   local label="$1" status
   status="$(run_check "$DIRECT_CONNECT" "$2" "$3")"
   case "$status" in
-    0) report FAIL "$label (connected)" ;;
-    3) report FAIL "$label (inconclusive: DNS resolution failed)" ;;
-    *) report PASS "$label" ;;
+    "$BLOCKED") report PASS "$label" ;;
+    "$CONNECTED") report FAIL "$label (connected)" ;;
+    "$DNS_FAILED") report FAIL "$label (inconclusive: DNS resolution failed)" ;;
+    *) report FAIL "$label (inconclusive: exit ${status})" ;;
   esac
 }
 
@@ -81,14 +99,15 @@ expect_proxy_status() {
 }
 
 for deployment in media-egress-proxy media-probe-db-egress media-probe-worker; do
-  if kubectl_bounded rollout status "deployment/${deployment}" --namespace "$NAMESPACE" --timeout=45s >/dev/null 2>&1; then
+  if kubectl_bounded 60s rollout status "deployment/${deployment}" --namespace "$NAMESPACE" --timeout=45s >/dev/null 2>&1; then
     report PASS "ready:${deployment}"
   else
     report FAIL "ready:${deployment}"
   fi
 done
 
-if ! kubectl_bounded apply --namespace "$NAMESPACE" -f - >/dev/null 2>&1 <<MANIFEST
+kubectl_bounded 60s delete pod --namespace "$NAMESPACE" --selector "$CHECK_LABEL" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+if ! kubectl_bounded 60s apply --namespace "$NAMESPACE" -f - >/dev/null 2>&1 <<MANIFEST
 apiVersion: v1
 kind: Pod
 metadata:
@@ -128,7 +147,7 @@ then
   printf 'RESULT FAIL %s\n' "$failures"
   exit 1
 fi
-if ! kubectl_bounded wait --namespace "$NAMESPACE" --for=condition=Ready "pod/${CHECK_POD}" --timeout=90s >/dev/null 2>&1; then
+if ! kubectl_bounded 105s wait --namespace "$NAMESPACE" --for=condition=Ready "pod/${CHECK_POD}" --timeout=90s >/dev/null 2>&1; then
   report FAIL 'check-pod:ready'
   printf 'RESULT FAIL %s\n' "$failures"
   exit 1
@@ -136,8 +155,8 @@ fi
 
 # Positive controls prove the check Pod has the probe identity, so the blocked
 # results below come from policy rather than from a broken check.
-expect_proxy_status 'reachable:proxy-connect-s3' 0 "$S3_ENDPOINT" 443
-if [[ "$(run_check 'exec timeout 8 bash -c "exec 3<>/dev/tcp/$0/$1"' media-probe-db-egress 5432)" == 0 ]]; then
+expect_proxy_status 'reachable:proxy-connect-s3' "$CONNECTED" "$S3_ENDPOINT" 443
+if [[ "$(run_check "$DIRECT_CONNECT" media-probe-db-egress 5432)" == "$CONNECTED" ]]; then
   report PASS 'reachable:forwarder'
 else
   report FAIL 'reachable:forwarder'
@@ -146,8 +165,8 @@ fi
 expect_blocked 'blocked:direct-database' "$DATABASE_HOST" "$DATABASE_PORT"
 expect_blocked 'blocked:direct-s3' "$S3_ENDPOINT" 443
 expect_blocked 'blocked:direct-internet-ip' "$INTERNET_IP" 443
-expect_proxy_status 'blocked:proxy-connect-database' 10 "$DATABASE_HOST" "$DATABASE_PORT"
-expect_proxy_status 'blocked:proxy-connect-not-allowlisted' 10 "$NOT_ALLOWLISTED_HOST" 443
+expect_proxy_status 'blocked:proxy-connect-database' "$PROXY_FORBIDDEN" "$DATABASE_HOST" "$DATABASE_PORT"
+expect_proxy_status 'blocked:proxy-connect-not-allowlisted' "$PROXY_FORBIDDEN" "$NOT_ALLOWLISTED_HOST" 443
 
 if [[ "$failures" -eq 0 ]]; then
   printf 'RESULT PASS\n'
