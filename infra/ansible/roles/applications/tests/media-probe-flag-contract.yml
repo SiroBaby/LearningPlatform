@@ -1,0 +1,111 @@
+---
+- name: Verify the media probe worker flag against the production dev vars
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+  tasks:
+    - name: Select a worker rollout with the production media probe flag
+      ansible.builtin.set_fact:
+        deployment_targets: [worker]
+        web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+
+    - name: Require the production dev vars to keep the media probe worker disabled
+      ansible.builtin.assert:
+        that:
+          - not (media_probe_worker_enabled | bool)
+        fail_msg: >-
+          vars/dev.yml enables the media probe worker; it needs real database
+          CIDRs and the deploy rollout list before it can be turned on.
+
+    - name: Run the production media probe contract with the flag disabled
+      ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
+
+    - name: Render the worker manifest with the production flag
+      ansible.builtin.set_fact:
+        applications_flag_disabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2')
+             | from_yaml_all | list }}
+        applications_flag_disabled_secrets: >-
+          {{ lookup('template', playbook_dir ~ '/../../external_secrets/templates/external-secrets.yaml.j2')
+             | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require a disabled flag to render no media probe workload or runtime secret
+      ansible.builtin.assert:
+        that:
+          - >-
+            applications_flag_disabled_manifests
+            | selectattr('kind', 'equalto', 'Deployment')
+            | selectattr('metadata.name', 'equalto', 'worker')
+            | list | length == 1
+          - >-
+            applications_flag_disabled_manifests
+            | selectattr('metadata.name', 'search', '^media-probe-worker')
+            | list | length == 0
+          - >-
+            applications_flag_disabled_secrets
+            | selectattr('metadata.name', 'equalto', 'learning-platform-media-probe-runtime')
+            | list | length == 0
+        fail_msg: >-
+          With media_probe_worker_enabled false, the worker rollout must not
+          render the media-probe-worker, its NetworkPolicy, or its ExternalSecret.
+
+    - name: Enable the flag while keeping the production placeholder CIDR
+      ansible.builtin.set_fact:
+        media_probe_worker_enabled: true
+
+    - name: Attempt the enabled contract with the placeholder CIDR
+      block:
+        - name: Run the production media probe contract with a placeholder CIDR
+          ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
+
+        - name: Record that the placeholder CIDR was accepted
+          ansible.builtin.set_fact:
+            applications_placeholder_cidr_rejected: false
+      rescue:
+        - name: Record that the placeholder CIDR was rejected
+          ansible.builtin.set_fact:
+            applications_placeholder_cidr_rejected: true
+
+    - name: Require an enabled flag to fail closed on placeholder CIDRs
+      ansible.builtin.assert:
+        that:
+          - applications_placeholder_cidr_rejected | bool
+        fail_msg: Enabling the media probe worker without real database CIDRs must fail the contract.
+
+    - name: Provide an explicit database CIDR
+      ansible.builtin.set_fact:
+        media_probe_worker_database_cidrs: ['203.0.113.10/32']
+
+    - name: Run the production media probe contract with a real CIDR
+      ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
+
+    - name: Render the worker manifest with the flag enabled
+      ansible.builtin.set_fact:
+        applications_flag_enabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2')
+             | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require an enabled flag to render the media probe workload and egress policy
+      ansible.builtin.assert:
+        that:
+          - >-
+            applications_flag_enabled_manifests
+            | selectattr('kind', 'equalto', 'Deployment')
+            | selectattr('metadata.name', 'equalto', 'media-probe-worker')
+            | list | length == 1
+          - >-
+            applications_flag_enabled_manifests
+            | selectattr('kind', 'equalto', 'NetworkPolicy')
+            | selectattr('metadata.name', 'equalto', 'media-probe-worker-egress')
+            | list | length == 1
+        fail_msg: An enabled flag must render the media-probe-worker Deployment and its egress NetworkPolicy.

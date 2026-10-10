@@ -300,17 +300,26 @@ jobs:
         env:
           VPS_HOST: ${{ vars.DEV_VPS_HOST }}
           VPS_USER: ${{ vars.DEV_VPS_USER }}
+          DEV_ANSIBLE_VARS: infra/ansible/vars/dev.yml
         run: |
           DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
           export DEPLOYMENT_DIR
           python3 - <<'PY' > "$DEPLOYMENT_DIR/selected-targets"
           import json
           import os
+          import re
+          import sys
           with open(f"{os.environ['DEPLOYMENT_DIR']}/overrides.yml", encoding='utf-8') as overrides:
               deployment_targets = json.load(overrides)['deployment_targets']
-              for target in deployment_targets:
-                  print(target)
-              if 'worker' in deployment_targets:
+          for target in deployment_targets:
+              print(target)
+          if 'worker' in deployment_targets:
+              # Ansible renders media-probe-worker only when the same vars file enables it.
+              with open(os.environ['DEV_ANSIBLE_VARS'], encoding='utf-8') as dev_vars:
+                  flags = re.findall(r'^media_probe_worker_enabled: (true|false)$', dev_vars.read(), re.MULTILINE)
+              if len(flags) != 1:
+                  sys.exit('media_probe_worker_enabled must be declared exactly once as true or false')
+              if flags[0] == 'true':
                   print('media-probe-worker')
           PY
           while IFS= read -r target; do

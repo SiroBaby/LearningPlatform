@@ -313,16 +313,44 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
     'go_worker_image' => "ghcr.io/sirobaby/learningplatform-ai-worker@#{digest}",
     'media_probe_worker_image' => "ghcr.io/sirobaby/learningplatform-media-probe@#{digest}"
   }, 'worker overrides must include the media probe image')
-  rollout_trace = File.join(directory, 'rollout-targets.trace')
-  _stdout, stderr, status = run_step(rollout_wait, bootstrap_environment.merge(
-    'MOCK_ROLLOUT_SUCCESS' => 'true',
-    'MOCK_ROLLOUT_TRACE' => rollout_trace
-  ))
-  assert(status.success?, "worker rollout wait failed: #{stderr}")
-  worker_rollout_targets = File.readlines(File.join(worker_deployment_dir, 'selected-targets'), chomp: true)
-  worker_rollout_trace = File.readlines(rollout_trace, chomp: true)
-  assert(worker_rollout_targets == %w[worker media-probe-worker], "worker rollout targets must include media-probe-worker: #{worker_rollout_targets.inspect}")
-  assert(worker_rollout_trace == %w[deployment/worker deployment/media-probe-worker], "worker rollout wait must wait for both worker deployments: #{worker_rollout_trace.inspect}")
+  {
+    'true' => %w[worker media-probe-worker],
+    'false' => %w[worker]
+  }.each do |flag, expected_targets|
+    dev_vars = File.join(directory, "dev-vars-media-probe-#{flag}.yml")
+    File.write(dev_vars, "deployment_targets: [web, api, worker]\nmedia_probe_worker_enabled: #{flag}\n")
+    rollout_trace = File.join(directory, "rollout-targets-#{flag}.trace")
+    _stdout, stderr, status = run_step(rollout_wait, bootstrap_environment.merge(
+      'DEV_ANSIBLE_VARS' => dev_vars,
+      'MOCK_ROLLOUT_SUCCESS' => 'true',
+      'MOCK_ROLLOUT_TRACE' => rollout_trace
+    ))
+    assert(status.success?, "worker rollout wait failed with media probe flag #{flag}: #{stderr}")
+    worker_rollout_targets = File.readlines(File.join(worker_deployment_dir, 'selected-targets'), chomp: true)
+    worker_rollout_trace = File.readlines(rollout_trace, chomp: true)
+    assert(worker_rollout_targets == expected_targets, "worker rollout targets must follow media probe flag #{flag}: #{worker_rollout_targets.inspect}")
+    assert(worker_rollout_trace == expected_targets.map { |target| "deployment/#{target}" },
+           "worker rollout wait must follow media probe flag #{flag}: #{worker_rollout_trace.inspect}")
+  end
+
+  {
+    'missing' => "deployment_targets: [worker]\n",
+    'duplicated' => "media_probe_worker_enabled: false\nmedia_probe_worker_enabled: true\n",
+    'non-boolean' => "media_probe_worker_enabled: maybe\n"
+  }.each do |label, content|
+    dev_vars = File.join(directory, "dev-vars-media-probe-#{label}.yml")
+    File.write(dev_vars, content)
+    _stdout, stderr, status = run_step(rollout_wait, bootstrap_environment.merge(
+      'DEV_ANSIBLE_VARS' => dev_vars,
+      'MOCK_ROLLOUT_SUCCESS' => 'true',
+      'MOCK_ROLLOUT_TRACE' => File.join(directory, "rollout-targets-#{label}.trace")
+    ))
+    assert(!status.success? && stderr.include?('media_probe_worker_enabled must be declared exactly once'),
+           "a #{label} media probe flag must fail the rollout wait closed: #{stderr}")
+  end
+
+  production_flag = File.read(File.join(root, 'infra', 'ansible', 'vars', 'dev.yml')).scan(/^media_probe_worker_enabled: (true|false)$/)
+  assert(production_flag.length == 1, 'production dev vars must declare media_probe_worker_enabled exactly once for the rollout wait')
 
   broken = app_inventory.sub("\nhost, user", "\n host, user")
   broken_runner_temp = File.join(directory, 'broken-runner-temp')

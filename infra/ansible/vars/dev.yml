@@ -80,7 +80,10 @@ deployment_targets: [web, api, worker]
 # Deploy the private proxy workload independently from runtime proxy consumers.
 media_egress_proxy_enabled: true
 object_storage_egress_proxy_enabled: false
-media_probe_worker_enabled: true
+# Disabled until the database egress design is decided: Aiven exposes only a
+# hostname, so no static CIDR exists for the NetworkPolicy below. Enabling the
+# flag without real CIDRs fails the applications contract closed.
+media_probe_worker_enabled: false
 media_probe_worker_proxy_url: http://media-egress-proxy:3128
 media_probe_worker_dns_ip: 10.43.0.10
 media_probe_worker_egress_proxy_port: 3128

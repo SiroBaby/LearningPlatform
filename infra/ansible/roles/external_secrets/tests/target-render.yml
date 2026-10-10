@@ -36,7 +36,7 @@
       ansible.builtin.set_fact:
         external_secrets_worker_resources: >-
           {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
-             template_vars={'deployment_targets': ['worker']}) | from_yaml_all | list }}
+             template_vars={'deployment_targets': ['worker'], 'media_probe_worker_enabled': true}) | from_yaml_all | list }}
       no_log: true
 
     - name: Require the worker-only document and remote-reference contract
@@ -76,7 +76,7 @@
       ansible.builtin.set_fact:
         external_secrets_backend_resources: >-
           {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
-             template_vars={'deployment_targets': ['api', 'worker']}) | from_yaml_all | list }}
+             template_vars={'deployment_targets': ['api', 'worker'], 'media_probe_worker_enabled': true}) | from_yaml_all | list }}
       no_log: true
 
     - name: Require the combined API and worker document contract
