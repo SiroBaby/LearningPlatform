@@ -4,6 +4,7 @@ Repository này chứa nhiều phạm vi độc lập. Không đặt coding rule
 
 - NestJS backend: xem `app/AGENTS.md`.
 - Next.js frontend: xem `web/AGENTS.md`.
+- Deployment automation: xem `deploy/AGENTS.md`.
 - Domain, ADR và PRD ở root `CONTEXT.md` và `docs/` là nguồn tham khảo chung, không phải coding rule cho mọi service.
 - Issue cục bộ nằm trong `.scratch/<feature>/issues/`.
 
