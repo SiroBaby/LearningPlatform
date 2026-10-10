@@ -151,7 +151,8 @@ jobs:
   build-api:
     name: Build api image
     needs: [changes, image-quality-gate]
-    if: needs.changes.outputs.backend == 'true'
+    # always(): a skipped quality job upstream must not skip a selected build; the gate result still blocks failures.
+    if: always() && needs.image-quality-gate.result == 'success' && needs.changes.outputs.backend == 'true'
     permissions:
       contents: read
       packages: write
@@ -162,7 +163,8 @@ jobs:
   build-web:
     name: Build web image
     needs: [changes, image-quality-gate]
-    if: needs.changes.outputs.web == 'true'
+    # always(): a skipped quality job upstream must not skip a selected build; the gate result still blocks failures.
+    if: always() && needs.image-quality-gate.result == 'success' && needs.changes.outputs.web == 'true'
     permissions:
       contents: read
       packages: write
@@ -173,7 +175,8 @@ jobs:
   build-go-worker:
     name: Build go-worker image
     needs: [changes, image-quality-gate]
-    if: needs.changes.outputs.go_worker == 'true'
+    # always(): a skipped quality job upstream must not skip a selected build; the gate result still blocks failures.
+    if: always() && needs.image-quality-gate.result == 'success' && needs.changes.outputs.go_worker == 'true'
     permissions:
       contents: read
       packages: write
@@ -184,7 +187,8 @@ jobs:
   build-media-probe:
     name: Build media-probe image
     needs: [changes, image-quality-gate]
-    if: needs.changes.outputs.go_worker == 'true'
+    # always(): a skipped quality job upstream must not skip a selected build; the gate result still blocks failures.
+    if: always() && needs.image-quality-gate.result == 'success' && needs.changes.outputs.go_worker == 'true'
     permissions:
       contents: read
       packages: write
