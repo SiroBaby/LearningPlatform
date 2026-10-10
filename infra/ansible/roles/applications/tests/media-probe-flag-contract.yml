@@ -38,15 +38,29 @@
         go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
         media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 
-    - name: Require the production dev vars to keep the media probe worker disabled
+    - name: Require the production dev vars to enable media end to end
       ansible.builtin.assert:
         that:
-          - not (media_probe_worker_enabled | bool)
+          - media_probe_worker_enabled is boolean
+          - media_probe_worker_enabled
+          - api_media_enabled is boolean
+          - api_media_enabled
+          - object_storage_egress_proxy_enabled is boolean
+          - object_storage_egress_proxy_enabled
         fail_msg: >-
-          vars/dev.yml enables the media probe worker; enabling it is a separate
-          owner decision after the media-probe-db-egress forwarder (#199) merges.
+          vars/dev.yml must enable the media probe worker, API media uploads,
+          and the API object-storage proxy route together (#158); roll back by
+          setting media_probe_worker_enabled and api_media_enabled to false.
 
-    - name: Run the production media probe contract with the flag disabled
+    - name: Run the production media probe contract with the production flags
+      ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
+
+    - name: Disable the media flags to cover the disabled rollout path
+      ansible.builtin.set_fact:
+        media_probe_worker_enabled: false
+        api_media_enabled: false
+
+    - name: Run the media probe contract with the flags disabled
       ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
 
     - name: Render the worker manifest with the production flag
@@ -80,12 +94,6 @@
           render the media-probe-worker, the media-probe-db-egress forwarder,
           their NetworkPolicies, or the probe ExternalSecret.
 
-    - name: Require the production dev vars to keep API media uploads disabled
-      ansible.builtin.assert:
-        that:
-          - not (api_media_enabled | default(false) | bool)
-        fail_msg: vars/dev.yml enables API media uploads while the media probe worker is disabled.
-
     - name: Enable API media uploads while the media probe worker stays disabled
       ansible.builtin.set_fact:
         api_media_enabled: true
@@ -109,7 +117,7 @@
           - applications_uploads_without_probe_rejected | bool
         fail_msg: Enabling API media uploads without the media probe worker must fail the contract.
 
-    - name: Restore the production API media upload flag
+    - name: Disable API media uploads again for the upstream cases
       ansible.builtin.set_fact:
         api_media_enabled: false
 

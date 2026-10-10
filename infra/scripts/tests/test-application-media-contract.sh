@@ -20,8 +20,9 @@ fi
 
 if ! grep -Fq "{% if object_storage_egress_proxy_enabled | default(false) | bool %}" <<<"${api_block}" \
   || ! grep -Fq '            - name: OBJECT_STORAGE_EGRESS_PROXY_URL' <<<"${api_block}" \
-  || ! grep -Fq '                  key: OBJECT_STORAGE_EGRESS_PROXY_URL' <<<"${api_block}"; then
-  printf '%s\n' 'API runtime must gate the explicit object-storage proxy environment key.' >&2
+  || ! grep -Fq '              value: {{ media_probe_worker_proxy_url | quote }}' <<<"${api_block}" \
+  || grep -Fq '                  key: OBJECT_STORAGE_EGRESS_PROXY_URL' <<<"${api_block}"; then
+  printf '%s\n' 'API runtime must gate the explicit in-cluster object-storage proxy literal.' >&2
   exit 1
 fi
 

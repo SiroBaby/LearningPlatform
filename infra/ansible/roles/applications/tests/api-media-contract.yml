@@ -20,9 +20,15 @@
       limits: {cpu: '1', memory: 512Mi}
     api_media_enabled: false
   tasks:
-    - name: Render the default disabled API media manifest
+    # vars_files outrank play vars, so pin the disabled scenario as facts
+    # before rendering; dev.yml itself enables API media.
+    - name: Pin the default disabled API media scenario
       ansible.builtin.set_fact:
         api_media_enabled: false
+        object_storage_egress_proxy_enabled: false
+
+    - name: Render the default disabled API media manifest
+      ansible.builtin.set_fact:
         applications_rendered_disabled_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2') | from_yaml_all | list }}
         applications_rendered_disabled_external_secrets: >-
@@ -95,7 +101,9 @@
           - applications_enabled_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'OBJECT_STORAGE_MEDIA_BUCKET') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_enabled_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'OBJECT_STORAGE_API_MEDIA_ACCESS_KEY') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
           - applications_enabled_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'OBJECT_STORAGE_API_MEDIA_SECRET_KEY') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
-          - applications_enabled_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'OBJECT_STORAGE_EGRESS_PROXY_URL') | map(attribute='valueFrom.secretKeyRef.name') | list == ['learning-platform-api-runtime']
+          - applications_enabled_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'OBJECT_STORAGE_EGRESS_PROXY_URL') | map(attribute='value') | list == [media_probe_worker_proxy_url]
+          - applications_enabled_api_deployments[0].spec.template.spec.containers[0].env | selectattr('name', 'equalto', 'OBJECT_STORAGE_EGRESS_PROXY_URL') | selectattr('valueFrom', 'defined') | list | length == 0
+          - applications_enabled_api_runtime.spec.data | selectattr('secretKey', 'equalto', 'OBJECT_STORAGE_EGRESS_PROXY_URL') | list | length == 0
           - >-
             (applications_enabled_api_runtime.spec.data
              | selectattr('secretKey', 'equalto', 'OBJECT_STORAGE_MEDIA_BUCKET')
@@ -114,8 +122,9 @@
           - applications_enabled_api_deployments[0].spec.template.spec.containers[0].env | to_json is not search('learning-platform-media-probe-runtime')
         fail_msg: >-
           A valid API media rollout must enable the feature and source the
-          canonical media bucket, dedicated API credentials, and approved
-          object-storage proxy from the API runtime Secret.
+          canonical media bucket and dedicated API credentials from the API
+          runtime Secret, and route object storage through the in-cluster
+          proxy literal instead of an SSM-sourced URL.
 
     - name: Load the application rollout gate source
       ansible.builtin.set_fact:
@@ -130,7 +139,8 @@
           - "'when: api_media_enabled | default(false) | bool' in applications_role_tasks_source"
           - "applications_role_tasks_source.find('- name: Validate enabled API media storage contract') < applications_role_tasks_source.find('- name: Wait for API runtime ExternalSecret readiness')"
           - "applications_role_tasks_source.find('- name: Validate enabled API media storage contract') < applications_role_tasks_source.find('- name: Apply selected stateless Learning Platform workloads')"
-          - "\"ssm_parameter_keys.object_storage_egress_proxy_url is not search('REPLACE_WITH')\" in applications_role_tasks_source"
+          - "'object_storage_egress_proxy_url' not in applications_role_tasks_source"
+          - "\"media_probe_worker_proxy_url is not search('REPLACE_WITH')\" in applications_role_tasks_source"
           - "\"ssm_parameter_keys.object_storage_media_bucket is not search('REPLACE_WITH')\" in applications_role_tasks_source"
           - "\"ssm_parameter_keys.object_storage_api_media_access_key is not search('REPLACE_WITH')\" in applications_role_tasks_source"
           - "\"ssm_parameter_keys.object_storage_api_media_secret_key is not search('REPLACE_WITH')\" in applications_role_tasks_source"

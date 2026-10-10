@@ -79,9 +79,13 @@
   ansible.builtin.assert:
     that:
       - media_egress_proxy_enabled | default(false) | bool
+      - media_probe_worker_proxy_url is string
+      - media_probe_worker_proxy_url is match('^https?://[A-Za-z0-9.-]+:[0-9]+$')
+      - media_probe_worker_proxy_url is not search('REPLACE_WITH')
     fail_msg: >-
       Runtime proxy consumers cannot be enabled until the private media egress
-      proxy deployment is enabled.
+      proxy deployment is enabled, and they route through the explicit
+      in-cluster proxy URL literal media_probe_worker_proxy_url.
   when: object_storage_egress_proxy_enabled | default(false) | bool
 
 - name: Validate the media probe worker contract when it is enabled
@@ -93,20 +97,17 @@
       - ssm_parameter_keys.object_storage_media_bucket is string
       - ssm_parameter_keys.object_storage_api_media_access_key is string
       - ssm_parameter_keys.object_storage_api_media_secret_key is string
-      - ssm_parameter_keys.object_storage_egress_proxy_url is string
       - ssm_parameter_keys.object_storage_media_bucket is search('^/')
       - ssm_parameter_keys.object_storage_api_media_access_key is search('^/')
       - ssm_parameter_keys.object_storage_api_media_secret_key is search('^/')
-      - ssm_parameter_keys.object_storage_egress_proxy_url is search('^/')
       - ssm_parameter_keys.object_storage_media_bucket is not search('REPLACE_WITH')
       - ssm_parameter_keys.object_storage_api_media_access_key is not search('REPLACE_WITH')
       - ssm_parameter_keys.object_storage_api_media_secret_key is not search('REPLACE_WITH')
-      - ssm_parameter_keys.object_storage_egress_proxy_url is not search('REPLACE_WITH')
       - object_storage_egress_proxy_enabled | default(false) | bool
     fail_msg: >-
       Enabled API media storage requires the canonical media bucket, dedicated
-      API media credentials, and an explicitly enabled approved object-storage
-      egress proxy SSM path; media-probe credentials must not be reused.
+      API media credentials, and the explicitly enabled in-cluster
+      object-storage egress proxy; media-probe credentials must not be reused.
   when: api_media_enabled | default(false) | bool
 
 - name: Discover existing Learning Platform workload deployments

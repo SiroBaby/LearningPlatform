@@ -84,7 +84,16 @@ classify_changes() {
               go_worker=true
               infra_quality=true
               ;;
-            infra/ansible/roles/external_secrets/*|infra/ansible/vars/dev.yml)
+            infra/ansible/vars/dev.yml)
+              # The dev vars also render web runtime env (MEDIA_UPLOADS_ENABLED
+              # follows api_media_enabled), so a flag change must reach web too.
+              web=true
+              api=true
+              worker=true
+              go_worker=true
+              infra_quality=true
+              ;;
+            infra/ansible/roles/external_secrets/*)
               api=true
               worker=true
               go_worker=true
