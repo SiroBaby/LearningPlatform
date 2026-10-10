@@ -143,6 +143,19 @@ assert(failures, media_probe_build.dig('with', 'target') == 'media-probe' && med
 rollout_wait = step_by_name(deploy, 'Wait for selected K3s rollouts').fetch('run')
 assert(failures, jobs.fetch('worker-quality').fetch('if') == "needs.changes.outputs.go_worker == 'true'",
        'worker quality must run only for worker/** changes')
+# Every job that runs the worker Go tests needs the same ffprobe toolchain.
+worker_ci_steps = safe_yaml_load(File.read(File.join(root, '.github', 'workflows', 'worker-ci.yml'))).fetch('jobs').fetch('quality').fetch('steps')
+{ 'worker-ci.yml quality' => worker_ci_steps, 'deploy-dev.yml worker-quality' => jobs.fetch('worker-quality').fetch('steps') }.each do |label, steps|
+  install_position = steps.index { |step| step['name'] == 'Install ffprobe for the demuxer allowlist regression' }
+  go_test_position = steps.index { |step| step['run'] == 'go test ./...' }
+  assert(failures, !install_position.nil? && !go_test_position.nil? && install_position < go_test_position &&
+                   steps[install_position]['run'].include?('apt-get install --yes --no-install-recommends ffmpeg'),
+         "#{label} must install ffprobe before go test ./...")
+end
+worker_ci_install = worker_ci_steps.find { |step| step['name'] == 'Install ffprobe for the demuxer allowlist regression' }
+deploy_install = jobs.fetch('worker-quality').fetch('steps').find { |step| step['name'] == 'Install ffprobe for the demuxer allowlist regression' }
+assert(failures, !worker_ci_install.nil? && !deploy_install.nil? && worker_ci_install['run'] == deploy_install['run'],
+       'worker-ci.yml and deploy-dev.yml worker-quality must install the same ffprobe toolchain')
 backend_steps = jobs.fetch('backend-quality').fetch('steps')
 backend_checkout_position = backend_steps.index { |step| step['uses'] == 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5' }
 backend_go_setup_position = backend_steps.index { |step| step['uses'] == 'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16' }
