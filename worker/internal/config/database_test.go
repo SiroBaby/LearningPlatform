@@ -256,8 +256,12 @@ func TestDatabaseHandshake(t *testing.T) {
 	}
 }
 
-// sslRequestCode is the PostgreSQL SSLRequest protocol code (80877103).
-var sslRequestCode = []byte{0x04, 0xd2, 0x16, 0x2f}
+// sslRequestCode is the PostgreSQL SSLRequest protocol code (80877103) and
+// startupProtocolVersion is the plaintext StartupMessage protocol 3.0 code.
+var (
+	sslRequestCode         = []byte{0x04, 0xd2, 0x16, 0x2f}
+	startupProtocolVersion = []byte{0x00, 0x03, 0x00, 0x00}
+)
 
 type fakeServerResult struct {
 	handshake bool
@@ -287,8 +291,9 @@ func answerSSLRequest(connection net.Conn, acceptTLS bool, certificate tls.Certi
 	if _, err := io.ReadFull(connection, request); err != nil {
 		return false, false
 	}
+	// Other request codes (for example a CancelRequest) are not a plaintext session.
 	if string(request[4:]) != string(sslRequestCode) {
-		return false, true
+		return false, string(request[4:]) == string(startupProtocolVersion)
 	}
 	if !acceptTLS {
 		_, _ = connection.Write([]byte{'N'})
