@@ -100,6 +100,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: worker/go.mod
+      # Keep in sync with worker-ci.yml: worker tests need a real ffprobe.
+      - name: Install ffprobe for the demuxer allowlist regression
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
+          ffprobe -version | head -n 1
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
