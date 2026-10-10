@@ -410,8 +410,8 @@ check_application_edge_contract() {
     fi
   done
 
-  if [ "$(grep -c "'DB_SSL_MODE': ssm_parameter_keys.db_ssl_mode" "${eso_template}")" -ne 2 ] \
-    || [ "$(grep -c "'DB_SSL_CA': ssm_parameter_keys.db_ssl_ca" "${eso_template}")" -ne 2 ] \
+  if [ "$(grep -c "'DB_SSL_MODE': ssm_parameter_keys.db_ssl_mode" "${eso_template}")" -ne 3 ] \
+    || [ "$(grep -c "'DB_SSL_CA': ssm_parameter_keys.db_ssl_ca" "${eso_template}")" -ne 3 ] \
     || [ "$(grep -c "'GOOGLE_CLIENT_ID': ssm_parameter_keys.google_client_id" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c "'GOOGLE_CLIENT_SECRET': ssm_parameter_keys.google_client_secret" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c "'GOOGLE_REDIRECT_URI': ssm_parameter_keys.google_redirect_uri" "${eso_template}")" -ne 1 ] \
@@ -468,7 +468,7 @@ check_application_edge_contract() {
     fail 'Go worker must reuse the existing backend database Secret without separate SSM database URLs.'
   fi
 
-  if ! grep -Fq "{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'] %}" "${app_template}" \
+  if ! grep -Fq "{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA'] %}" "${app_template}" \
     || ! grep -Fqx '                  name: learning-platform-api-runtime' "${app_template}"; then
     fail 'Go worker must source its shared PostgreSQL configuration from the backend runtime Secret.'
   fi

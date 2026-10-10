@@ -96,7 +96,11 @@ func run() error {
 		return newBootstrapFailure(bootstrapProbe)
 	}
 
-	store, err := mediaprobe.NewPostgresStore(ctx, workerConfig.DatabaseURL)
+	poolConfig, err := workerConfig.Database.PoolConfig()
+	if err != nil {
+		return newBootstrapFailure(bootstrapDatabase)
+	}
+	store, err := mediaprobe.NewPostgresStore(ctx, poolConfig)
 	if err != nil {
 		return newBootstrapFailure(bootstrapDatabase)
 	}

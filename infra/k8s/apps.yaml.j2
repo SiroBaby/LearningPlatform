@@ -366,7 +366,7 @@ spec:
               value: '1000'
             - name: AI_WORKER_SHUTDOWN_TIMEOUT_MS
               value: '30000'
-{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'] %}
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA'] %}
             - name: {{ key }}
               valueFrom:
                 secretKeyRef:
@@ -504,7 +504,7 @@ spec:
               value: /tmp/media-probe
             - name: MEDIA_PROBE_MAX_DOWNLOAD_BYTES
               value: '524288000'
-{% for key in ['DB_HOST', 'DB_PORT', 'DB_NAME', 'MEDIA_PROBE_DB_USER', 'MEDIA_PROBE_DB_PASSWORD', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY', 'OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY'] %}
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'MEDIA_PROBE_DB_USER', 'MEDIA_PROBE_DB_PASSWORD', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY', 'OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY'] %}
             - name: {{ key }}
               valueFrom:
                 secretKeyRef:

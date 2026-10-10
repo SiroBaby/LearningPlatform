@@ -59,7 +59,7 @@ type LookupEnv func(string) (string, bool)
 
 type Config struct {
 	HealthAddress         string
-	DatabaseURL           string
+	Database              Database
 	MigrationsDir         string
 	Concurrency           int
 	JobTimeout            time.Duration
@@ -152,7 +152,7 @@ func LoadMediaProbe(lookup LookupEnv) (Config, error) {
 	}
 	return Config{
 		HealthAddress:         loaded.HealthAddress,
-		DatabaseURL:           loaded.DatabaseURL,
+		Database:              loaded.Database,
 		MigrationsDir:         loaded.MigrationsDir,
 		Concurrency:           loaded.Concurrency,
 		JobTimeout:            loaded.JobTimeout,
@@ -179,7 +179,7 @@ func Load(lookup LookupEnv) (Config, error) {
 		return Config{}, err
 	}
 
-	databaseURL, err := buildDatabaseURL(lookup)
+	database, err := loadDatabase(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -276,7 +276,7 @@ func Load(lookup LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{HealthAddress: healthAddress, DatabaseURL: databaseURL, MigrationsDir: migrationsDir, Concurrency: concurrency, JobTimeout: jobTimeout, PollInterval: pollInterval, ShutdownTimeout: shutdownTimeout, Storage: Storage{endpoint, accessKey, secretKey, bucket}, MediaStorage: mediaStorage, ObjectStorageProxyURL: objectStorageProxyURL, LLM: llm}, nil
+	return Config{HealthAddress: healthAddress, Database: database, MigrationsDir: migrationsDir, Concurrency: concurrency, JobTimeout: jobTimeout, PollInterval: pollInterval, ShutdownTimeout: shutdownTimeout, Storage: Storage{endpoint, accessKey, secretKey, bucket}, MediaStorage: mediaStorage, ObjectStorageProxyURL: objectStorageProxyURL, LLM: llm}, nil
 }
 
 func optionalMediaStorage(lookup LookupEnv, endpoint string) (Storage, error) {
@@ -374,33 +374,6 @@ func normalizeStorageEndpoint(lookup LookupEnv, endpoint string) (string, error)
 		return "", fmt.Errorf("%s must be a valid port", storagePortEnvironment)
 	}
 	return scheme + "://" + endpoint + ":" + port, nil
-}
-
-func buildDatabaseURL(lookup LookupEnv) (string, error) {
-	host, err := required(lookup, databaseHostEnvironment)
-	if err != nil {
-		return "", err
-	}
-	port, err := required(lookup, databasePortEnvironment)
-	if err != nil {
-		return "", err
-	}
-	if _, err = strconv.ParseUint(port, 10, 16); err != nil {
-		return "", fmt.Errorf("%s must be a valid port", databasePortEnvironment)
-	}
-	user, err := required(lookup, databaseUserEnvironment)
-	if err != nil {
-		return "", err
-	}
-	password, err := required(lookup, databasePasswordEnvironment)
-	if err != nil {
-		return "", err
-	}
-	database, err := required(lookup, databaseNameEnvironment)
-	if err != nil {
-		return "", err
-	}
-	return (&url.URL{Scheme: "postgres", User: url.UserPassword(user, password), Host: host + ":" + port, Path: database}).String(), nil
 }
 
 func requireSecureExternalURL(lookup LookupEnv, key, raw string) error {

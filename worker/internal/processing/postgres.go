@@ -15,8 +15,8 @@ type PostgresStore struct {
 	beginRetry func(context.Context) (pgx.Tx, error)
 }
 
-func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
+func NewPostgresStore(ctx context.Context, poolConfig *pgxpool.Config) (*PostgresStore, error) {
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("connect worker database: %w", err)
 	}

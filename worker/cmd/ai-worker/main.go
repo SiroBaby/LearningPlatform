@@ -125,7 +125,11 @@ func run() error {
 		return nil
 	}
 
-	migrationConnection, err := pgx.Connect(ctx, workerConfig.DatabaseURL)
+	migrationConnectionConfig, err := workerConfig.Database.ConnConfig()
+	if err != nil {
+		return newBootstrapFailure(bootstrapDatabase)
+	}
+	migrationConnection, err := pgx.ConnectConfig(ctx, migrationConnectionConfig)
 	if err != nil {
 		return newBootstrapFailure(bootstrapDatabase)
 	}
@@ -134,7 +138,11 @@ func run() error {
 		return newBootstrapFailure(bootstrapMigration)
 	}
 	migrationConnection.Close(ctx)
-	store, err := processing.NewPostgresStore(ctx, workerConfig.DatabaseURL)
+	poolConfig, err := workerConfig.Database.PoolConfig()
+	if err != nil {
+		return newBootstrapFailure(bootstrapDatabase)
+	}
+	store, err := processing.NewPostgresStore(ctx, poolConfig)
 	if err != nil {
 		return newBootstrapFailure(bootstrapDatabase)
 	}
