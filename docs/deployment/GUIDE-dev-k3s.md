@@ -30,7 +30,7 @@ Mục đích của tài liệu này là giúp owner và operator chuẩn bị đ
 | `DB_SSL_MODE` | `/learning-platform/dev/db-ssl-mode` |
 | `DB_SSL_CA` | `/learning-platform/dev/db-ssl-ca` |
 
-`DB_SSL_MODE` cố định là `verify-ca`. Không commit file CA. Không đưa secret value thật vào `group_vars/k3s_nodes.yml` hoặc GitHub Environment.
+`DB_SSL_MODE` cố định là `verify-ca`. API, `go-worker` và `media-probe-worker` cùng đọc hai path này; Go worker fail-closed (dừng khởi động) khi `NODE_ENV=production` mà mode không phải `verify-ca`/`verify-full` hoặc `DB_SSL_CA` thiếu/không phải PEM. Không commit file CA. Không đưa secret value thật vào `group_vars/k3s_nodes.yml` hoặc GitHub Environment.
 
 ### 2.2. Cần nhớ
 

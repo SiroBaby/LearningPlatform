@@ -36,6 +36,11 @@ temporary directory that is removed during cleanup.
 scheme, TCP port, path, query, and fragment out of that value and configure the
 port separately with `OBJECT_STORAGE_PORT`.
 
+PostgreSQL TLS uses the API contract: `DB_SSL_MODE` is required and accepts
+`verify-ca`, `verify-full`, or `disabled`; verify modes require the PEM CA in
+`DB_SSL_CA`. `NODE_ENV=production` rejects `disabled`. pgx never runs with its
+default `sslmode=prefer`, so there is no unverified TLS or plaintext fallback.
+
 `/healthz` reports that the health server is alive. `/readyz` becomes ready
 only after the database connection and consumer lifecycle start.
 

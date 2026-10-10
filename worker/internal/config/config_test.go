@@ -16,7 +16,7 @@ func TestLoad(t *testing.T) {
 	}{
 		{name: "loads shared backend database configuration", env: validEnvironment()},
 		{name: "rejects insecure object storage outside explicit local override", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "localhost", storagePortEnvironment: "9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents"}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
-		{name: "rejects local override in production", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "localhost", storagePortEnvironment: "9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true", "NODE_ENV": "production"}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
+		{name: "rejects local override in production", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "localhost", storagePortEnvironment: "9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true", "NODE_ENV": "production", databaseSSLModeEnvironment: string(DatabaseSSLModeVerifyCA), databaseSSLCAEnvironment: testCertificateAuthorityPEM}), wantErr: "OBJECT_STORAGE_ENDPOINT must use HTTPS"},
 		{name: "requires a host-only endpoint", env: environmentWithDatabase(map[string]string{storageEndpointEnvironment: "http://localhost:9000", storagePortEnvironment: "9000", storageAccessKeyEnvironment: "access", storageSecretKeyEnvironment: "secret", storageBucketEnvironment: "documents", allowInsecureEndpointsEnvironment: "true"}), wantErr: "OBJECT_STORAGE_ENDPOINT must be a host name or IP address"},
 		{name: "rejects missing health address", env: map[string]string{}, wantErr: healthAddressEnvironment + " is required"},
 		{name: "rejects malformed health address", env: map[string]string{healthAddressEnvironment: "3403"}, wantErr: "must be a host:port address"},
@@ -68,8 +68,12 @@ func TestLoadMediaProbeDoesNotRequireAIProviderCredentials(t *testing.T) {
 	if config.Storage.Bucket != "media" || config.Storage.AccessKey != "media-probe-access" || config.Storage.SecretKey != "media-probe-secret" {
 		t.Fatalf("media probe storage = %#v", config.Storage)
 	}
-	if !strings.Contains(config.DatabaseURL, "media_probe") || !strings.Contains(config.DatabaseURL, "media-probe-password") {
-		t.Fatalf("media probe database URL does not use dedicated credentials: %q", config.DatabaseURL)
+	poolConfig, err := config.Database.PoolConfig()
+	if err != nil {
+		t.Fatalf("media probe PoolConfig() error = %v", err)
+	}
+	if poolConfig.ConnConfig.User != "media_probe" || poolConfig.ConnConfig.Password != "media-probe-password" {
+		t.Fatalf("media probe database does not use dedicated credentials: user %q", poolConfig.ConnConfig.User)
 	}
 	if config.ObjectStorageProxyURL != "" {
 		t.Fatalf("local media probe proxy configuration = %q, want empty", config.ObjectStorageProxyURL)
@@ -113,6 +117,7 @@ func TestLoadRejectsMediaBucketReuseInEveryEnvironment(t *testing.T) {
 			env[fullPipelineMediaAccessKeyEnvironment] = "full-pipeline-access"
 			env[fullPipelineMediaSecretKeyEnvironment] = "full-pipeline-secret"
 			if environment == "production" {
+				useProductionEnvironment(env)
 				env[storageEndpointEnvironment] = "s3.example.test"
 				env[storagePortEnvironment] = "443"
 				env[storageUseSSLEnvironment] = "true"
@@ -151,7 +156,7 @@ func TestLoadMediaProbeRequiresEgressProxyInProduction(t *testing.T) {
 	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
 	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
 	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
-	env["NODE_ENV"] = "production"
+	useProductionEnvironment(env)
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
 	env[storageUseSSLEnvironment] = "true"
@@ -168,7 +173,7 @@ func TestLoadMediaProbeAcceptsValidatedEgressProxyInProduction(t *testing.T) {
 	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
 	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
 	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
-	env["NODE_ENV"] = "production"
+	useProductionEnvironment(env)
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
 	env[storageUseSSLEnvironment] = "true"
@@ -185,7 +190,7 @@ func TestLoadMediaProbeAcceptsValidatedEgressProxyInProduction(t *testing.T) {
 
 func TestLoadAllowsMissingEgressProxyInProductionWhenMediaDisabled(t *testing.T) {
 	env := validEnvironment()
-	env["NODE_ENV"] = "production"
+	useProductionEnvironment(env)
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
 	env[storageUseSSLEnvironment] = "true"
@@ -200,7 +205,7 @@ func TestLoadAllowsMissingEgressProxyInProductionWhenMediaDisabled(t *testing.T)
 
 func TestLoadRequiresEgressProxyInProductionWhenMediaEnabled(t *testing.T) {
 	env := validEnvironment()
-	env["NODE_ENV"] = "production"
+	useProductionEnvironment(env)
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
 	env[storageUseSSLEnvironment] = "true"
@@ -219,7 +224,7 @@ func TestLoadMediaProbeRejectsMalformedProductionProxy(t *testing.T) {
 	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
 	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
 	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
-	env["NODE_ENV"] = "production"
+	useProductionEnvironment(env)
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
 	env[storageUseSSLEnvironment] = "true"
@@ -292,7 +297,17 @@ func environmentWithDatabase(env map[string]string) map[string]string {
 	env[databaseUserEnvironment] = "learning"
 	env[databasePasswordEnvironment] = "password"
 	env[databaseNameEnvironment] = "learning"
+	if _, ok := env[databaseSSLModeEnvironment]; !ok {
+		env[databaseSSLModeEnvironment] = string(DatabaseSSLModeDisabled)
+	}
 	return env
+}
+
+// useProductionEnvironment applies the production database TLS contract.
+func useProductionEnvironment(env map[string]string) {
+	env["NODE_ENV"] = "production"
+	env[databaseSSLModeEnvironment] = string(DatabaseSSLModeVerifyCA)
+	env[databaseSSLCAEnvironment] = testCertificateAuthorityPEM
 }
 
 func validEnvironment() map[string]string {

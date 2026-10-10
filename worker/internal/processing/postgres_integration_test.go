@@ -158,7 +158,7 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		}
 		probeURL := strings.Replace(database.databaseURL, "postgres:postgres@", "source_failure_probe:source_failure_probe@", 1)
 		var err error
-		probeStore, err = NewPostgresStore(ctx, probeURL)
+		probeStore, err = newPostgresStoreFromURL(ctx, probeURL)
 		if err != nil {
 			t.Fatalf("connect source failure store: %v", err)
 		}
@@ -390,11 +390,21 @@ func startPostgresIntegration(t *testing.T, ctx context.Context) *postgresIntegr
 		t.Fatalf("run tracked migrations: %v", err)
 	}
 	connection.Close(ctx)
-	store, err := NewPostgresStore(ctx, adminURL)
+	store, err := newPostgresStoreFromURL(ctx, adminURL)
 	if err != nil {
 		t.Fatalf("connect PostgreSQL store: %v", err)
 	}
 	return &postgresIntegration{admin: admin, container: container, store: store, databaseURL: adminURL}
+}
+
+// newPostgresStoreFromURL connects the local testcontainers fixture, whose URL
+// explicitly sets sslmode=disable.
+func newPostgresStoreFromURL(ctx context.Context, databaseURL string) (*PostgresStore, error) {
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	return NewPostgresStore(ctx, poolConfig)
 }
 
 func migrationDirectory(t *testing.T) string {

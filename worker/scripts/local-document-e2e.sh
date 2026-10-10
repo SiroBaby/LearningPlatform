@@ -473,6 +473,8 @@ start_go_worker() {
     export DB_USER=learning
     export DB_PASSWORD=learning
     export DB_NAME=learning
+    # Local fixture only: production rejects disabled database TLS.
+    export DB_SSL_MODE=disabled
     export OBJECT_STORAGE_ENDPOINT=127.0.0.1
     export OBJECT_STORAGE_PORT="$minio_port"
     export OBJECT_STORAGE_REGION=us-east-1
@@ -505,6 +507,7 @@ start_media_probe_worker() {
       --env DB_HOST="$postgres_container" \
       --env DB_PORT=5432 \
       --env DB_NAME=learning \
+      --env DB_SSL_MODE=disabled \
       --env MEDIA_PROBE_DB_USER=learning_platform_media_probe \
       --env MEDIA_PROBE_DB_PASSWORD=media_probe_local \
       --env OBJECT_STORAGE_ENDPOINT="$minio_container" \
@@ -529,6 +532,7 @@ start_media_probe_worker() {
     export DB_HOST=127.0.0.1
     export DB_PORT="$postgres_port"
     export DB_NAME=learning
+    export DB_SSL_MODE=disabled
     export MEDIA_PROBE_DB_USER=learning_platform_media_probe
     export MEDIA_PROBE_DB_PASSWORD=media_probe_local
     export OBJECT_STORAGE_ENDPOINT=127.0.0.1

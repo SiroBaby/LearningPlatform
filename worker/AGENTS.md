@@ -9,6 +9,8 @@
 - Before a PR, worker lifecycle, concurrency, timeout, or shutdown changes must pass `go test -race ./...` and one local executable smoke (for example `ai-worker preflight` with the fake provider or the configured real alias); if PostgreSQL/object storage are unavailable, record that full startup/E2E evidence is not covered.
 - Any JSON value crossing from Go to the Node return seam must preserve fields required by the versioned handoff contract even when their valid value is zero; cover that serialization contract with a regression test before emitting `ai.outbox`.
 
+- Build every PostgreSQL connection from `config.Database.PoolConfig()`/`ConnConfig()`; never pass a raw URL to `pgxpool.New`/`pgx.Connect`. pgx defaults to `sslmode=prefer` (unverified TLS with plaintext fallback), and the verified TLS policy is applied only by those builders.
+
 ## Processing Failure Logging
 
 - Every processing retry or final failure must emit one safe structured event when the outcome is known: retry scheduled, retry persistence failed, final failure persisted, final-failure persistence failed, or persistence outcome ambiguous.
