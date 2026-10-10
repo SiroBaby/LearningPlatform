@@ -6,6 +6,7 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  become: false
   vars_files:
     - ../../../vars/dev.yml
   vars:
@@ -288,6 +289,8 @@
     - name: Locate the forwarder, legacy-env, and workload apply tasks
       ansible.builtin.set_fact:
         applications_task_names: "{{ applications_role_tasks | map(attribute='name') | list }}"
+        applications_forwarder_select_task: >-
+          {{ applications_role_tasks | selectattr('name', 'equalto', 'Select the media probe database forwarder resources') | list }}
         applications_forwarder_apply_task: >-
           {{ applications_role_tasks | selectattr('name', 'equalto', 'Apply the media probe database forwarder before its consumer') | list }}
         applications_legacy_env_task: >-
@@ -299,11 +302,12 @@
     - name: Require the forwarder to be applied and awaited before the probe workload
       ansible.builtin.assert:
         that:
+          - applications_forwarder_select_task | length == 1
+          - applications_forwarder_select_task[0].when == applications_forwarder_apply_task[0].when
           - applications_forwarder_apply_task | length == 1
           - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].state == 'present'
           - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].wait == true
           - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].wait_timeout == 180
-          - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].definition is search(applications_forwarder_selector | regex_escape)
           - applications_forwarder_apply_task[0].when is search('media_probe_worker_enabled')
           - applications_legacy_env_task | length == 1
           - applications_legacy_env_task[0].when is search('media_probe_worker_enabled')
@@ -312,13 +316,84 @@
           - >-
             applications_task_names.index('Read an existing media probe worker Deployment')
             < applications_task_names.index('Require no legacy secret-sourced database address on the media probe worker')
+            < applications_task_names.index('Select the media probe database forwarder resources')
             < applications_task_names.index('Apply the media probe database forwarder before its consumer')
             < applications_task_names.index('Apply selected stateless Learning Platform workloads')
-          - >-
-            applications_enabled_manifests | selectattr('metadata.name', 'match', applications_forwarder_selector)
-            | map(attribute='kind') | sort | list
-            == ['ConfigMap', 'Deployment', 'NetworkPolicy', 'NetworkPolicy', 'Service', 'ServiceAccount']
         fail_msg: >-
           The applications role must reject a legacy secret-sourced probe
-          database address, then apply exactly the forwarder resources and wait
-          for them before applying media-probe-worker.
+          database address, then select the forwarder resources and apply and
+          wait for them before applying media-probe-worker.
+
+    # Run 38070362590: with wait, kubernetes.core.k8s applies and awaits each
+    # document in list order, so a Deployment listed before its ServiceAccount
+    # never becomes Ready. Execute the role's own select and apply expressions
+    # (not a copy) against the rendered template to prove the applied order.
+    - name: Execute the role's forwarder expressions against the rendered template
+      block:
+        - name: Create a scratch directory for the role expressions
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: forwarder-order
+          register: applications_expression_dir
+
+        - name: Write the role's select and apply expressions as templates
+          ansible.builtin.copy:
+            dest: "{{ applications_expression_dir.path }}/{{ item.file }}"
+            mode: '0600'
+            content: "{{ '{{ (' ~ (item.expression | trim | regex_replace('^\\{\\{|\\}\\}$', '')) ~ ') | to_json }}' }}"
+          loop:
+            - file: select.j2
+              expression: "{{ applications_forwarder_select_task[0]['ansible.builtin.set_fact'].applications_forwarder_resources }}"
+            - file: apply.j2
+              expression: "{{ applications_forwarder_apply_task[0]['kubernetes.core.k8s'].definition }}"
+          loop_control:
+            label: "{{ item.file }}"
+
+        - name: Execute the role's select expression the way the deploy playbook does
+          ansible.builtin.set_fact:
+            applications_selected_forwarder: >-
+              {{ lookup('template', applications_expression_dir.path ~ '/select.j2',
+                 template_vars={'playbook_dir': playbook_dir ~ '/../../../playbooks',
+                                'deployment_targets': ['worker'],
+                                'media_probe_worker_enabled': true,
+                                'media_probe_database_upstream_host': 'database.example.net',
+                                'media_probe_database_upstream_port': 13039})
+                 | from_json }}
+
+        - name: Execute the role's apply expression on the selected resources
+          ansible.builtin.set_fact:
+            applications_applied_forwarder: >-
+              {{ lookup('template', applications_expression_dir.path ~ '/apply.j2',
+                 template_vars={'applications_forwarder_resources': applications_selected_forwarder})
+                 | from_json }}
+            # Reversed input puts the Deployment before its ConfigMap, so the
+            # reordering is exercised whatever order the template uses.
+            applications_applied_reversed_forwarder: >-
+              {{ lookup('template', applications_expression_dir.path ~ '/apply.j2',
+                 template_vars={'applications_forwarder_resources': applications_selected_forwarder | reverse | list})
+                 | from_json }}
+
+        - name: Require every forwarder dependency to be applied before its Deployment
+          vars:
+            applications_applied_kinds: "{{ applications_applied_forwarder | map(attribute='kind') | list }}"
+            applications_applied_reversed_kinds: "{{ applications_applied_reversed_forwarder | map(attribute='kind') | list }}"
+          ansible.builtin.assert:
+            that:
+              - applications_applied_kinds | sort == ['ConfigMap', 'Deployment', 'NetworkPolicy', 'NetworkPolicy', 'Service', 'ServiceAccount']
+              - applications_applied_forwarder | map(attribute='metadata.name') | unique | sort == applications_forwarder_names | sort
+              - applications_applied_kinds | select('equalto', 'Deployment') | list | length == 1
+              - applications_applied_kinds[-1] == 'Deployment'
+              - applications_applied_reversed_kinds | sort == applications_applied_kinds | sort
+              - applications_applied_reversed_kinds[-1] == 'Deployment'
+            fail_msg: >-
+              The forwarder apply runs with wait, so its ServiceAccount, ConfigMap,
+              Service, and NetworkPolicies must be applied before the Deployment;
+              otherwise the pod is rejected and the wait times out. Applied order:
+              {{ applications_applied_kinds }}; from reversed input:
+              {{ applications_applied_reversed_kinds }}.
+      always:
+        - name: Remove the scratch directory
+          ansible.builtin.file:
+            path: "{{ applications_expression_dir.path }}"
+            state: absent
+          when: applications_expression_dir.path is defined

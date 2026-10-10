@@ -288,13 +288,23 @@
 
 # The probe pings PostgreSQL at startup, so the forwarder must be serving
 # before the probe exists; otherwise the first rollout starts in CrashLoopBackOff.
+- name: Select the media probe database forwarder resources
+  ansible.builtin.set_fact:
+    applications_forwarder_resources: >-
+      {{ lookup('template', playbook_dir ~ '/../../k8s/apps.yaml.j2') | from_yaml_all
+         | selectattr('metadata.name', 'match', '^media-probe-db-egress(-config|-ingress|-egress)?$') | list }}
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+
+# With wait the module applies and awaits each document in list order, so every
+# dependency (ServiceAccount, ConfigMap, Service, NetworkPolicy) must precede the
+# Deployment; otherwise its pods are rejected while the module waits on it.
 - name: Apply the media probe database forwarder before its consumer
   kubernetes.core.k8s:
     kubeconfig: /etc/rancher/k3s/k3s.yaml
     state: present
     definition: >-
-      {{ lookup('template', playbook_dir ~ '/../../k8s/apps.yaml.j2') | from_yaml_all
-         | selectattr('metadata.name', 'match', '^media-probe-db-egress(-config|-ingress|-egress)?$') | list }}
+      {{ (applications_forwarder_resources | rejectattr('kind', 'equalto', 'Deployment') | list)
+         + (applications_forwarder_resources | selectattr('kind', 'equalto', 'Deployment') | list) }}
     wait: true
     wait_timeout: 180
   when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
