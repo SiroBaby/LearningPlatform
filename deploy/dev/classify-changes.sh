@@ -99,11 +99,12 @@ classify_changes() {
               go_worker=true
               infra_quality=true
               ;;
-            .github/workflows/deploy-dev.yml|infra/scripts/*|deploy/dev/tests/*)
-              infra_quality=true
-              ;;
+            # Keep before deploy/dev/tests/* so the observability health test is not shadowed.
             deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/k3s/*)
               observability=true
+              infra_quality=true
+              ;;
+            .github/workflows/deploy-dev.yml|infra/scripts/*|deploy/dev/tests/*)
               infra_quality=true
               ;;
           esac

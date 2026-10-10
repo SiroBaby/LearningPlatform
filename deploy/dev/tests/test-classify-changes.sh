@@ -213,6 +213,19 @@ main() {
   (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
   (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
+  # The observability health test must not be shadowed by the generic deploy test pattern.
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file deploy/dev/tests/test-observability-health.sh)"
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
+
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file deploy/dev/tests/test-deploy-state.sh)"
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
+
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file app/src/main.ts)"
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" $'web=true\napi=true\nworker=false\nbackend=true\ndeploy_any=true')
