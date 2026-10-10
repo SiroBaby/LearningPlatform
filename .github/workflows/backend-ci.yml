@@ -51,12 +51,8 @@ jobs:
       - run: npx tsc -p tsconfig.spec.json --noEmit
       - name: Prepare local worker fixture
         run: cp ../worker/.env.example ../worker/.env
-      - name: Install ffmpeg for local media fixture
-        run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes ffmpeg
-          fi
+      - name: Install pinned ffmpeg/ffprobe artifact for local media fixture
+        run: bash ../worker/scripts/install-media-tools.sh
       - name: Run real MinIO S3-compatible round trip
         run: bash ../worker/scripts/local-document-e2e.sh
       - name: Verify production dependency graph

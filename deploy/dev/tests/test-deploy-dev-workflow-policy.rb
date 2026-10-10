@@ -148,7 +148,7 @@ worker_ci_steps = safe_yaml_load(File.read(File.join(root, '.github', 'workflows
   install_position = steps.index { |step| step['name'] == 'Install ffprobe for the demuxer allowlist regression' }
   go_test_position = steps.index { |step| step['run'] == 'go test ./...' }
   assert(failures, !install_position.nil? && !go_test_position.nil? && install_position < go_test_position &&
-                   steps[install_position]['run'].include?('apt-get install --yes --no-install-recommends ffmpeg'),
+                   steps[install_position]['run'] == 'bash scripts/install-media-tools.sh',
          "#{label} must install ffprobe before go test ./...")
 end
 worker_ci_install = worker_ci_steps.find { |step| step['name'] == 'Install ffprobe for the demuxer allowlist regression' }

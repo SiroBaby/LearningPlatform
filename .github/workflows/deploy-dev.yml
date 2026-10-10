@@ -102,10 +102,7 @@ jobs:
           go-version-file: worker/go.mod
       # Keep in sync with worker-ci.yml: worker tests need a real ffprobe.
       - name: Install ffprobe for the demuxer allowlist regression
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
-          ffprobe -version | head -n 1
+        run: bash scripts/install-media-tools.sh
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
@@ -116,26 +113,10 @@ jobs:
     name: Frontend quality
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-24.04
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # actions/setup-node v4, verified against refs/tags/v4 on 2026-07-18.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci --no-audit --no-fund
-      - run: timeout 180s node ../deploy/dev/audit-high.js
-      - run: npm run lint
-      - run: npm run build
-      - run: npm run test:runtime
+    # Same job definition as the pull request web CI.
+    uses: ./.github/workflows/web-quality.yml
 
   infra-quality:
     name: Infrastructure and observability policy

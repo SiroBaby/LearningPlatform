@@ -16,6 +16,8 @@ ENTRYPOINT ["/app/ai-worker"]
 
 # BtbN publishes a reproducible, statically packaged FFmpeg build. The archive
 # checksum is the supply-chain pin; the runtime image carries only ffprobe.
+# worker/scripts/install-media-tools.sh reads these ARG literals so CI tests the
+# same artifact; keep each value literal on one line.
 FROM --platform=linux/amd64 debian:bookworm-slim@sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867 AS media-probe-artifact
 ARG FFPROBE_VERSION=8.1.3-16-ge0a878dd70
 ARG FFPROBE_BUILD_VERSION=8.1.3-16-ge0a878dd70-20261009

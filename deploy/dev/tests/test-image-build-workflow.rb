@@ -24,7 +24,9 @@ quality_jobs.each do |job|
   assert(commands.include?('npm run test:e2e -- --runInBand'), 'dedicated E2E verification must remain serial')
   assert(commands.include?('npm run build') && commands.include?('npx tsc -p tsconfig.spec.json --noEmit'), 'retain build and spec type-check')
 end
-frontend_commands = jobs.fetch('frontend-quality').fetch('steps').filter_map { |step| step['run'] }
+assert(jobs.fetch('frontend-quality').fetch('uses') == './.github/workflows/web-quality.yml', 'frontend quality must reuse the pull request web CI job')
+web_quality = YAML.safe_load(File.read(File.join(root, '.github/workflows/web-quality.yml')), aliases: true)
+frontend_commands = web_quality.fetch('jobs').fetch('quality').fetch('steps').filter_map { |step| step['run'] }
 assert(frontend_commands.include?('npm ci --no-audit --no-fund') && frontend_commands.include?('timeout 180s node ../deploy/dev/audit-high.js'), 'frontend must keep its explicit bounded audit after suppressing duplicate install audit')
 
 builds = { 'build-api' => ['api', 'backend'], 'build-web' => ['web', 'web'], 'build-go-worker' => ['go-worker', 'go_worker'],

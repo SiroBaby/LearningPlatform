@@ -20,11 +20,14 @@ Publish có tối đa ba lần, mỗi lần tối đa 600 giây, nghỉ 10 rồi
 
 ## Kiểm chứng trước merge
 
-Workflow `deploy-workflow-ci.yml` chạy trên push nhánh task và pull request, chỉ có quyền đọc repository, không push image hoặc truy cập dev. Nó chạy actionlint (kiểm tra cú pháp/biểu thức workflow), ShellCheck, regression (kiểm thử chống tái diễn) workflow/classifier và fixture (lệnh giả lập) publish.
+Workflow `deploy-workflow-ci.yml` chạy trên push nhánh task và pull request, chỉ có quyền đọc repository, không push image hoặc truy cập dev. Nó chạy actionlint (kiểm tra cú pháp/biểu thức workflow), ShellCheck, regression (kiểm thử chống tái diễn) workflow/classifier, fixture (lệnh giả lập) publish và toàn bộ `deploy/dev/tests`, gồm `test-media-tools-ci.sh` (CI cài ffmpeg/ffprobe từ artifact đã pin SHA-256, không dùng apt).
+
+Workflow `web-quality.yml` chạy trên pull request đổi `web/**` hoặc `deploy/dev/**`: `npm ci`, `audit-high.js`, lint, build, `tsc --noEmit`, `test:runtime`. Job `frontend-quality` của `deploy-dev.yml` gọi lại chính workflow này qua `workflow_call` (gọi workflow tái sử dụng), nên PR và deploy dùng cùng một định nghĩa.
 
 ```sh
 bash deploy/dev/tests/test-deploy-dev-workflow.sh
 python3 deploy/dev/tests/test-publish-image.py
+bash deploy/dev/tests/test-media-tools-ci.sh
 shellcheck deploy/dev/publish-image.sh
 actionlint -shellcheck=
 ```

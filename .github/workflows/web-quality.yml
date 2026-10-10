@@ -1,0 +1,39 @@
+name: Web CI
+
+on:
+  pull_request:
+    paths:
+      - web/**
+      - deploy/dev/**
+      - .github/workflows/web-quality.yml
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Web lint, type-check, build, test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # actions/setup-node v4, verified against refs/tags/v4 on 2026-07-18.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: timeout 180s node ../deploy/dev/audit-high.js
+      - run: npm run lint
+      - run: npm run build
+      # After build: tsconfig includes the route types that next build generates.
+      - run: npx tsc --noEmit
+      - run: npm run test:runtime
