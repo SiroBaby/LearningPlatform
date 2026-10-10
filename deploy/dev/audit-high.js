@@ -9,6 +9,14 @@ const PATCHED_BRACE_EXPANSION_ADVISORIES = new Set([
   'https://github.com/advisories/GHSA-mh99-v99m-4gvg',
   'https://github.com/advisories/GHSA-rgw5-rvv9-x895',
 ]);
+// GHSA-vfj7-8cjw-p6xm has no patched braces release yet. Only the lint-only path
+// pinned by @next/eslint-plugin-next is accepted; remove once a fix is published.
+const UNPATCHED_BRACES_VERSIONS = new Set(['3.0.3']);
+const UNPATCHED_BRACES_ADVISORY = Object.freeze({
+  url: 'https://github.com/advisories/GHSA-vfj7-8cjw-p6xm',
+  range: '<=3.0.3',
+});
+const UNPATCHED_BRACES_PATH = 'eslint-config-next>@next/eslint-plugin-next>fast-glob>micromatch>braces';
 
 function commandJson(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8' });
@@ -29,6 +37,26 @@ function collectDependencyVersions(node, dependencyName, versions = new Set()) {
   return versions;
 }
 
+function collectDependencyPaths(node, dependencyName, ancestors = [], paths = new Set()) {
+  for (const [name, dependency] of Object.entries(node.dependencies ?? {})) {
+    const path = [...ancestors, name];
+    if (name === dependencyName) paths.add(path.join('>'));
+    collectDependencyPaths(dependency, dependencyName, path, paths);
+  }
+  return paths;
+}
+
+function isAcceptedUnpatchedBraces(vulnerability, installedVersions, installedPaths) {
+  if (vulnerability.name !== 'braces' || installedVersions.size === 0) return false;
+  const advisories = vulnerability.via.filter((entry) => typeof entry === 'object');
+  return advisories.length > 0
+    && vulnerability.via.length === advisories.length
+    && advisories.every((entry) => entry.url === UNPATCHED_BRACES_ADVISORY.url
+      && entry.range === UNPATCHED_BRACES_ADVISORY.range)
+    && [...installedVersions].every((version) => UNPATCHED_BRACES_VERSIONS.has(version))
+    && [...installedPaths].every((path) => path === UNPATCHED_BRACES_PATH);
+}
+
 function isPatchedBraceExpansion(vulnerability, installedVersions) {
   if (vulnerability.name !== 'brace-expansion' || installedVersions.size === 0) return false;
   const advisories = vulnerability.via.filter((entry) => typeof entry === 'object');
@@ -40,6 +68,8 @@ function isPatchedBraceExpansion(vulnerability, installedVersions) {
 function unresolvedVulnerabilities(audit, dependencyTree) {
   const vulnerabilities = audit.vulnerabilities ?? {};
   const installedVersions = collectDependencyVersions(dependencyTree, 'brace-expansion');
+  const installedBracesVersions = collectDependencyVersions(dependencyTree, 'braces');
+  const installedBracesPaths = collectDependencyPaths(dependencyTree, 'braces');
   const ignored = new Set();
 
   const isIgnored = (name, visiting = new Set()) => {
@@ -47,7 +77,8 @@ function unresolvedVulnerabilities(audit, dependencyTree) {
     if (visiting.has(name)) return false;
     const vulnerability = vulnerabilities[name];
     if (!vulnerability) return false;
-    if (isPatchedBraceExpansion(vulnerability, installedVersions)) {
+    if (isPatchedBraceExpansion(vulnerability, installedVersions)
+      || isAcceptedUnpatchedBraces(vulnerability, installedBracesVersions, installedBracesPaths)) {
       ignored.add(name);
       return true;
     }
@@ -71,7 +102,7 @@ function main() {
     : commandJson('npm', ['audit', '--json', '--audit-level=high']);
   const dependencyTree = process.argv[3]
     ? JSON.parse(readFileSync(process.argv[3], 'utf8'))
-    : commandJson('npm', ['ls', 'brace-expansion', '--all', '--json']);
+    : commandJson('npm', ['ls', 'brace-expansion', 'braces', '--all', '--json']);
   const unresolved = unresolvedVulnerabilities(audit, dependencyTree);
   if (unresolved.length > 0) {
     console.error(`Unresolved npm audit findings: ${unresolved.join(', ')}`);
