@@ -136,3 +136,33 @@
           - external_secrets_runtime_store is skipped
       tags: [external_secrets_runtime]
       when: run_web_only_skip_test | bool
+
+- name: Verify the example inventory renders every runtime ExternalSecret key
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../inventory/group_vars/k3s_nodes.yml.example
+  tasks:
+    # Enable every optional media branch so each referenced SSM key is rendered.
+    - name: Render API and worker runtime resources from the example inventory
+      ansible.builtin.set_fact:
+        external_secrets_example_resources: >-
+          {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['api', 'worker'], 'api_media_enabled': true,
+                            'media_probe_worker_enabled': true, 'object_storage_egress_proxy_enabled': true}) | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require the example inventory to define every referenced SSM key
+      ansible.builtin.assert:
+        that:
+          - external_secrets_example_resources | length == 5
+          - >-
+            external_secrets_example_resources[1:]
+            | map(attribute='spec.data')
+            | flatten
+            | map(attribute='remoteRef.key')
+            | list
+            | difference(ssm_parameter_keys.values() | list)
+            | length == 0
+      no_log: true

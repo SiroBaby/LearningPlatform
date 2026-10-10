@@ -124,9 +124,9 @@
       - ssm_parameter_keys.object_storage_egress_proxy_url is not search('REPLACE_WITH')
       - object_storage_egress_proxy_enabled | default(false) | bool
     fail_msg: >-
-      Enabled API media storage requires the canonical media bucket, approved
-      media credentials, and an explicitly enabled object-storage egress proxy
-      SSM path.
+      Enabled API media storage requires the canonical media bucket, dedicated
+      API media credentials, and an explicitly enabled approved object-storage
+      egress proxy SSM path; media-probe credentials must not be reused.
   when: api_media_enabled | default(false) | bool
 
 - name: Discover existing Learning Platform workload deployments
