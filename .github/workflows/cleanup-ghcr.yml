@@ -60,16 +60,22 @@ jobs:
           protected_image_pattern+='(learningplatform-api|learningplatform-web)'
           protected_image_pattern+='@sha256:[a-f0-9]{64}$'
           for resource in deployments replicasets; do
-            ssh -n -o BatchMode=yes \
+            if ssh -n -o BatchMode=yes \
               -o ConnectTimeout=15 -o ConnectionAttempts=1 \
               -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
               -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
               "$VPS_USER@$VPS_HOST" \
-              "sudo timeout 30s k3s kubectl get $resource \
+              "timeout 30s sudo -n k3s kubectl get $resource \
               --namespace learning-platform-dev \
               -o jsonpath=$quoted_jsonpath" \
-              >> "$RUNNER_TEMP/protected-images.tmp"
+              >> "$RUNNER_TEMP/protected-images.tmp" 2>/dev/null; then
+              :
+            else
+              transport_rc=$?
+              printf 'K3s digest collection transport failed for %s (rc=%s); refusing cleanup\n' "$resource" "$transport_rc" >&2
+              exit 1
+            fi
           done
           managed_image_pattern='^ghcr\.io/sirobaby/(learningplatform-api|learningplatform-web)([:@]|$)'
           if grep -E "$managed_image_pattern" "$RUNNER_TEMP/protected-images.tmp" | grep -Ev "$protected_image_pattern" > /dev/null; then
@@ -80,12 +86,11 @@ jobs:
             "$protected_image_pattern" \
             "$RUNNER_TEMP/protected-images.tmp" \
             | sed -E 's|^.*@||' \
-            | sort -u > "$RUNNER_TEMP/protected-digests.tmp"; then
+            | sort -u > "$RUNNER_TEMP/protected-digests.tmp" || [[ ! -s "$RUNNER_TEMP/protected-digests.tmp" ]]; then
             printf '%s\n' \
               'no protected K3s digests were discovered; refusing cleanup' >&2
             exit 1
           fi
-          [[ -s "$RUNNER_TEMP/protected-digests.tmp" ]]
           mv -- "$RUNNER_TEMP/protected-images.tmp" "$RUNNER_TEMP/protected-images"
           mv -- "$RUNNER_TEMP/protected-digests.tmp" "$RUNNER_TEMP/protected-digests"
       - name: List and select eligible versions

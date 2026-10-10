@@ -38,7 +38,7 @@ done
 if [[ "${EVENT_NAME}" == workflow_dispatch && "${CONFIRMATION:-}" != DELETE ]]; then
   printf '%s\n' 'manual run is dry-run; type DELETE in confirmation to delete'
   for request in "${requests[@]}"; do
-    printf '%s\n' "${request#*/}"
+    printf '%s\n' "$request"
   done
   exit 0
 fi

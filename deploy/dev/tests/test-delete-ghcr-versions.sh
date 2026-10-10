@@ -26,7 +26,7 @@ EOF
   output="$(CANDIDATE_DIR="${candidates}" EVENT_NAME=workflow_dispatch \
     CURL_LOG="${temp_dir}/curl.log" PATH="${mock_bin}:${PATH}" \
     bash "${DELETE_SCRIPT}")"
-  [[ "${output}" == $'manual run is dry-run; type DELETE in confirmation to delete\n101\n202' ]] \
+  [[ "${output}" == $'manual run is dry-run; type DELETE in confirmation to delete\nlearningplatform-api/101\nlearningplatform-web/202' ]] \
     || fail 'manual dry-run did not report exact candidates'
   [[ ! -s "${temp_dir}/curl.log" ]] || fail 'manual dry-run invoked DELETE'
 

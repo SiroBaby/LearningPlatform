@@ -64,10 +64,11 @@ required = ('-n', 'BatchMode=yes', 'ConnectTimeout=15', 'ConnectionAttempts=1',
 if any(option not in sys.argv for option in required):
     sys.exit(32)
 if os.environ.get('MOCK_SSH_FAILURE') == 'true' and 'replicasets' in sys.argv[-1]:
+    print('private remote diagnostic must not leak', file=sys.stderr)
     sys.exit(255)
 sys.exit(subprocess.run(['bash', '--noprofile', '--norc', '-ceu', sys.argv[-1]]).returncode)
 ''')
-        self.executable('sudo', '#!/bin/sh\nexec "$@"\n')
+        self.executable('sudo', '#!/bin/sh\n[ "$1" = -n ] && [ "$2" = k3s ] || exit 34\nshift\nexec "$@"\n')
         self.executable('k3s', '''#!/usr/bin/env python3
 import os, sys
 expected = ['kubectl','get',sys.argv[3],'--namespace','learning-platform-dev','-o',
@@ -91,7 +92,7 @@ print(os.environ['MOCK_IMAGE'])
                               text=True, capture_output=True)
 
     def run_step(self, name):
-        return subprocess.run(['bash', '-ceu', STEPS[name]['run']], env=self.env,
+        return subprocess.run(['bash', '--noprofile', '--norc', '-e', '-c', STEPS[name]['run']], env=self.env,
                               text=True, capture_output=True, cwd=ROOT)
 
     def select(self, versions, package=PACKAGES[0]):
@@ -161,7 +162,7 @@ print(os.environ['MOCK_IMAGE'])
         (self.directory / 'unmanaged-delete-ids').write_text('do-not-read\n')
         result = self.run_delete(EVENT_NAME='workflow_dispatch', CONFIRMATION='')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, 'manual run is dry-run; type DELETE in confirmation to delete\n101\n')
+        self.assertEqual(result.stdout, 'manual run is dry-run; type DELETE in confirmation to delete\nlearningplatform-api/101\n')
         self.assertEqual(self.calls(), [])
 
     def test_manual_confirmed_deletion_and_request_failure(self):
@@ -187,6 +188,13 @@ print(os.environ['MOCK_IMAGE'])
                 self.env.update(overrides)
                 result = self.run_step('Collect protected K3s image digests')
                 self.assertNotEqual(result.returncode, 0)
+                if 'MOCK_SSH_FAILURE' in overrides:
+                    self.assertIn('transport failed for replicasets (rc=255)', result.stderr)
+                    self.assertNotIn('private remote diagnostic', result.stderr)
+                elif overrides['MOCK_IMAGE'].startswith('another.registry/'):
+                    self.assertIn('no protected K3s digests were discovered; refusing cleanup', result.stderr)
+                else:
+                    self.assertIn('managed K3s image is not an immutable digest', result.stderr)
                 self.assertFalse((self.directory / 'protected-digests').exists())
                 self.assertFalse((self.directory / 'protected-images').exists())
                 self.assertFalse(list(self.directory.glob('protected-*.tmp')))
