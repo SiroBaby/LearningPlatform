@@ -288,13 +288,76 @@
 
 # The probe pings PostgreSQL at startup, so the forwarder must be serving
 # before the probe exists; otherwise the first rollout starts in CrashLoopBackOff.
+- name: Select the media probe database forwarder resources
+  ansible.builtin.set_fact:
+    applications_forwarder_resources: >-
+      {{ lookup('template', playbook_dir ~ '/../../k8s/apps.yaml.j2') | from_yaml_all
+         | selectattr('metadata.name', 'match', '^media-probe-db-egress(-config|-ingress|-egress)?$') | list }}
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+
+# With wait the module applies and awaits each document in list order, so every
+# dependency (ServiceAccount, ConfigMap, Service, NetworkPolicy) must exist
+# before the Deployment is awaited; otherwise its pods are rejected.
+- name: Apply the media probe database forwarder dependencies
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition: "{{ applications_forwarder_resources | rejectattr('kind', 'equalto', 'Deployment') | list }}"
+    wait: true
+    wait_timeout: 180
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+
+# A ReplicaSet that failed to create pods (for example before its ServiceAccount
+# existed) retries with a backoff of up to ~1000s, does not watch
+# ServiceAccounts, and an unchanged template apply is a no-op, so the wait below
+# would time out. Restart only such a stuck Deployment; a healthy or absent one
+# is left untouched (#199).
+- name: Read an existing media probe database forwarder Deployment
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ learning_platform_namespace }}'
+    name: media-probe-db-egress
+  register: applications_existing_forwarder_deployment
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+  no_log: true
+
+- name: Detect a media probe database forwarder Deployment stuck on FailedCreate
+  ansible.builtin.set_fact:
+    applications_forwarder_restart_required: >-
+      {{ applications_existing_forwarder_deployment.resources
+         | map(attribute='status.conditions', default=[]) | flatten
+         | selectattr('type', 'equalto', 'ReplicaFailure')
+         | selectattr('status', 'equalto', 'True')
+         | selectattr('reason', 'defined')
+         | selectattr('reason', 'equalto', 'FailedCreate')
+         | list | length > 0 }}
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+
+- name: Restart a media probe database forwarder Deployment stuck on FailedCreate
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ learning_platform_namespace }}'
+    name: media-probe-db-egress
+    state: patched
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              kubectl.kubernetes.io/restartedAt: "{{ now(utc=True).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+  when:
+    - "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+    - applications_forwarder_restart_required | bool
+
 - name: Apply the media probe database forwarder before its consumer
   kubernetes.core.k8s:
     kubeconfig: /etc/rancher/k3s/k3s.yaml
     state: present
-    definition: >-
-      {{ lookup('template', playbook_dir ~ '/../../k8s/apps.yaml.j2') | from_yaml_all
-         | selectattr('metadata.name', 'match', '^media-probe-db-egress(-config|-ingress|-egress)?$') | list }}
+    definition: "{{ applications_forwarder_resources | selectattr('kind', 'equalto', 'Deployment') | list }}"
     wait: true
     wait_timeout: 180
   when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
