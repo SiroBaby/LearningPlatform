@@ -2,4 +2,5 @@
 .env
 
 # Local Go build output; E2E builds into a temporary directory instead.
-ai-worker
+/ai-worker
+/media-probe-worker

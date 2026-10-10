@@ -537,11 +537,12 @@ describe('ContentRepository.deleteOwnedDocument', () => {
     await deletion.connect();
     await deletion.startTransaction();
     try {
-      await deletion.query('SELECT "id" FROM "course"."documents" WHERE "id" = $1 FOR UPDATE', [document.id]);
+      // Same lock order as deleteOwnedDocument: advisory lock, then the Document row.
       await deletion.query(
         'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
         [`media-probe:${document.id}:${ownerId}`],
       );
+      await deletion.query('SELECT "id" FROM "course"."documents" WHERE "id" = $1 FOR UPDATE', [document.id]);
       await deletion.query(
         `UPDATE "ai"."media_probe_jobs"
          SET "status" = 'CANCELLED', "lease_id" = NULL, "lease_until" = NULL

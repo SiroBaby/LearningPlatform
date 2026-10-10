@@ -158,8 +158,12 @@ check không thay thế kiểm tra nguồn cung image.
 Artifact được pin tới BtbN release/tag bất biến
 `autobuild-2026-10-09-14-16`, asset
 `ffmpeg-n8.1.3-16-ge0a878dd70-linux64-gpl-8.1.tar.xz`, SHA-256
-`968255015cc65dd999a7eddf8016be89a8a1bbef063ea7d3e9c3a229b0f6faaf`;
-version contract là `8.1.3-16-ge0a878dd70`. Không dùng URL `latest`.
+`968255015cc65dd999a7eddf8016be89a8a1bbef063ea7d3e9c3a229b0f6faaf`.
+Release version của artifact là `8.1.3-16-ge0a878dd70`, còn `ffprobe -version`
+của chính binary đó báo thêm hậu tố ngày build:
+`8.1.3-16-ge0a878dd70-20261009`. Runtime so khớp chính xác chuỗi thứ hai, nên
+version contract trong `MEDIA_PROBE_FFPROBE_VERSION` (Dockerfile và manifest)
+là `8.1.3-16-ge0a878dd70-20261009`. Không dùng URL `latest`.
 
 Process probe phải thỏa các điều kiện sau:
 

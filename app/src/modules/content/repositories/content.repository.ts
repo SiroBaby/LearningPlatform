@@ -29,7 +29,7 @@ import type {
   DocumentProbeFailureCommand,
   DocumentProbeFailureOutcome,
 } from '../contracts/document-status-projection.port';
-import { MEDIA_PROBE_JOB_TYPE } from '../contracts/media-probe-policy';
+import { MAX_MEDIA_DURATION_SEC, MEDIA_PROBE_JOB_TYPE } from '../contracts/media-probe-policy';
 
 @Injectable()
 export class ContentRepository extends BaseRepository<Document> {
@@ -621,12 +621,13 @@ export class ContentRepository extends BaseRepository<Document> {
 
       if (
         command.durationSec <= 0 ||
-        command.durationSec > 7200 ||
-        !Number.isInteger(command.durationSec) ||
-        !Number.isSafeInteger(command.locator.contentLength) ||
-        command.locator.contentLength < 0
+        command.durationSec > MAX_MEDIA_DURATION_SEC ||
+        !Number.isInteger(command.durationSec)
       ) {
         throw new Error('Invalid media probe duration');
+      }
+      if (!Number.isSafeInteger(command.locator.contentLength) || command.locator.contentLength < 0) {
+        throw new Error('Invalid media probe content length');
       }
 
       const [probeRequest] = await manager.query<readonly [ProbeRequestIdentity]>(
