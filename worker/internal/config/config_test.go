@@ -157,6 +157,7 @@ func TestLoadMediaProbeRequiresEgressProxyInProduction(t *testing.T) {
 	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
 	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
 	useProductionEnvironment(env)
+	env[databaseSSLServerNameEnvironment] = testDatabaseHost
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
 	env[storageUseSSLEnvironment] = "true"
@@ -174,6 +175,7 @@ func TestLoadMediaProbeAcceptsValidatedEgressProxyInProduction(t *testing.T) {
 	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
 	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
 	useProductionEnvironment(env)
+	env[databaseSSLServerNameEnvironment] = testDatabaseHost
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
 	env[storageUseSSLEnvironment] = "true"
@@ -185,6 +187,37 @@ func TestLoadMediaProbeAcceptsValidatedEgressProxyInProduction(t *testing.T) {
 	}
 	if config.ObjectStorageProxyURL != env[objectStorageEgressProxyEnvironment] {
 		t.Fatalf("proxy configuration = %q", config.ObjectStorageProxyURL)
+	}
+}
+
+func TestLoadMediaProbeRequiresServerNameInProduction(t *testing.T) {
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
+	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
+	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
+	useProductionEnvironment(env)
+	env[storageEndpointEnvironment] = "s3.example.test"
+	env[storagePortEnvironment] = "443"
+	env[storageUseSSLEnvironment] = "true"
+	env[objectStorageEgressProxyEnvironment] = "http://egress-proxy.example.test:3128"
+	env[databaseHostEnvironment] = "media-probe-db-egress"
+
+	if _, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok }); err == nil || err.Error() != databaseSSLServerNameEnvironment+" is required" {
+		t.Fatalf("LoadMediaProbe() error = %v, want production server name requirement", err)
+	}
+	env[databaseSSLServerNameEnvironment] = testDatabaseHost
+	config, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
+	if err != nil {
+		t.Fatalf("LoadMediaProbe() error = %v", err)
+	}
+	poolConfig, err := config.Database.PoolConfig()
+	if err != nil {
+		t.Fatalf("PoolConfig() error = %v", err)
+	}
+	if poolConfig.ConnConfig.Host != "media-probe-db-egress" || poolConfig.ConnConfig.TLSConfig.ServerName != testDatabaseHost {
+		t.Fatalf("media probe dials %q with ServerName %q", poolConfig.ConnConfig.Host, poolConfig.ConnConfig.TLSConfig.ServerName)
 	}
 }
 
@@ -225,6 +258,7 @@ func TestLoadMediaProbeRejectsMalformedProductionProxy(t *testing.T) {
 	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
 	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
 	useProductionEnvironment(env)
+	env[databaseSSLServerNameEnvironment] = testDatabaseHost
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
 	env[storageUseSSLEnvironment] = "true"

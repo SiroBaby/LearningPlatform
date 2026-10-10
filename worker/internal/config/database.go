@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -18,7 +19,14 @@ import (
 const (
 	databaseSSLModeEnvironment = "DB_SSL_MODE"
 	databaseSSLCAEnvironment   = "DB_SSL_CA"
+	// DB_SSL_SERVER_NAME names the certificate host when DB_HOST is an in-cluster
+	// TCP forwarder (ADR-0031 §5) rather than the PostgreSQL server itself.
+	databaseSSLServerNameEnvironment = "DB_SSL_SERVER_NAME"
 )
+
+// databaseServerNamePattern accepts a lowercase fully qualified DNS name; an IP
+// address or single-label name could never match a managed database certificate.
+var databaseServerNamePattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$`)
 
 // DatabaseSSLMode uses the same vocabulary as the API (`disabled`, `verify-ca`)
 // so both runtimes can read the same DB_SSL_MODE parameter. Both verify modes
@@ -39,7 +47,7 @@ var errInvalidDatabaseSettings = errors.New("database connection settings are in
 // bypassed by pgx's default sslmode=prefer (unverified TLS with plaintext fallback).
 type Database struct {
 	connectionString string
-	host             string
+	serverName       string
 	sslMode          DatabaseSSLMode
 	rootCAs          *x509.CertPool
 }
@@ -78,12 +86,13 @@ func (database Database) applyTLS(connectionConfig *pgconn.Config) {
 // API passes `ssl: { ca, rejectUnauthorized: true }` to node-postgres, which sets
 // `servername = host` and lets Node's tls.connect run checkServerIdentity, so its
 // `verify-ca` already checks the host name; the Go worker must not be weaker for
-// the same DB_SSL_MODE value.
+// the same DB_SSL_MODE value. DB_SSL_SERVER_NAME only moves that check to the
+// real server name when DB_HOST is a forwarder; it never disables it.
 func (database Database) tlsConfig() *tls.Config {
 	if database.sslMode == DatabaseSSLModeDisabled {
 		return nil
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: database.rootCAs, ServerName: database.host}
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: database.rootCAs, ServerName: database.serverName}
 }
 
 func loadDatabase(lookup LookupEnv) (Database, error) {
@@ -122,6 +131,10 @@ func loadDatabase(lookup LookupEnv) (Database, error) {
 	if err != nil {
 		return Database{}, err
 	}
+	serverName, err := loadDatabaseServerName(lookup, sslMode, host)
+	if err != nil {
+		return Database{}, err
+	}
 	// pgx's sslmode only seeds the parse; applyTLS replaces it with the validated policy.
 	pgxSSLMode := "require"
 	if sslMode == DatabaseSSLModeDisabled {
@@ -134,7 +147,7 @@ func loadDatabase(lookup LookupEnv) (Database, error) {
 		Path:     name,
 		RawQuery: url.Values{"sslmode": {pgxSSLMode}}.Encode(),
 	}
-	return Database{connectionString: connectionURL.String(), host: host, sslMode: sslMode, rootCAs: rootCAs}, nil
+	return Database{connectionString: connectionURL.String(), serverName: serverName, sslMode: sslMode, rootCAs: rootCAs}, nil
 }
 
 func loadDatabaseSSLMode(lookup LookupEnv) (DatabaseSSLMode, error) {
@@ -169,4 +182,20 @@ func loadDatabaseRootCAs(lookup LookupEnv, sslMode DatabaseSSLMode) (*x509.CertP
 		return nil, fmt.Errorf("%s must contain at least one PEM certificate", databaseSSLCAEnvironment)
 	}
 	return rootCAs, nil
+}
+
+// loadDatabaseServerName returns the host name the server certificate must
+// match: DB_SSL_SERVER_NAME when set, otherwise DB_HOST.
+func loadDatabaseServerName(lookup LookupEnv, sslMode DatabaseSSLMode, host string) (string, error) {
+	serverName, ok := lookup(databaseSSLServerNameEnvironment)
+	if !ok || strings.TrimSpace(serverName) == "" {
+		return host, nil
+	}
+	if sslMode == DatabaseSSLModeDisabled {
+		return "", fmt.Errorf("%s requires %s verify-ca or verify-full", databaseSSLServerNameEnvironment, databaseSSLModeEnvironment)
+	}
+	if !databaseServerNamePattern.MatchString(serverName) {
+		return "", fmt.Errorf("%s must be a lowercase fully qualified host name", databaseSSLServerNameEnvironment)
+	}
+	return serverName, nil
 }

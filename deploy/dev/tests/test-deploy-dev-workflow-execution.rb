@@ -322,7 +322,7 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
     'media_probe_worker_image' => "ghcr.io/sirobaby/learningplatform-media-probe@#{digest}"
   }, 'worker overrides must include the media probe image')
   {
-    'true' => %w[worker media-probe-worker],
+    'true' => %w[worker media-probe-db-egress media-probe-worker],
     'false' => %w[worker]
   }.each do |flag, expected_targets|
     dev_vars = File.join(directory, "dev-vars-media-probe-#{flag}.yml")

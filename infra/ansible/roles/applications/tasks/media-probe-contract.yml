@@ -19,14 +19,19 @@
       - media_probe_worker_proxy_url is match('^https?://[A-Za-z0-9.-]+:[0-9]+$')
       - media_probe_worker_proxy_url is not search('REPLACE_WITH')
       - media_egress_proxy_enabled | default(false) | bool
-      - media_probe_worker_database_cidrs is sequence
-      - media_probe_worker_database_cidrs is not string
-      - media_probe_worker_database_cidrs | length > 0
-      - media_probe_worker_database_cidrs | select('match', '^[0-9]{1,3}(\\.[0-9]{1,3}){3}/([0-9]|[12][0-9]|3[0-2])$') | list | length == media_probe_worker_database_cidrs | length
-      - media_probe_worker_database_cidrs | select('search', 'REPLACE_WITH') | list | length == 0
-      - media_probe_worker_database_cidrs | select('equalto', '0.0.0.0/0') | list | length == 0
+      - media_probe_database_upstream_host is string
+      - media_probe_database_upstream_host is not search('REPLACE_WITH')
+      - media_probe_database_upstream_host | length <= 253
+      - media_probe_database_upstream_host is match('^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$')
+      - media_probe_database_upstream_port is not string
+      - media_probe_database_upstream_port is not boolean
+      - media_probe_database_upstream_port is number
+      - media_probe_database_upstream_port is integer
+      - media_probe_database_upstream_port | int >= 1
+      - media_probe_database_upstream_port | int <= 65535
     fail_msg: >-
       The media-probe-worker requires an immutable image, bounded resources,
-      the explicitly enabled in-cluster media egress proxy, and explicit
-      non-default CIDRs for the external PostgreSQL service.
+      the explicitly enabled in-cluster media egress proxy, and one explicit
+      PostgreSQL upstream for the media-probe-db-egress forwarder: a lowercase
+      fully qualified host name and an integer port from 1 to 65535.
   when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"

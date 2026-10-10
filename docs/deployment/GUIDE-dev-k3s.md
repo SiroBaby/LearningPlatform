@@ -30,7 +30,7 @@ Mục đích của tài liệu này là giúp owner và operator chuẩn bị đ
 | `DB_SSL_MODE` | `/learning-platform/dev/db-ssl-mode` |
 | `DB_SSL_CA` | `/learning-platform/dev/db-ssl-ca` |
 
-`DB_SSL_MODE` cố định là `verify-ca`. API, `go-worker` và `media-probe-worker` cùng đọc hai path này; Go worker fail-closed (dừng khởi động) khi `NODE_ENV=production` mà mode không phải `verify-ca`/`verify-full` hoặc `DB_SSL_CA` thiếu/không phải PEM. Với `verify-ca`, cả API (node-postgres) và Go worker đều kiểm chain theo CA **và** hostname theo `DB_HOST`. Không commit file CA. Không đưa secret value thật vào `group_vars/k3s_nodes.yml` hoặc GitHub Environment.
+`DB_SSL_MODE` cố định là `verify-ca`. API, `go-worker` và `media-probe-worker` cùng đọc hai path này; Go worker fail-closed (dừng khởi động) khi `NODE_ENV=production` mà mode không phải `verify-ca`/`verify-full` hoặc `DB_SSL_CA` thiếu/không phải PEM. Với `verify-ca`, cả API (node-postgres) và Go worker đều kiểm chain theo CA **và** hostname theo `DB_HOST`. Riêng `media-probe-worker` kết nối qua forwarder `media-probe-db-egress:5432` (ADR-0031 §5, #199) nên `DB_HOST`/`DB_PORT` là literal trong manifest; hostname cert được kiểm theo `DB_SSL_SERVER_NAME` = `media_probe_database_upstream_host` trong `infra/ansible/vars/dev.yml` (phải là cùng host Aiven với SSM `db-host`, vì `DB_SSL_CA` là CA của project đó). Không commit file CA. Không đưa secret value thật vào `group_vars/k3s_nodes.yml` hoặc GitHub Environment.
 
 ### 2.2. Cần nhớ
 

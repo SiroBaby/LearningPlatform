@@ -108,7 +108,9 @@ media_egress_proxy_enabled: false
 object_storage_egress_proxy_enabled: false
 media_probe_worker_dns_ip: REPLACE_WITH_CLUSTER_DNS_IP
 media_probe_worker_egress_proxy_port: 3128
-media_probe_worker_database_cidrs: [REPLACE_WITH_AIVEN_DATABASE_CIDR]
+# media-probe-db-egress forwards to exactly this PostgreSQL host and port.
+media_probe_database_upstream_host: REPLACE_WITH_DATABASE_FQDN
+media_probe_database_upstream_port: REPLACE_WITH_DATABASE_PORT
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}

@@ -449,7 +449,7 @@ check_application_edge_contract() {
         has_pull_secret = 1
       }
       END { emit_deployment() }
-    ' "${app_template}" | LC_ALL=C sort | paste -sd, -)" != "api,media-egress-proxy,media-probe-worker,web,worker" ] \
+    ' "${app_template}" | LC_ALL=C sort | paste -sd, -)" != "api,media-egress-proxy,media-probe-db-egress,media-probe-worker,web,worker" ] \
     || ! grep -q 'kind: Ingress' "${app_template}" \
     || ! grep -q 'ingressClassName: traefik' "${app_template}" \
     || ! grep -q 'name: api' "${app_template}" \
@@ -708,6 +708,8 @@ check_ansible_when_installed() {
       "${ANSIBLE_DIR}/roles/applications/tests/media-egress-proxy-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-probe-flag-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/media-probe-db-egress-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/secret-key-reference-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \

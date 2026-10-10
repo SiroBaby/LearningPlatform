@@ -7,6 +7,27 @@
     - ../../../vars/dev.yml
   vars:
     learning_platform_namespace: learning-platform-dev
+    # [label, host, port]; Jinja keeps native types so numbers, strings, and
+    # booleans reach the contract unchanged.
+    applications_invalid_upstream_cases:
+      - [placeholder host, REPLACE_WITH_DATABASE_FQDN, 27158]
+      - [missing host, null, 27158]
+      - [empty host, '', 27158]
+      - [IPv4 host, 203.0.113.10, 27158]
+      - [single-label host, media-probe-db-egress, 27158]
+      - [uppercase host, PG.Example.NET, 27158]
+      - [host with port, 'db.example.net:27158', 27158]
+      - [host with scheme, 'postgres://db.example.net', 27158]
+      - [host with trailing dot, db.example.net., 27158]
+      - [wildcard host, '*.example.net', 27158]
+      - [placeholder port, db.example.net, REPLACE_WITH_DATABASE_PORT]
+      - [missing port, db.example.net, null]
+      - [string port, db.example.net, '27158']
+      - [zero port, db.example.net, 0]
+      - [negative port, db.example.net, -1]
+      - [out-of-range port, db.example.net, 65536]
+      - [boolean port, db.example.net, true]
+      - [fractional port, db.example.net, 27158.5]
   tasks:
     - name: Select a worker rollout with the production media probe flag
       ansible.builtin.set_fact:
@@ -22,8 +43,8 @@
         that:
           - not (media_probe_worker_enabled | bool)
         fail_msg: >-
-          vars/dev.yml enables the media probe worker; it needs real database
-          CIDRs and the deploy rollout list before it can be turned on.
+          vars/dev.yml enables the media probe worker; enabling it is a separate
+          owner decision after the media-probe-db-egress forwarder (#199) merges.
 
     - name: Run the production media probe contract with the flag disabled
       ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
@@ -48,7 +69,7 @@
             | list | length == 1
           - >-
             applications_flag_disabled_manifests
-            | selectattr('metadata.name', 'search', '^media-probe-worker')
+            | selectattr('metadata.name', 'search', '^media-probe-')
             | list | length == 0
           - >-
             applications_flag_disabled_secrets
@@ -56,7 +77,8 @@
             | list | length == 0
         fail_msg: >-
           With media_probe_worker_enabled false, the worker rollout must not
-          render the media-probe-worker, its NetworkPolicy, or its ExternalSecret.
+          render the media-probe-worker, the media-probe-db-egress forwarder,
+          their NetworkPolicies, or the probe ExternalSecret.
 
     - name: Require the production dev vars to keep API media uploads disabled
       ansible.builtin.assert:
@@ -91,36 +113,52 @@
       ansible.builtin.set_fact:
         api_media_enabled: false
 
-    - name: Enable the flag while keeping the production placeholder CIDR
+    - name: Accept every upstream value while the flag stays disabled
+      ansible.builtin.include_tasks: media-probe-upstream-case.yml
+      vars:
+        media_probe_database_upstream_host: "{{ upstream_case[1] }}"
+        media_probe_database_upstream_port: "{{ upstream_case[2] }}"
+        upstream_case_label: "{{ upstream_case[0] }}"
+        upstream_case_expected_accepted: true
+      loop: "{{ applications_invalid_upstream_cases }}"
+      loop_control:
+        loop_var: upstream_case
+        label: "{{ upstream_case[0] }}"
+
+    - name: Enable the flag with the production upstream and API media uploads
       ansible.builtin.set_fact:
         media_probe_worker_enabled: true
-
-    - name: Attempt the enabled contract with the placeholder CIDR
-      block:
-        - name: Run the production media probe contract with a placeholder CIDR
-          ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
-
-        - name: Record that the placeholder CIDR was accepted
-          ansible.builtin.set_fact:
-            applications_placeholder_cidr_rejected: false
-      rescue:
-        - name: Record that the placeholder CIDR was rejected
-          ansible.builtin.set_fact:
-            applications_placeholder_cidr_rejected: true
-
-    - name: Require an enabled flag to fail closed on placeholder CIDRs
-      ansible.builtin.assert:
-        that:
-          - applications_placeholder_cidr_rejected | bool
-        fail_msg: Enabling the media probe worker without real database CIDRs must fail the contract.
-
-    - name: Provide an explicit database CIDR and enable API media uploads
-      ansible.builtin.set_fact:
-        media_probe_worker_database_cidrs: ['203.0.113.10/32']
         api_media_enabled: true
 
-    - name: Run the production media probe contract with a real CIDR
+    - name: Run the production media probe contract with the production upstream
       ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
+
+    - name: Accept other valid upstream values while the flag is enabled
+      ansible.builtin.include_tasks: media-probe-upstream-case.yml
+      vars:
+        media_probe_database_upstream_host: "{{ upstream_case[1] }}"
+        media_probe_database_upstream_port: "{{ upstream_case[2] }}"
+        upstream_case_label: "{{ upstream_case[0] }}"
+        upstream_case_expected_accepted: true
+      loop:
+        - [lowest port, db.example.net, 1]
+        - [highest port, db.example.net, 65535]
+        - [postgres default port, primary-1.db.example.net, 5432]
+      loop_control:
+        loop_var: upstream_case
+        label: "{{ upstream_case[0] }}"
+
+    - name: Reject every invalid upstream value while the flag is enabled
+      ansible.builtin.include_tasks: media-probe-upstream-case.yml
+      vars:
+        media_probe_database_upstream_host: "{{ upstream_case[1] }}"
+        media_probe_database_upstream_port: "{{ upstream_case[2] }}"
+        upstream_case_label: "{{ upstream_case[0] }}"
+        upstream_case_expected_accepted: false
+      loop: "{{ applications_invalid_upstream_cases }}"
+      loop_control:
+        loop_var: upstream_case
+        label: "{{ upstream_case[0] }}"
 
     - name: Render the worker manifest with the flag enabled
       ansible.builtin.set_fact:
@@ -142,4 +180,17 @@
             | selectattr('kind', 'equalto', 'NetworkPolicy')
             | selectattr('metadata.name', 'equalto', 'media-probe-worker-egress')
             | list | length == 1
-        fail_msg: An enabled flag must render the media-probe-worker Deployment and its egress NetworkPolicy.
+          - >-
+            applications_flag_enabled_manifests
+            | selectattr('kind', 'equalto', 'Deployment')
+            | selectattr('metadata.name', 'equalto', 'media-probe-db-egress')
+            | list | length == 1
+          - >-
+            (applications_flag_enabled_manifests
+             | selectattr('kind', 'equalto', 'ConfigMap')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress-config')
+             | first).data['haproxy.cfg']
+            is search('(?m)^  server database ' ~ (media_probe_database_upstream_host | regex_escape) ~ ':' ~ media_probe_database_upstream_port ~ ' ')
+        fail_msg: >-
+          An enabled flag must render the media-probe-worker Deployment, its
+          egress NetworkPolicy, and the forwarder pinned to the production upstream.

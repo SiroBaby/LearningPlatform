@@ -1,0 +1,24 @@
+---
+# Include params outrank vars_files and set_fact, so each case replaces the
+# production upstream values only for this contract run.
+- name: Attempt the media probe contract for one upstream case
+  block:
+    - name: Run the production media probe contract for the upstream case
+      ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
+
+    - name: Record that the upstream case was accepted
+      ansible.builtin.set_fact:
+        applications_upstream_case_accepted: true
+  rescue:
+    - name: Record that the upstream case was rejected
+      ansible.builtin.set_fact:
+        applications_upstream_case_accepted: false
+
+- name: Require the expected contract outcome for the upstream case
+  ansible.builtin.assert:
+    that:
+      - applications_upstream_case_accepted == upstream_case_expected_accepted
+    fail_msg: >-
+      Upstream case {{ upstream_case_label }} with media_probe_worker_enabled={{ media_probe_worker_enabled }}
+      was {{ applications_upstream_case_accepted | ternary('accepted', 'rejected') }};
+      expected {{ upstream_case_expected_accepted | ternary('accepted', 'rejected') }}.

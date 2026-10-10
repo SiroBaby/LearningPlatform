@@ -19,7 +19,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const testDatabaseHost = "learning-db.example.test"
+const (
+	testDatabaseHost  = "learning-db.example.test"
+	testForwarderHost = "media-probe-db-egress"
+)
 
 type testAuthority struct {
 	certificate *x509.Certificate
@@ -117,6 +120,10 @@ func TestLoadDatabaseRejectsUnsafeTLSSettings(t *testing.T) {
 		{name: "verify-ca requires a CA", absent: databaseSSLCAEnvironment, wantErr: "DB_SSL_CA is required when DB_SSL_MODE is verify-ca"},
 		{name: "verify-full requires a CA", overrides: map[string]string{databaseSSLModeEnvironment: "verify-full", databaseSSLCAEnvironment: " "}, wantErr: "DB_SSL_CA is required when DB_SSL_MODE is verify-full"},
 		{name: "CA must be PEM", overrides: map[string]string{databaseSSLCAEnvironment: "not a certificate"}, wantErr: "DB_SSL_CA must contain at least one PEM certificate"},
+		{name: "server name cannot be an IP address", overrides: map[string]string{databaseSSLServerNameEnvironment: "203.0.113.10"}, wantErr: "DB_SSL_SERVER_NAME must be a lowercase fully qualified host name"},
+		{name: "server name cannot be a single label", overrides: map[string]string{databaseSSLServerNameEnvironment: "media-probe-db-egress"}, wantErr: "DB_SSL_SERVER_NAME must be a lowercase fully qualified host name"},
+		{name: "server name cannot carry a port", overrides: map[string]string{databaseSSLServerNameEnvironment: testDatabaseHost + ":27158"}, wantErr: "DB_SSL_SERVER_NAME must be a lowercase fully qualified host name"},
+		{name: "server name requires verified TLS", overrides: map[string]string{databaseSSLServerNameEnvironment: testDatabaseHost, databaseSSLModeEnvironment: "disabled", databaseSSLCAEnvironment: "", "NODE_ENV": "test"}, wantErr: "DB_SSL_SERVER_NAME requires DB_SSL_MODE verify-ca or verify-full"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -174,6 +181,27 @@ func TestDatabaseVerifyCAMatchesAPIHostNameCheck(t *testing.T) {
 	}
 }
 
+func TestDatabaseServerNameOverridesCertificateHostOnly(t *testing.T) {
+	t.Parallel()
+	for _, sslMode := range []DatabaseSSLMode{DatabaseSSLModeVerifyCA, DatabaseSSLModeVerifyFull} {
+		database, err := loadTestDatabase(databaseEnvironment(map[string]string{databaseSSLModeEnvironment: string(sslMode), databaseHostEnvironment: testForwarderHost, databasePortEnvironment: "5432", databaseSSLServerNameEnvironment: testDatabaseHost}))
+		if err != nil {
+			t.Fatalf("%s loadDatabase() error = %v", sslMode, err)
+		}
+		connConfig, err := database.ConnConfig()
+		if err != nil {
+			t.Fatalf("%s ConnConfig() error = %v", sslMode, err)
+		}
+		actualTLS := connConfig.TLSConfig
+		if connConfig.Host != testForwarderHost || connConfig.Port != 5432 {
+			t.Fatalf("%s dial target = %q:%d, want the forwarder", sslMode, connConfig.Host, connConfig.Port)
+		}
+		if actualTLS == nil || actualTLS.ServerName != testDatabaseHost || actualTLS.InsecureSkipVerify || actualTLS.RootCAs == nil || actualTLS.VerifyPeerCertificate != nil {
+			t.Fatalf("%s TLS config = %#v", sslMode, actualTLS)
+		}
+	}
+}
+
 func TestLoadDatabaseHostForms(t *testing.T) {
 	t.Parallel()
 	_, err := loadTestDatabase(databaseEnvironment(map[string]string{databaseHostEnvironment: "primary.example.test,replica.example.test"}))
@@ -218,6 +246,7 @@ func TestDatabaseHandshake(t *testing.T) {
 		acceptTLS     bool
 		authority     testAuthority
 		dnsName       string
+		viaForwarder  bool
 		wantHandshake bool
 	}{
 		{name: "verify-full accepts the configured CA and host", sslMode: DatabaseSSLModeVerifyFull, acceptTLS: true, authority: testAuthorityInstance, dnsName: testDatabaseHost, wantHandshake: true},
@@ -226,6 +255,11 @@ func TestDatabaseHandshake(t *testing.T) {
 		{name: "verify-ca rejects a host mismatch like the API", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: true, authority: testAuthorityInstance, dnsName: "attacker.example.test"},
 		{name: "verify-ca rejects an unknown CA", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: true, authority: otherCertificateAuthority, dnsName: testDatabaseHost},
 		{name: "verify-ca never falls back to plaintext", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: false},
+		{name: "forwarder verify-ca accepts the configured server name", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: true, authority: testAuthorityInstance, dnsName: testDatabaseHost, viaForwarder: true, wantHandshake: true},
+		{name: "forwarder verify-full accepts the configured server name", sslMode: DatabaseSSLModeVerifyFull, acceptTLS: true, authority: testAuthorityInstance, dnsName: testDatabaseHost, viaForwarder: true, wantHandshake: true},
+		{name: "forwarder rejects a certificate for another host", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: true, authority: testAuthorityInstance, dnsName: "attacker.example.test", viaForwarder: true},
+		{name: "forwarder rejects a certificate for the forwarder name", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: true, authority: testAuthorityInstance, dnsName: testForwarderHost, viaForwarder: true},
+		{name: "forwarder rejects an unknown CA", sslMode: DatabaseSSLModeVerifyFull, acceptTLS: true, authority: otherCertificateAuthority, dnsName: testDatabaseHost, viaForwarder: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -241,7 +275,13 @@ func TestDatabaseHandshake(t *testing.T) {
 			serverResult := make(chan fakeServerResult, 1)
 			go serveSSLRequest(listener, test.acceptTLS, serverCertificate, serverResult)
 			_, port, _ := net.SplitHostPort(listener.Addr().String())
-			database, err := loadTestDatabase(databaseEnvironment(map[string]string{databaseSSLModeEnvironment: string(test.sslMode), databasePortEnvironment: port}))
+			inputOverrides := map[string]string{databaseSSLModeEnvironment: string(test.sslMode), databasePortEnvironment: port}
+			if test.viaForwarder {
+				// DB_HOST names the in-cluster forwarder; the certificate must still match the real server.
+				inputOverrides[databaseHostEnvironment] = testForwarderHost
+				inputOverrides[databaseSSLServerNameEnvironment] = testDatabaseHost
+			}
+			database, err := loadTestDatabase(databaseEnvironment(inputOverrides))
 			if err != nil {
 				t.Fatalf("loadDatabase() error = %v", err)
 			}
