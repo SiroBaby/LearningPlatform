@@ -72,6 +72,45 @@
           - external_secrets_web_resources | map(attribute='metadata.namespace') | list == ['learning-platform-dev']
       no_log: true
 
+    - name: Render API and worker runtime resources together
+      ansible.builtin.set_fact:
+        external_secrets_backend_resources: >-
+          {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['api', 'worker']}) | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require the combined API and worker document contract
+      ansible.builtin.assert:
+        that:
+          - external_secrets_backend_resources | length == 5
+          - external_secrets_backend_resources | map(attribute='kind') | list == ['SecretStore', 'ExternalSecret', 'ExternalSecret', 'ExternalSecret', 'ExternalSecret']
+          - external_secrets_backend_resources | map(attribute='metadata.name') | list == ['aws-parameter-store', 'learning-platform-api-runtime', 'learning-platform-go-worker-runtime', 'learning-platform-worker-runtime', 'learning-platform-media-probe-runtime']
+          - external_secrets_backend_resources | map(attribute='metadata.namespace') | unique | list == ['learning-platform-dev']
+      no_log: true
+
+    # ESO drops unknown auth fields, so a mis-indented ref leaves the store without a secret key.
+    - name: Require both AWS credential refs inside auth.secretRef for every target selection
+      ansible.builtin.assert:
+        that:
+          - external_secrets_store.spec.provider.aws.auth.keys() | list == ['secretRef']
+          - external_secrets_store.spec.provider.aws.auth.secretRef.keys() | sort == ['accessKeyIDSecretRef', 'secretAccessKeySecretRef']
+          - external_secrets_store.spec.provider.aws.auth.secretRef.accessKeyIDSecretRef.name == aws_credentials_secret_name
+          - external_secrets_store.spec.provider.aws.auth.secretRef.accessKeyIDSecretRef.key == 'access-key-id'
+          - external_secrets_store.spec.provider.aws.auth.secretRef.secretAccessKeySecretRef.name == aws_credentials_secret_name
+          - external_secrets_store.spec.provider.aws.auth.secretRef.secretAccessKeySecretRef.key == 'secret-access-key'
+        fail_msg: SecretStore AWS auth must keep both credential refs under auth.secretRef
+      loop:
+        - "{{ external_secrets_api_resources }}"
+        - "{{ external_secrets_worker_resources }}"
+        - "{{ external_secrets_backend_resources }}"
+        - "{{ external_secrets_web_resources }}"
+      loop_control:
+        label: "{{ external_secrets_store_index }}"
+        index_var: external_secrets_store_index
+      vars:
+        external_secrets_store: "{{ item | selectattr('kind', 'equalto', 'SecretStore') | first }}"
+      no_log: true
+
 - name: Verify web-only application deployment skips runtime ESO reconciliation
   hosts: localhost
   connection: local
