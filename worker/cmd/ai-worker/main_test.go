@@ -116,6 +116,7 @@ func TestRunKeepsReadinessFalseUntilQuizPreflightCompletes(t *testing.T) {
 		"DB_USER":                   "learning",
 		"DB_PASSWORD":               "password",
 		"DB_NAME":                   "learning",
+		"DB_SSL_MODE":               "disabled",
 		"OBJECT_STORAGE_ENDPOINT":   "localhost",
 		"OBJECT_STORAGE_PORT":       "9000",
 		"OBJECT_STORAGE_ACCESS_KEY": "access",
