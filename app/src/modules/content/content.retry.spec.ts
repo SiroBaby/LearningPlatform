@@ -114,6 +114,46 @@ describe('ContentService.retry', () => {
     expect(retryCalls).toBe(0);
   });
 
+  it('rejects a failed media retry without a persisted immutable locator before PROBING', async () => {
+    const failed = Object.assign(
+      createDocument(DocumentStatus.FAILED, DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE),
+      {
+        originalName: 'lecture.mp4',
+        storageRef: 'owner-1/lecture.mp4',
+        type: 'VIDEO' as const,
+      },
+    );
+    let retryCalls = 0;
+    const repository = {
+      findByOwnerId: async (): Promise<Document> => failed,
+      retryProcessing: async (): Promise<Document> => {
+        retryCalls += 1;
+        return failed;
+      },
+      confirmMediaProbe: async (): Promise<Document> => {
+        retryCalls += 1;
+        return failed;
+      },
+    };
+    const service = new ContentService(
+      repository as never,
+      { getBucketName: (): string => 'learning-platform-dev-media' } as never,
+      null as never,
+      null as never,
+    );
+
+    await expectHttpException(
+      service.retry('owner-1', 'document-1'),
+      409,
+      {
+        code: 'MEDIA_SOURCE_IDENTITY_UNAVAILABLE',
+        message: 'Media source identity is incomplete. Please upload the file again.',
+        retryable: false,
+      },
+    );
+    expect(retryCalls).toBe(0);
+  });
+
   it('does not reveal an inaccessible Document', async () => {
     const repository = {
       findByOwnerId: async (): Promise<null> => null,

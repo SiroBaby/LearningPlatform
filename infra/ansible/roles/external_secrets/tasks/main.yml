@@ -1,73 +1,68 @@
 ---
-- name: Validate External Secrets configuration
-  ansible.builtin.assert:
-    that:
-      - external_secrets_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+$')
-      - external_secrets_manifest_url is match('^https://')
-      - external_secrets_manifest_url is not search('REPLACE_WITH')
-      - external_secrets_manifest_sha256 is match('^[a-f0-9]{64}$')
-      - external_secrets_operator_namespace is string
-      - external_secrets_operator_namespace | length > 0
-      - aws_credentials_secret_name is string
-      - aws_credentials_secret_name | length > 0
-      - aws_credentials_secret_name is not search('REPLACE_WITH')
-      - aws_region is string
-      - aws_region | length > 0
-      - aws_region is not search('REPLACE_WITH')
-      - ssm_parameter_keys is mapping
-      - ssm_parameter_keys.db_ssl_mode is string
-      - ssm_parameter_keys.db_ssl_ca is string
-      - ssm_parameter_keys.google_client_id is string
-      - ssm_parameter_keys.google_client_secret is string
-      - ssm_parameter_keys.google_redirect_uri is string
-      - ssm_parameter_keys.auth_oauth_encryption_key is string
-      - ssm_parameter_keys.auth_admin_google_subs is string
-      - ssm_parameter_keys.auth_external_approval_public_key is string
-      - ssm_parameter_keys.auth_external_approval_issuer is string
-      - ssm_parameter_keys.auth_external_approval_audience is string
-      - ssm_parameter_keys.db_ssl_mode is search('^/')
-      - ssm_parameter_keys.db_ssl_ca is search('^/')
-      - ssm_parameter_keys.google_client_id is search('^/')
-      - ssm_parameter_keys.google_client_secret is search('^/')
-      - ssm_parameter_keys.google_redirect_uri is search('^/')
-      - ssm_parameter_keys.auth_oauth_encryption_key is search('^/')
-      - ssm_parameter_keys.auth_admin_google_subs is search('^/')
-      - ssm_parameter_keys.auth_external_approval_public_key is search('^/')
-      - ssm_parameter_keys.auth_external_approval_issuer is search('^/')
-      - ssm_parameter_keys.auth_external_approval_audience is search('^/')
-      - ssm_parameter_keys.values() | select('search', '^/') | list | length == ssm_parameter_keys | length
-      - ssm_parameter_keys.values() | select('search', 'REPLACE_WITH') | list | length == 0
-    fail_msg: Configure ESO version, AWS region, credential Secret name, and exact absolute SSM keys including Aiven TLS values.
+- name: Reconcile runtime Secrets only for selected API and worker deployments
+  block:
+    - name: Validate External Secrets configuration
+      ansible.builtin.assert:
+        that:
+          - external_secrets_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+$')
+          - external_secrets_manifest_url is match('^https://')
+          - external_secrets_manifest_url is not search('REPLACE_WITH')
+          - external_secrets_manifest_sha256 is match('^[a-f0-9]{64}$')
+          - external_secrets_operator_namespace is string
+          - external_secrets_operator_namespace | length > 0
+          - aws_credentials_secret_name is string
+          - aws_credentials_secret_name | length > 0
+          - aws_credentials_secret_name is not search('REPLACE_WITH')
+          - aws_region is string
+          - aws_region | length > 0
+          - aws_region is not search('REPLACE_WITH')
+          - ssm_parameter_keys is mapping
+          - ssm_parameter_keys.db_ssl_mode is string
+          - ssm_parameter_keys.db_ssl_ca is string
+          - ssm_parameter_keys.google_client_id is string
+          - ssm_parameter_keys.google_client_secret is string
+          - ssm_parameter_keys.google_redirect_uri is string
+          - ssm_parameter_keys.auth_oauth_encryption_key is string
+          - ssm_parameter_keys.auth_admin_google_subs is string
+          - ssm_parameter_keys.auth_external_approval_public_key is string
+          - ssm_parameter_keys.auth_external_approval_issuer is string
+          - ssm_parameter_keys.auth_external_approval_audience is string
+          - ssm_parameter_keys.db_ssl_mode is search('^/')
+          - ssm_parameter_keys.db_ssl_ca is search('^/')
+          - ssm_parameter_keys.google_client_id is search('^/')
+          - ssm_parameter_keys.google_client_secret is search('^/')
+          - ssm_parameter_keys.google_redirect_uri is search('^/')
+          - ssm_parameter_keys.auth_oauth_encryption_key is search('^/')
+          - ssm_parameter_keys.auth_admin_google_subs is search('^/')
+          - ssm_parameter_keys.auth_external_approval_public_key is search('^/')
+          - ssm_parameter_keys.auth_external_approval_issuer is search('^/')
+          - ssm_parameter_keys.auth_external_approval_audience is search('^/')
+          - ssm_parameter_keys.values() | select('search', '^/') | list | length == ssm_parameter_keys | length
+          - ssm_parameter_keys.values() | select('search', 'REPLACE_WITH') | list | length == 0
+        fail_msg: Configure ESO version, AWS region, credential Secret name, and exact absolute SSM keys including Aiven TLS values.
 
-- name: Create application namespace
-  kubernetes.core.k8s:
-    kubeconfig: /etc/rancher/k3s/k3s.yaml
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: '{{ learning_platform_namespace }}'
+    - name: Verify manually provisioned AWS credential Secret exists
+      kubernetes.core.k8s_info:
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        api_version: v1
+        kind: Secret
+        namespace: '{{ learning_platform_namespace }}'
+        name: '{{ aws_credentials_secret_name }}'
+      register: external_secrets_aws_credentials_secret
 
-- name: Verify manually provisioned AWS credential Secret exists
-  kubernetes.core.k8s_info:
-    kubeconfig: /etc/rancher/k3s/k3s.yaml
-    api_version: v1
-    kind: Secret
-    namespace: '{{ learning_platform_namespace }}'
-    name: '{{ aws_credentials_secret_name }}'
-  register: external_secrets_aws_credentials_secret
-
-- name: Fail before ESO reconciliation when AWS credential Secret is missing
-  ansible.builtin.assert:
-    that:
-      - external_secrets_aws_credentials_secret.resources | length == 1
-      - "'access-key-id' in (external_secrets_aws_credentials_secret.resources[0].data | default({}))"
-      - "'secret-access-key' in (external_secrets_aws_credentials_secret.resources[0].data | default({}))"
-    fail_msg: >-
-      Manually provision Secret {{ aws_credentials_secret_name }} in namespace
-      {{ learning_platform_namespace }} with non-empty access-key-id and
-      secret-access-key data keys before bootstrap.
+    - name: Fail before ESO reconciliation when AWS credential Secret is missing
+      ansible.builtin.assert:
+        that:
+          - external_secrets_aws_credentials_secret.resources | length == 1
+          - "'access-key-id' in (external_secrets_aws_credentials_secret.resources[0].data | default({}))"
+          - "'secret-access-key' in (external_secrets_aws_credentials_secret.resources[0].data | default({}))"
+        fail_msg: >-
+          Manually provision Secret {{ aws_credentials_secret_name }} in namespace
+          {{ learning_platform_namespace }} with non-empty access-key-id and
+          secret-access-key data keys before bootstrap.
+      no_log: true
+  when: "(deployment_targets | default(['api', 'worker']) | intersect(['api', 'worker']) | length) > 0"
+  tags: [external_secrets_runtime]
 
 - name: Download pinned External Secrets Operator manifest
   ansible.builtin.get_url:
@@ -107,8 +102,7 @@
     external_secrets_operator.resources | length == 1 and
     (external_secrets_operator.resources[0].status.availableReplicas | default(0) | int) > 0
 
-- name: Apply namespace-scoped AWS Parameter Store resources
-  kubernetes.core.k8s:
-    kubeconfig: /etc/rancher/k3s/k3s.yaml
-    state: present
-    definition: "{{ lookup('template', 'external-secrets.yaml.j2') | from_yaml_all | list }}"
+- name: Reconcile selected runtime ExternalSecrets without installing ESO
+  ansible.builtin.import_tasks: runtime-readiness.yml
+  when: "(deployment_targets | default(['api', 'worker']) | intersect(['api', 'worker']) | length) > 0"
+  tags: [external_secrets_runtime]

@@ -22,13 +22,14 @@ import { OutboxEvent } from '../entities/outbox-event.entity';
 import { JobType } from '../../ai/enums/job-type.enum';
 import type { DocumentModelSelection } from '../../ai/contracts/model-selection.contracts';
 import { BudgetExhaustedError } from '../../ai/budget-exhausted.error';
+import { DocumentProcessingFailureCode } from '../../ai/contracts/document-processing-result';
 import type {
   DocumentProbeCompletionCommand,
   DocumentProbeCompletionOutcome,
   DocumentProbeFailureCommand,
   DocumentProbeFailureOutcome,
 } from '../contracts/document-status-projection.port';
-import { MEDIA_PROBE_JOB_TYPE } from '../contracts/media-probe-policy';
+import { MAX_MEDIA_DURATION_SEC, MEDIA_PROBE_JOB_TYPE } from '../contracts/media-probe-policy';
 
 @Injectable()
 export class ContentRepository extends BaseRepository<Document> {
@@ -123,6 +124,9 @@ export class ContentRepository extends BaseRepository<Document> {
     preflightMediaLocator?: DocumentPurgeLocator,
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
+      // Lock order: media probe advisory lock, then the Document row. Enqueue
+      // holds the advisory lock while its foreign key check waits on the row.
+      await this.lockMediaProbe(manager, id, ownerId);
       const document = await manager.findOne(Document, {
         where: { id, ownerId },
         lock: { mode: 'pessimistic_write' },
@@ -239,11 +243,6 @@ export class ContentRepository extends BaseRepository<Document> {
     isMediaDocument: boolean,
   ): Promise<void> {
     if (isMediaDocument) {
-      // Serialize with the media enqueue path, which uses this same key.
-      await manager.query(
-        'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
-        [`media-probe:${documentId}:${ownerId}`],
-      );
       const mediaCancellationKey = `document-cancel:${documentId}:${deletionFence}:MEDIA_PROBE`;
       await manager.query(
         `INSERT INTO "ai"."media_probe_cancellation_tombstones"
@@ -308,6 +307,14 @@ export class ContentRepository extends BaseRepository<Document> {
     }
   }
 
+  private async lockMediaProbe(manager: EntityManager, documentId: string, ownerId: string): Promise<void> {
+    // Shared with enqueue and first-locator persistence across runtimes.
+    await manager.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
+      [`media-probe:${documentId}:${ownerId}`],
+    );
+  }
+
   private async collectPurgeLocators(
     manager: EntityManager,
     document: Document,
@@ -358,7 +365,22 @@ export class ContentRepository extends BaseRepository<Document> {
       [document.id, document.ownerId],
     );
 
-    return rows
+    // First-claim workers persist the exact VersionId here before a receipt
+    // exists. Lock every generation so deletion snapshots cannot miss a
+    // locator being written concurrently.
+    const probeRows = await manager.query<LocatorRow[]>(
+      `SELECT "source_bucket" AS "bucket", "source_key" AS "key",
+              "source_version_id" AS "versionId", "source_etag" AS "etag",
+              "source_content_length" AS "contentLength"
+         FROM "ai"."media_probe_jobs"
+        WHERE "document_id" = $1 AND "owner_id" = $2
+        FOR UPDATE`,
+      [document.id, document.ownerId],
+    );
+
+    return [...rows, ...probeRows.filter((row) =>
+      row.bucket === mediaBucket && row.key === document.storageRef,
+    )]
       .map((row) => ({
         bucket: row.bucket?.trim() ?? '',
         key: row.key?.trim() ?? '',
@@ -490,7 +512,7 @@ export class ContentRepository extends BaseRepository<Document> {
     id: string,
     selection: DocumentModelSelection,
     policyVersion: string,
-    mediaLocator: DocumentPurgeLocator,
+    mediaBucket: string,
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       const current = await manager.findOne(Document, {
@@ -503,16 +525,12 @@ export class ContentRepository extends BaseRepository<Document> {
       ) {
         return current;
       }
-      const canonicalMediaLocator = this.canonicalizeMediaPurgeLocator(mediaLocator);
-      if (!this.isExactMediaPurgeLocator(canonicalMediaLocator, current, mediaLocator.bucket)) {
-        throw new Error('Invalid confirmed media locator');
+      // A failed full pipeline must re-probe the exact captured object version;
+      // never let a new generation fall back to mutable "latest" storage.
+      const persistedMediaLocator = this.mediaPurgeLocatorFromDocument(current, mediaBucket);
+      if (current.status === DocumentStatus.FAILED && !persistedMediaLocator) {
+        throw new Error('Media probe retry requires a persisted source identity');
       }
-
-      const persistedMediaLocator = this.mediaPurgeLocatorFromDocument(current, mediaLocator.bucket);
-      if (persistedMediaLocator && !this.sameMediaPurgeLocator(persistedMediaLocator, canonicalMediaLocator!)) {
-        throw new Error('Media source locator changed after persistence');
-      }
-      const sourceLocator = persistedMediaLocator ?? canonicalMediaLocator!;
       const probeGeneration = randomUUID();
       const started = await manager
         .createQueryBuilder()
@@ -523,12 +541,6 @@ export class ContentRepository extends BaseRepository<Document> {
           probeGeneration,
           probePolicyVersion: policyVersion,
           processingAttempt: () => '"processing_attempt" + 1',
-          ...(persistedMediaLocator ? {} : {
-            mediaSourceBucket: sourceLocator.bucket,
-            mediaSourceVersionId: sourceLocator.versionId,
-            mediaSourceEtag: sourceLocator.etag,
-            mediaSourceContentLength: sourceLocator.contentLength,
-          }),
           status: DocumentStatus.PROBING,
         })
         .where(
@@ -561,11 +573,13 @@ export class ContentRepository extends BaseRepository<Document> {
           probeGeneration,
           policyVersion,
           deletionFence: Number(updated.deletionFence),
-          sourceBucket: sourceLocator.bucket,
-          sourceKey: sourceLocator.key,
-          sourceVersionId: sourceLocator.versionId,
-          sourceEtag: sourceLocator.etag,
-          sourceContentLength: sourceLocator.contentLength,
+          sourceBucket: persistedMediaLocator?.bucket ?? mediaBucket,
+          sourceKey: persistedMediaLocator?.key ?? updated.storageRef,
+          ...(persistedMediaLocator ? {
+            sourceVersionId: persistedMediaLocator.versionId,
+            sourceEtag: persistedMediaLocator.etag,
+            sourceContentLength: persistedMediaLocator.contentLength,
+          } : {}),
           ...selection,
         };
         await manager.save(outbox);
@@ -605,8 +619,15 @@ export class ContentRepository extends BaseRepository<Document> {
         return 'IGNORED';
       }
 
-      if (command.durationSec <= 0 || !Number.isInteger(command.durationSec)) {
+      if (
+        command.durationSec <= 0 ||
+        command.durationSec > MAX_MEDIA_DURATION_SEC ||
+        !Number.isInteger(command.durationSec)
+      ) {
         throw new Error('Invalid media probe duration');
+      }
+      if (!Number.isSafeInteger(command.locator.contentLength) || command.locator.contentLength < 0) {
+        throw new Error('Invalid media probe content length');
       }
 
       const [probeRequest] = await manager.query<readonly [ProbeRequestIdentity]>(
@@ -619,9 +640,6 @@ export class ContentRepository extends BaseRepository<Document> {
                 , "payload"->>'deletionFence' AS "deletionFence"
                 , "payload"->>'sourceBucket' AS "sourceBucket"
                 , "payload"->>'sourceKey' AS "sourceKey"
-                , "payload"->>'sourceVersionId' AS "sourceVersionId"
-                , "payload"->>'sourceEtag' AS "sourceEtag"
-                , ("payload"->>'sourceContentLength') AS "sourceContentLength"
          FROM "course"."outbox"
          WHERE "aggregate_id" = $1
            AND "event_type" = 'DocumentProbeRequested'
@@ -650,6 +668,7 @@ export class ContentRepository extends BaseRepository<Document> {
       if (!Number.isSafeInteger(processingAttempt) || processingAttempt < 1) {
         throw new Error('Invalid processing attempt');
       }
+      let budgetExhausted = false;
       if (isPlatformModel && estimatedCredits > 0) {
         const reserveKey = `reserve:${command.fullPipelineJobId}:${processingAttempt}`;
         const existingReservation = await manager.query<readonly { readonly id: string }[]>(
@@ -661,18 +680,42 @@ export class ContentRepository extends BaseRepository<Document> {
             'SELECT "available_credits" AS "availableCredits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1 FOR UPDATE',
             [command.ownerId],
           );
-          if (Number(wallet[0]?.availableCredits ?? 0) < estimatedCredits) {
-            throw new BudgetExhaustedError();
+          try {
+            if (Number(wallet[0]?.availableCredits ?? 0) < estimatedCredits) {
+              throw new BudgetExhaustedError();
+            }
+            await manager.query(
+              'UPDATE "course"."owner_credit_wallets" SET "available_credits" = "available_credits" - $2, "reserved_credits" = "reserved_credits" + $2, "updated_at" = now() WHERE "owner_id" = $1',
+              [command.ownerId, estimatedCredits],
+            );
+            await manager.query(
+              'INSERT INTO "course"."credit_ledger_entries" ("owner_id", "job_id", "job_attempt", "business_key", "entry_type", "credits") VALUES ($1, $2, $3, $4, \'RESERVE\', $5)',
+              [command.ownerId, command.fullPipelineJobId, processingAttempt, reserveKey, estimatedCredits],
+            );
+          } catch (error) {
+            if (!(error instanceof BudgetExhaustedError)) throw error;
+            budgetExhausted = true;
           }
-          await manager.query(
-            'UPDATE "course"."owner_credit_wallets" SET "available_credits" = "available_credits" - $2, "reserved_credits" = "reserved_credits" + $2, "updated_at" = now() WHERE "owner_id" = $1',
-            [command.ownerId, estimatedCredits],
-          );
-          await manager.query(
-            'INSERT INTO "course"."credit_ledger_entries" ("owner_id", "job_id", "job_attempt", "business_key", "entry_type", "credits") VALUES ($1, $2, $3, $4, \'RESERVE\', $5)',
-            [command.ownerId, command.fullPipelineJobId, processingAttempt, reserveKey, estimatedCredits],
-          );
         }
+      }
+
+      if (budgetExhausted) {
+        await manager.update(
+          Document,
+          { id: command.documentId, ownerId: command.ownerId, status: DocumentStatus.PROBING },
+          {
+            durationSec: command.durationSec,
+            mediaSourceBucket: command.locator.bucket,
+            mediaSourceVersionId: command.locator.versionId,
+            mediaSourceEtag: command.locator.etag,
+            mediaSourceContentLength: command.locator.contentLength,
+            budgetStatus: 'EXHAUSTED',
+            errorCode: DocumentProcessingFailureCode.BUDGET_EXHAUSTED,
+            errorMessage: 'Processing budget was exhausted',
+            status: DocumentStatus.FAILED,
+          },
+        );
+        return 'APPLIED';
       }
 
       await manager.update(
@@ -680,6 +723,10 @@ export class ContentRepository extends BaseRepository<Document> {
         { id: command.documentId, ownerId: command.ownerId, status: DocumentStatus.PROBING },
         {
           durationSec: command.durationSec,
+          mediaSourceBucket: command.locator.bucket,
+          mediaSourceVersionId: command.locator.versionId,
+          mediaSourceEtag: command.locator.etag,
+          mediaSourceContentLength: command.locator.contentLength,
           budgetStatus: isPlatformModel ? 'RESERVED' : 'CUSTOM_ZERO_COST',
           status: DocumentStatus.PROCESSING,
         },
@@ -722,15 +769,13 @@ export class ContentRepository extends BaseRepository<Document> {
       request.deletionFence === String(command.deletionFence) &&
       request.sourceBucket === command.locator.bucket &&
       request.sourceKey === command.locator.key &&
-      normalizeStorageVersionId(request.sourceVersionId) === command.locator.versionId &&
-      request.sourceEtag === command.locator.etag &&
-      request.sourceContentLength === String(command.locator.contentLength) &&
-      document.mediaSourceBucket === command.locator.bucket &&
-      normalizeStorageVersionId(document.mediaSourceVersionId) === command.locator.versionId &&
-      document.mediaSourceEtag === command.locator.etag &&
-      Number(document.mediaSourceContentLength) === command.locator.contentLength &&
       document.storageRef === command.locator.key &&
-      Number(document.sizeBytes) === command.locator.contentLength;
+      Number(document.sizeBytes) === command.locator.contentLength &&
+      (document.mediaSourceVersionId === null ||
+        (normalizeStorageVersionId(document.mediaSourceVersionId) === command.locator.versionId &&
+          document.mediaSourceBucket === command.locator.bucket &&
+          document.mediaSourceEtag === command.locator.etag &&
+          Number(document.mediaSourceContentLength) === command.locator.contentLength));
   }
 
   private async persistProbeReceipt(
@@ -835,6 +880,38 @@ export class ContentRepository extends BaseRepository<Document> {
         return 'IGNORED';
       }
 
+      const locator = command.locator;
+      if (locator) {
+        const [probeRequest] = await manager.query<readonly [ProbeRequestIdentity]>(
+          `SELECT "payload"->>'sourceBucket' AS "sourceBucket",
+                  "payload"->>'sourceKey' AS "sourceKey"
+           FROM "course"."outbox"
+           WHERE "aggregate_id" = $1
+             AND "event_type" = 'DocumentProbeRequested'
+           ORDER BY "created_at" DESC, "id" DESC
+           LIMIT 1`,
+          [command.documentId],
+        );
+        const versionId = normalizeStorageVersionId(locator.versionId);
+        if (
+          !probeRequest ||
+          probeRequest.sourceBucket !== locator.bucket ||
+          probeRequest.sourceKey !== locator.key ||
+          locator.key !== document.storageRef ||
+          locator.contentLength !== Number(document.sizeBytes) ||
+          !versionId ||
+          !locator.etag.trim()
+        ) {
+          return 'IGNORED';
+        }
+        if (document.mediaSourceVersionId !== null) {
+          const currentLocator = this.mediaPurgeLocatorFromDocument(document, locator.bucket);
+          if (!currentLocator || !this.sameMediaPurgeLocator(currentLocator, locator)) {
+            return 'IGNORED';
+          }
+        }
+      }
+
       await manager.update(
         Document,
         {
@@ -846,6 +923,12 @@ export class ContentRepository extends BaseRepository<Document> {
           deletionFence: command.deletionFence,
         },
         {
+          ...(locator ? {
+            mediaSourceBucket: locator.bucket,
+            mediaSourceVersionId: normalizeStorageVersionId(locator.versionId)!,
+            mediaSourceEtag: locator.etag.trim(),
+            mediaSourceContentLength: locator.contentLength,
+          } : {}),
           errorCode: command.errorCode,
           errorMessage: command.errorMessage,
           status: DocumentStatus.FAILED,
@@ -1059,10 +1142,7 @@ interface ProbeRequestIdentity {
   readonly policyVersion: string | null;
   readonly probeGeneration: string | null;
   readonly sourceBucket: string | null;
-  readonly sourceContentLength: string | null;
-  readonly sourceEtag: string | null;
   readonly sourceKey: string | null;
-  readonly sourceVersionId: string | null;
 }
 
 interface ProbeReceiptIdentity {

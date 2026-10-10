@@ -40,6 +40,7 @@ jobs:
       worker: ${{ steps.classify.outputs.worker }}
       go_worker: ${{ steps.classify.outputs.go_worker }}
       observability: ${{ steps.classify.outputs.observability }}
+      infra_quality: ${{ steps.classify.outputs.infra_quality }}
       backend: ${{ steps.classify.outputs.backend }}
       deploy_any: ${{ steps.classify.outputs.deploy_any }}
     steps:
@@ -67,6 +68,10 @@ jobs:
     steps:
       # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up pinned Go toolchain for cross-runtime tests
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: worker/go.mod
       # actions/setup-node v4, verified against refs/tags/v4 on 2026-07-18.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -129,7 +134,7 @@ jobs:
   infra-quality:
     name: Infrastructure and observability policy
     needs: changes
-    if: needs.changes.outputs.observability == 'true'
+    if: needs.changes.outputs.infra_quality == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -137,12 +142,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Validate infrastructure source contract
         run: bash infra/scripts/validate.sh
+      - name: Validate deployment workflow and classifier policy
+        run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
       - name: Validate rendered observability policy fixtures
+        if: needs.changes.outputs.observability == 'true'
         run: ruby infra/scripts/tests/test-rendered-observability-policy.rb
       - name: Render and validate pinned observability chart archives
+        if: needs.changes.outputs.observability == 'true'
         run: bash infra/scripts/test-real-render-observability.sh
-      - name: Validate deployment workflow target policy
-        run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
 
   image-quality-gate:
     name: Approve selected image builds
@@ -187,10 +194,21 @@ jobs:
     with:
       runtime: go-worker
 
+  build-media-probe:
+    name: Build media-probe image
+    needs: [changes, image-quality-gate]
+    if: needs.changes.outputs.go_worker == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yml
+    with:
+      runtime: media-probe
+
   build-images:
     name: Collect selected image digests
-    needs: [changes, image-quality-gate, build-api, build-web, build-go-worker]
-    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.image-quality-gate.result == 'success' && (needs.build-api.result == 'success' || needs.build-api.result == 'skipped') && (needs.build-web.result == 'success' || needs.build-web.result == 'skipped') && (needs.build-go-worker.result == 'success' || needs.build-go-worker.result == 'skipped')
+    needs: [changes, image-quality-gate, build-api, build-web, build-go-worker, build-media-probe]
+    if: always() && needs.changes.outputs.deploy_any == 'true' && needs.image-quality-gate.result == 'success' && (needs.build-api.result == 'success' || needs.build-api.result == 'skipped') && (needs.build-web.result == 'success' || needs.build-web.result == 'skipped') && (needs.build-go-worker.result == 'success' || needs.build-go-worker.result == 'skipped') && (needs.build-media-probe.result == 'success' || needs.build-media-probe.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -198,22 +216,25 @@ jobs:
       api_digest: ${{ needs.build-api.outputs.digest }}
       web_digest: ${{ needs.build-web.outputs.digest }}
       go_worker_digest: ${{ needs.build-go-worker.outputs.digest }}
+      media_probe_digest: ${{ needs.build-media-probe.outputs.digest }}
     steps:
       - name: Validate every selected manifest digest
         env:
           SELECT_BACKEND: ${{ needs.changes.outputs.backend }}
           SELECT_WEB: ${{ needs.changes.outputs.web }}
           SELECT_GO_WORKER: ${{ needs.changes.outputs.go_worker }}
+          SELECT_MEDIA_PROBE: ${{ needs.changes.outputs.go_worker }}
           BACKEND_DIGEST: ${{ needs.build-api.outputs.digest }}
           WEB_DIGEST: ${{ needs.build-web.outputs.digest }}
           GO_WORKER_DIGEST: ${{ needs.build-go-worker.outputs.digest }}
+          MEDIA_PROBE_DIGEST: ${{ needs.build-media-probe.outputs.digest }}
         run: |
           python3 - <<'PY'
           import os
           import re
           import sys
 
-          for runtime in ('BACKEND', 'WEB', 'GO_WORKER'):
+          for runtime in ('BACKEND', 'WEB', 'GO_WORKER', 'MEDIA_PROBE'):
               if os.environ[f'SELECT_{runtime}'] == 'true':
                   if not re.fullmatch(r'sha256:[a-f0-9]{64}', os.environ[f'{runtime}_DIGEST']):
                       sys.exit(f'{runtime} selected image has no immutable manifest digest')
@@ -245,6 +266,7 @@ jobs:
           WEB_DIGEST: ${{ needs.build-images.outputs.web_digest }}
           BACKEND_DIGEST: ${{ needs.build-images.outputs.api_digest }}
           GO_WORKER_DIGEST: ${{ needs.build-images.outputs.go_worker_digest }}
+          MEDIA_PROBE_DIGEST: ${{ needs.build-images.outputs.media_probe_digest }}
         run: |
           DEPLOYMENT_DIR="$(mktemp -d "$RUNNER_TEMP/dev-k3s-deploy.XXXXXX")"
           printf '%s\n' "$DEPLOYMENT_DIR" > "$RUNNER_TEMP/dev-k3s-deploy-path"
@@ -277,6 +299,9 @@ jobs:
                   go_digest = os.environ['GO_WORKER_DIGEST']
                   if not re.fullmatch(r'sha256:[a-f0-9]{64}', go_digest): sys.exit('Go worker digest is not immutable')
                   image_overrides['go_worker_image'] = f'ghcr.io/sirobaby/learningplatform-ai-worker@{go_digest}'
+                  media_probe_digest = os.environ['MEDIA_PROBE_DIGEST']
+                  if not re.fullmatch(r'sha256:[a-f0-9]{64}', media_probe_digest): sys.exit('media probe digest is not immutable')
+                  image_overrides['media_probe_worker_image'] = f'ghcr.io/sirobaby/learningplatform-media-probe@{media_probe_digest}'
           deployment_dir = os.environ['DEPLOYMENT_DIR']
           with open(f'{deployment_dir}/hosts.yml', 'w', encoding='utf-8') as inventory:
               json.dump({'k3s_nodes': {'hosts': {'dev': {'ansible_host': host, 'ansible_user': user}}}}, inventory)
@@ -302,24 +327,36 @@ jobs:
           ANSIBLE_STDOUT_CALLBACK: default
         run: |
           DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
-          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags cert_manager,applications -e "@$DEPLOYMENT_DIR/overrides.yml"
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags cert_manager,external_secrets_runtime,applications -e "@$DEPLOYMENT_DIR/overrides.yml"
       - name: Wait for selected K3s rollouts
         env:
           VPS_HOST: ${{ vars.DEV_VPS_HOST }}
           VPS_USER: ${{ vars.DEV_VPS_USER }}
+          DEV_ANSIBLE_VARS: infra/ansible/vars/dev.yml
         run: |
           DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
           export DEPLOYMENT_DIR
           python3 - <<'PY' > "$DEPLOYMENT_DIR/selected-targets"
           import json
           import os
+          import re
+          import sys
           with open(f"{os.environ['DEPLOYMENT_DIR']}/overrides.yml", encoding='utf-8') as overrides:
-              for target in json.load(overrides)['deployment_targets']:
-                  print(target)
+              deployment_targets = json.load(overrides)['deployment_targets']
+          for target in deployment_targets:
+              print(target)
+          if 'worker' in deployment_targets:
+              # Ansible renders media-probe-worker only when the same vars file enables it.
+              with open(os.environ['DEV_ANSIBLE_VARS'], encoding='utf-8') as dev_vars:
+                  flags = re.findall(r'^media_probe_worker_enabled: (true|false)$', dev_vars.read(), re.MULTILINE)
+              if len(flags) != 1:
+                  sys.exit('media_probe_worker_enabled must be declared exactly once as true or false')
+              if flags[0] == 'true':
+                  print('media-probe-worker')
           PY
           while IFS= read -r target; do
             case "$target" in
-              web|api|worker) ;;
+              web|api|worker|media-probe-worker) ;;
               *) printf 'unsupported rollout target: %s\n' "$target" >&2; exit 1 ;;
             esac
             if ! ssh -n -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo timeout 190s k3s kubectl rollout status deployment/$target --namespace learning-platform-dev --timeout=180s"; then

@@ -8,3 +8,9 @@ export const MEDIA_PROBE_POLICY_VERSION = 'media-v1';
 
 /** Queue discriminator used by the content-owned probe request outbox event. */
 export const MEDIA_PROBE_JOB_TYPE = 'MEDIA_PROBE';
+
+/**
+ * Longest accepted media duration from ADR-0031. Keep in sync with
+ * `maxMediaDurationSec` in worker/internal/mediaprobe/policy.go.
+ */
+export const MAX_MEDIA_DURATION_SEC = 7200;

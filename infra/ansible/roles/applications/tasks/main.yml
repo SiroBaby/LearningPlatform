@@ -84,6 +84,9 @@
       proxy deployment is enabled.
   when: object_storage_egress_proxy_enabled | default(false) | bool
 
+- name: Validate the media probe worker contract when it is enabled
+  ansible.builtin.include_tasks: media-probe-contract.yml
+
 - name: Validate enabled API media storage contract
   ansible.builtin.assert:
     that:
@@ -231,6 +234,24 @@
       | selectattr('status', 'equalto', 'True')
       | list | length) == 1
   when: "'worker' in deployment_targets"
+
+- name: Wait for media probe runtime ExternalSecret readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    namespace: '{{ learning_platform_namespace }}'
+    name: learning-platform-media-probe-runtime
+  register: applications_media_probe_runtime_external_secret
+  retries: 30
+  delay: 2
+  until: >-
+    applications_media_probe_runtime_external_secret.resources | length == 1 and
+    (applications_media_probe_runtime_external_secret.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
 
 - name: Apply selected stateless Learning Platform workloads
   kubernetes.core.k8s:

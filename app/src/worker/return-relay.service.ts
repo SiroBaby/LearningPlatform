@@ -121,6 +121,7 @@ export class ReturnRelay {
             errorMessage: probeFailure.errorMessage,
             eventCreatedAt: row.createdAt,
             leaseId: probeFailure.leaseId,
+            locator: probeFailure.locator,
             ownerId: probeFailure.ownerId,
             policyVersion: probeFailure.policyVersion,
             probeGeneration: probeFailure.probeGeneration,
@@ -370,6 +371,7 @@ export class ReturnRelay {
   private parseProbeFailure(payload: Record<string, unknown>): ProbeFailurePayload {
     const errorCode = this.parseFailureCode(payload.errorCode);
     const errorMessage = payload.errorMessage ?? null;
+    const locator = payload.locator === undefined ? undefined : this.parseProbeLocator(payload.locator);
     if (
       payload.version !== 1 ||
       (payload.jobType !== undefined && payload.jobType !== MEDIA_PROBE_JOB_TYPE) ||
@@ -392,6 +394,7 @@ export class ReturnRelay {
       payload.deletionFence < 0 ||
       errorCode === undefined ||
       errorCode === null ||
+      (payload.locator !== undefined && locator === undefined) ||
       (errorMessage !== null && typeof errorMessage !== 'string')
     ) {
       throw new Error('Invalid media probe failure outbox payload');
@@ -404,6 +407,7 @@ export class ReturnRelay {
       errorCode,
       errorMessage,
       leaseId: payload.leaseId,
+      ...(locator ? { locator } : {}),
       ownerId: payload.ownerId,
       policyVersion: payload.policyVersion,
       probeGeneration: payload.probeGeneration,

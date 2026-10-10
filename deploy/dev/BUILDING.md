@@ -4,7 +4,7 @@ Workflow `deploy-dev.yml` vẫn nhận push trên `develop` và các target th�
 
 ## Quan hệ phụ thuộc và đầu ra
 
-`image-quality-gate` giữ nguyên điều kiện kiểm tra chất lượng trước đây: mọi job kiểm tra phải thành công hoặc được bỏ qua theo phân loại. Sau gate, `build-api`, `build-web` và `build-go-worker` chạy song song khi runtime tương ứng được chọn. API và worker NestJS tiếp tục dùng chung image backend.
+`image-quality-gate` giữ nguyên điều kiện kiểm tra chất lượng trước đây: mọi job kiểm tra phải thành công hoặc được bỏ qua theo phân loại. Sau gate, `build-api`, `build-web`, `build-go-worker` và `build-media-probe` chạy song song khi runtime tương ứng được chọn; hai image Go dùng chung `worker/Dockerfile` nhưng build đúng target `ai-worker` và `media-probe`. API và worker NestJS tiếp tục dùng chung image backend.
 
 Ba job gọi `build-image.yml`. Job `build-images` thu thập và kiểm tra digest (mã băm manifest bất biến) cho mọi image được chọn trước khi cung cấp đúng các đầu ra `api_digest`, `web_digest`, `go_worker_digest` cho deploy. Build thất bại, bị hủy hoặc thiếu digest đều chặn deploy.
 

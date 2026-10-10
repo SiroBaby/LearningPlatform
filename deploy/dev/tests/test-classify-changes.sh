@@ -44,7 +44,7 @@ assert_output() {
   local after_sha="$3"
   local expected="$4"
   local actual
-  actual="$("${CLASSIFIER}" "${target}" "${before_sha}" "${after_sha}" | grep -Ev '^(observability|go_worker)=')"
+  actual="$("${CLASSIFIER}" "${target}" "${before_sha}" "${after_sha}" | grep -Ev '^(observability|go_worker|infra_quality)=')"
   [[ "${actual}" == "${expected}" ]] || fail "unexpected ${target} output: ${actual}"
 }
 
@@ -96,6 +96,17 @@ assert_observability_output() {
   grep -Fxq "observability=${expected}" <<<"${actual}" || fail "unexpected observability output for ${target}: ${actual}"
 }
 
+assert_infra_quality_output() {
+  local target="$1"
+  local before_sha="$2"
+  local after_sha="$3"
+  local expected="$4"
+  local actual
+
+  actual="$("${CLASSIFIER}" "${target}" "${before_sha}" "${after_sha}")"
+  grep -Fxq "infra_quality=${expected}" <<<"${actual}" || fail "unexpected infrastructure quality output for ${target}: ${actual}"
+}
+
 commit_file() {
   local path="$1"
   mkdir -p "$(dirname "${path}")"
@@ -122,6 +133,10 @@ main() {
 	expected=$'web=false\napi=false\nworker=true\nbackend=true\ndeploy_any=true'
 	(cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
 	(cd "${repository}" && assert_go_worker_output "${before_sha}" "${after_sha}")
+
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file worker/Dockerfile)"
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
 	before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file app/src/worker/job.ts)"
@@ -155,35 +170,61 @@ main() {
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/k8s/apps.yaml.j2)"
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/cert_manager/tasks/main.yml)"
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file .github/workflows/deploy-dev.yml)"
   expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
-  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
+
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file infra/scripts/validate.sh)"
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" $'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false')
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file deploy/dev/classify-changes.sh)"
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file deploy/dev/observability-health.sh)"
   expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
+
+  # The observability health test must not be shadowed by the generic deploy test pattern.
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file deploy/dev/tests/test-observability-health.sh)"
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
+
+  before_sha="${after_sha}"
+  after_sha="$(cd "${repository}" && commit_file deploy/dev/tests/test-deploy-state.sh)"
+  (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file app/src/main.ts)"
@@ -194,11 +235,13 @@ main() {
   expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/observability/kube-prometheus-stack-values.yml)"
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/external_secrets/tasks/main.yml)"
@@ -206,6 +249,7 @@ main() {
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/vars/dev.yml)"
@@ -213,6 +257,7 @@ main() {
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)
+  (cd "${repository}" && assert_infra_quality_output auto "${before_sha}" "${after_sha}" true)
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/roles/monitoring/tasks/main.yml)"
@@ -233,21 +278,28 @@ main() {
 
   expected=$'web=true\napi=false\nworker=false\nbackend=false\ndeploy_any=true'
   (cd "${repository}" && assert_output web "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_quality_output web "${before_sha}" "${after_sha}" true)
   expected=$'web=false\napi=true\nworker=false\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output api "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_quality_output api "${before_sha}" "${after_sha}" true)
   expected=$'web=false\napi=false\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output worker "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_quality_output worker "${before_sha}" "${after_sha}" true)
   (cd "${repository}" && assert_manual_worker_go_worker_output "${before_sha}" "${after_sha}")
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output all "${before_sha}" "${after_sha}" "${expected}")
+  (cd "${repository}" && assert_infra_quality_output all "${before_sha}" "${after_sha}" true)
   (cd "${repository}" && assert_manual_all_go_worker_output "${before_sha}" "${after_sha}")
   expected=$'web=false\napi=false\nworker=false\nbackend=false\ndeploy_any=false'
   (cd "${repository}" && assert_output observability "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output observability "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output observability "${before_sha}" "${after_sha}" true)
   (cd "${repository}" && assert_output observability-recovery "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output observability-recovery "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output observability-recovery "${before_sha}" "${after_sha}" true)
   (cd "${repository}" && assert_output observability-health "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_observability_output observability-health "${before_sha}" "${after_sha}" true)
+  (cd "${repository}" && assert_infra_quality_output observability-health "${before_sha}" "${after_sha}" true)
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "0000000000000000000000000000000000000000" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_go_worker_output "0000000000000000000000000000000000000000" "${after_sha}")

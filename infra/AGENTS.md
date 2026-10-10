@@ -22,3 +22,7 @@
 
 - Any Alloy ingest change must update or preserve the static config-contract test. The test must check CRI parsing order, every supported level normalization mapping, unknown-level behavior, and the absence of `level`/correlation fields from Loki labels.
 - Run the narrow observability validation for the changed configuration; do not require application or worker tests for documentation-only changes.
+
+## Application Rollout
+
+- When `infra/k8s/apps.yaml.j2` conditionally renders a Deployment for a selected application target, update workflow rollout target derivation and failure diagnostics to wait for that exact Deployment; keep optional image validation conditional on the target and cover both paths with static and execution regressions.

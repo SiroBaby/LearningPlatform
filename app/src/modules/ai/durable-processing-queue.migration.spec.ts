@@ -141,7 +141,7 @@ describe('durable processing queue migration', () => {
     expect(processingColumns).not.toContain('source_version_id');
   });
 
-  it('does not grant media-probe UPDATE access to immutable source locator columns', async () => {
+  it('grants only the locator write and cancellation read columns needed by media-probe', async () => {
     const privileges = await db.client.query<{ readonly columnName: string }>(
       `SELECT column_name AS "columnName"
        FROM information_schema.column_privileges
@@ -154,7 +154,75 @@ describe('durable processing queue migration', () => {
       [['source_version_id', 'source_etag', 'source_content_length']],
     );
 
-    expect(privileges.rows).toEqual([]);
+    expect(privileges.rows).toEqual([
+      { columnName: 'source_content_length' },
+      { columnName: 'source_etag' },
+      { columnName: 'source_version_id' },
+    ]);
+
+    const cancellationReadPrivileges = await db.client.query<{ readonly columnName: string }>(
+      `SELECT column_name AS "columnName"
+       FROM information_schema.column_privileges
+       WHERE table_schema = 'ai'
+         AND table_name = 'media_probe_cancellation_tombstones'
+         AND grantee = 'learning_platform_media_probe'
+         AND privilege_type = 'SELECT'
+         AND column_name = ANY($1::text[])
+       ORDER BY column_name`,
+      [['document_id', 'owner_id', 'deletion_fence']],
+    );
+    expect(cancellationReadPrivileges.rows).toEqual([
+      { columnName: 'deletion_fence' },
+      { columnName: 'document_id' },
+      { columnName: 'owner_id' },
+    ]);
+
+    const mediaProbeJobPrivileges = await db.client.query<{
+      readonly privilegeType: string;
+      readonly columnName: string;
+    }>(
+      `SELECT privilege_type AS "privilegeType", column_name AS "columnName"
+       FROM information_schema.column_privileges
+       WHERE table_schema = 'ai'
+         AND table_name = 'media_probe_jobs'
+         AND grantee = 'learning_platform_media_probe'
+         AND privilege_type IN ('SELECT', 'UPDATE')
+         AND column_name = ANY($1::text[])
+       ORDER BY privilege_type, column_name`,
+      [['id', 'status', 'attempts', 'lease_id', 'lease_until', 'source_version_id', 'source_etag', 'source_content_length']],
+    );
+    expect(mediaProbeJobPrivileges.rows).toEqual([
+      { privilegeType: 'SELECT', columnName: 'attempts' },
+      { privilegeType: 'SELECT', columnName: 'id' },
+      { privilegeType: 'SELECT', columnName: 'lease_id' },
+      { privilegeType: 'SELECT', columnName: 'lease_until' },
+      { privilegeType: 'SELECT', columnName: 'source_content_length' },
+      { privilegeType: 'SELECT', columnName: 'source_etag' },
+      { privilegeType: 'SELECT', columnName: 'source_version_id' },
+      { privilegeType: 'SELECT', columnName: 'status' },
+      { privilegeType: 'UPDATE', columnName: 'attempts' },
+      { privilegeType: 'UPDATE', columnName: 'lease_id' },
+      { privilegeType: 'UPDATE', columnName: 'lease_until' },
+      { privilegeType: 'UPDATE', columnName: 'source_content_length' },
+      { privilegeType: 'UPDATE', columnName: 'source_etag' },
+      { privilegeType: 'UPDATE', columnName: 'source_version_id' },
+      { privilegeType: 'UPDATE', columnName: 'status' },
+    ]);
+
+    const tombstoneReadPrivileges = await db.client.query<{ readonly columnName: string }>(
+      `SELECT column_name AS "columnName"
+       FROM information_schema.column_privileges
+       WHERE table_schema = 'ai'
+         AND table_name = 'media_probe_cancellation_tombstones'
+         AND grantee = 'learning_platform_media_probe'
+         AND privilege_type = 'SELECT'
+       ORDER BY column_name`,
+    );
+    expect(tombstoneReadPrivileges.rows).toEqual([
+      { columnName: 'deletion_fence' },
+      { columnName: 'document_id' },
+      { columnName: 'owner_id' },
+    ]);
   });
 
   it('does not remove document probe state owned by the earlier migration on down', async () => {
@@ -271,6 +339,37 @@ describe('durable processing queue migration', () => {
            AND indexname = 'uq_media_probe_result_document_owner'`,
       );
       expect(scopedIndex.rows).toHaveLength(0);
+    } finally {
+      await rollbackDb.stop();
+    }
+  });
+
+  it('preserves established probe grants when the grant-repair migration is reverted', async () => {
+    const rollbackDb = await startTestDb();
+    try {
+      const downSql = readFileSync(
+        join(__dirname, '../../database/migrations/1787803978000_reapply_media_probe_worker_grants.down.sql'),
+        'utf8',
+      );
+      await rollbackDb.client.query(downSql);
+
+      const grants = await rollbackDb.client.query<{ readonly tableName: string; readonly columnName: string; readonly privilegeType: string }>(
+        `SELECT table_name AS "tableName", column_name AS "columnName", privilege_type AS "privilegeType"
+         FROM information_schema.column_privileges
+         WHERE table_schema = 'ai'
+           AND grantee = 'learning_platform_media_probe'
+           AND ((table_name = 'media_probe_jobs' AND column_name IN ('source_version_id', 'source_etag', 'source_content_length') AND privilege_type = 'UPDATE')
+             OR (table_name = 'media_probe_cancellation_tombstones' AND column_name IN ('document_id', 'owner_id', 'deletion_fence') AND privilege_type = 'SELECT'))
+         ORDER BY table_name, column_name, privilege_type`,
+      );
+      expect(grants.rows).toEqual([
+        { tableName: 'media_probe_cancellation_tombstones', columnName: 'deletion_fence', privilegeType: 'SELECT' },
+        { tableName: 'media_probe_cancellation_tombstones', columnName: 'document_id', privilegeType: 'SELECT' },
+        { tableName: 'media_probe_cancellation_tombstones', columnName: 'owner_id', privilegeType: 'SELECT' },
+        { tableName: 'media_probe_jobs', columnName: 'source_content_length', privilegeType: 'UPDATE' },
+        { tableName: 'media_probe_jobs', columnName: 'source_etag', privilegeType: 'UPDATE' },
+        { tableName: 'media_probe_jobs', columnName: 'source_version_id', privilegeType: 'UPDATE' },
+      ]);
     } finally {
       await rollbackDb.stop();
     }

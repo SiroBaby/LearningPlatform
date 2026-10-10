@@ -2,10 +2,14 @@
 set -Eeuo pipefail
 
 : "${BUILD_CONTEXT:?}" "${DOCKERFILE:?}" "${IMAGE:?}" "${GITHUB_OUTPUT:?}"
-[[ "$IMAGE" =~ ^ghcr\.io/sirobaby/learningplatform-(api|web|ai-worker):sha-[a-f0-9]{40}$ ]] || {
+[[ "$IMAGE" =~ ^ghcr\.io/sirobaby/learningplatform-(api|web|ai-worker|media-probe):sha-[a-f0-9]{40}$ ]] || {
   printf '%s\n' 'invalid immutable image tag' >&2
   exit 1
 }
+
+# Multi-target Dockerfiles must publish the same stage that was cached.
+target_args=()
+[[ -z "${BUILD_TARGET:-}" ]] || target_args=(--target "$BUILD_TARGET")
 
 publish_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/ghcr-publish.XXXXXX")"
 trap 'rm -rf -- "$publish_dir"' EXIT
@@ -15,7 +19,7 @@ trap 'exit 143' TERM
 
 for attempt in 1 2 3; do
   # Reuse the same builder and build inputs: publication solves cached layers.
-  if timeout 600s docker buildx build "$BUILD_CONTEXT" --file "$DOCKERFILE" \
+  if timeout 600s docker buildx build "$BUILD_CONTEXT" --file "$DOCKERFILE" ${target_args[@]+"${target_args[@]}"} \
     --platform linux/amd64 --tag "$IMAGE" --provenance=mode=min,inline-only=true \
     --metadata-file "$publish_dir/metadata.json" --push > "$publish_dir/push.log" 2>&1; then
     digest="$(python3 - "$publish_dir/metadata.json" <<'PY'

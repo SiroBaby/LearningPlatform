@@ -27,7 +27,8 @@ end
 frontend_commands = jobs.fetch('frontend-quality').fetch('steps').filter_map { |step| step['run'] }
 assert(frontend_commands.include?('npm ci --no-audit --no-fund') && frontend_commands.include?('timeout 180s node ../deploy/dev/audit-high.js'), 'frontend must keep its explicit bounded audit after suppressing duplicate install audit')
 
-builds = { 'build-api' => ['api', 'backend'], 'build-web' => ['web', 'web'], 'build-go-worker' => ['go-worker', 'go_worker'] }
+builds = { 'build-api' => ['api', 'backend'], 'build-web' => ['web', 'web'], 'build-go-worker' => ['go-worker', 'go_worker'],
+           'build-media-probe' => ['media-probe', 'go_worker'] }
 builds.each do |name, (runtime, output)|
   job = jobs.fetch(name)
   assert(job.fetch('needs') == %w[changes image-quality-gate], "#{name}: retain quality gate without serial image dependencies")
@@ -39,15 +40,22 @@ end
 expected_outputs = {
   'api_digest' => '${{ needs.build-api.outputs.digest }}',
   'web_digest' => '${{ needs.build-web.outputs.digest }}',
-  'go_worker_digest' => '${{ needs.build-go-worker.outputs.digest }}'
+  'go_worker_digest' => '${{ needs.build-go-worker.outputs.digest }}',
+  'media_probe_digest' => '${{ needs.build-media-probe.outputs.digest }}'
 }
 assert(jobs.fetch('build-images').fetch('outputs') == expected_outputs, 'retain exact deployment digest output names')
-assert(jobs.fetch('build-images').fetch('needs') == %w[changes image-quality-gate build-api build-web build-go-worker], 'collect only after all selected builds finish')
+assert(jobs.fetch('build-images').fetch('needs') == %w[changes image-quality-gate build-api build-web build-go-worker build-media-probe], 'collect only after all selected builds finish')
 assert(jobs.fetch('build-images').fetch('permissions') == { 'contents' => 'read' }, 'collector must have no registry write permission')
 assert(jobs.fetch('deploy').fetch('needs') == %w[changes infra-quality build-images], 'deployment dependencies remain unchanged')
 
 steps = reusable.fetch('jobs').fetch('image').fetch('steps')
 build = steps.find { |step| step['name'] == 'Build and cache without registry publication' }.fetch('with')
+runtime_map = steps.find { |step| step['id'] == 'runtime' }.fetch('run')
+assert(runtime_map.include?('go-worker) context=.; dockerfile=worker/Dockerfile; target=ai-worker; image=learningplatform-ai-worker ;;'), 'AI worker image must explicitly build the ai-worker target')
+assert(runtime_map.include?('media-probe) context=.; dockerfile=worker/Dockerfile; target=media-probe; image=learningplatform-media-probe ;;'), 'media probe image must explicitly build the media-probe target')
+assert(build['target'] == '${{ steps.runtime.outputs.target }}', 'cached build must use the runtime target')
+publish_env = steps.last.fetch('env')
+assert(publish_env['BUILD_TARGET'] == '${{ steps.runtime.outputs.target }}', 'publication must rebuild the same target that was cached')
 assert(build['push'] == false && build['platforms'] == 'linux/amd64', 'build must finish before publication with existing runner architecture')
 assert(build['provenance'] == 'mode=min,inline-only=true', 'retain minimal provenance on immutable manifest')
 assert(build['cache-from'] == 'type=gha,version=2,scope=dev-${{ inputs.runtime }}-v1', 'isolate cache import by runtime and policy version')
@@ -68,7 +76,7 @@ quality_names.each do |name|
   end
 end
 
-%w[success skipped failure cancelled].repeated_permutation(3) do |states|
+%w[success skipped failure cancelled].repeated_permutation(4) do |states|
   needs = base.merge('image-quality-gate' => { 'result' => 'success' })
   builds.keys.zip(states).each { |name, state| needs[name] = { 'result' => state } }
   expected = states.all? { |state| %w[success skipped].include?(state) }
@@ -86,11 +94,11 @@ end
 
 collector = jobs.fetch('build-images').fetch('steps').first.fetch('run')
 digest = "sha256:#{'a' * 64}"
-environment = { 'SELECT_BACKEND' => 'true', 'SELECT_WEB' => 'true', 'SELECT_GO_WORKER' => 'true',
-                'BACKEND_DIGEST' => digest, 'WEB_DIGEST' => digest, 'GO_WORKER_DIGEST' => digest }
+environment = { 'SELECT_BACKEND' => 'true', 'SELECT_WEB' => 'true', 'SELECT_GO_WORKER' => 'true', 'SELECT_MEDIA_PROBE' => 'true',
+                'BACKEND_DIGEST' => digest, 'WEB_DIGEST' => digest, 'GO_WORKER_DIGEST' => digest, 'MEDIA_PROBE_DIGEST' => digest }
 _out, err, status = Open3.capture3(environment, 'bash', '-ceu', collector)
 assert(status.success?, "collector rejects valid digests: #{err}")
-%w[BACKEND WEB GO_WORKER].each do |runtime|
+%w[BACKEND WEB GO_WORKER MEDIA_PROBE].each do |runtime|
   ['', 'latest', 'sha256:short'].each do |invalid|
     _out, _err, status = Open3.capture3(environment.merge("#{runtime}_DIGEST" => invalid), 'bash', '-ceu', collector)
     assert(!status.success?, "collector must block selected #{runtime} missing/malformed digest")

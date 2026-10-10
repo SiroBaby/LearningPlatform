@@ -108,6 +108,7 @@ media_egress_proxy_enabled: false
 object_storage_egress_proxy_enabled: false
 media_probe_worker_dns_ip: REPLACE_WITH_CLUSTER_DNS_IP
 media_probe_worker_egress_proxy_port: 3128
+media_probe_worker_database_cidrs: [REPLACE_WITH_AIVEN_DATABASE_CIDR]
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}

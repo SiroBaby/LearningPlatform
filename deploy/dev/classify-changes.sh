@@ -31,6 +31,7 @@ classify_changes() {
   local worker=false
   local go_worker=false
   local observability=false
+  local infra_quality=false
   local changed_file
 
   case "${target}" in
@@ -40,6 +41,7 @@ classify_changes() {
         api=true
         worker=true
         go_worker=true
+        infra_quality=true
       else
         while IFS= read -r changed_file; do
           case "${changed_file}" in
@@ -51,6 +53,9 @@ classify_changes() {
             worker/*)
               go_worker=true
               worker=true
+              if [[ "${changed_file}" == worker/Dockerfile ]]; then
+                infra_quality=true
+              fi
               ;;
             app/src/worker/*|app/src/worker.ts)
               worker=true
@@ -77,11 +82,13 @@ classify_changes() {
               api=true
               worker=true
               go_worker=true
+              infra_quality=true
               ;;
             infra/ansible/roles/external_secrets/*|infra/ansible/vars/dev.yml)
               api=true
               worker=true
               go_worker=true
+              infra_quality=true
               ;;
             deploy/dev/classify-changes.sh)
               # A classifier change must reconcile every application so a
@@ -90,9 +97,15 @@ classify_changes() {
               api=true
               worker=true
               go_worker=true
+              infra_quality=true
               ;;
-            .github/workflows/deploy-dev.yml|deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/k3s/*|infra/scripts/*)
+            # Keep before deploy/dev/tests/* so the observability health test is not shadowed.
+            deploy/dev/observability-health.sh|deploy/dev/tests/test-observability-health.sh|infra/observability/*|infra/ansible/playbooks/site.yml|infra/ansible/roles/observability/*|infra/ansible/roles/k3s/*)
               observability=true
+              infra_quality=true
+              ;;
+            .github/workflows/deploy-dev.yml|infra/scripts/*|deploy/dev/tests/*)
+              infra_quality=true
               ;;
           esac
         done < <(list_changed_files "${before_sha}" "${after_sha}")
@@ -100,28 +113,35 @@ classify_changes() {
       ;;
     web)
       web=true
+      infra_quality=true
       ;;
     api)
       api=true
+      infra_quality=true
       ;;
     worker)
       worker=true
       go_worker=true
+      infra_quality=true
       ;;
     all)
       web=true
       api=true
       worker=true
       go_worker=true
+      infra_quality=true
       ;;
     observability)
       observability=true
+      infra_quality=true
       ;;
     observability-recovery)
       observability=true
+      infra_quality=true
       ;;
     observability-health)
       observability=true
+      infra_quality=true
       ;;
     *)
       fail "target must be auto, web, api, worker, observability, observability-recovery, observability-health, or all"
@@ -142,6 +162,7 @@ classify_changes() {
   printf 'worker=%s\n' "${worker}"
   printf 'go_worker=%s\n' "${go_worker}"
   printf 'observability=%s\n' "${observability}"
+  printf 'infra_quality=%s\n' "${infra_quality}"
   printf 'backend=%s\n' "${backend}"
   printf 'deploy_any=%s\n' "${deploy_any}"
 }

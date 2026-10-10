@@ -80,8 +80,14 @@ deployment_targets: [web, api, worker]
 # Deploy the private proxy workload independently from runtime proxy consumers.
 media_egress_proxy_enabled: true
 object_storage_egress_proxy_enabled: false
+# Disabled until the database egress design is decided: Aiven exposes only a
+# hostname, so no static CIDR exists for the NetworkPolicy below. Enabling the
+# flag without real CIDRs fails the applications contract closed.
+media_probe_worker_enabled: false
+media_probe_worker_proxy_url: http://media-egress-proxy:3128
 media_probe_worker_dns_ip: 10.43.0.10
 media_probe_worker_egress_proxy_port: 3128
+media_probe_worker_database_cidrs: [REPLACE_WITH_AIVEN_DATABASE_CIDR]
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}
@@ -92,6 +98,10 @@ api_resources:
 worker_resources:
   requests: {cpu: 250m, memory: 512Mi}
   limits: {cpu: "1", memory: 1Gi}
+media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:REPLACE_WITH_64_HEX_DIGEST
+media_probe_worker_resources:
+  requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 550Mi}
+  limits: {cpu: 500m, memory: 512Mi, ephemeral-storage: 550Mi}
 go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:REPLACE_WITH_64_HEX_DIGEST
 
 monitoring_enabled: false

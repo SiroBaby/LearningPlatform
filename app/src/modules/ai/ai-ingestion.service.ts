@@ -7,9 +7,9 @@ import {
   MEDIA_PROBE_JOB_TYPE,
   type DocumentCancellationCommand,
 } from './contracts/ai-ingestion.port';
+import { normalizeStorageVersionId } from '../../storage/storage-version-id';
 import { MediaProbeJobRepository } from './repositories/media-probe-job.repository';
 import { ProcessingJobRepository } from './repositories/processing-job.repository';
-import { normalizeStorageVersionId } from '../../storage/storage-version-id';
 
 @Injectable()
 export class AiIngestionService implements AiIngestion {
@@ -31,13 +31,21 @@ export class AiIngestionService implements AiIngestion {
         !cmd.fullPipelineJobId ||
         !cmd.sourceBucket ||
         !cmd.sourceKey ||
-        normalizeStorageVersionId(cmd.sourceVersionId) === undefined ||
-        !cmd.sourceEtag ||
-        !Number.isSafeInteger(cmd.sourceContentLength) ||
-        cmd.sourceContentLength < 0 ||
         cmd.deletionFence === undefined
       ) {
-        throw new Error('MEDIA_PROBE requires probeGeneration, policyVersion, immutable source locator and deletionFence');
+        throw new Error('MEDIA_PROBE requires probeGeneration, policyVersion, managed source key and deletionFence');
+      }
+      const hasSourceLocator = cmd.sourceVersionId !== undefined ||
+        cmd.sourceEtag !== undefined ||
+        cmd.sourceContentLength !== undefined;
+      if (
+        hasSourceLocator &&
+        (!normalizeStorageVersionId(cmd.sourceVersionId) ||
+          !cmd.sourceEtag?.trim() ||
+          !Number.isSafeInteger(cmd.sourceContentLength) ||
+          (cmd.sourceContentLength as number) < 0)
+      ) {
+        throw new Error('MEDIA_PROBE source locator must be complete');
       }
       if (!this.mediaProbeJobs) {
         throw new Error('Media probe ingestion is unavailable');

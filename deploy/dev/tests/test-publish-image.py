@@ -27,7 +27,7 @@ pathlib.Path(metadata).write_text(os.environ['MOCK_METADATA'])
 
 
 class PublishImageTests(unittest.TestCase):
-    def run_publish(self, failures=(), metadata=None, status=1, image=None):
+    def run_publish(self, failures=(), metadata=None, status=1, image=None, target=None):
         with tempfile.TemporaryDirectory(prefix='ghcr-publish-test-') as tmp:
             directory = Path(tmp)
             for name, text in (
@@ -45,6 +45,9 @@ class PublishImageTests(unittest.TestCase):
                        GITHUB_OUTPUT=str(output), RUNNER_TEMP=tmp, MOCK_DIR=tmp,
                        MOCK_FAILURES=json.dumps(failures), MOCK_STATUS=str(status),
                        MOCK_METADATA=metadata if metadata is not None else json.dumps({'containerimage.digest': DIGEST}))
+            env.pop('BUILD_TARGET', None)
+            if target is not None:
+                env['BUILD_TARGET'] = target
             result = subprocess.run(['bash', str(SCRIPT)], env=env, text=True, capture_output=True)
             attempts = int((directory / 'count').read_text()) if (directory / 'count').exists() else 0
             arguments = [json.loads(line) for line in (directory / 'arguments').read_text().splitlines()] if attempts else []
@@ -59,6 +62,13 @@ class PublishImageTests(unittest.TestCase):
         self.assertEqual(arguments[0], ['buildx', 'build', 'app', '--file', 'app/Dockerfile',
                          '--platform', 'linux/amd64', '--tag', 'ghcr.io/sirobaby/learningplatform-api:sha-' + 'b' * 40,
                          '--provenance=mode=min,inline-only=true', '--metadata-file', arguments[0][-2], '--push'])
+
+    def test_target_is_forwarded_for_multi_stage_runtime(self):
+        image = 'ghcr.io/sirobaby/learningplatform-media-probe:sha-' + 'b' * 40
+        result, attempts, output, arguments, _ = self.run_publish(image=image, target='media-probe')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((attempts, output), (1, 'digest=' + DIGEST + '\n'))
+        self.assertEqual(arguments[0][:7], ['buildx', 'build', 'app', '--file', 'app/Dockerfile', '--target', 'media-probe'])
 
     def test_transient_push_errors_retry_with_same_inputs(self):
         for error in ('429 Too Many Requests', '500 Internal Server Error', '502 Bad Gateway',

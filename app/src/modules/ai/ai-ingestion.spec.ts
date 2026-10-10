@@ -117,9 +117,6 @@ describe('AiIngestionService.enqueue', () => {
       fullPipelineJobId: randomUUID(),
       sourceBucket: 'media',
       sourceKey: `media/${randomUUID()}.mp4`,
-      sourceVersionId: 'version-1',
-      sourceEtag: 'etag-1',
-      sourceContentLength: 1024,
     };
     const second = {
       ...first,
@@ -151,7 +148,7 @@ describe('AiIngestionService.enqueue', () => {
     );
   });
 
-  it('từ chối delivery cùng idempotency key nhưng locator đã bị thay đổi', async () => {
+  it('từ chối delivery cùng idempotency key nhưng source key đã bị thay đổi', async () => {
     const command = {
       documentId: randomUUID(),
       ownerId: randomUUID(),
@@ -163,27 +160,26 @@ describe('AiIngestionService.enqueue', () => {
       fullPipelineJobId: randomUUID(),
       sourceBucket: 'media',
       sourceKey: `media/${randomUUID()}.mp4`,
-      sourceVersionId: 'version-1',
-      sourceEtag: 'etag-1',
-      sourceContentLength: 1024,
     } as const;
     await seedMediaDocument(command);
 
     await ingestion.enqueue(command);
     await expect(ingestion.enqueue({
       ...command,
-      sourceVersionId: 'version-2',
+      sourceKey: 'media/replaced.mp4',
     })).rejects.toThrow('Media probe idempotency conflict');
 
     const persisted = await mediaProbeJobs.findOneByOrFail({ documentId: command.documentId });
     expect(persisted).toMatchObject({
-      sourceVersionId: 'version-1',
-      sourceEtag: 'etag-1',
+      sourceBucket: command.sourceBucket,
+      sourceKey: command.sourceKey,
     });
-    expect(Number(persisted.sourceContentLength)).toBe(1024);
+    expect(persisted.sourceVersionId).toBeNull();
+    expect(persisted.sourceEtag).toBeNull();
+    expect(persisted.sourceContentLength).toBeNull();
   });
 
-  it.each(['null', ' NULL ', 'NuLl'])('từ chối MEDIA_PROBE khi VersionId là placeholder %j', async (sourceVersionId) => {
+  it('chấp nhận MEDIA_PROBE không có locator; worker sẽ lấy locator ở lần claim đầu', async () => {
     const command = {
       documentId: randomUUID(),
       ownerId: randomUUID(),
@@ -195,17 +191,18 @@ describe('AiIngestionService.enqueue', () => {
       fullPipelineJobId: randomUUID(),
       sourceBucket: 'media',
       sourceKey: `media/${randomUUID()}.mp4`,
-      sourceVersionId,
-      sourceEtag: 'etag-1',
-      sourceContentLength: 1024,
     } as const;
 
     await seedMediaDocument(command);
 
-    await expect(ingestion.enqueue(command)).rejects.toThrow(
-      'MEDIA_PROBE requires probeGeneration, policyVersion, immutable source locator and deletionFence',
-    );
-    await expect(mediaProbeJobs.findBy({ documentId: command.documentId })).resolves.toHaveLength(0);
+    await ingestion.enqueue(command);
+    await expect(mediaProbeJobs.findOneByOrFail({ documentId: command.documentId })).resolves.toMatchObject({
+      sourceBucket: command.sourceBucket,
+      sourceKey: command.sourceKey,
+      sourceVersionId: null,
+      sourceEtag: null,
+      sourceContentLength: null,
+    });
   });
 
   it('giữ FULL_PIPELINE độc lập và idempotent bên cạnh các probe generation', async () => {
@@ -221,9 +218,6 @@ describe('AiIngestionService.enqueue', () => {
       fullPipelineJobId: randomUUID(),
       sourceBucket: 'media',
       sourceKey: `media/${randomUUID()}.mp4`,
-      sourceVersionId: 'version-1',
-      sourceEtag: 'etag-1',
-      sourceContentLength: 1024,
     };
     const fullPipeline = {
       documentId,
@@ -244,6 +238,34 @@ describe('AiIngestionService.enqueue', () => {
     expect(all.filter((job) => job.jobType === JobType.FULL_PIPELINE)).toHaveLength(1);
   });
 
+  it('delivery lặp của MEDIA_PROBE không tạo FULL_PIPELINE job hoặc AI result outbox', async () => {
+    const documentId = randomUUID();
+    const command = {
+      documentId,
+      ownerId: randomUUID(),
+      jobType: MEDIA_PROBE_JOB_TYPE,
+      correlationId: randomUUID(),
+      probeGeneration: randomUUID(),
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId: randomUUID(),
+      sourceBucket: 'media',
+      sourceKey: `media/${randomUUID()}.mp4`,
+    } as const;
+
+    await seedMediaDocument(command);
+    await ingestion.enqueue(command);
+    await ingestion.enqueue(command);
+
+    expect(await mediaProbeJobs.countBy({ documentId })).toBe(1);
+    expect(await jobs.countBy({ documentId })).toBe(0);
+    const resultOutboxRows = await ds.query(
+      'SELECT COUNT(*)::int AS count FROM "ai"."outbox" WHERE "aggregate_id" = $1',
+      [command.fullPipelineJobId],
+    ) as readonly { readonly count: number }[];
+    expect(resultOutboxRows[0].count).toBe(0);
+  });
+
   it('giữ media probe trong AI boundary và hủy job mà không đổi deletion fence lịch sử', async () => {
     const command = {
       documentId: randomUUID(),
@@ -256,9 +278,6 @@ describe('AiIngestionService.enqueue', () => {
       fullPipelineJobId: randomUUID(),
       sourceBucket: 'media',
       sourceKey: `media/${randomUUID()}.mp4`,
-      sourceVersionId: 'version-1',
-      sourceEtag: 'etag-1',
-      sourceContentLength: 1024,
     } as const;
     await seedMediaDocument(command, DocumentStatus.DELETING);
 
@@ -336,9 +355,6 @@ describe('AiIngestionService.enqueue', () => {
       probeGeneration: randomUUID(),
       sourceBucket: 'media',
       sourceKey: `media/${documentId}.mp4`,
-      sourceVersionId: 'version-1',
-      sourceEtag: 'etag-1',
-      sourceContentLength: 1024,
     } as const;
 
     await ingestion.cancelDocument({
@@ -413,9 +429,6 @@ describe('AiIngestionService.enqueue', () => {
       fullPipelineJobId: randomUUID(),
       sourceBucket: 'media',
       sourceKey: `media/${randomUUID()}.mp4`,
-      sourceVersionId: 'version-1',
-      sourceEtag: 'etag-1',
-      sourceContentLength: 1024,
       ...missing,
     };
 
@@ -423,7 +436,7 @@ describe('AiIngestionService.enqueue', () => {
     await expect(mediaProbeJobs.findBy({ documentId: command.documentId })).resolves.toHaveLength(0);
   });
 
-  it('từ chối MEDIA_PROBE khi thiếu locator object bất biến', async () => {
+  it('từ chối MEDIA_PROBE khi thiếu managed source key', async () => {
     const command = {
       documentId: randomUUID(),
       ownerId: randomUUID(),
@@ -434,10 +447,10 @@ describe('AiIngestionService.enqueue', () => {
       policyVersion: 'media-v1',
       deletionFence: 0,
       sourceBucket: 'media',
-      sourceKey: `media/${randomUUID()}.mp4`,
+      sourceKey: '',
     };
 
-    await expect(ingestion.enqueue(command as unknown as EnqueueCommand)).rejects.toThrow('immutable source locator');
+    await expect(ingestion.enqueue(command as unknown as EnqueueCommand)).rejects.toThrow('managed source key');
     await expect(mediaProbeJobs.findBy({ documentId: command.documentId })).resolves.toHaveLength(0);
   });
 
