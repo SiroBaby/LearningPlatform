@@ -130,6 +130,14 @@ func LoadMediaProbe(lookup LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// In production the probe reaches PostgreSQL only through the
+	// media-probe-db-egress forwarder (ADR-0031 §5), so DB_HOST never names the
+	// certificate host; without the real name every verified handshake would fail.
+	if value(lookup, "NODE_ENV", "development") == "production" {
+		if _, err := required(lookup, databaseSSLServerNameEnvironment); err != nil {
+			return Config{}, err
+		}
+	}
 	proxyURL, err := loadObjectStorageProxyURL(lookup, true)
 	if err != nil {
 		return Config{}, err

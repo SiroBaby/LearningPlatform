@@ -1,0 +1,324 @@
+---
+# ADR-0031 §5 (#199): the media-probe-worker reaches PostgreSQL only through a
+# TCP forwarder pinned to one upstream host:port; it has no direct database or
+# Internet egress.
+- name: Verify the media-probe-db-egress forwarder render contract
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+    applications_forwarder_names:
+      - media-probe-db-egress
+      - media-probe-db-egress-config
+      - media-probe-db-egress-ingress
+      - media-probe-db-egress-egress
+    applications_probe_labels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-probe-worker
+    applications_forwarder_labels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-probe-db-egress
+    applications_non_public_cidrs:
+      - 10.0.0.0/8
+      - 100.64.0.0/10
+      - 127.0.0.0/8
+      - 169.254.0.0/16
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+    applications_kube_dns_peer:
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+  tasks:
+    - name: Render worker and API-only manifests with the flag disabled and enabled
+      ansible.builtin.set_fact:
+        applications_disabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['web', 'api', 'worker'],
+                            'media_probe_worker_enabled': false})
+             | from_yaml_all | list }}
+        applications_api_only_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['api'],
+                            'media_probe_worker_enabled': true})
+             | from_yaml_all | list }}
+        applications_enabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['worker'],
+                            'media_probe_worker_enabled': true,
+                            'media_probe_database_upstream_host': 'database.example.net',
+                            'media_probe_database_upstream_port': 13039})
+             | from_yaml_all | list }}
+        applications_other_port_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['worker'],
+                            'media_probe_worker_enabled': true,
+                            'media_probe_database_upstream_host': 'database.example.net',
+                            'media_probe_database_upstream_port': 13040})
+             | from_yaml_all | list }}
+
+    - name: Require the forwarder to render only with the worker target and the flag
+      ansible.builtin.assert:
+        that:
+          - applications_disabled_manifests | selectattr('metadata.name', 'in', applications_forwarder_names) | list | length == 0
+          - applications_api_only_manifests | selectattr('metadata.name', 'in', applications_forwarder_names) | list | length == 0
+          - >-
+            applications_enabled_manifests | selectattr('metadata.name', 'in', applications_forwarder_names)
+            | map(attribute='kind') | sort | list
+            == ['ConfigMap', 'Deployment', 'NetworkPolicy', 'NetworkPolicy', 'Service', 'ServiceAccount']
+        fail_msg: >-
+          media-probe-db-egress must render only for a worker rollout with
+          media_probe_worker_enabled, never for API-only or disabled rollouts.
+
+    - name: Select the rendered forwarder and probe resources
+      ansible.builtin.set_fact:
+        applications_forwarder_configmap: >-
+          {{ applications_enabled_manifests | selectattr('kind', 'equalto', 'ConfigMap')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress-config') | list }}
+        applications_forwarder_deployment: >-
+          {{ applications_enabled_manifests | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress') | list }}
+        applications_forwarder_service: >-
+          {{ applications_enabled_manifests | selectattr('kind', 'equalto', 'Service')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress') | list }}
+        applications_forwarder_service_account: >-
+          {{ applications_enabled_manifests | selectattr('kind', 'equalto', 'ServiceAccount')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress') | list }}
+        applications_forwarder_ingress_policy: >-
+          {{ applications_enabled_manifests | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress-ingress') | list }}
+        applications_forwarder_egress_policy: >-
+          {{ applications_enabled_manifests | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress-egress') | list }}
+        applications_probe_egress_policy: >-
+          {{ applications_enabled_manifests | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-probe-worker-egress') | list }}
+        applications_probe_deployment: >-
+          {{ applications_enabled_manifests | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'media-probe-worker') | list }}
+        applications_other_port_deployment: >-
+          {{ applications_other_port_manifests | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress') | list }}
+        applications_other_port_egress_policy: >-
+          {{ applications_other_port_manifests | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-probe-db-egress-egress') | list }}
+
+    - name: Select the forwarder configuration text
+      ansible.builtin.set_fact:
+        applications_forwarder_config: "{{ applications_forwarder_configmap[0].data['haproxy.cfg'] }}"
+        applications_forwarder_pod: "{{ applications_forwarder_deployment[0].spec.template.spec }}"
+
+    - name: Require HAProxy to pass TCP to exactly one literal upstream
+      ansible.builtin.assert:
+        that:
+          - applications_forwarder_configmap | length == 1
+          - applications_forwarder_config is search('(?m)^defaults\n  mode tcp$')
+          - applications_forwarder_config | regex_findall('(?m)^\s*server\s') | length == 1
+          - applications_forwarder_config | regex_findall('(?m)^\s*(frontend|backend|listen)\s') | length == 3
+          - applications_forwarder_config is search('(?m)^frontend postgres\n  bind :5432\n  default_backend database$')
+          - >-
+            applications_forwarder_config is search('(?m)^frontend health\n  mode http\n  bind :8404\n  timeout client 5s\n\x20
+            timeout http-request 5s\n  monitor-uri /healthz\n  http-request deny$')
+          - applications_forwarder_config | regex_findall('(?m)^\s*bind\s') | length == 2
+          - >-
+            applications_forwarder_config is search('(?m)^backend database\n  server database database\.example\.net:13039
+            resolvers cluster-dns resolve-prefer ipv4 init-addr none$')
+          - applications_forwarder_config is not search('(?m)^\s*(server\s.*\scheck\b|option\s|tcp-check|monitor fail)')
+          - applications_forwarder_config is search('(?m)^resolvers cluster-dns\n  nameserver kube-dns ' ~ (media_probe_worker_dns_ip | regex_escape) ~ ':53$')
+          - applications_forwarder_config | regex_findall('(?m)^\s*nameserver\s') | length == 1
+          - applications_forwarder_config is search('(?m)^  hold valid 10s$')
+          - applications_forwarder_config is search('(?m)^  hold obsolete 0s$')
+          - applications_forwarder_config is not search('REPLACE_WITH|stats|server-template|use_backend|parse-resolv-conf|\{\{')
+          - applications_forwarder_config | regex_findall('(?m)^\s*mode http$') | length == 1
+        fail_msg: >-
+          The forwarder must be HAProxy mode tcp with one frontend on :5432 and
+          exactly one server line naming the configured upstream host:port,
+          re-resolved through cluster DNS without permanent caching.
+
+    - name: Require a bounded, non-root, immutable forwarder workload
+      ansible.builtin.assert:
+        that:
+          - applications_forwarder_deployment | length == 1
+          - applications_forwarder_deployment[0].metadata.namespace == learning_platform_namespace
+          - applications_forwarder_deployment[0].spec.replicas == 1
+          - applications_forwarder_deployment[0].spec.strategy.type == 'Recreate'
+          - applications_forwarder_deployment[0].spec.strategy.rollingUpdate is none
+          - applications_forwarder_deployment[0].spec.selector.matchLabels == applications_forwarder_labels
+          - applications_forwarder_deployment[0].spec.template.metadata.labels == applications_forwarder_labels
+          - >-
+            applications_forwarder_deployment[0].spec.template.metadata.annotations['learning-platform.io/config-sha256']
+            == applications_forwarder_config | trim | hash('sha256')
+          - >-
+            applications_other_port_deployment[0].spec.template.metadata.annotations['learning-platform.io/config-sha256']
+            != applications_forwarder_deployment[0].spec.template.metadata.annotations['learning-platform.io/config-sha256']
+          - applications_forwarder_pod.serviceAccountName == 'media-probe-db-egress'
+          - applications_forwarder_pod.automountServiceAccountToken == false
+          - applications_forwarder_pod.securityContext.runAsNonRoot == true
+          - applications_forwarder_pod.securityContext.runAsUser == 99
+          - applications_forwarder_pod.securityContext.runAsGroup == 99
+          - applications_forwarder_pod.securityContext.fsGroup == 99
+          - applications_forwarder_pod.securityContext.seccompProfile.type == 'RuntimeDefault'
+          - applications_forwarder_pod.containers | length == 1
+          - applications_forwarder_pod.containers[0].image is match('^haproxy@sha256:[a-f0-9]{64}$')
+          - applications_forwarder_pod.containers[0].command == ['haproxy']
+          - applications_forwarder_pod.containers[0].args == ['-f', '/usr/local/etc/haproxy/haproxy.cfg', '-db']
+          - >-
+            applications_forwarder_pod.containers[0].ports
+            == [{'name': 'postgres', 'containerPort': 5432}, {'name': 'health', 'containerPort': 8404}]
+          - applications_forwarder_pod.containers[0].env is not defined
+          - applications_forwarder_pod.containers[0].envFrom is not defined
+          - applications_forwarder_pod.containers[0].securityContext.allowPrivilegeEscalation == false
+          - applications_forwarder_pod.containers[0].securityContext.readOnlyRootFilesystem == true
+          - applications_forwarder_pod.containers[0].securityContext.capabilities.drop == ['ALL']
+          # Kubelet probes must never traverse the forwarder to the database (review M1).
+          - "applications_forwarder_pod.containers[0].readinessProbe.httpGet == {'path': '/healthz', 'port': 'health'}"
+          - "applications_forwarder_pod.containers[0].livenessProbe.httpGet == {'path': '/healthz', 'port': 'health'}"
+          - applications_forwarder_pod.containers[0].readinessProbe.tcpSocket is not defined
+          - applications_forwarder_pod.containers[0].livenessProbe.tcpSocket is not defined
+          - >-
+            [applications_forwarder_pod.containers[0].readinessProbe, applications_forwarder_pod.containers[0].livenessProbe]
+            | to_json is not search('postgres|5432')
+          - applications_forwarder_pod.containers[0].resources.limits.cpu == '200m'
+          - applications_forwarder_pod.containers[0].resources.limits.memory == '128Mi'
+          - applications_forwarder_pod.containers[0].resources.limits['ephemeral-storage'] == '16Mi'
+          - applications_forwarder_pod.containers[0].resources.requests['ephemeral-storage'] == '16Mi'
+          - >-
+            applications_forwarder_pod.containers[0].volumeMounts
+            == [{'name': 'haproxy-config', 'mountPath': '/usr/local/etc/haproxy/haproxy.cfg', 'subPath': 'haproxy.cfg', 'readOnly': true},
+                {'name': 'haproxy-runtime', 'mountPath': '/tmp'}]
+          - >-
+            applications_forwarder_pod.volumes
+            == [{'name': 'haproxy-config', 'configMap': {'name': 'media-probe-db-egress-config', 'defaultMode': 292}},
+                {'name': 'haproxy-runtime', 'emptyDir': {'sizeLimit': '16Mi'}}]
+          - applications_forwarder_pod | to_json is not search('secretKeyRef|secretName|hostNetwork|hostPath')
+        fail_msg: >-
+          media-probe-db-egress must be one non-root, read-only, capability-free
+          HAProxy pod with an immutable image, numeric UID/GID, bounded
+          resources, no credentials, and a config checksum that restarts it.
+
+    - name: Require a private Service and a token-free ServiceAccount
+      ansible.builtin.assert:
+        that:
+          - applications_forwarder_service | length == 1
+          - applications_forwarder_service[0].spec.type == 'ClusterIP'
+          - applications_forwarder_service[0].spec.selector == applications_forwarder_labels
+          - "applications_forwarder_service[0].spec.ports == [{'name': 'postgres', 'port': 5432, 'targetPort': 'postgres'}]"
+          - applications_forwarder_service_account | length == 1
+          - applications_forwarder_service_account[0].automountServiceAccountToken == false
+        fail_msg: The forwarder must be reachable only as a ClusterIP Service on 5432 without a mounted token.
+
+    - name: Require forwarder ingress from the probe only and egress to DNS plus the upstream port
+      ansible.builtin.assert:
+        that:
+          - applications_forwarder_ingress_policy | length == 1
+          - applications_forwarder_ingress_policy[0].spec.podSelector.matchLabels == applications_forwarder_labels
+          - applications_forwarder_ingress_policy[0].spec.policyTypes == ['Ingress']
+          - >-
+            applications_forwarder_ingress_policy[0].spec.ingress
+            == [{'from': [{'podSelector': {'matchLabels': applications_probe_labels}}],
+                 'ports': [{'protocol': 'TCP', 'port': 5432}]}]
+          - applications_forwarder_egress_policy | length == 1
+          - applications_forwarder_egress_policy[0].spec.podSelector.matchLabels == applications_forwarder_labels
+          - applications_forwarder_egress_policy[0].spec.policyTypes == ['Egress']
+          - >-
+            applications_forwarder_egress_policy[0].spec.egress
+            == [{'to': [applications_kube_dns_peer],
+                 'ports': [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]},
+                {'to': [{'ipBlock': {'cidr': '0.0.0.0/0', 'except': applications_non_public_cidrs}}],
+                 'ports': [{'protocol': 'TCP', 'port': 13039}]}]
+          - "applications_other_port_egress_policy[0].spec.egress[1].ports == [{'protocol': 'TCP', 'port': 13040}]"
+        fail_msg: >-
+          Only media-probe-worker may connect to the forwarder on TCP 5432, and
+          the forwarder may reach only CoreDNS and the configured upstream port
+          on public addresses (no cluster, private, loopback, or metadata ranges).
+
+    - name: Require the probe egress to have exactly the forwarder, proxy, and DNS destinations
+      ansible.builtin.assert:
+        that:
+          - applications_probe_egress_policy | length == 1
+          - applications_probe_egress_policy[0].spec.policyTypes == ['Egress']
+          - >-
+            applications_probe_egress_policy[0].spec.egress
+            == [{'to': [applications_kube_dns_peer],
+                 'ports': [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]},
+                {'to': [{'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'learning-platform',
+                                                         'app.kubernetes.io/component': 'media-egress-proxy'}}}],
+                 'ports': [{'protocol': 'TCP', 'port': 3128}]},
+                {'to': [{'podSelector': {'matchLabels': applications_forwarder_labels}}],
+                 'ports': [{'protocol': 'TCP', 'port': 5432}]}]
+          - applications_probe_egress_policy[0].spec | to_json is not search('ipBlock|13039|0\.0\.0\.0')
+        fail_msg: >-
+          media-probe-worker egress must contain only kube-dns:53,
+          media-egress-proxy:3128, and media-probe-db-egress:5432, with no ipBlock.
+
+    - name: Require the probe to dial the forwarder while verifying the upstream certificate name
+      ansible.builtin.assert:
+        that:
+          - applications_probe_deployment | length == 1
+          - >-
+            applications_probe_deployment[0].spec.template.spec.containers[0].env
+            | selectattr('name', 'in', ['DB_HOST', 'DB_PORT', 'DB_SSL_SERVER_NAME']) | list
+            == [{'name': 'DB_HOST', 'value': 'media-probe-db-egress'},
+                {'name': 'DB_PORT', 'value': '5432'},
+                {'name': 'DB_SSL_SERVER_NAME', 'value': 'database.example.net'}]
+          - >-
+            applications_probe_deployment[0].spec.template.spec.containers[0].env
+            | selectattr('name', 'equalto', 'NODE_ENV') | map(attribute='value') | list == ['production']
+        fail_msg: >-
+          media-probe-worker must connect to media-probe-db-egress:5432 and set
+          DB_SSL_SERVER_NAME to the pinned upstream host so TLS still verifies
+          the real database certificate (no InsecureSkipVerify).
+
+    - name: Load the applications role tasks
+      ansible.builtin.set_fact:
+        applications_role_tasks: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml') | from_yaml }}"
+        applications_forwarder_selector: '^media-probe-db-egress(-config|-ingress|-egress)?$'
+
+    - name: Locate the forwarder, legacy-env, and workload apply tasks
+      ansible.builtin.set_fact:
+        applications_task_names: "{{ applications_role_tasks | map(attribute='name') | list }}"
+        applications_forwarder_apply_task: >-
+          {{ applications_role_tasks | selectattr('name', 'equalto', 'Apply the media probe database forwarder before its consumer') | list }}
+        applications_legacy_env_task: >-
+          {{ applications_role_tasks | selectattr('name', 'equalto', 'Require no legacy secret-sourced database address on the media probe worker') | list }}
+
+    # Review L1: the forwarder must be applied and serving before the probe
+    # exists. Review L3: an older secret-sourced DB_HOST/DB_PORT fails closed
+    # before any mutation.
+    - name: Require the forwarder to be applied and awaited before the probe workload
+      ansible.builtin.assert:
+        that:
+          - applications_forwarder_apply_task | length == 1
+          - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].state == 'present'
+          - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].wait == true
+          - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].wait_timeout == 180
+          - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].definition is search(applications_forwarder_selector | regex_escape)
+          - applications_forwarder_apply_task[0].when is search('media_probe_worker_enabled')
+          - applications_legacy_env_task | length == 1
+          - applications_legacy_env_task[0].when is search('media_probe_worker_enabled')
+          - applications_legacy_env_task[0]['ansible.builtin.assert'].that | join(' ') is search('valueFrom')
+          - "'Read an existing media probe worker Deployment' in applications_task_names"
+          - >-
+            applications_task_names.index('Read an existing media probe worker Deployment')
+            < applications_task_names.index('Require no legacy secret-sourced database address on the media probe worker')
+            < applications_task_names.index('Apply the media probe database forwarder before its consumer')
+            < applications_task_names.index('Apply selected stateless Learning Platform workloads')
+          - >-
+            applications_enabled_manifests | selectattr('metadata.name', 'match', applications_forwarder_selector)
+            | map(attribute='kind') | sort | list
+            == ['ConfigMap', 'Deployment', 'NetworkPolicy', 'NetworkPolicy', 'Service', 'ServiceAccount']
+        fail_msg: >-
+          The applications role must reject a legacy secret-sourced probe
+          database address, then apply exactly the forwarder resources and wait
+          for them before applying media-probe-worker.

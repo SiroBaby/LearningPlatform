@@ -170,13 +170,13 @@ assert(failures, deploy.fetch('needs') == %w[changes infra-quality build-images]
        'application deploy must wait for infra-quality and image build')
 assert(failures, deploy.fetch('if').include?("needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped'"),
        'application deploy must block failed infra-quality but allow skipped infra-quality')
-assert(failures, rollout_wait.include?("if 'worker' in deployment_targets:") && rollout_wait.include?("print('media-probe-worker')"),
-       'worker application rollout must add the media-probe-worker deployment to the selected rollout targets')
+assert(failures, rollout_wait.include?("if 'worker' in deployment_targets:") && rollout_wait.include?("print('media-probe-db-egress')\n        print('media-probe-worker')"),
+       'worker application rollout must wait for the media-probe-db-egress forwarder before the media-probe-worker deployment')
 assert(failures, step_by_name(deploy, 'Wait for selected K3s rollouts').dig('env', 'DEV_ANSIBLE_VARS') == 'infra/ansible/vars/dev.yml' &&
                  rollout_wait.include?("if flags[0] == 'true':"),
        'media-probe-worker rollout must follow media_probe_worker_enabled from the same vars file Ansible loads')
-assert(failures, rollout_wait.include?('web|api|worker|media-probe-worker'),
-       'rollout target allowlist and diagnostics must accept media-probe-worker')
+assert(failures, rollout_wait.include?('web|api|worker|media-probe-db-egress|media-probe-worker'),
+       'rollout target allowlist and diagnostics must accept media-probe-db-egress and media-probe-worker')
 
 observability = jobs.fetch('deploy-observability')
 observability_if = observability.fetch('if')

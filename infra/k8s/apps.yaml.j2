@@ -457,7 +457,7 @@ spec:
   template:
     metadata:
       annotations:
-        learning-platform.io/rollout-revision: media-probe-worker-v1
+        learning-platform.io/rollout-revision: media-probe-worker-v2
       labels:
         app.kubernetes.io/name: learning-platform
         app.kubernetes.io/component: media-probe-worker
@@ -504,7 +504,15 @@ spec:
               value: /tmp/media-probe
             - name: MEDIA_PROBE_MAX_DOWNLOAD_BYTES
               value: '524288000'
-{% for key in ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'MEDIA_PROBE_DB_USER', 'MEDIA_PROBE_DB_PASSWORD', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY', 'OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY'] %}
+            # PostgreSQL is reachable only through the pinned forwarder; TLS
+            # still verifies the real server certificate name end to end.
+            - name: DB_HOST
+              value: media-probe-db-egress
+            - name: DB_PORT
+              value: '5432'
+            - name: DB_SSL_SERVER_NAME
+              value: {{ media_probe_database_upstream_host | quote }}
+{% for key in ['DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'MEDIA_PROBE_DB_USER', 'MEDIA_PROBE_DB_PASSWORD', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY', 'OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY'] %}
             - name: {{ key }}
               valueFrom:
                 secretKeyRef:
@@ -588,15 +596,255 @@ spec:
       ports:
         - protocol: TCP
           port: 3128
-    # PostgreSQL runs outside the cluster; only the configured Aiven CIDRs are open.
+    # PostgreSQL is reachable only through the forwarder pinned to one upstream.
     - to:
-{% for cidr in media_probe_worker_database_cidrs %}
-        - ipBlock:
-            cidr: {{ cidr }}
-{% endfor %}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: media-probe-db-egress
       ports:
         - protocol: TCP
           port: 5432
+{% set media_probe_db_egress_config %}
+# TCP passthrough to exactly one PostgreSQL upstream; TLS stays end to end
+# between the media-probe-worker and the database (ADR-0031 §5).
+global
+  maxconn 64
+  hard-stop-after 10s
+
+# Re-resolve the upstream through cluster DNS so a provider IP change is
+# followed without restarting; answers are never cached permanently.
+resolvers cluster-dns
+  nameserver kube-dns {{ media_probe_worker_dns_ip }}:53
+  accepted_payload_size 8192
+  resolve_retries 3
+  timeout resolve 1s
+  timeout retry 1s
+  hold valid 10s
+  hold other 10s
+  hold refused 10s
+  hold nx 10s
+  hold timeout 10s
+  hold obsolete 0s
+
+defaults
+  mode tcp
+  timeout connect 10s
+  timeout client 30m
+  timeout server 30m
+  timeout client-fin 10s
+  timeout server-fin 10s
+
+# Kubelet probes stop here: a tcpSocket probe on :5432 would open a real
+# upstream connection on every check. This only proves HAProxy is serving.
+frontend health
+  mode http
+  bind :8404
+  timeout client 5s
+  timeout http-request 5s
+  monitor-uri /healthz
+  http-request deny
+
+frontend postgres
+  bind :5432
+  default_backend database
+
+# No health check: DNS resolution runs without one, and a check would open a
+# connection to the database every interval.
+backend database
+  server database {{ media_probe_database_upstream_host }}:{{ media_probe_database_upstream_port | int }} resolvers cluster-dns resolve-prefer ipv4 init-addr none
+{% endset %}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: media-probe-db-egress-config
+  namespace: {{ learning_platform_namespace }}
+data:
+  haproxy.cfg: |
+{{ media_probe_db_egress_config | trim | indent(4, true) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-probe-db-egress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-probe-db-egress
+  template:
+    metadata:
+      annotations:
+        # The ConfigMap is mounted through subPath; the checksum restarts the forwarder on every config change.
+        learning-platform.io/config-sha256: {{ media_probe_db_egress_config | trim | hash('sha256') }}
+      labels:
+        app.kubernetes.io/name: learning-platform
+        app.kubernetes.io/component: media-probe-db-egress
+    spec:
+      serviceAccountName: media-probe-db-egress
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 99
+        runAsGroup: 99
+        fsGroup: 99
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: {{ ghcr_pull_secret_name }}
+      containers:
+        - name: media-probe-db-egress
+          image: haproxy@sha256:5961c68bc8a81c5124d0a98ab20f81b74717d6afe596e805977d9cf84c126222
+          imagePullPolicy: IfNotPresent
+          command:
+            - haproxy
+          args:
+            - -f
+            - /usr/local/etc/haproxy/haproxy.cfg
+            - -db
+          ports:
+            - name: postgres
+              containerPort: 5432
+            - name: health
+              containerPort: 8404
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # Probes use the local health frontend so they never reach the database.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+              ephemeral-storage: 16Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+              ephemeral-storage: 16Mi
+          volumeMounts:
+            - name: haproxy-config
+              mountPath: /usr/local/etc/haproxy/haproxy.cfg
+              subPath: haproxy.cfg
+              readOnly: true
+            - name: haproxy-runtime
+              mountPath: /tmp
+      volumes:
+        - name: haproxy-config
+          configMap:
+            name: media-probe-db-egress-config
+            defaultMode: 0444
+        - name: haproxy-runtime
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: media-probe-db-egress
+  namespace: {{ learning_platform_namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-probe-db-egress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: learning-platform
+    app.kubernetes.io/component: media-probe-db-egress
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-probe-db-egress-ingress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-probe-db-egress
+  policyTypes: [Ingress]
+  # The :8404 health frontend needs no rule: K3s network policy already admits
+  # kubelet probes from the node (the api readiness probe relies on the same).
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: media-probe-worker
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-probe-db-egress-egress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-probe-db-egress
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # NetworkPolicy cannot encode the database hostname. The HAProxy server
+    # line is the destination allowlist; this rule only permits its port to
+    # public addresses, never cluster, private, loopback, or metadata ranges.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: {{ media_probe_database_upstream_port | int }}
 {% endif %}
 {% endif %}
 {% if media_egress_proxy_enabled | default(false) | bool %}

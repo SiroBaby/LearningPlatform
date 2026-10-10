@@ -253,6 +253,51 @@
       | list | length) == 1
   when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
 
+# DB_HOST/DB_PORT of media-probe-worker are now literal values. A strategic
+# merge onto an older Deployment that still sources them from secretKeyRef
+# would produce an env entry with both value and valueFrom, which the API
+# rejects; fail closed before any mutation instead (#199).
+- name: Read an existing media probe worker Deployment
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ learning_platform_namespace }}'
+    name: media-probe-worker
+  register: applications_existing_media_probe_deployment
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+  no_log: true
+
+- name: Require no legacy secret-sourced database address on the media probe worker
+  ansible.builtin.assert:
+    that:
+      - >-
+        applications_existing_media_probe_deployment.resources
+        | map(attribute='spec.template.spec.containers') | flatten
+        | selectattr('name', 'equalto', 'media-probe-worker')
+        | map(attribute='env') | flatten
+        | selectattr('name', 'in', ['DB_HOST', 'DB_PORT'])
+        | selectattr('valueFrom', 'defined')
+        | list | length == 0
+    fail_msg: >-
+      deployment/media-probe-worker still reads DB_HOST/DB_PORT from a Secret;
+      it predates the media-probe-db-egress forwarder and must be removed
+      through a reviewed change before this rollout.
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+
+# The probe pings PostgreSQL at startup, so the forwarder must be serving
+# before the probe exists; otherwise the first rollout starts in CrashLoopBackOff.
+- name: Apply the media probe database forwarder before its consumer
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    state: present
+    definition: >-
+      {{ lookup('template', playbook_dir ~ '/../../k8s/apps.yaml.j2') | from_yaml_all
+         | selectattr('metadata.name', 'match', '^media-probe-db-egress(-config|-ingress|-egress)?$') | list }}
+    wait: true
+    wait_timeout: 180
+  when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+
 - name: Apply selected stateless Learning Platform workloads
   kubernetes.core.k8s:
     kubeconfig: /etc/rancher/k3s/k3s.yaml

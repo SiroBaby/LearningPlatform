@@ -14,7 +14,6 @@
     api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-    media_probe_worker_database_cidrs: ['203.0.113.10/32']
   tasks:
     - name: Render the proxy-disabled application manifest
       ansible.builtin.set_fact:
@@ -80,8 +79,7 @@
         applications_rendered_enabled_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
              template_vars={'media_egress_proxy_enabled': true,
-                            'object_storage_egress_proxy_enabled': false,
-                            'media_probe_worker_database_cidrs': ['203.0.113.10/32']})
+                            'object_storage_egress_proxy_enabled': false})
              | from_yaml_all | list }}
         applications_rendered_enabled_external_secrets: >-
           {{ lookup('template', playbook_dir ~ '/../../external_secrets/templates/external-secrets.yaml.j2')
@@ -252,14 +250,15 @@
             == [ssm_parameter_keys.object_storage_full_pipeline_media_secret_key]
           - >-
             applications_media_probe_egress_network_policies[0].spec.egress[2].to
-            == [{'ipBlock': {'cidr': '203.0.113.10/32'}}]
+            == [{'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'learning-platform',
+                                                 'app.kubernetes.io/component': 'media-probe-db-egress'}}}]
           - >-
             applications_media_probe_egress_network_policies[0].spec.egress[2].ports
             == [{'protocol': 'TCP', 'port': 5432}]
         fail_msg: >-
           Media readers must receive the explicit in-cluster proxy route; the
           API remains direct while API media storage is disabled, and the
-          probe worker must reach PostgreSQL only through configured CIDRs.
+          probe worker must reach PostgreSQL only through media-probe-db-egress.
 
     - name: Require the proxy configuration to allow only regional S3 CONNECT
       ansible.builtin.assert:

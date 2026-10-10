@@ -80,14 +80,16 @@ deployment_targets: [web, api, worker]
 # Deploy the private proxy workload independently from runtime proxy consumers.
 media_egress_proxy_enabled: true
 object_storage_egress_proxy_enabled: false
-# Disabled until the database egress design is decided: Aiven exposes only a
-# hostname, so no static CIDR exists for the NetworkPolicy below. Enabling the
-# flag without real CIDRs fails the applications contract closed.
+# Enabling the media probe worker is a separate owner decision after #199
+# merges. The probe reaches PostgreSQL only through the media-probe-db-egress
+# forwarder, which is pinned to the single upstream below (ADR-0031 §5). These
+# are the non-secret Aiven endpoint values, not credentials.
 media_probe_worker_enabled: false
 media_probe_worker_proxy_url: http://media-egress-proxy:3128
 media_probe_worker_dns_ip: 10.43.0.10
 media_probe_worker_egress_proxy_port: 3128
-media_probe_worker_database_cidrs: [REPLACE_WITH_AIVEN_DATABASE_CIDR]
+media_probe_database_upstream_host: pg-15341ed3-ngocphat076-b603.j.aivencloud.com
+media_probe_database_upstream_port: 27158
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}
