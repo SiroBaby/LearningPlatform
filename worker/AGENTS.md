@@ -10,6 +10,7 @@
 - Any JSON value crossing from Go to the Node return seam must preserve fields required by the versioned handoff contract even when their valid value is zero; cover that serialization contract with a regression test before emitting `ai.outbox`.
 
 - Build every PostgreSQL connection from `config.Database.PoolConfig()`/`ConnConfig()`; never pass a raw URL to `pgxpool.New`/`pgx.Connect`. pgx defaults to `sslmode=prefer` (unverified TLS with plaintext fallback), and the verified TLS policy is applied only by those builders. Both verify modes must check the host name like the API's node-postgres `verify-ca`; never weaken one runtime for the same `DB_SSL_MODE`. pgx CancelRequest stays plaintext (PID + cancel key only). When `DB_HOST` names a TCP forwarder (media probe → `media-probe-db-egress`), keep verification on the real server via `DB_SSL_SERVER_NAME`; never use `InsecureSkipVerify` or a custom `VerifyPeerCertificate` to make a forwarder name pass.
+- A runtime selected by an egress NetworkPolicy (media probe) must not fail on its first PostgreSQL attempt: kube-router can reject a new pod's IP for a few seconds. Bootstrap Ping retries only transient errors (refused, reset, timeout, EOF) with bounded backoff and a total budget, fails at once on SQLSTATE/x509 errors, stops on SIGTERM, and stays unready until Ping succeeds. Log only `database_stage`, `sqlstate`, and `attempts` from `ClassifyDatabaseError`; never a raw pgx error, which echoes host and user.
 
 ## Processing Failure Logging
 

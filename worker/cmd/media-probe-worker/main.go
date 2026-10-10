@@ -26,7 +26,10 @@ const (
 	bootstrapUnknown       bootstrapFailureCode = "unknown"
 )
 
-type bootstrapFailure struct{ code bootstrapFailureCode }
+type bootstrapFailure struct {
+	code     bootstrapFailureCode
+	database *mediaprobe.DatabaseConnectError
+}
 
 func (failure bootstrapFailure) Error() string {
 	return "media probe worker bootstrap failed: " + string(failure.code)
@@ -45,6 +48,17 @@ func safeBootstrapFailureCode(code bootstrapFailureCode) bootstrapFailureCode {
 	}
 }
 
+// newDatabaseBootstrapFailure keeps only the classified stage of a database
+// error; the raw pgx message echoes host and user and must never be logged.
+func newDatabaseBootstrapFailure(err error) error {
+	var databaseError mediaprobe.DatabaseConnectError
+	if !errors.As(err, &databaseError) {
+		// Only PoolConfig returns another error type: the settings are invalid.
+		databaseError.Stage = mediaprobe.DatabaseStageConfig
+	}
+	return bootstrapFailure{code: bootstrapDatabase, database: &databaseError}
+}
+
 func bootstrapFailureCodeOf(err error) bootstrapFailureCode {
 	var failure bootstrapFailure
 	if errors.As(err, &failure) {
@@ -53,10 +67,24 @@ func bootstrapFailureCodeOf(err error) bootstrapFailureCode {
 	return bootstrapUnknown
 }
 
+// logBootstrapFailure emits the allowlisted bootstrap fields only.
+func logBootstrapFailure(logger *slog.Logger, err error) {
+	attributes := []any{"code", "MEDIA_PROBE_WORKER_BOOTSTRAP_FAILED", "bootstrap_code", bootstrapFailureCodeOf(err)}
+	var failure bootstrapFailure
+	if errors.As(err, &failure) && failure.database != nil {
+		attributes = append(attributes,
+			"database_stage", string(failure.database.Stage),
+			"sqlstate", failure.database.SQLState,
+			"attempts", failure.database.Attempts,
+		)
+	}
+	logger.Error("media_probe_worker.bootstrap.failed", attributes...)
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
-		slog.Error("media_probe_worker.bootstrap.failed", "code", "MEDIA_PROBE_WORKER_BOOTSTRAP_FAILED", "bootstrap_code", bootstrapFailureCodeOf(err))
+		logBootstrapFailure(slog.Default(), err)
 		os.Exit(1)
 	}
 }
@@ -67,11 +95,9 @@ func run() error {
 		return newBootstrapFailure(bootstrapConfiguration)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(signals)
+	// SIGTERM cancels ctx during bootstrap too, so a database retry stops at once.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	server, ready, err := startUnreadyHealthServer(workerConfig.HealthAddress)
 	if err != nil {
@@ -98,11 +124,15 @@ func run() error {
 
 	poolConfig, err := workerConfig.Database.PoolConfig()
 	if err != nil {
-		return newBootstrapFailure(bootstrapDatabase)
+		return newDatabaseBootstrapFailure(err)
 	}
 	store, err := mediaprobe.NewPostgresStore(ctx, poolConfig)
 	if err != nil {
-		return newBootstrapFailure(bootstrapDatabase)
+		if ctx.Err() != nil {
+			slog.Info("media_probe_worker.shutdown.completed", "event", "media_probe_worker.shutdown.completed", "runtime", "media-probe-worker")
+			return nil
+		}
+		return newDatabaseBootstrapFailure(err)
 	}
 	defer store.Close()
 	objects, err := mediaprobe.NewS3Store(
@@ -129,9 +159,8 @@ func run() error {
 	ready.Store(true)
 
 	slog.Info("media_probe_worker.started", "event", "media_probe_worker.started", "runtime", "media-probe-worker")
-	<-signals
+	<-ctx.Done()
 	ready.Store(false)
-	cancel()
 	probeWorker.Close()
 	slog.Info("media_probe_worker.shutdown.completed", "event", "media_probe_worker.shutdown.completed", "runtime", "media-probe-worker")
 	return nil
