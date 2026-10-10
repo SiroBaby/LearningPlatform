@@ -1,0 +1,42 @@
+name: GHCR cleanup CI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/cleanup-ghcr*.yml
+      - deploy/dev/select-ghcr-versions.py
+      - deploy/dev/delete-ghcr-versions.sh
+      - deploy/dev/tests/*ghcr*
+      - deploy/dev/tests/fixtures/ghcr-*
+  push:
+    branches: [main, develop]
+    paths:
+      - .github/workflows/cleanup-ghcr*.yml
+      - deploy/dev/select-ghcr-versions.py
+      - deploy/dev/delete-ghcr-versions.sh
+      - deploy/dev/tests/*ghcr*
+      - deploy/dev/tests/fixtures/ghcr-*
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Validate cleanup workflow and delete shell
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -shellcheck= .github/workflows/cleanup-ghcr.yml .github/workflows/cleanup-ghcr-ci.yml
+          shellcheck deploy/dev/delete-ghcr-versions.sh
+      - name: Verify retention and exact deletion contracts
+        run: |
+          bash deploy/dev/tests/test-select-ghcr-versions.sh
+          bash deploy/dev/tests/test-delete-ghcr-versions.sh
+          bash deploy/dev/tests/test-cleanup-ghcr-workflow.sh
+      - name: Execute production cleanup with mocked transport only
+        run: python3 deploy/dev/tests/test-ghcr-cleanup-execution.py
