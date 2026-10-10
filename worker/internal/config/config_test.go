@@ -54,6 +54,10 @@ func TestLoadMediaProbeDoesNotRequireAIProviderCredentials(t *testing.T) {
 	env[mediaBucketEnvironment] = "media"
 	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
 	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
+	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
+	env[fullPipelineMediaAccessKeyEnvironment] = "full-pipeline-access"
+	env[fullPipelineMediaSecretKeyEnvironment] = "full-pipeline-secret"
 	config, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
 	if err != nil {
 		t.Fatalf("LoadMediaProbe() error = %v", err)
@@ -64,11 +68,17 @@ func TestLoadMediaProbeDoesNotRequireAIProviderCredentials(t *testing.T) {
 	if config.Storage.Bucket != "media" || config.Storage.AccessKey != "media-probe-access" || config.Storage.SecretKey != "media-probe-secret" {
 		t.Fatalf("media probe storage = %#v", config.Storage)
 	}
+	if !strings.Contains(config.DatabaseURL, "media_probe") || !strings.Contains(config.DatabaseURL, "media-probe-password") {
+		t.Fatalf("media probe database URL does not use dedicated credentials: %q", config.DatabaseURL)
+	}
 	if config.ObjectStorageProxyURL != "" {
 		t.Fatalf("local media probe proxy configuration = %q, want empty", config.ObjectStorageProxyURL)
 	}
 	if config.Probe.BinaryPath != "/usr/local/bin/ffprobe" || config.Probe.MaxDownloadSize != 500*1024*1024 {
 		t.Fatalf("media probe config = %#v", config.Probe)
+	}
+	if config.HealthAddress != "127.0.0.1:3404" {
+		t.Fatalf("media probe health address = %q, want dedicated default", config.HealthAddress)
 	}
 }
 
@@ -123,11 +133,24 @@ func TestLoadMediaProbeRejectsMissingDedicatedMediaCredentials(t *testing.T) {
 	}
 }
 
+func TestLoadMediaProbeRejectsIncompleteDedicatedMediaCredentials(t *testing.T) {
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
+	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
+	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
+	if _, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok }); err == nil || !strings.Contains(err.Error(), mediaProbeSecretKeyEnvironment+" is required") {
+		t.Fatalf("LoadMediaProbe() error = %v, want incomplete probe credential rejection", err)
+	}
+}
+
 func TestLoadMediaProbeRequiresEgressProxyInProduction(t *testing.T) {
 	env := validEnvironment()
 	env[mediaBucketEnvironment] = "media"
 	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
 	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
+	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
 	env["NODE_ENV"] = "production"
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
@@ -143,6 +166,8 @@ func TestLoadMediaProbeAcceptsValidatedEgressProxyInProduction(t *testing.T) {
 	env[mediaBucketEnvironment] = "media"
 	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
 	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
+	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
 	env["NODE_ENV"] = "production"
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"
@@ -192,6 +217,8 @@ func TestLoadMediaProbeRejectsMalformedProductionProxy(t *testing.T) {
 	env[mediaBucketEnvironment] = "media"
 	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
 	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
+	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
 	env["NODE_ENV"] = "production"
 	env[storageEndpointEnvironment] = "s3.example.test"
 	env[storagePortEnvironment] = "443"

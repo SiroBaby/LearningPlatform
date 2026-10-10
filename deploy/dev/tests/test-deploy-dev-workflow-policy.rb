@@ -101,6 +101,24 @@ assert(failures, !workflow_job_runs?(jobs, 'observability-health', workflow_cont
 changes = jobs.fetch('changes')
 assert(failures, changes.dig('outputs', 'observability') == '${{ steps.classify.outputs.observability }}',
        'changes must expose observability classification')
+assert(failures, changes.dig('outputs', 'infra_quality') == '${{ steps.classify.outputs.infra_quality }}',
+       'changes must expose infrastructure quality classification')
+
+infra_quality = jobs.fetch('infra-quality')
+assert(failures, infra_quality.fetch('if') == "needs.changes.outputs.infra_quality == 'true'",
+       'infrastructure quality must run independently from observability deployment classification')
+workflow_validation = step_by_name(infra_quality, 'Validate deployment workflow and classifier policy')
+assert(failures, !workflow_validation.nil? && workflow_validation['if'].nil?,
+       'classifier and workflow tests must run whenever infrastructure quality is selected')
+%w[Validate\ rendered\ observability\ policy\ fixtures Render\ and\ validate\ pinned\ observability\ chart\ archives].each do |step_name|
+  assert(failures, step_by_name(infra_quality, step_name)&.fetch('if', nil) == "needs.changes.outputs.observability == 'true'",
+         "#{step_name} must remain conditional on observability changes")
+end
+quality_outputs = { 'deploy_any' => 'false', 'backend' => 'false', 'web' => 'false', 'observability' => 'false', 'infra_quality' => 'true' }
+assert(failures, workflow_job_runs?(jobs, 'infra-quality', workflow_context(outputs: quality_outputs, results: {}, event_name: 'push', ref: 'refs/heads/develop', target: '')),
+       'infrastructure-only quality changes must run infra-quality without observability deployment')
+assert(failures, !workflow_job_runs?(jobs, 'infra-quality', workflow_context(outputs: quality_outputs.merge('infra_quality' => 'false'), results: {}, event_name: 'push', ref: 'refs/heads/develop', target: '')),
+       'unclassified changes must skip infra-quality')
 
 api_jobs = %w[backend-quality build-images deploy]
 assert(failures, api_jobs.all? { |job| jobs.key?(job) },
@@ -109,15 +127,29 @@ assert(failures, jobs.fetch('deploy').fetch('if').include?("needs.changes.output
        'target=api deploy must remain gated by selected application changes')
 assert(failures, step_names(jobs.fetch('deploy')).include?('Apply selected applications through Ansible'),
        'target=api deploy must apply applications')
-assert(failures, ansible_tags(step_by_name(jobs.fetch('deploy'), 'Apply selected applications through Ansible')) == %w[cert_manager applications],
-        'target=api deploy must use exactly cert_manager,applications tags')
+assert(failures, ansible_tags(step_by_name(jobs.fetch('deploy'), 'Apply selected applications through Ansible')) == %w[cert_manager external_secrets_runtime applications],
+        'target=api deploy must reconcile selected runtime ExternalSecrets without selecting the ESO bootstrap tag')
 application_roles = playbook.fetch('roles').select { |role| (role.fetch('tags') & %w[cert_manager applications]).any? }.map { |role| role.fetch('role') }
 assert(failures, application_roles == %w[cert_manager applications],
         'application deployment tags must select cert-manager before applications')
 build_images = jobs.fetch('build-images')
 deploy = jobs.fetch('deploy')
+go_worker_build = build_images.fetch('steps').find { |step| step['id'] == 'go-worker-build' }
+media_probe_build = build_images.fetch('steps').find { |step| step['id'] == 'media-probe-build' }
+assert(failures, go_worker_build.dig('with', 'target') == 'ai-worker' && go_worker_build.dig('with', 'tags').include?('learningplatform-ai-worker:'),
+       'AI worker image must explicitly build the ai-worker target')
+assert(failures, media_probe_build.dig('with', 'target') == 'media-probe' && media_probe_build.dig('with', 'tags').include?('learningplatform-media-probe:'),
+       'media probe image must explicitly build the media-probe target')
+rollout_wait = step_by_name(deploy, 'Wait for selected K3s rollouts').fetch('run')
 assert(failures, jobs.fetch('worker-quality').fetch('if') == "needs.changes.outputs.go_worker == 'true'",
        'worker quality must run only for worker/** changes')
+backend_steps = jobs.fetch('backend-quality').fetch('steps')
+backend_checkout_position = backend_steps.index { |step| step['uses'] == 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5' }
+backend_go_setup_position = backend_steps.index { |step| step['uses'] == 'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16' }
+backend_npm_test_position = backend_steps.index { |step| step['run'] == 'npm test -- --runInBand' }
+assert(failures, !backend_go_setup_position.nil? && backend_go_setup_position > backend_checkout_position && backend_go_setup_position < backend_npm_test_position &&
+                 backend_steps[backend_go_setup_position].dig('with', 'go-version-file') == 'worker/go.mod',
+       'backend quality must install the pinned Go toolchain before cross-runtime tests')
 assert(failures, build_images.fetch('needs') == %w[changes backend-quality frontend-quality infra-quality worker-quality],
        'application image build must wait for infrastructure quality')
 assert(failures, build_images.fetch('if').include?("needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped'"),
@@ -126,6 +158,10 @@ assert(failures, deploy.fetch('needs') == %w[changes infra-quality build-images]
        'application deploy must wait for infra-quality and image build')
 assert(failures, deploy.fetch('if').include?("needs.infra-quality.result == 'success' || needs.infra-quality.result == 'skipped'"),
        'application deploy must block failed infra-quality but allow skipped infra-quality')
+assert(failures, rollout_wait.include?("if 'worker' in deployment_targets:") && rollout_wait.include?("print('media-probe-worker')"),
+       'worker application rollout must add the media-probe-worker deployment to the selected rollout targets')
+assert(failures, rollout_wait.include?('web|api|worker|media-probe-worker'),
+       'rollout target allowlist and diagnostics must accept media-probe-worker')
 
 observability = jobs.fetch('deploy-observability')
 observability_if = observability.fetch('if')
@@ -276,7 +312,7 @@ assert(failures, step_by_name(jobs.fetch('deploy'), 'Create ephemeral Ansible in
 source = File.read(workflow_path)
 assert(failures, !source.match?(/DEV_K3S_ANSIBLE_VARS_B64|ANSIBLE_VARS_B64|base64\s+--decode/),
        'workflow must not contain a desired-state base64 transport')
-assert(failures, source.match?(/site\.yml --tags cert_manager,applications/) && source.match?(/site\.yml --tags k3s,external_secrets,observability/),
+assert(failures, source.match?(/site\.yml --tags cert_manager,external_secrets_runtime,applications/) && source.match?(/site\.yml --tags k3s,external_secrets,observability/),
         'application and observability Ansible paths must remain distinct')
 assert(failures, !source.match?(/learning-platform-dev-aws-credentials|aws_credentials_secret_name.*observability/i),
        'observability bootstrap must not reuse the application AWS Secret contract')

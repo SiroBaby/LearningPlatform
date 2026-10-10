@@ -40,6 +40,7 @@ jobs:
       worker: ${{ steps.classify.outputs.worker }}
       go_worker: ${{ steps.classify.outputs.go_worker }}
       observability: ${{ steps.classify.outputs.observability }}
+      infra_quality: ${{ steps.classify.outputs.infra_quality }}
       backend: ${{ steps.classify.outputs.backend }}
       deploy_any: ${{ steps.classify.outputs.deploy_any }}
     steps:
@@ -67,6 +68,10 @@ jobs:
     steps:
       # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up pinned Go toolchain for cross-runtime tests
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: worker/go.mod
       # actions/setup-node v4, verified against refs/tags/v4 on 2026-07-18.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -129,7 +134,7 @@ jobs:
   infra-quality:
     name: Infrastructure and observability policy
     needs: changes
-    if: needs.changes.outputs.observability == 'true'
+    if: needs.changes.outputs.infra_quality == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -137,12 +142,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Validate infrastructure source contract
         run: bash infra/scripts/validate.sh
+      - name: Validate deployment workflow and classifier policy
+        run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
       - name: Validate rendered observability policy fixtures
+        if: needs.changes.outputs.observability == 'true'
         run: ruby infra/scripts/tests/test-rendered-observability-policy.rb
       - name: Render and validate pinned observability chart archives
+        if: needs.changes.outputs.observability == 'true'
         run: bash infra/scripts/test-real-render-observability.sh
-      - name: Validate deployment workflow target policy
-        run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
 
   build-images:
     name: Build and push images
@@ -156,6 +163,7 @@ jobs:
       api_digest: ${{ steps.api-build.outputs.digest }}
       web_digest: ${{ steps.web-build.outputs.digest }}
       go_worker_digest: ${{ steps.go-worker-build.outputs.digest }}
+      media_probe_digest: ${{ steps.media-probe-build.outputs.digest }}
     steps:
       # actions/checkout v4, verified against refs/tags/v4 on 2026-07-18.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -187,8 +195,18 @@ jobs:
         with:
           context: .
           file: worker/Dockerfile
+          target: ai-worker
           push: true
           tags: ghcr.io/sirobaby/learningplatform-ai-worker:sha-${{ github.sha }}
+      - id: media-probe-build
+        if: needs.changes.outputs.go_worker == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: worker/Dockerfile
+          target: media-probe
+          push: true
+          tags: ghcr.io/sirobaby/learningplatform-media-probe:sha-${{ github.sha }}
 
   deploy:
     name: Deploy immutable digests to K3s
@@ -216,6 +234,7 @@ jobs:
           WEB_DIGEST: ${{ needs.build-images.outputs.web_digest }}
           BACKEND_DIGEST: ${{ needs.build-images.outputs.api_digest }}
           GO_WORKER_DIGEST: ${{ needs.build-images.outputs.go_worker_digest }}
+          MEDIA_PROBE_DIGEST: ${{ needs.build-images.outputs.media_probe_digest }}
         run: |
           DEPLOYMENT_DIR="$(mktemp -d "$RUNNER_TEMP/dev-k3s-deploy.XXXXXX")"
           printf '%s\n' "$DEPLOYMENT_DIR" > "$RUNNER_TEMP/dev-k3s-deploy-path"
@@ -248,6 +267,9 @@ jobs:
                   go_digest = os.environ['GO_WORKER_DIGEST']
                   if not re.fullmatch(r'sha256:[a-f0-9]{64}', go_digest): sys.exit('Go worker digest is not immutable')
                   image_overrides['go_worker_image'] = f'ghcr.io/sirobaby/learningplatform-ai-worker@{go_digest}'
+                  media_probe_digest = os.environ['MEDIA_PROBE_DIGEST']
+                  if not re.fullmatch(r'sha256:[a-f0-9]{64}', media_probe_digest): sys.exit('media probe digest is not immutable')
+                  image_overrides['media_probe_worker_image'] = f'ghcr.io/sirobaby/learningplatform-media-probe@{media_probe_digest}'
           deployment_dir = os.environ['DEPLOYMENT_DIR']
           with open(f'{deployment_dir}/hosts.yml', 'w', encoding='utf-8') as inventory:
               json.dump({'k3s_nodes': {'hosts': {'dev': {'ansible_host': host, 'ansible_user': user}}}}, inventory)
@@ -273,7 +295,7 @@ jobs:
           ANSIBLE_STDOUT_CALLBACK: default
         run: |
           DEPLOYMENT_DIR="$(<"$RUNNER_TEMP/dev-k3s-deploy-path")"
-          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags cert_manager,applications -e "@$DEPLOYMENT_DIR/overrides.yml"
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-playbook" -i "$DEPLOYMENT_DIR/hosts.yml" infra/ansible/playbooks/site.yml --tags cert_manager,external_secrets_runtime,applications -e "@$DEPLOYMENT_DIR/overrides.yml"
       - name: Wait for selected K3s rollouts
         env:
           VPS_HOST: ${{ vars.DEV_VPS_HOST }}
@@ -285,12 +307,15 @@ jobs:
           import json
           import os
           with open(f"{os.environ['DEPLOYMENT_DIR']}/overrides.yml", encoding='utf-8') as overrides:
-              for target in json.load(overrides)['deployment_targets']:
+              deployment_targets = json.load(overrides)['deployment_targets']
+              for target in deployment_targets:
                   print(target)
+              if 'worker' in deployment_targets:
+                  print('media-probe-worker')
           PY
           while IFS= read -r target; do
             case "$target" in
-              web|api|worker) ;;
+              web|api|worker|media-probe-worker) ;;
               *) printf 'unsupported rollout target: %s\n' "$target" >&2; exit 1 ;;
             esac
             if ! ssh -n -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo timeout 190s k3s kubectl rollout status deployment/$target --namespace learning-platform-dev --timeout=180s"; then

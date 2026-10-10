@@ -235,9 +235,6 @@ describe('ForwardRelay.pump', () => {
         policyVersion: 'media-v1',
         sourceBucket: 'media',
         sourceKey,
-        sourceVersionId: 'version-1',
-        sourceEtag: 'etag-1',
-        sourceContentLength: 1024,
       },
       publishedAt: null,
     });
@@ -250,7 +247,7 @@ describe('ForwardRelay.pump', () => {
     });
   });
 
-  it('chuyển metadata bất biến của MEDIA_PROBE sang bảng media probe riêng', async () => {
+  it('chuyển source reference để worker lấy metadata bất biến ở lần claim đầu', async () => {
     const documentId = randomUUID();
     const ownerId = randomUUID();
     const probeGeneration = randomUUID();
@@ -284,9 +281,6 @@ describe('ForwardRelay.pump', () => {
         processingAttempt: 1,
         sourceBucket: 'media',
         sourceKey,
-        sourceVersionId: 'version-1',
-        sourceEtag: 'etag-1',
-        sourceContentLength: 1024,
       },
       publishedAt: null,
     });
@@ -297,9 +291,61 @@ describe('ForwardRelay.pump', () => {
     expect(job.probeGeneration).toBe(probeGeneration);
     expect(job.policyVersion).toBe('media-v1');
     expect(Number(job.deletionFence)).toBe(0);
-    expect(job.sourceVersionId).toBe('version-1');
-    expect(job.sourceEtag).toBe('etag-1');
-    expect(Number(job.sourceContentLength)).toBe(1024);
+    expect(job.sourceVersionId).toBeNull();
+    expect(job.sourceEtag).toBeNull();
+    expect(job.sourceContentLength).toBeNull();
+  });
+
+  it('chuyển locator đã capture để retry không đọc object version mới nhất', async () => {
+    const documentId = randomUUID();
+    const ownerId = randomUUID();
+    const probeGeneration = randomUUID();
+    const fullPipelineJobId = randomUUID();
+    const sourceKey = `media/${documentId}.mp4`;
+    await documents.save(documents.create({
+      id: documentId,
+      ownerId,
+      type: DocumentType.VIDEO,
+      originalName: 'lecture.mp4',
+      storageRef: sourceKey,
+      sizeBytes: 1024,
+      status: DocumentStatus.PROBING,
+      deletionFence: 0,
+      probeGeneration,
+      probePolicyVersion: 'media-v1',
+      fullPipelineJobId,
+      processingAttempt: 2,
+    }));
+    await outbox.insert({
+      aggregateId: documentId,
+      eventType: 'DocumentProbeRequested',
+      payload: {
+        documentId,
+        ownerId,
+        jobType: MEDIA_PROBE_JOB_TYPE,
+        deletionFence: 0,
+        fullPipelineJobId,
+        processingAttempt: 2,
+        probeGeneration,
+        policyVersion: 'media-v1',
+        sourceBucket: 'media',
+        sourceKey,
+        sourceVersionId: 'version-1',
+        sourceEtag: 'etag-1',
+        sourceContentLength: 1024,
+      },
+      publishedAt: null,
+    });
+
+    await relay.pump(100);
+
+    await expect(mediaProbeJobs.findOneByOrFail({ documentId })).resolves.toMatchObject({
+      sourceBucket: 'media',
+      sourceKey,
+      sourceVersionId: 'version-1',
+      sourceEtag: 'etag-1',
+      sourceContentLength: '1024',
+    });
   });
 
   it('ack stale DocumentProbeRequested khi probeGeneration đã đổi mà không tạo media probe job', async () => {
@@ -337,9 +383,6 @@ describe('ForwardRelay.pump', () => {
         policyVersion: 'media-v1',
         sourceBucket: 'media',
         sourceKey,
-        sourceVersionId: 'version-1',
-        sourceEtag: 'etag-1',
-        sourceContentLength: 1024,
       },
       publishedAt: null,
     });

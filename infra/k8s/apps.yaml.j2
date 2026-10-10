@@ -380,12 +380,26 @@ spec:
                   name: learning-platform-go-worker-runtime
                   key: {{ key }}
 {% endfor %}
+{% if media_probe_worker_enabled | default(false) | bool %}
+{% for key in ['OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_FULL_PIPELINE_MEDIA_ACCESS_KEY', 'OBJECT_STORAGE_FULL_PIPELINE_MEDIA_SECRET_KEY'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-go-worker-runtime
+                  key: {{ key }}
+{% endfor %}
+            # Media reads on VPS must use the in-cluster allowlisted proxy.
+            - name: OBJECT_STORAGE_EGRESS_PROXY_URL
+              value: {{ media_probe_worker_proxy_url | quote }}
+{% endif %}
 {% if object_storage_egress_proxy_enabled | default(false) | bool %}
+{% if not media_probe_worker_enabled | default(false) | bool %}
             - name: OBJECT_STORAGE_EGRESS_PROXY_URL
               valueFrom:
                 secretKeyRef:
                   name: learning-platform-go-worker-runtime
                   key: OBJECT_STORAGE_EGRESS_PROXY_URL
+{% endif %}
 {% endif %}
           readinessProbe:
             httpGet:
@@ -424,6 +438,166 @@ spec:
     - name: health
       port: 3403
       targetPort: health
+{% if 'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-probe-worker
+  namespace: {{ learning_platform_namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-probe-worker
+  template:
+    metadata:
+      annotations:
+        learning-platform.io/rollout-revision: media-probe-worker-v1
+      labels:
+        app.kubernetes.io/name: learning-platform
+        app.kubernetes.io/component: media-probe-worker
+    spec:
+      serviceAccountName: media-probe-worker
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: {{ ghcr_pull_secret_name }}
+      containers:
+        - name: media-probe-worker
+          image: {{ media_probe_worker_image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: health
+              containerPort: 3404
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: MEDIA_PROBE_HEALTH_ADDRESS
+              value: 0.0.0.0:3404
+            - name: OBJECT_STORAGE_EGRESS_PROXY_URL
+              value: {{ media_probe_worker_proxy_url | quote }}
+            - name: MEDIA_PROBE_FFPROBE_PATH
+              value: /usr/local/bin/ffprobe
+            - name: MEDIA_PROBE_FFPROBE_VERSION
+              value: '8.1.3-16-ge0a878dd70-20261009'
+            - name: MEDIA_PROBE_TIMEOUT_MS
+              value: '600000'
+            - name: MEDIA_PROBE_OUTPUT_MAX_BYTES
+              value: '1048576'
+            - name: MEDIA_PROBE_TEMP_DIR
+              value: /tmp/media-probe
+            - name: MEDIA_PROBE_MAX_DOWNLOAD_BYTES
+              value: '524288000'
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_NAME', 'MEDIA_PROBE_DB_USER', 'MEDIA_PROBE_DB_PASSWORD', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY', 'OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-media-probe-runtime
+                  key: {{ key }}
+{% endfor %}
+          volumeMounts:
+            - name: media-probe-temp
+              mountPath: /tmp/media-probe
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources: {{ media_probe_worker_resources | to_json }}
+      volumes:
+        - name: media-probe-temp
+          emptyDir:
+            sizeLimit: 550Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: media-probe-worker
+  namespace: {{ learning_platform_namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-probe-worker-ingress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-probe-worker
+  policyTypes: [Ingress]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: media-probe-worker-egress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: media-probe-worker
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: media-egress-proxy
+      ports:
+        - protocol: TCP
+          port: 3128
+    # PostgreSQL runs outside the cluster; only the configured Aiven CIDRs are open.
+    - to:
+{% for cidr in media_probe_worker_database_cidrs %}
+        - ipBlock:
+            cidr: {{ cidr }}
+{% endfor %}
+      ports:
+        - protocol: TCP
+          port: 5432
+{% endif %}
 {% endif %}
 {% if media_egress_proxy_enabled | default(false) | bool %}
 ---

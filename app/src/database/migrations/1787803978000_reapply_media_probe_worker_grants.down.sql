@@ -1,0 +1,2 @@
+-- This migration reapplies the established least-privilege grants after role
+-- recreation. Reverting it must not remove grants owned by earlier migrations.

@@ -35,7 +35,7 @@ func (store *PostgresStore) Claim(ctx context.Context) (*Job, error) {
 	}
 	defer tx.Rollback(ctx)
 	var id string
-	err = tx.QueryRow(ctx, `SELECT id FROM ai.processing_jobs AS job WHERE ((status='PENDING' AND next_visible_at<=now()) OR (status='RUNNING' AND lease_until<=now())) AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT id FROM ai.processing_jobs AS job WHERE job_type='FULL_PIPELINE' AND ((status='PENDING' AND next_visible_at<=now()) OR (status='RUNNING' AND lease_until<=now())) AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -43,7 +43,7 @@ func (store *PostgresStore) Claim(ctx context.Context) (*Job, error) {
 		return nil, NewPersistenceError(FailureOperationClaim, err)
 	}
 	var job Job
-	err = tx.QueryRow(ctx, `UPDATE ai.processing_jobs SET attempts=attempts+1,lease_id=gen_random_uuid(),lease_until=now()+interval '15 minutes',status='RUNNING',updated_at=now() WHERE id=$1 AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations WHERE user_id=ai.processing_jobs.owner_id) RETURNING id,document_id,owner_id,correlation_id,attempts,lease_id,created_at`, id).Scan(&job.ID, &job.DocumentID, &job.OwnerID, &job.CorrelationID, &job.Attempt, &job.LeaseID, &job.CreatedAt)
+	err = tx.QueryRow(ctx, `UPDATE ai.processing_jobs SET attempts=attempts+1,lease_id=gen_random_uuid(),lease_until=now()+interval '15 minutes',status='RUNNING',updated_at=now() WHERE id=$1 AND job_type='FULL_PIPELINE' AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations WHERE user_id=ai.processing_jobs.owner_id) RETURNING id,document_id,owner_id,correlation_id,attempts,lease_id,created_at`, id).Scan(&job.ID, &job.DocumentID, &job.OwnerID, &job.CorrelationID, &job.Attempt, &job.LeaseID, &job.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -57,14 +57,63 @@ func (store *PostgresStore) Claim(ctx context.Context) (*Job, error) {
 }
 func (store *PostgresStore) Source(ctx context.Context, job Job) (Source, error) {
 	var source Source
-	err := store.pool.QueryRow(ctx, `SELECT storage_ref,type FROM course.documents WHERE id=$1 AND owner_id=$2 AND status='PROCESSING'`, job.DocumentID, job.OwnerID).Scan(&source.StorageRef, &source.Type)
+	var bucket, key, versionID, etag string
+	var contentLength int64
+	err := store.pool.QueryRow(ctx, `
+		SELECT document.storage_ref, document.type,
+		       COALESCE(probe.bucket, ''), COALESCE(probe.object_key, ''),
+		       COALESCE(probe.version_id, ''), COALESCE(probe.etag, ''),
+		       COALESCE(probe.content_length, -1)
+		  FROM course.documents AS document
+		  JOIN ai.processing_jobs AS pipeline
+		    ON pipeline.id = $3
+		   AND pipeline.document_id = document.id
+		   AND pipeline.owner_id = document.owner_id
+		   AND pipeline.job_type = 'FULL_PIPELINE'
+		  LEFT JOIN ai.media_probe_results AS probe
+		    ON probe.id = pipeline.probe_result_id
+		   AND probe.document_id = document.id
+		   AND probe.owner_id = document.owner_id
+		   AND probe.full_pipeline_job_id = pipeline.id
+		   AND probe.probe_generation IS NOT DISTINCT FROM pipeline.probe_generation
+		   AND probe.policy_version IS NOT DISTINCT FROM pipeline.policy_version
+		   AND probe.deletion_fence = pipeline.deletion_fence
+		 WHERE document.id=$1 AND document.owner_id=$2 AND document.status='PROCESSING'`, job.DocumentID, job.OwnerID, job.ID).Scan(&source.StorageRef, &source.Type, &bucket, &key, &versionID, &etag, &contentLength)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Source{}, Failure{Code: ObjectNotFound}
 		}
 		return Source{}, NewPersistenceError(FailureOperationSourceDescriptorRead, err)
 	}
+	if source.Type == "VIDEO" || source.Type == "AUDIO" {
+		if bucket == "" || key == "" || versionID == "" || etag == "" || contentLength < 0 || key != source.StorageRef {
+			return Source{}, Failure{Code: ObjectNotFound}
+		}
+		source.MediaLocator = &ObjectLocator{Bucket: bucket, Key: key, VersionID: versionID, ETag: etag, ContentLength: contentLength}
+	}
 	return source, nil
+}
+
+func (store *PostgresStore) CheckActive(ctx context.Context, job Job) error {
+	var id string
+	err := store.pool.QueryRow(ctx, `
+		SELECT id
+		  FROM ai.processing_jobs
+		 WHERE id=$1 AND document_id=$2 AND owner_id=$3
+		   AND job_type='FULL_PIPELINE' AND status='RUNNING'
+		   AND attempts=$4 AND lease_id=$5
+		   AND lease_until>now() AND cancellation_marker_id IS NULL
+		   AND NOT EXISTS (
+		       SELECT 1 FROM ai.account_access_revocations AS revocation
+		        WHERE revocation.user_id=ai.processing_jobs.owner_id
+		   )`, job.ID, job.DocumentID, job.OwnerID, job.Attempt, job.LeaseID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrJobFenceLost
+	}
+	if err != nil {
+		return NewPersistenceError(FailureOperationSourceDescriptorRead, err)
+	}
+	return nil
 }
 func (store *PostgresStore) ReplaceChunks(ctx context.Context, job Job, chunks []Chunk) (bool, error) {
 	tx, err := store.pool.Begin(ctx)
@@ -91,7 +140,7 @@ func (store *PostgresStore) ReplaceChunks(ctx context.Context, job Job, chunks [
 			return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 		}
 	}
-	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET updated_at=updated_at WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID)
+	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET updated_at=updated_at WHERE job.id=$1 AND job.job_type='FULL_PIPELINE' AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID)
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
@@ -112,7 +161,7 @@ func nullPage(locator Locator) any {
 
 func lockActiveJob(ctx context.Context, tx pgx.Tx, job Job) (bool, error) {
 	var id string
-	err := tx.QueryRow(ctx, `SELECT job.id FROM ai.processing_jobs AS job WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id) FOR UPDATE`, job.ID, job.Attempt, job.LeaseID).Scan(&id)
+	err := tx.QueryRow(ctx, `SELECT job.id FROM ai.processing_jobs AS job WHERE job.id=$1 AND job.job_type='FULL_PIPELINE' AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id) FOR UPDATE`, job.ID, job.Attempt, job.LeaseID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrJobFenceLost
 	}
@@ -148,7 +197,7 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 			return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 		}
 	}
-	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='COMPLETED',failure_code=NULL,error_message=NULL,lease_id=NULL,lease_until=NULL,completed_at=now(),updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID)
+	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='COMPLETED',failure_code=NULL,error_message=NULL,lease_id=NULL,lease_until=NULL,completed_at=now(),updated_at=now() WHERE job.id=$1 AND job.job_type='FULL_PIPELINE' AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID)
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
@@ -176,7 +225,7 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status=$4,failure_code=NULLIF($5,''),error_message=NULL,lease_id=NULL,lease_until=NULL,completed_at=now(),updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, status, code)
+	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status=$4,failure_code=NULLIF($5,''),error_message=NULL,lease_id=NULL,lease_until=NULL,completed_at=now(),updated_at=now() WHERE job.id=$1 AND job.job_type='FULL_PIPELINE' AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, status, code)
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
@@ -214,7 +263,7 @@ func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode
 	}
 	defer tx.Rollback(ctx)
 	var retry int
-	err = tx.QueryRow(ctx, `SELECT technical_retry_count FROM ai.processing_jobs AS job WHERE id=$1 AND attempts=$2 AND lease_id=$3 AND status='RUNNING' AND lease_until>now() AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id) FOR UPDATE`, job.ID, job.Attempt, job.LeaseID).Scan(&retry)
+	err = tx.QueryRow(ctx, `SELECT technical_retry_count FROM ai.processing_jobs AS job WHERE job_type='FULL_PIPELINE' AND id=$1 AND attempts=$2 AND lease_id=$3 AND status='RUNNING' AND lease_until>now() AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id) FOR UPDATE`, job.ID, job.Attempt, job.LeaseID).Scan(&retry)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RetryResult{}, ErrJobFenceLost
@@ -229,7 +278,7 @@ func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode
 		finalized, finalizeErr := store.finalizeWithDLQ(ctx, job, code)
 		return RetryResult{Finalized: finalized}, finalizeErr
 	}
-	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='PENDING',technical_retry_count=technical_retry_count+1,failure_code=$4,lease_id=NULL,lease_until=NULL,next_visible_at=now()+$5::interval,updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, code, delays[retry])
+	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='PENDING',technical_retry_count=technical_retry_count+1,failure_code=$4,lease_id=NULL,lease_until=NULL,next_visible_at=now()+$5::interval,updated_at=now() WHERE job.id=$1 AND job.job_type='FULL_PIPELINE' AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, code, delays[retry])
 	if err != nil {
 		return RetryResult{}, NewPersistenceError(FailureOperationRetrySchedule, err)
 	}
@@ -249,7 +298,7 @@ func (store *PostgresStore) finalizeWithDLQ(ctx context.Context, job Job, code F
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='FAILED', failure_code=$4, error_message=NULL, lease_id=NULL, lease_until=NULL, completed_at=now(), updated_at=now() WHERE job.id=$1 AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, code)
+	tag, err := tx.Exec(ctx, `UPDATE ai.processing_jobs AS job SET status='FAILED', failure_code=$4, error_message=NULL, lease_id=NULL, lease_until=NULL, completed_at=now(), updated_at=now() WHERE job.id=$1 AND job.job_type='FULL_PIPELINE' AND job.attempts=$2 AND job.lease_id=$3 AND job.status='RUNNING' AND job.lease_until>now() AND job.cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations AS revocation WHERE revocation.user_id=job.owner_id)`, job.ID, job.Attempt, job.LeaseID, code)
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}

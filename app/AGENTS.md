@@ -34,6 +34,8 @@
 - `content -> ai`: `course.outbox` -> relay -> `AiIngestion`; content không ghi `ai.*`.
 - `ai -> content`: dùng `ai.outbox` return seam; AI không ghi trực tiếp `course.documents`.
 - Relay là at-least-once. Consumer/repository write phải idempotent.
+- Media retry sau khi probe đã capture phải forward lại locator bất biến từ `mediaSource*`; không đọc lại object version mới nhất, và phải reject trước `PROBING` nếu locator không đầy đủ.
+- Khi xóa media Document, dùng advisory lock chung với enqueue và lần persist VersionId đầu tiên; khóa/thu thập mọi locator hợp lệ từ `ai.media_probe_jobs` cùng `course.document_probe_receipts` trước khi hủy job để purge manifest không bỏ sót version chưa có receipt. Worker phải giữ cùng thứ tự khóa và kiểm lại owner, generation, fence cùng trạng thái job sau khi lấy khóa.
 - AI enqueue phải từ chối event cũ nếu `ai.account_access_revocations` đã có marker cho `owner_id`; cancellation relay có thể chạy sau forward relay nên không được chỉ dựa vào bước cancel pending job.
 - Go worker phải persist mọi thay đổi `ai` và `ai.outbox` result trong cùng transaction khi `attempt` + `lease_id` còn hiệu lực, rồi mới ACK/finalize. Node return relay là owner duy nhất của course write và phải project idempotent mọi course/document/budget outcome.
 - Production Go worker tái sử dụng các key database hiện có từ Secret `learning-platform-api-runtime` để kết nối cùng PostgreSQL. Consumer store và tracked migration runner dùng cùng một database URL; không tạo SSM parameter, Secret hay PostgreSQL role riêng cho Go worker.
@@ -100,6 +102,7 @@
 - Với route/shared symbol, chạy impact analysis trước edit.
 - Trong môi trường development cục bộ, AI được chủ động chạy app, worker, build, test và thao tác dữ liệu/database phục vụ phát triển hoặc xác minh mà không cần xin phép trước, miễn là không tác động staging, production hay hạ tầng dùng chung.
 - Khi chạy local cùng Next BFF, Nest API phải dùng port `3010` còn Next dùng `3000`; trước OAuth browser smoke phải kiểm tra cả hai health endpoint để chặn `EADDRINUSE` bị BFF che thành lỗi đăng nhập generic.
+- Local BFF startup chỉ được coi là hoàn tất sau khi kiểm tra thời hạn/chuỗi/identity của mTLS certificate và gọi thử OAuth start qua BFF; health endpoint đơn lẻ không đủ.
 - Phải hỏi trước khi thay đổi đáng kể cấu trúc dự án, tạo/sửa database schema hoặc migration, thực hiện thao tác database phá hủy/khó hoàn tác, hay có khả năng tác động staging, production hoặc tài nguyên dùng chung.
 - Tất cả `dependencies` và `devDependencies` dùng exact version; `package.json` không được có prefix range `^`, `~`, `>`, `<`, `*` hoặc workspace range. Chỉ nâng version qua security/dependency upgrade có audit và verification.
 - Production object storage phải dùng S3-compatible client; không thêm MinIO Node SDK vào production dependency graph. Regression phải kiểm `npm ls --omit=dev` và lockfile không chứa `minio` hoặc `stream-json` vulnerable path.

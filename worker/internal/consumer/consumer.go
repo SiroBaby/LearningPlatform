@@ -252,11 +252,17 @@ func (bootstrap *Bootstrap) processOne(ctx context.Context) error {
 }
 
 func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.Job) (processOutcome, error, failureComponent) {
+	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
+		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
+	}
 	source, err := bootstrap.store.Source(ctx, job)
 	if err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
-	bytes, err := bootstrap.objects.Read(ctx, source.StorageRef, 20*1024*1024)
+	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
+		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
+	}
+	bytes, err := readSource(ctx, bootstrap.objects, source, 20*1024*1024)
 	if err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentStorage)
 	}
@@ -267,6 +273,9 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	chunks, err := processing.ChunkText(job.DocumentID, job.OwnerID, segments)
 	if err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentExtraction)
+	}
+	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
+		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
 	questions := make([]processing.Question, 0, len(chunks))
 	for index, chunk := range chunks {
@@ -293,6 +302,17 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 		return processOutcomeUnknown, err, failureComponentPersistence
 	}
 	return bootstrap.finish(ctx, job, err, failureComponentPersistence)
+}
+
+func readSource(ctx context.Context, objects processing.ObjectReader, source processing.Source, max int64) ([]byte, error) {
+	if source.MediaLocator == nil {
+		return objects.Read(ctx, source.StorageRef, max)
+	}
+	versioned, ok := objects.(processing.VersionedObjectReader)
+	if !ok {
+		return nil, processing.Failure{Code: processing.ObjectNotFound}
+	}
+	return versioned.ReadVersion(ctx, *source.MediaLocator, max)
 }
 
 func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err error, component failureComponent) (processOutcome, error, failureComponent) {

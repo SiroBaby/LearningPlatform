@@ -18,11 +18,37 @@ import (
 )
 
 type S3Reader struct {
-	client *minio.Client
-	bucket string
+	client      *minio.Client
+	bucket      string
+	mediaClient *minio.Client
+	mediaBucket string
 }
 
 func NewS3Reader(endpoint, accessKey, secretKey, bucket string) (*S3Reader, error) {
+	client, err := newS3Client(endpoint, accessKey, secretKey, "")
+	if err != nil {
+		return nil, err
+	}
+	return &S3Reader{client: client, bucket: bucket}, nil
+}
+
+// NewS3ReaderWithMedia adds a separate least-privilege reader for the media
+// bucket while preserving the existing document reader for PDF/TEXT.
+func NewS3ReaderWithMedia(endpoint, accessKey, secretKey, bucket, mediaAccessKey, mediaSecretKey, mediaBucket, proxyURL string) (*S3Reader, error) {
+	reader, err := NewS3Reader(endpoint, accessKey, secretKey, bucket)
+	if err != nil {
+		return nil, err
+	}
+	mediaClient, err := newS3Client(endpoint, mediaAccessKey, mediaSecretKey, proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	reader.mediaClient = mediaClient
+	reader.mediaBucket = mediaBucket
+	return reader, nil
+}
+
+func newS3Client(endpoint, accessKey, secretKey, proxyURL string) (*minio.Client, error) {
 	server := endpoint
 	secure := false
 	if strings.Contains(endpoint, "://") {
@@ -33,11 +59,21 @@ func NewS3Reader(endpoint, accessKey, secretKey, bucket string) (*S3Reader, erro
 		server = parsed.Host
 		secure = parsed.Scheme == "https"
 	}
-	client, err := minio.New(server, &minio.Options{Creds: credentials.NewStaticV4(accessKey, secretKey, ""), Secure: secure})
+	options := &minio.Options{Creds: credentials.NewStaticV4(accessKey, secretKey, ""), Secure: secure}
+	if strings.TrimSpace(proxyURL) != "" {
+		proxy, err := url.Parse(proxyURL)
+		if err != nil || proxy.Host == "" || (proxy.Scheme != "http" && proxy.Scheme != "https") {
+			return nil, fmt.Errorf("object storage proxy URL is invalid")
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(proxy)
+		options.Transport = transport
+	}
+	client, err := minio.New(server, options)
 	if err != nil {
 		return nil, fmt.Errorf("create object storage client: %w", err)
 	}
-	return &S3Reader{client: client, bucket: bucket}, nil
+	return client, nil
 }
 func (reader *S3Reader) Read(ctx context.Context, key string, max int64) ([]byte, error) {
 	object, err := reader.client.GetObject(ctx, reader.bucket, key, minio.GetObjectOptions{})
@@ -55,9 +91,35 @@ func (reader *S3Reader) Read(ctx context.Context, key string, max int64) ([]byte
 	return bytes, nil
 }
 
+func (reader *S3Reader) ReadVersion(ctx context.Context, locator ObjectLocator, max int64) ([]byte, error) {
+	if reader.mediaClient == nil || locator.Bucket == "" || locator.Bucket != reader.mediaBucket || locator.Key == "" || locator.VersionID == "" || locator.ETag == "" || locator.ContentLength < 0 {
+		return nil, Failure{Code: ObjectNotFound}
+	}
+	object, err := reader.mediaClient.GetObject(ctx, locator.Bucket, locator.Key, minio.GetObjectOptions{VersionID: locator.VersionID})
+	if err != nil {
+		return nil, classifyObjectReadError(err)
+	}
+	defer object.Close()
+	info, err := object.Stat()
+	if err != nil {
+		return nil, classifyObjectReadError(err)
+	}
+	if info.VersionID != locator.VersionID || info.ETag != locator.ETag || info.Size != locator.ContentLength {
+		return nil, Failure{Code: ObjectNotFound}
+	}
+	bytes, err := io.ReadAll(io.LimitReader(object, max+1))
+	if err != nil {
+		return nil, classifyObjectReadError(err)
+	}
+	if int64(len(bytes)) > max {
+		return nil, Failure{Code: ObjectTooLarge}
+	}
+	return bytes, nil
+}
+
 func classifyObjectReadError(err error) Failure {
 	var response minio.ErrorResponse
-	if errors.As(err, &response) && (response.Code == "NoSuchKey" || response.Code == "NoSuchObject") {
+	if errors.As(err, &response) && (response.Code == "NoSuchKey" || response.Code == "NoSuchObject" || response.Code == "NoSuchVersion") {
 		return Failure{Code: ObjectNotFound}
 	}
 	return Failure{Code: ProcessingFailed, Technical: true}

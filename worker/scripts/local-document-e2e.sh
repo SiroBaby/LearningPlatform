@@ -11,6 +11,7 @@ temp_dir=""
 network_name="${run_id}-network"
 postgres_container="${run_id}-postgres"
 minio_container="${run_id}-minio"
+media_probe_container="${run_id}-media-probe"
 postgres_volume="${run_id}-postgres-data"
 minio_volume="${run_id}-minio-data"
 postgres_port=""
@@ -22,10 +23,14 @@ api_log=""
 relay_log=""
 relay_health_port=""
 go_health_port=""
+media_probe_health_port=""
 go_log=""
+media_probe_log=""
 api_pid=""
 relay_pid=""
 go_pid=""
+media_probe_pid=""
+media_probe_container_created=false
 network_created=false
 postgres_volume_created=false
 minio_volume_created=false
@@ -33,6 +38,7 @@ postgres_container_created=false
 minio_container_created=false
 result_emitted=false
 document_flow_result=""
+document_id=""
 requested_provider_mode=${LOCAL_DOCUMENT_E2E_PROVIDER_MODE:-}
 provider_mode=""
 
@@ -63,7 +69,7 @@ cleanup() {
   trap - ERR
   set +e
   PHASE=cleanup-pids
-  for pid in "$api_pid" "$relay_pid" "$go_pid"; do
+  for pid in "$api_pid" "$relay_pid" "$go_pid" "$media_probe_pid"; do
     if [[ -n "$pid" ]]; then
       kill "$pid" >/dev/null 2>&1
       wait "$pid" >/dev/null 2>&1
@@ -76,6 +82,10 @@ cleanup() {
   PHASE=cleanup-minio-container
   if [[ "$minio_container_created" == true ]]; then
     docker rm -f "$minio_container" >/dev/null 2>&1
+  fi
+  PHASE=cleanup-media-probe-container
+  if [[ "$media_probe_container_created" == true ]]; then
+    docker rm -f "$media_probe_container" >/dev/null 2>&1
   fi
   PHASE=cleanup-postgres-volume
   if [[ "$postgres_volume_created" == true ]]; then
@@ -91,13 +101,6 @@ cleanup() {
   fi
   PHASE=cleanup-temp
   if [[ -d "$temp_dir" && "$temp_dir" == "${tmp_root}/${run_id}."* ]]; then
-    if (( exit_code != 0 )); then
-      for log_file in "$api_log" "$relay_log" "$go_log"; do
-        if [[ -f "$log_file" ]]; then
-          tail -80 "$log_file"
-        fi
-      done
-    fi
     rm -rf -- "$temp_dir" >/dev/null 2>&1
   fi
   if [[ "$result_emitted" == false ]]; then
@@ -131,6 +134,7 @@ check_confirm_status_classification() {
 function classifyConfirmStatus(status) {
   if (typeof status !== 'string') return 'confirm-missing';
   if (status === 'UPLOADED') return 'confirm-uploaded';
+  if (status === 'PROBING') return 'confirm-probing';
   if (status === 'READY') return 'confirm-ready';
   if (status === 'FAILED') return 'confirm-failed';
   if (status === 'PROCESSING') return 'confirm-processing-unexpected';
@@ -140,6 +144,7 @@ function classifyConfirmStatus(status) {
 const values = [
   [undefined, 'confirm-missing'],
   ['UPLOADED', 'confirm-uploaded'],
+  ['PROBING', 'confirm-probing'],
   ['READY', 'confirm-ready'],
   ['FAILED', 'confirm-failed'],
   ['PROCESSING', 'confirm-processing-unexpected'],
@@ -172,6 +177,22 @@ check_pipeline_stage_allowlist() {
 
 check_confirm_status_classification
 check_pipeline_stage_allowlist
+
+check_media_probe_contract() {
+  local env_example="$root/worker/.env.example"
+  local key
+  for key in \
+    MEDIA_PROBE_HEALTH_ADDRESS \
+    MEDIA_PROBE_DB_USER \
+    MEDIA_PROBE_DB_PASSWORD \
+    OBJECT_STORAGE_MEDIA_BUCKET \
+    OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY \
+    OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY; do
+    grep -Eq "^${key}=" "$env_example" || return 1
+  done
+}
+
+check_media_probe_contract
 temp_dir=$(mktemp -d "${tmp_root}/${run_id}.XXXXXX")
 
 find_loopback_port() {
@@ -204,6 +225,12 @@ wait_for_http() {
   return 1
 }
 
+container_port() {
+  local container=$1
+  local port=$2
+  mapped_port "$container" "$port"
+}
+
 wait_for_process_http() {
   local phase=$1
   local url=$2
@@ -224,6 +251,35 @@ wait_for_process_http() {
     [[ -n "$go_bootstrap_category" ]] || go_bootstrap_category=unknown
     emit_phase wait-go-ready-bootstrap-"$go_bootstrap_category"
     phase=$PHASE
+  fi
+  if [[ "$phase" == wait-media-probe-health || "$phase" == wait-media-probe-ready ]] && [[ "$category" == process-exited ]]; then
+    if [[ "$media_probe_container_created" == true ]]; then
+      local container_exit_status
+      container_exit_status=$(docker inspect --format '{{.State.ExitCode}}' "$media_probe_container" 2>/dev/null || printf 'unknown')
+      if [[ "$container_exit_status" =~ ^[0-9]+$ ]]; then
+        printf 'MEDIA_PROBE_EXIT_STATUS %s\n' "$container_exit_status"
+      else
+        printf 'MEDIA_PROBE_EXIT_STATUS unknown\n'
+      fi
+      local container_bootstrap_code
+      container_bootstrap_code=$(docker logs "$media_probe_container" 2>&1 | sed -n 's/.*bootstrap_code[^a-z]*\([a-z][a-z]*\).*/\1/p' | tail -n 1 || true)
+      case "$container_bootstrap_code" in
+        configuration|probe|database|storage|worker|health|unknown)
+          printf 'MEDIA_PROBE_BOOTSTRAP %s\n' "$container_bootstrap_code"
+          ;;
+        *)
+          printf 'MEDIA_PROBE_BOOTSTRAP unknown\n'
+          ;;
+      esac
+      emit_phase wait-media-probe-ready-container-exited
+      phase=$PHASE
+    else
+      local media_probe_bootstrap_category
+      media_probe_bootstrap_category=$(read_go_bootstrap_category "$media_probe_log" || true)
+      [[ -n "$media_probe_bootstrap_category" ]] || media_probe_bootstrap_category=unknown
+      emit_phase wait-media-probe-ready-bootstrap-"$media_probe_bootstrap_category"
+      phase=$PHASE
+    fi
   fi
   emit_result FAIL
   printf 'CATEGORY %s-%s\n' "$phase" "$category"
@@ -318,6 +374,10 @@ start_node_api() {
     export OBJECT_STORAGE_ACCESS_KEY=minioadmin
     export OBJECT_STORAGE_SECRET_KEY=minioadmin
     export OBJECT_STORAGE_BUCKET=documents
+    export OBJECT_STORAGE_API_MEDIA_ACCESS_KEY=minioadmin
+    export OBJECT_STORAGE_API_MEDIA_SECRET_KEY=minioadmin
+    export OBJECT_STORAGE_MEDIA_ENABLED=true
+    export OBJECT_STORAGE_MEDIA_BUCKET=media
     export OBJECT_STORAGE_PRESIGN_EXPIRY=300
     exec ./node_modules/.bin/ts-node -T -e '
 const mainPath = process.argv[1];
@@ -381,6 +441,10 @@ start_node_relay() {
     export OBJECT_STORAGE_ACCESS_KEY=minioadmin
     export OBJECT_STORAGE_SECRET_KEY=minioadmin
     export OBJECT_STORAGE_BUCKET=documents
+    export OBJECT_STORAGE_API_MEDIA_ACCESS_KEY=minioadmin
+    export OBJECT_STORAGE_API_MEDIA_SECRET_KEY=minioadmin
+    export OBJECT_STORAGE_MEDIA_ENABLED=true
+    export OBJECT_STORAGE_MEDIA_BUCKET=media
     export OBJECT_STORAGE_PRESIGN_EXPIRY=300
     exec ./node_modules/.bin/ts-node -T src/worker.ts
   ) >"$relay_log" 2>&1 &
@@ -402,6 +466,8 @@ start_go_worker() {
     export NODE_ENV=development
     export AI_WORKER_ALLOW_INSECURE_LOCAL_ENDPOINTS=true
     export AI_WORKER_HEALTH_ADDRESS="127.0.0.1:${go_health_port}"
+    export AI_WORKER_CONCURRENCY=1
+    export AI_WORKER_POLL_INTERVAL_MS=100
     export DB_HOST=127.0.0.1
     export DB_PORT="$postgres_port"
     export DB_USER=learning
@@ -420,6 +486,63 @@ start_go_worker() {
   go_pid=$!
 }
 
+start_media_probe_worker() {
+  media_probe_log="$temp_dir/media-probe-worker.log"
+  if [[ -n "${LOCAL_DOCUMENT_E2E_MEDIA_PROBE_IMAGE:-}" ]]; then
+    docker run --detach \
+      --name "$media_probe_container" \
+      --network "$network_name" \
+      -p "127.0.0.1:${media_probe_health_port}:3404" \
+      --read-only \
+      --tmpfs /tmp/media-probe:rw,noexec,nosuid,size=512m,uid=65532,gid=65532,mode=0700 \
+      --env NODE_ENV=development \
+      --env AI_WORKER_ALLOW_INSECURE_LOCAL_ENDPOINTS=true \
+      --env MEDIA_PROBE_HEALTH_ADDRESS=0.0.0.0:3404 \
+      --env DB_HOST="$postgres_container" \
+      --env DB_PORT=5432 \
+      --env DB_NAME=learning \
+      --env MEDIA_PROBE_DB_USER=learning_platform_media_probe \
+      --env MEDIA_PROBE_DB_PASSWORD=media_probe_local \
+      --env OBJECT_STORAGE_ENDPOINT="$minio_container" \
+      --env OBJECT_STORAGE_PORT=9000 \
+      --env OBJECT_STORAGE_REGION=us-east-1 \
+      --env OBJECT_STORAGE_USE_SSL=false \
+      --env OBJECT_STORAGE_MEDIA_BUCKET=media \
+      --env OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY=minioadmin \
+      --env OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY=minioadmin \
+      "$LOCAL_DOCUMENT_E2E_MEDIA_PROBE_IMAGE" >/dev/null 2>&1
+    media_probe_container_created=true
+    return
+  fi
+  (
+    set -a
+    source "$root/worker/.env"
+    set +a
+    unset AI_LLM_PROVIDER OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_DEFAULT_REGION AWS_REGION AWS_PROFILE AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME
+    export NODE_ENV=development
+    export AI_WORKER_ALLOW_INSECURE_LOCAL_ENDPOINTS=true
+    export MEDIA_PROBE_HEALTH_ADDRESS="127.0.0.1:${media_probe_health_port}"
+    export DB_HOST=127.0.0.1
+    export DB_PORT="$postgres_port"
+    export DB_NAME=learning
+    export MEDIA_PROBE_DB_USER=learning_platform_media_probe
+    export MEDIA_PROBE_DB_PASSWORD=media_probe_local
+    export OBJECT_STORAGE_ENDPOINT=127.0.0.1
+    export OBJECT_STORAGE_PORT="$minio_port"
+    export OBJECT_STORAGE_REGION=us-east-1
+    export OBJECT_STORAGE_USE_SSL=false
+    export OBJECT_STORAGE_MEDIA_BUCKET=media
+    export OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY=minioadmin
+    export OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY=minioadmin
+    export MEDIA_PROBE_FFPROBE_PATH="${MEDIA_PROBE_FFPROBE_PATH:-$(command -v ffprobe)}"
+    export MEDIA_PROBE_FFPROBE_VERSION=8.1.3-16-ge0a878dd70-20261009
+    export MEDIA_PROBE_TEMP_DIR="$temp_dir/media-probe"
+    export AI_WORKER_MIGRATIONS_DIR="$root/app/src/database/migrations"
+    exec "$temp_dir/media-probe-worker"
+  ) >"$media_probe_log" 2>&1 &
+  media_probe_pid=$!
+}
+
 run_document_flow() {
   node - "http://127.0.0.1:${api_port}" "$auth_owner_id" "$auth_access_token" <<'NODE'
 const apiBaseUrl = process.argv[2];
@@ -429,12 +552,12 @@ const fs = require('node:fs');
 const inputPath = process.env.LOCAL_DOCUMENT_E2E_INPUT_PATH;
 const input = inputPath
   ? fs.readFileSync(inputPath)
-  : Buffer.from('A bounded E2E document checks one learning concept.');
-const inputType = inputPath ? 'PDF' : 'TEXT';
-const originalName = inputPath ? 'document-e2e.pdf' : 'document-e2e.txt';
-const contentType = inputPath ? 'application/pdf' : 'text/plain';
+  : Buffer.alloc(0);
+const inputType = 'AUDIO';
+const originalName = 'document-e2e.mp3';
+const contentType = 'audio/mpeg';
 const requestTimeoutMs = 10_000;
-const pollDeadlineMs = 180_000;
+const pollDeadlineMs = 120_000;
 const pollIntervalMs = 1_000;
 let phase = 'unknown';
 
@@ -449,11 +572,43 @@ function requireMarker(condition, marker) {
   if (!condition) throw new FlowFailure(marker);
 }
 
+function formatHttpStatusMarker(name, status) {
+  return `HTTP ${name} ${status}\n`;
+}
+
+requireMarker(
+  formatHttpStatusMarker('presigned-upload', 204) === 'HTTP presigned-upload 204\n',
+  'presigned-upload-marker-regression',
+);
+
 async function request(url, init = {}) {
   let response;
+  const parsedUrl = new URL(url);
   try {
     response = await fetch(url, { ...init, signal: AbortSignal.timeout(requestTimeoutMs) });
-  } catch {
+  } catch (error) {
+    let current = error;
+    let code;
+    let causeCode;
+    for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth += 1) {
+      if ('code' in current && typeof current.code === 'string') {
+        causeCode = code;
+        code = current.code;
+      }
+      current = 'cause' in current ? current.cause : undefined;
+    }
+    const message = error instanceof Error ? error.message : '';
+    const category = code === 'ECONNREFUSED' ? 'connection-refused'
+      : code === 'ENOTFOUND' ? 'name-resolution'
+        : code === 'ETIMEDOUT' ? 'timeout'
+          : code === 'EAI_AGAIN' ? 'temporary-name-resolution'
+            : /invalid url/i.test(message) ? 'invalid-url'
+              : 'fetch-failed';
+    const errorName = error instanceof Error && /^(TypeError|TimeoutError|AbortError)$/u.test(error.name)
+      ? error.name : 'Error';
+    const safeCode = typeof code === 'string' && /^[A-Z0-9_]{1,40}$/u.test(code) ? code : 'UNKNOWN';
+    const safeCauseCode = typeof causeCode === 'string' && /^[A-Z0-9_]{1,40}$/u.test(causeCode) ? causeCode : 'UNKNOWN';
+    process.stdout.write(`NETWORK_ERROR phase=${phase} category=${category} error=${errorName} code=${safeCode} causeCode=${safeCauseCode}\n`);
     throw new FlowFailure('network');
   }
   if (!response.ok) throw new FlowFailure(phase);
@@ -493,12 +648,19 @@ async function main() {
       typeof upload.uploadFields === 'object',
     'upload-contract',
   );
+  requireMarker(typeof upload.uploadUrl === 'string' && upload.uploadUrl.length > 0, 'upload-contract');
+  process.stdout.write('HTTP upload-url 201\n');
 
   const form = new FormData();
   for (const [key, value] of Object.entries(upload.uploadFields)) form.set(key, String(value));
   form.set('file', new Blob([input], { type: contentType }), originalName);
   phase = 'presigned-upload';
-  await request(upload.uploadUrl, { method: 'POST', body: form });
+  const uploaded = await request(upload.uploadUrl, { method: 'POST', body: form });
+  process.stdout.write(formatHttpStatusMarker('presigned-upload', uploaded.status));
+  phase = 'uploaded-status';
+  const uploadedDocument = await requestJson(`/api/v1/documents/${upload.documentId}`, { headers });
+  requireMarker(uploadedDocument.status === 'UPLOADED', 'uploaded-status');
+  process.stdout.write('DOCUMENT_STATUS UPLOADED\n');
 
   phase = 'confirm';
   const confirmed = await requestJson(`/api/v1/documents/${upload.documentId}/confirm`, {
@@ -508,40 +670,33 @@ async function main() {
   function classifyConfirmStatus(status) {
     if (typeof status !== 'string') return 'confirm-missing';
     if (status === 'UPLOADED') return 'confirm-uploaded';
+    if (status === 'PROBING') return 'confirm-probing';
     if (status === 'READY') return 'confirm-ready';
     if (status === 'FAILED') return 'confirm-failed';
     if (status === 'PROCESSING') return 'confirm-processing-unexpected';
     return 'confirm-unknown';
   }
-  requireMarker(confirmed.status === 'PROCESSING', classifyConfirmStatus(confirmed.status));
+  requireMarker(confirmed.status === 'PROBING', classifyConfirmStatus(confirmed.status));
+  process.stdout.write('HTTP confirm 202\n');
+  process.stdout.write('DOCUMENT_STATUS PROBING\n');
 
   const deadline = Date.now() + pollDeadlineMs;
-  let ready = false;
+  let processing = false;
   while (Date.now() < deadline) {
     phase = 'document-status';
     const document = await requestJson(`/api/v1/documents/${upload.documentId}`, { headers });
-    if (document.status === 'READY') {
-      ready = true;
+    if (document.status === 'PROCESSING') {
+      if (!processing) process.stdout.write('DOCUMENT_STATUS PROCESSING\n');
+      processing = true;
       break;
     }
     if (document.status === 'FAILED') throw new FlowFailure('document-failed');
     await sleep(pollIntervalMs);
   }
 
-  if (!ready) throw new FlowFailure('document-timeout');
-  phase = 'document-status';
-  const document = await requestJson(`/api/v1/documents/${upload.documentId}`, { headers });
-  requireMarker(document.status === 'READY', 'ready-status');
-  phase = 'document-quiz';
-  const documentQuiz = await requestJson(`/api/v1/documents/${upload.documentId}/quiz`, { headers });
-  requireMarker(typeof documentQuiz.quizId === 'string', 'document-quiz-contract');
-  requireMarker(
-    Number.isInteger(documentQuiz.questionCount) && documentQuiz.questionCount > 0,
-    'question-count',
-  );
-  phase = 'quiz-endpoint';
-  const quiz = await requestJson(`/api/v1/quizzes/${documentQuiz.quizId}`, { headers });
-  requireMarker(Array.isArray(quiz.questions) && quiz.questions.length > 0, 'quiz-contract');
+  if (!processing) throw new FlowFailure('document-timeout');
+  // #158 stops after media probing; AUDIO/VIDEO extraction and READY belong to #160.
+  process.stdout.write(`DOCUMENT_ID ${upload.documentId}\n`);
 }
 
 void main().catch((error) => {
@@ -588,7 +743,13 @@ seed_media_probe_role() {
       --no-psqlrc --quiet \
       --set=ON_ERROR_STOP=1 \
       --username=learning --dbname=learning \
-      --command 'CREATE ROLE learning_platform_media_probe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;'
+      --command "CREATE ROLE learning_platform_media_probe LOGIN PASSWORD 'media_probe_local' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;"
+  else
+    docker exec "$postgres_container" psql \
+      --no-psqlrc --quiet \
+      --set=ON_ERROR_STOP=1 \
+      --username=learning --dbname=learning \
+      --command "ALTER ROLE learning_platform_media_probe LOGIN PASSWORD 'media_probe_local';"
   fi
 }
 
@@ -837,15 +998,84 @@ LIMIT 1;
   fi
 }
 
+read_document_failure_code() {
+  docker exec "$postgres_container" psql \
+    --no-psqlrc --tuples-only --no-align --quiet \
+    --set=ON_ERROR_STOP=1 \
+    --set=document_id="$document_id" \
+    --username=learning --dbname=learning \
+    --command 'SELECT COALESCE((SELECT failure_code FROM ai.processing_jobs WHERE document_id = :\x27document_id\x27 ORDER BY created_at DESC LIMIT 1), \x27NONE\x27);' 2>/dev/null || printf 'UNKNOWN\n'
+}
+
+verify_media_probe_flow() {
+  local row
+  local attempts=120
+
+  while (( attempts > 0 )); do
+    if row=$(printf '%s\n' "
+SELECT concat_ws(E'\n',
+  'DOCUMENT_STATUS ' || document.status,
+  'MEDIA_PROBE_STATUS ' || probe.status,
+  'MEDIA_PROBE_VERSION_ID ' || probe.source_version_id,
+  'MEDIA_PROBE_RESULT_VERSION_ID ' || result.version_id,
+  'FULL_PIPELINE_JOB_TYPE ' || pipeline.job_type,
+  'FULL_PIPELINE_JOB_STATUS ' || pipeline.status,
+  'FULL_PIPELINE_JOB_COUNT ' || (
+    SELECT COUNT(*)::text
+    FROM ai.processing_jobs
+    WHERE document_id = document.id AND job_type = 'FULL_PIPELINE'
+  )
+)
+FROM course.documents AS document
+JOIN ai.media_probe_jobs AS probe ON probe.document_id = document.id
+LEFT JOIN ai.media_probe_results AS result ON result.id = probe.probe_result_id
+LEFT JOIN ai.processing_jobs AS pipeline
+  ON pipeline.id = probe.full_pipeline_job_id
+ AND pipeline.job_type = 'FULL_PIPELINE'
+WHERE document.id = :'document_id'
+  AND document.status = 'PROCESSING'
+  AND probe.status = 'COMPLETED'
+  AND probe.source_version_id IS NOT NULL
+  AND result.version_id IS NOT NULL
+  AND probe.source_version_id = result.version_id
+  AND pipeline.job_type = 'FULL_PIPELINE'
+  AND pipeline.status IN ('PENDING', 'RUNNING')
+  AND (
+    SELECT COUNT(*)
+    FROM ai.processing_jobs
+    WHERE document_id = document.id AND job_type = 'FULL_PIPELINE'
+  ) = 1
+ORDER BY probe.created_at DESC, pipeline.created_at DESC NULLS LAST
+LIMIT 1;
+" | docker exec -i "$postgres_container" psql \
+      --no-psqlrc --tuples-only --no-align --quiet \
+      --pset=footer=off \
+      --set=ON_ERROR_STOP=1 \
+      --set=document_id="$document_id" \
+      --username=learning --dbname=learning); then
+      if [[ -n "$row" ]]; then
+        printf '%s\n' "$row"
+        return 0
+      fi
+    fi
+    attempts=$((attempts - 1))
+    sleep 1
+  done
+  printf 'MEDIA_PROBE_EVIDENCE unavailable\n'
+  return 1
+}
+
 emit_phase build-app
 npm --prefix "$root/app" run build >/dev/null 2>&1
 emit_phase build-go
 go build -C "$root/worker" -o "$temp_dir/ai-worker" ./cmd/ai-worker >/dev/null 2>&1
+go build -C "$root/worker" -o "$temp_dir/media-probe-worker" ./cmd/media-probe-worker >/dev/null 2>&1
 
 emit_phase allocate-ports
-api_port=$(find_loopback_port)
+api_port=${LOCAL_DOCUMENT_E2E_API_PORT:-3010}
 relay_health_port=$(find_loopback_port)
 go_health_port=$(find_loopback_port)
+media_probe_health_port=$(find_loopback_port)
 
 emit_phase create-network
 docker network create "$network_name" >/dev/null 2>&1
@@ -897,6 +1127,12 @@ emit_phase wait-minio
 wait_for_http "http://127.0.0.1:${minio_port}/minio/health/live" "" >/dev/null
 emit_phase configure-minio
 configure_minio_buckets
+emit_phase create-media-fixture
+ffmpeg -hide_banner -loglevel error \
+  -f lavfi -i sine=frequency=1000:duration=1 \
+  -c:a libmp3lame -q:a 9 \
+  "$temp_dir/document-e2e.mp3" >/dev/null 2>&1
+export LOCAL_DOCUMENT_E2E_INPUT_PATH="$temp_dir/document-e2e.mp3"
 
 emit_phase storage-round-trip
 run_s3_round_trip
@@ -916,20 +1152,36 @@ emit_phase wait-node-relay
 wait_for_process_http wait-node-relay "http://127.0.0.1:${relay_health_port}/health" "$relay_pid"
 
 emit_phase go
-emit_phase start-go
-start_go_worker
-emit_phase wait-go-health
-wait_for_process_http wait-go-health "http://127.0.0.1:${go_health_port}/healthz" "$go_pid"
-emit_phase wait-go-ready
-wait_for_process_http wait-go-ready "http://127.0.0.1:${go_health_port}/readyz" "$go_pid"
+emit_phase start-media-probe
+start_media_probe_worker
+if [[ "$media_probe_container_created" == true ]]; then
+  media_probe_pid=""
+fi
+emit_phase wait-media-probe-health
+if [[ "$media_probe_container_created" == true ]]; then
+  wait_for_process_http wait-media-probe-health "http://127.0.0.1:${media_probe_health_port}/healthz" ""
+  emit_phase wait-media-probe-ready
+  wait_for_process_http wait-media-probe-ready "http://127.0.0.1:${media_probe_health_port}/readyz" ""
+else
+  wait_for_process_http wait-media-probe-health "http://127.0.0.1:${media_probe_health_port}/healthz" "$media_probe_pid"
+  emit_phase wait-media-probe-ready
+  wait_for_process_http wait-media-probe-ready "http://127.0.0.1:${media_probe_health_port}/readyz" "$media_probe_pid"
+fi
 
 emit_phase document-flow
 document_flow_result="$temp_dir/document-flow-result"
-if ! run_document_flow >"$document_flow_result" 2>/dev/null; then
+document_flow_error="$temp_dir/document-flow-error"
+if ! run_document_flow >"$document_flow_result" 2>"$document_flow_error"; then
   PHASE=document-flow-marker
-  document_flow_marker=$(<"$document_flow_result")
+  minio_state=$(docker inspect --format '{{.State.Status}}' "$minio_container" 2>/dev/null || printf 'unknown')
+  printf 'MINIO_STATE %s\n' "$minio_state"
+  docker logs "$minio_container" 2>&1 \
+    | rg -o 'SignatureDoesNotMatch|AccessDenied|InvalidRequest|IncompleteBody|EntityTooLarge|InvalidBucketName|ConnectionClosed|write tcp' \
+    | sort | uniq -c | awk '{ print "MINIO_SIGNAL " $2 " count=" $1 }' || true
+  rg '^NETWORK_ERROR phase=(presigned-upload|upload-url|uploaded-status|confirm|document-status) category=[a-z-]+ error=[A-Za-z]+ code=[A-Z0-9_]+ causeCode=[A-Z0-9_]+' "$document_flow_result" || true
+  document_flow_marker=$(tail -n 1 "$document_flow_result")
   case "$document_flow_marker" in
-    upload-url|presigned-upload|confirm|document-failed|document-timeout|document-status|document-quiz|quiz-endpoint|network|upload-contract|confirm-missing|confirm-uploaded|confirm-ready|confirm-failed|confirm-processing-unexpected|confirm-unknown|ready-status|document-quiz-contract|question-count|quiz-contract|unknown)
+    upload-url|presigned-upload|uploaded-status|confirm|document-failed|document-timeout|document-status|document-quiz|quiz-endpoint|network|upload-contract|confirm-missing|confirm-uploaded|confirm-probing|confirm-ready|confirm-failed|confirm-processing-unexpected|confirm-unknown|ready-status|processing-status|document-quiz-contract|question-count|quiz-contract|quiz-learner-projection|unknown)
       printf 'DOCUMENT_FLOW_MARKER %s\n' "$document_flow_marker"
       ;;
     *)
@@ -938,6 +1190,15 @@ if ! run_document_flow >"$document_flow_result" 2>/dev/null; then
   esac
   pipeline_stage=$(classify_pipeline_stage)
   printf 'PIPELINE_STAGE %s\n' "$pipeline_stage"
+  document_failure_code=$(read_document_failure_code)
+  case "$document_failure_code" in
+    [A-Z_]*|NONE|UNKNOWN)
+      printf 'DOCUMENT_FAILURE_CODE %s\n' "$document_failure_code"
+      ;;
+    *)
+      printf 'DOCUMENT_FAILURE_CODE UNKNOWN\n'
+      ;;
+  esac
   if [[ "$pipeline_stage" == return-pending ]]; then
     return_relay_stage=$(read_return_relay_stage "$relay_log")
     case "$return_relay_stage" in
@@ -951,3 +1212,7 @@ if ! run_document_flow >"$document_flow_result" 2>/dev/null; then
   fi
   false
 fi
+document_id=$(awk '$1 == "DOCUMENT_ID" { print $2; exit }' "$document_flow_result")
+[[ "$document_id" =~ ^[0-9a-fA-F-]{36}$ ]] || exit 1
+emit_phase verify-media-probe-flow
+verify_media_probe_flow

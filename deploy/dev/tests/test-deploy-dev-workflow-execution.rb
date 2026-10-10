@@ -121,6 +121,20 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   assert((File.stat(File.join(deployment_dir, 'hosts.yml')).mode & 0o777) == 0o600, 'app hosts mode must be 0600')
   assert((File.stat(File.join(deployment_dir, 'overrides.yml')).mode & 0o777) == 0o600, 'app overrides mode must be 0600')
 
+  api_only_runner_temp = File.join(directory, 'api-only-runner-temp')
+  Dir.mkdir(api_only_runner_temp)
+  api_only_environment = environment.merge(
+    'RUNNER_TEMP' => api_only_runner_temp,
+    'SELECT_WEB' => 'false',
+    'SELECT_API' => 'true',
+    'SELECT_WORKER' => 'false'
+  ).reject { |name, _value| name == 'WEB_DIGEST' }
+  _stdout, stderr, status = run_step(app_inventory, api_only_environment)
+  assert(status.success?, "API-only inventory script failed: #{stderr}")
+  api_only_deployment_dir = File.read(File.join(api_only_runner_temp, 'dev-k3s-deploy-path')).strip
+  api_only_overrides = JSON.parse(File.read(File.join(api_only_deployment_dir, 'overrides.yml')))
+  assert(api_only_overrides == { 'deployment_targets' => ['api'], 'api_image' => "ghcr.io/sirobaby/learningplatform-api@#{digest}" }, 'API-only overrides must not require a media probe image placeholder')
+
   _stdout, stderr, status = run_step(observability_inventory, environment)
   assert(status.success?, "observability inventory script failed: #{stderr}")
   observability_dir = File.read(File.join(runner_temp, 'dev-k3s-observability-path')).strip
@@ -156,7 +170,11 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
     remote_command="${!#}"
     payload="$(mktemp)"
     trap 'rm -f -- "$payload"' EXIT
-    cat > "$payload"
+    if [[ " $* " == *' -n '* ]]; then
+      : > "$payload"
+    else
+      cat > "$payload"
+    fi
     env BASH_ENV="$MOCK_BASH_ENV" bash -c "$remote_command" < "$payload"
   BASH
   File.write(File.join(mock_bin, 'sudo'), <<~'BASH')
@@ -185,6 +203,12 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
         ;;
       rollout)
         [ "$2" = status ]
+        if [ -n "${MOCK_ROLLOUT_TRACE:-}" ]; then
+          printf '%s\n' "$3" >> "$MOCK_ROLLOUT_TRACE"
+        fi
+        if [ "${MOCK_ROLLOUT_SUCCESS:-false}" = true ]; then
+          exit 0
+        fi
         printf '%s\n' 'rollout did not finish' >&2
         exit 1
         ;;
@@ -272,6 +296,33 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
   assert(trace.include?('get pods') && trace.include?('jsonpath='), 'diagnostics must derive target pod nodes')
   assert(trace.include?('describe node node-a'), 'diagnostics must describe only the derived node')
   assert(output.include?('--- target node diagnostic: node-a ---'), 'diagnostics must label each target node')
+
+  worker_environment = environment.merge(
+    'SELECT_WEB' => 'false',
+    'SELECT_API' => 'false',
+    'SELECT_WORKER' => 'true',
+    'GO_WORKER_DIGEST' => digest,
+    'MEDIA_PROBE_DIGEST' => digest
+  )
+  _stdout, stderr, status = run_step(app_inventory, worker_environment)
+  assert(status.success?, "worker inventory script failed: #{stderr}")
+  worker_deployment_dir = File.read(File.join(runner_temp, 'dev-k3s-deploy-path')).strip
+  assert(JSON.parse(File.read(File.join(worker_deployment_dir, 'overrides.yml'))) == {
+    'deployment_targets' => ['worker'],
+    'worker_image' => "ghcr.io/sirobaby/learningplatform-api@#{digest}",
+    'go_worker_image' => "ghcr.io/sirobaby/learningplatform-ai-worker@#{digest}",
+    'media_probe_worker_image' => "ghcr.io/sirobaby/learningplatform-media-probe@#{digest}"
+  }, 'worker overrides must include the media probe image')
+  rollout_trace = File.join(directory, 'rollout-targets.trace')
+  _stdout, stderr, status = run_step(rollout_wait, bootstrap_environment.merge(
+    'MOCK_ROLLOUT_SUCCESS' => 'true',
+    'MOCK_ROLLOUT_TRACE' => rollout_trace
+  ))
+  assert(status.success?, "worker rollout wait failed: #{stderr}")
+  worker_rollout_targets = File.readlines(File.join(worker_deployment_dir, 'selected-targets'), chomp: true)
+  worker_rollout_trace = File.readlines(rollout_trace, chomp: true)
+  assert(worker_rollout_targets == %w[worker media-probe-worker], "worker rollout targets must include media-probe-worker: #{worker_rollout_targets.inspect}")
+  assert(worker_rollout_trace == %w[deployment/worker deployment/media-probe-worker], "worker rollout wait must wait for both worker deployments: #{worker_rollout_trace.inspect}")
 
   broken = app_inventory.sub("\nhost, user", "\n host, user")
   broken_runner_temp = File.join(directory, 'broken-runner-temp')

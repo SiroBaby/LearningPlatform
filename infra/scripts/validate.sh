@@ -215,6 +215,24 @@ check_image_policy() {
   done
 }
 
+check_media_probe_ffprobe_artifact_pin() {
+  local dockerfile="${WORKSPACE_DIR}/worker/Dockerfile"
+
+  if ! grep -Fqx 'ARG FFPROBE_RELEASE=autobuild-2026-10-09-14-16' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_ASSET=ffmpeg-n8.1.3-16-ge0a878dd70-linux64-gpl-8.1.tar.xz' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFPROBE_RELEASE}/${FFPROBE_ASSET}' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_SHA256=968255015cc65dd999a7eddf8016be89a8a1bbef063ea7d3e9c3a229b0f6faaf' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_VERSION=8.1.3-16-ge0a878dd70' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_BUILD_VERSION=8.1.3-16-ge0a878dd70-20261009' "${dockerfile}" \
+    || ! grep -Fq 'test "${ffprobe_version}" = "${FFPROBE_BUILD_VERSION}"' "${dockerfile}" \
+    || ! grep -Fq 'MEDIA_PROBE_FFPROBE_VERSION=8.1.3-16-ge0a878dd70-20261009' "${dockerfile}" \
+    || ! grep -Fq "              value: '8.1.3-16-ge0a878dd70-20261009'" "${INFRA_DIR}/k8s/apps.yaml.j2" \
+    || ! grep -Fqx 'FROM ai-worker AS default' <(tail -n 1 "${dockerfile}") \
+    || grep -Eq 'FFPROBE_(URL|ASSET)=.*latest' "${dockerfile}"; then
+    fail 'FFprobe must remain pinned, while the Docker default target remains the AI worker.'
+  fi
+}
+
 check_artifact_integrity_contract() {
   local checksum_name
   for checksum_name in k3s_installer_sha256 external_secrets_manifest_sha256 cert_manager_manifest_sha256 kube_state_metrics_manifest_sha256; do
@@ -406,7 +424,32 @@ check_application_edge_contract() {
     || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_PUBLIC_KEY=' "${app_env_example}" \
     || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_ISSUER=' "${app_env_example}" \
     || ! grep -Eq '^AUTH_EXTERNAL_APPROVAL_AUDIENCE=' "${app_env_example}" \
-    || [ "$(grep -c 'imagePullSecrets:' "${app_template}")" -ne 4 ] \
+    || [ "$(awk '
+      function emit_deployment() {
+        if (kind == "Deployment" && has_pull_secret && deployment_name != "") {
+          print deployment_name
+        }
+      }
+      /^---[[:space:]]*($|#)/ {
+        emit_deployment()
+        kind = ""
+        deployment_name = ""
+        has_pull_secret = 0
+        next
+      }
+      /^kind:[[:space:]]*Deployment[[:space:]]*$/ {
+        kind = "Deployment"
+        next
+      }
+      kind == "Deployment" && /^  name:[[:space:]]*/ {
+        deployment_name = $0
+        sub(/^  name:[[:space:]]*/, "", deployment_name)
+      }
+      kind == "Deployment" && /^      imagePullSecrets:[[:space:]]*$/ {
+        has_pull_secret = 1
+      }
+      END { emit_deployment() }
+    ' "${app_template}" | LC_ALL=C sort | paste -sd, -)" != "api,media-egress-proxy,media-probe-worker,web,worker" ] \
     || ! grep -q 'kind: Ingress' "${app_template}" \
     || ! grep -q 'ingressClassName: traefik' "${app_template}" \
     || ! grep -q 'name: api' "${app_template}" \
@@ -464,7 +507,7 @@ check_application_edge_contract() {
     fail 'Unselected workload images must not block selective application deployment.'
   fi
 
-  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 4 ] \
+  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 5 ] \
     || grep -Fqx '           env:' "${app_template}"; then
     fail 'Each workload container env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
   fi
@@ -663,6 +706,26 @@ check_ansible_when_installed() {
       "${ANSIBLE_DIR}/roles/applications/tests/api-media-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-egress-proxy-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/external_secrets/tests/target-render.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/external_secrets/tests/target-render.yml" \
+      --tags external_secrets_runtime -e run_web_only_skip_test=true
+    local runtime_role_tasks
+    runtime_role_tasks="$(ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      -i "${ANSIBLE_DIR}/inventory/hosts.example.yml" \
+      "${ANSIBLE_DIR}/playbooks/site.yml" --tags external_secrets_runtime --list-tasks)"
+    local preflight_line namespace_line apply_line
+    preflight_line="$(grep -Fn 'Require the selected runtime ExternalSecret document contract' <<<"${runtime_role_tasks}" | cut -d: -f1)"
+    namespace_line="$(grep -Fn 'Create application namespace after validating selected runtime resources' <<<"${runtime_role_tasks}" | cut -d: -f1)"
+    apply_line="$(grep -Fn 'Reconcile only selected namespace-scoped runtime ExternalSecrets' <<<"${runtime_role_tasks}" | cut -d: -f1)"
+    if ! grep -Fq 'Reconcile only selected namespace-scoped runtime ExternalSecrets' <<<"${runtime_role_tasks}" \
+      || ! grep -Fq 'Wait for the existing External Secrets Operator deployment' <<<"${runtime_role_tasks}" \
+      || grep -Eq 'Download pinned External Secrets Operator manifest|Apply pinned External Secrets Operator manifest' <<<"${runtime_role_tasks}" \
+      || [[ -z "${preflight_line}" || -z "${namespace_line}" || -z "${apply_line}" ]] \
+      || (( preflight_line >= namespace_line || namespace_line >= apply_line )); then
+      fail 'Application runtime-secret reconciliation must check an existing ESO without installing baseline infrastructure.'
+    fi
     return
   fi
 
@@ -682,6 +745,7 @@ check_observability_release_policy_when_present
 check_observability_workflow_bootstrap_contract
 check_plaintext_secrets
 check_image_policy
+check_media_probe_ffprobe_artifact_pin
 check_artifact_integrity_contract
 check_monitoring_jobs
 check_k3s_edge_contract

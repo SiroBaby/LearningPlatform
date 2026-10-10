@@ -16,7 +16,21 @@ type Job struct {
 	Attempt                                         int
 	CreatedAt                                       time.Time
 }
-type Source struct{ StorageRef, Type string }
+type Source struct {
+	StorageRef   string
+	Type         string
+	MediaLocator *ObjectLocator
+}
+
+// ObjectLocator identifies the exact version of a media object selected by
+// the probe stage. Document and text sources continue to use StorageRef.
+type ObjectLocator struct {
+	Bucket        string
+	Key           string
+	VersionID     string
+	ETag          string
+	ContentLength int64
+}
 type Locator struct {
 	Kind  string `json:"kind"`
 	Page  int    `json:"page,omitempty"`
@@ -199,6 +213,7 @@ type RetryResult struct {
 
 type Store interface {
 	Claim(context.Context) (*Job, error)
+	CheckActive(context.Context, Job) error
 	Source(context.Context, Job) (Source, error)
 	PersistAndComplete(context.Context, Job, []Chunk, []Question) (bool, error)
 	Fail(context.Context, Job, Failure) (bool, error)
@@ -206,6 +221,12 @@ type Store interface {
 }
 type ObjectReader interface {
 	Read(context.Context, string, int64) ([]byte, error)
+}
+
+// VersionedObjectReader is implemented by readers that can fetch an exact
+// object version. It is optional so existing document readers stay simple.
+type VersionedObjectReader interface {
+	ReadVersion(context.Context, ObjectLocator, int64) ([]byte, error)
 }
 type Generator interface {
 	Generate(context.Context, string) (Question, error)

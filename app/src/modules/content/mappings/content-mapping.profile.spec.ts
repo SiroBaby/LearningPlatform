@@ -48,8 +48,10 @@ describe('ContentMappingProfile', () => {
       originalName: document.originalName,
       sizeBytes: 248320,
       status: DocumentStatus.READY,
+      type: DocumentType.PDF,
       updatedAt: '2026-06-21T12:35:56.789Z',
     });
+    expect(Object.prototype.hasOwnProperty.call(actual, 'type')).toBe(true);
     expect(actual).not.toHaveProperty('ownerId');
     expect(actual).not.toHaveProperty('storageRef');
   });

@@ -66,12 +66,8 @@ ssm_parameter_keys:
   object_storage_secret_key: /REPLACE/WITH/EXACT/object-storage-secret-key
   object_storage_bucket: /REPLACE/WITH/EXACT/object-storage-bucket
   object_storage_media_bucket: /REPLACE/WITH/EXACT/object-storage-media-bucket
-  object_storage_api_media_access_key: /REPLACE/WITH/EXACT/object-storage-api-media-access-key
-  object_storage_api_media_secret_key: /REPLACE/WITH/EXACT/object-storage-api-media-secret-key
-  object_storage_media_probe_access_key: /REPLACE/WITH/EXACT/object-storage-media-probe-access-key
-  object_storage_media_probe_secret_key: /REPLACE/WITH/EXACT/object-storage-media-probe-secret-key
-  object_storage_full_pipeline_media_access_key: /REPLACE/WITH/EXACT/object-storage-full-pipeline-media-access-key
-  object_storage_full_pipeline_media_secret_key: /REPLACE/WITH/EXACT/object-storage-full-pipeline-media-secret-key
+  object_storage_media_access_key: /REPLACE/WITH/EXACT/object-storage-media-access-key
+  object_storage_media_secret_key: /REPLACE/WITH/EXACT/object-storage-media-secret-key
   object_storage_egress_proxy_url: /REPLACE/WITH/EXACT/object-storage-egress-proxy-url
   media_probe_db_user: /REPLACE/WITH/EXACT/media-probe-db-user
   media_probe_db_password: /REPLACE/WITH/EXACT/media-probe-db-password
@@ -108,6 +104,7 @@ media_egress_proxy_enabled: false
 object_storage_egress_proxy_enabled: false
 media_probe_worker_dns_ip: REPLACE_WITH_CLUSTER_DNS_IP
 media_probe_worker_egress_proxy_port: 3128
+media_probe_worker_database_cidrs: [REPLACE_WITH_AIVEN_DATABASE_CIDR]
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}

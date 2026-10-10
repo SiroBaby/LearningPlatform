@@ -1,0 +1,99 @@
+---
+- name: Verify ExternalSecret rendering follows selected application targets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+  tasks:
+    - name: Render API-only runtime resources
+      ansible.builtin.set_fact:
+        external_secrets_api_resources: >-
+          {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['api']}) | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require the API-only document and remote-reference contract
+      ansible.builtin.assert:
+        that:
+          - external_secrets_api_resources | length == 2
+          - external_secrets_api_resources | map(attribute='kind') | list == ['SecretStore', 'ExternalSecret']
+          - external_secrets_api_resources | map(attribute='metadata.name') | list == ['aws-parameter-store', 'learning-platform-api-runtime']
+          - external_secrets_api_resources | map(attribute='metadata.namespace') | unique | list == ['learning-platform-dev']
+          - >-
+            external_secrets_api_resources[1:]
+            | map(attribute='spec.data')
+            | flatten
+            | map(attribute='remoteRef.key')
+            | list
+            | difference(ssm_parameter_keys.values() | list)
+            | length == 0
+      no_log: true
+
+    - name: Render worker-only runtime resources
+      ansible.builtin.set_fact:
+        external_secrets_worker_resources: >-
+          {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['worker']}) | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require the worker-only document and remote-reference contract
+      ansible.builtin.assert:
+        that:
+          - external_secrets_worker_resources | length == 4
+          - external_secrets_worker_resources | map(attribute='kind') | list == ['SecretStore', 'ExternalSecret', 'ExternalSecret', 'ExternalSecret']
+          - external_secrets_worker_resources | map(attribute='metadata.name') | list == ['aws-parameter-store', 'learning-platform-go-worker-runtime', 'learning-platform-worker-runtime', 'learning-platform-media-probe-runtime']
+          - external_secrets_worker_resources | map(attribute='metadata.namespace') | unique | list == ['learning-platform-dev']
+          - >-
+            external_secrets_worker_resources[1:]
+            | map(attribute='spec.data')
+            | flatten
+            | map(attribute='remoteRef.key')
+            | list
+            | difference(ssm_parameter_keys.values() | list)
+            | length == 0
+      no_log: true
+
+    - name: Render web-only runtime resources
+      ansible.builtin.set_fact:
+        external_secrets_web_resources: >-
+          {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['web']}) | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require web-only selection to render no runtime ExternalSecrets
+      ansible.builtin.assert:
+        that:
+          - external_secrets_web_resources | length == 1
+          - external_secrets_web_resources | map(attribute='kind') | list == ['SecretStore']
+          - external_secrets_web_resources | map(attribute='metadata.name') | list == ['aws-parameter-store']
+          - external_secrets_web_resources | map(attribute='metadata.namespace') | list == ['learning-platform-dev']
+      no_log: true
+
+- name: Verify web-only application deployment skips runtime ESO reconciliation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    run_web_only_skip_test: false
+  roles:
+    - role: external_secrets
+      when: run_web_only_skip_test | bool
+      tags: [external_secrets]
+      deployment_targets: [web]
+  tasks:
+    - name: Require web-only deployment to skip every runtime ESO interaction
+      ansible.builtin.assert:
+        that:
+          - external_secrets_aws_credentials_secret is skipped
+          - external_secrets_runtime_crd is skipped
+          - external_secrets_runtime_operator is skipped
+          - external_secrets_runtime_documents is not defined
+          - external_secrets_runtime_store is skipped
+      tags: [external_secrets_runtime]
+      when: run_web_only_skip_test | bool
