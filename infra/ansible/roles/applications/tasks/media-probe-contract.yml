@@ -1,4 +1,14 @@
 ---
+# Enabled media uploads create MEDIA_PROBE jobs; without the worker those
+# Documents would stay PROBING indefinitely.
+- name: Require the media probe worker whenever API media uploads are enabled
+  ansible.builtin.assert:
+    that:
+      - not (api_media_enabled | default(false) | bool) or (media_probe_worker_enabled | default(false) | bool)
+    fail_msg: >-
+      api_media_enabled requires media_probe_worker_enabled; otherwise uploaded
+      media Documents wait in PROBING with no worker to probe them.
+
 - name: Validate enabled media probe worker contract
   ansible.builtin.assert:
     that:

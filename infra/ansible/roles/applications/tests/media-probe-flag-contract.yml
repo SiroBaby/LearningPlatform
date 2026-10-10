@@ -58,6 +58,39 @@
           With media_probe_worker_enabled false, the worker rollout must not
           render the media-probe-worker, its NetworkPolicy, or its ExternalSecret.
 
+    - name: Require the production dev vars to keep API media uploads disabled
+      ansible.builtin.assert:
+        that:
+          - not (api_media_enabled | default(false) | bool)
+        fail_msg: vars/dev.yml enables API media uploads while the media probe worker is disabled.
+
+    - name: Enable API media uploads while the media probe worker stays disabled
+      ansible.builtin.set_fact:
+        api_media_enabled: true
+
+    - name: Attempt the contract with media uploads but no media probe worker
+      block:
+        - name: Run the production media probe contract with media uploads enabled
+          ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
+
+        - name: Record that media uploads without a probe worker were accepted
+          ansible.builtin.set_fact:
+            applications_uploads_without_probe_rejected: false
+      rescue:
+        - name: Record that media uploads without a probe worker were rejected
+          ansible.builtin.set_fact:
+            applications_uploads_without_probe_rejected: true
+
+    - name: Require media uploads without a probe worker to fail closed
+      ansible.builtin.assert:
+        that:
+          - applications_uploads_without_probe_rejected | bool
+        fail_msg: Enabling API media uploads without the media probe worker must fail the contract.
+
+    - name: Restore the production API media upload flag
+      ansible.builtin.set_fact:
+        api_media_enabled: false
+
     - name: Enable the flag while keeping the production placeholder CIDR
       ansible.builtin.set_fact:
         media_probe_worker_enabled: true
@@ -81,9 +114,10 @@
           - applications_placeholder_cidr_rejected | bool
         fail_msg: Enabling the media probe worker without real database CIDRs must fail the contract.
 
-    - name: Provide an explicit database CIDR
+    - name: Provide an explicit database CIDR and enable API media uploads
       ansible.builtin.set_fact:
         media_probe_worker_database_cidrs: ['203.0.113.10/32']
+        api_media_enabled: true
 
     - name: Run the production media probe contract with a real CIDR
       ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
