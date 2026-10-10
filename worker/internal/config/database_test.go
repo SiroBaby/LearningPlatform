@@ -153,7 +153,9 @@ func TestDatabaseVerifyFullSetsServerName(t *testing.T) {
 	}
 }
 
-func TestDatabaseVerifyCAChecksChainWithoutFallback(t *testing.T) {
+// TestDatabaseVerifyCAMatchesAPIHostNameCheck keeps verify-ca as strict as the
+// API's node-postgres connection for the same DB_SSL_MODE value.
+func TestDatabaseVerifyCAMatchesAPIHostNameCheck(t *testing.T) {
 	t.Parallel()
 	database, err := loadTestDatabase(databaseEnvironment(nil))
 	if err != nil {
@@ -164,19 +166,30 @@ func TestDatabaseVerifyCAChecksChainWithoutFallback(t *testing.T) {
 		t.Fatalf("ConnConfig() error = %v", err)
 	}
 	actualTLS := connConfig.TLSConfig
-	if actualTLS == nil || actualTLS.VerifyConnection == nil || len(connConfig.Fallbacks) != 0 {
-		t.Fatalf("verify-ca TLS config = %#v, fallbacks = %d", actualTLS, len(connConfig.Fallbacks))
+	if actualTLS == nil || actualTLS.InsecureSkipVerify || actualTLS.ServerName != testDatabaseHost || actualTLS.RootCAs == nil {
+		t.Fatalf("verify-ca TLS config = %#v", actualTLS)
 	}
-	trusted := testAuthorityInstance.issueServerCertificate(t, "another-host.example.test")
-	if err := actualTLS.VerifyConnection(tls.ConnectionState{PeerCertificates: parseCertificates(t, trusted)}); err != nil {
-		t.Fatalf("verify-ca rejected a certificate from the configured CA: %v", err)
+	if len(connConfig.Fallbacks) != 0 {
+		t.Fatalf("verify-ca fallbacks = %d, want none", len(connConfig.Fallbacks))
 	}
-	untrusted := otherCertificateAuthority.issueServerCertificate(t, testDatabaseHost)
-	if err := actualTLS.VerifyConnection(tls.ConnectionState{PeerCertificates: parseCertificates(t, untrusted)}); err == nil {
-		t.Fatal("verify-ca accepted a certificate from an unknown CA")
+}
+
+func TestLoadDatabaseHostForms(t *testing.T) {
+	t.Parallel()
+	_, err := loadTestDatabase(databaseEnvironment(map[string]string{databaseHostEnvironment: "primary.example.test,replica.example.test"}))
+	if err == nil || err.Error() != "DB_HOST must be a single host" {
+		t.Fatalf("multi-host loadDatabase() error = %v, want single-host rejection", err)
 	}
-	if err := actualTLS.VerifyConnection(tls.ConnectionState{}); err == nil {
-		t.Fatal("verify-ca accepted a server without a certificate")
+	database, err := loadTestDatabase(databaseEnvironment(map[string]string{databaseHostEnvironment: "::1"}))
+	if err != nil {
+		t.Fatalf("IPv6 loadDatabase() error = %v", err)
+	}
+	poolConfig, err := database.PoolConfig()
+	if err != nil {
+		t.Fatalf("IPv6 PoolConfig() error = %v", err)
+	}
+	if poolConfig.ConnConfig.Host != "::1" || poolConfig.ConnConfig.Port != 13039 {
+		t.Fatalf("IPv6 host/port = %q/%d", poolConfig.ConnConfig.Host, poolConfig.ConnConfig.Port)
 	}
 }
 
@@ -209,6 +222,8 @@ func TestDatabaseHandshake(t *testing.T) {
 	}{
 		{name: "verify-full accepts the configured CA and host", sslMode: DatabaseSSLModeVerifyFull, acceptTLS: true, authority: testAuthorityInstance, dnsName: testDatabaseHost, wantHandshake: true},
 		{name: "verify-full rejects a host mismatch", sslMode: DatabaseSSLModeVerifyFull, acceptTLS: true, authority: testAuthorityInstance, dnsName: "attacker.example.test"},
+		{name: "verify-ca accepts the configured CA and host", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: true, authority: testAuthorityInstance, dnsName: testDatabaseHost, wantHandshake: true},
+		{name: "verify-ca rejects a host mismatch like the API", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: true, authority: testAuthorityInstance, dnsName: "attacker.example.test"},
 		{name: "verify-ca rejects an unknown CA", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: true, authority: otherCertificateAuthority, dnsName: testDatabaseHost},
 		{name: "verify-ca never falls back to plaintext", sslMode: DatabaseSSLModeVerifyCA, acceptTLS: false},
 	}
@@ -256,11 +271,12 @@ func TestDatabaseHandshake(t *testing.T) {
 	}
 }
 
-// sslRequestCode is the PostgreSQL SSLRequest protocol code (80877103) and
-// startupProtocolVersion is the plaintext StartupMessage protocol 3.0 code.
+// sslRequestCode is the PostgreSQL SSLRequest code (80877103) and
+// cancelRequestCode the CancelRequest code (80877102) that pgx sends on a new
+// connection when a session closes abnormally.
 var (
-	sslRequestCode         = []byte{0x04, 0xd2, 0x16, 0x2f}
-	startupProtocolVersion = []byte{0x00, 0x03, 0x00, 0x00}
+	sslRequestCode    = []byte{0x04, 0xd2, 0x16, 0x2f}
+	cancelRequestCode = []byte{0x04, 0xd2, 0x16, 0x2e}
 )
 
 type fakeServerResult struct {
@@ -291,9 +307,10 @@ func answerSSLRequest(connection net.Conn, acceptTLS bool, certificate tls.Certi
 	if _, err := io.ReadFull(connection, request); err != nil {
 		return false, false
 	}
-	// Other request codes (for example a CancelRequest) are not a plaintext session.
+	// Anything except SSLRequest or CancelRequest (any StartupMessage version,
+	// GSSENCRequest, ...) counts as a plaintext attempt so the test fails closed.
 	if string(request[4:]) != string(sslRequestCode) {
-		return false, string(request[4:]) == string(startupProtocolVersion)
+		return false, string(request[4:]) != string(cancelRequestCode)
 	}
 	if !acceptTLS {
 		_, _ = connection.Write([]byte{'N'})
@@ -302,15 +319,6 @@ func answerSSLRequest(connection net.Conn, acceptTLS bool, certificate tls.Certi
 	_, _ = connection.Write([]byte{'S'})
 	server := tls.Server(connection, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
 	return server.Handshake() == nil, false
-}
-
-func parseCertificates(t *testing.T, certificate tls.Certificate) []*x509.Certificate {
-	t.Helper()
-	parsed, err := x509.ParseCertificate(certificate.Certificate[0])
-	if err != nil {
-		t.Fatalf("parse certificate: %v", err)
-	}
-	return []*x509.Certificate{parsed}
 }
 
 func TestDatabaseErrorsDoNotExposeCredentials(t *testing.T) {

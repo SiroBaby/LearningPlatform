@@ -5,8 +5,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -19,7 +21,9 @@ const (
 )
 
 // DatabaseSSLMode uses the same vocabulary as the API (`disabled`, `verify-ca`)
-// so both runtimes can read the same DB_SSL_MODE parameter.
+// so both runtimes can read the same DB_SSL_MODE parameter. Both verify modes
+// check the chain against DB_SSL_CA and the DB_HOST name, matching what the API
+// enforces in practice; `verify-full` is accepted as an explicit alias.
 type DatabaseSSLMode string
 
 const (
@@ -70,41 +74,26 @@ func (database Database) applyTLS(connectionConfig *pgconn.Config) {
 	connectionConfig.TLSConfig = database.tlsConfig()
 }
 
+// tlsConfig verifies both the chain and the host name in every verify mode. The
+// API passes `ssl: { ca, rejectUnauthorized: true }` to node-postgres, which sets
+// `servername = host` and lets Node's tls.connect run checkServerIdentity, so its
+// `verify-ca` already checks the host name; the Go worker must not be weaker for
+// the same DB_SSL_MODE value.
 func (database Database) tlsConfig() *tls.Config {
-	switch database.sslMode {
-	case DatabaseSSLModeVerifyFull:
-		return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: database.rootCAs, ServerName: database.host}
-	case DatabaseSSLModeVerifyCA:
-		rootCAs := database.rootCAs
-		return &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			// Hostname checking is skipped only for verify-ca; the chain is verified below.
-			InsecureSkipVerify: true,
-			VerifyConnection: func(state tls.ConnectionState) error {
-				return verifyCertificateChain(state.PeerCertificates, rootCAs)
-			},
-		}
-	default:
+	if database.sslMode == DatabaseSSLModeDisabled {
 		return nil
 	}
-}
-
-func verifyCertificateChain(certificates []*x509.Certificate, rootCAs *x509.CertPool) error {
-	if len(certificates) == 0 {
-		return errors.New("database server presented no certificate")
-	}
-	intermediates := x509.NewCertPool()
-	for _, certificate := range certificates[1:] {
-		intermediates.AddCert(certificate)
-	}
-	_, err := certificates[0].Verify(x509.VerifyOptions{Roots: rootCAs, Intermediates: intermediates})
-	return err
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: database.rootCAs, ServerName: database.host}
 }
 
 func loadDatabase(lookup LookupEnv) (Database, error) {
 	host, err := required(lookup, databaseHostEnvironment)
 	if err != nil {
 		return Database{}, err
+	}
+	// pgx reads a comma as a multi-host list, which applyTLS would silently truncate.
+	if strings.Contains(host, ",") {
+		return Database{}, fmt.Errorf("%s must be a single host", databaseHostEnvironment)
 	}
 	port, err := required(lookup, databasePortEnvironment)
 	if err != nil {
@@ -141,7 +130,7 @@ func loadDatabase(lookup LookupEnv) (Database, error) {
 	connectionURL := url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(user, password),
-		Host:     host + ":" + port,
+		Host:     net.JoinHostPort(host, port),
 		Path:     name,
 		RawQuery: url.Values{"sslmode": {pgxSSLMode}}.Encode(),
 	}
