@@ -221,8 +221,9 @@ báo literal trong manifest:
 | --- | --- |
 | `media-probe-worker` | `DB_HOST=media-probe-db-egress`, `DB_PORT=5432` là literal trong manifest. Egress chỉ còn kube-dns `:53`, `media-egress-proxy:3128` và `media-probe-db-egress:5432`; không còn `ipBlock`. |
 | TLS | Vẫn end-to-end giữa pgx và PostgreSQL; forwarder chỉ chuyển byte, không giữ cert hay credential. `DB_SSL_SERVER_NAME` = upstream host để `verify-ca`/`verify-full` (#198) kiểm cert theo hostname database thật thay vì tên forwarder; không dùng `InsecureSkipVerify`. Production probe thiếu biến này thì fail-closed khi khởi động. |
-| `media-probe-db-egress` | Một `server` duy nhất, re-resolve hostname qua kube-dns (`hold valid 10s`, không cache IP vĩnh viễn). Image HAProxy pin digest, UID/GID `99`, read-only root filesystem, `emptyDir` cho `/tmp`, drop ALL capabilities, seccomp `RuntimeDefault`, không mount ServiceAccount token. |
-| NetworkPolicy forwarder | Ingress chỉ từ `media-probe-worker` TCP `5432`. Egress chỉ kube-dns `:53` và TCP `<upstream port>`; dòng `server` của HAProxy là allowlist đích vì NetworkPolicy không mã hóa được hostname. |
+| `media-probe-db-egress` | Một `server` duy nhất, re-resolve hostname qua kube-dns (`hold valid 10s`, không cache IP vĩnh viễn), không health check tới database. Probe của kubelet gọi frontend health `:8404/healthz` (chỉ chứng minh HAProxy đang chạy). Image HAProxy pin digest, UID/GID `99`, read-only root filesystem, `emptyDir` cho `/tmp`, drop ALL capabilities, seccomp `RuntimeDefault`, không mount ServiceAccount token. |
+| NetworkPolicy forwarder | Ingress chỉ từ `media-probe-worker` TCP `5432` (kubelet probe từ node được network policy controller của K3s cho qua sẵn, như readiness của `api`). Egress chỉ kube-dns `:53` và TCP `<upstream port>` tới địa chỉ public (loại `10/8`, `100.64/10`, `127/8`, `169.254/16`, `172.16/12`, `192.168/16`); dòng `server` của HAProxy là allowlist đích vì NetworkPolicy không mã hóa được hostname. |
+| Thứ tự apply | Role `applications` apply forwarder và chờ Deployment sẵn sàng trước khi apply `media-probe-worker`, để lần bật cờ đầu tiên probe không `Ping` vào forwarder chưa chạy. |
 | Ansible contract | Khi bật `media_probe_worker_enabled`, upstream host phải là FQDN chữ thường hợp lệ, port là số nguyên 1–65535, không chứa `REPLACE_WITH`; thiếu hoặc sai thì fail-closed trước mọi mutation. |
 
 Lý do: hẹp nhất trong các phương án không đổi CNI (Container Network
@@ -230,9 +231,24 @@ Interface — plugin mạng của pod). Client không chọn được đích, kh
 `CONNECT`, không đụng Squid S3 dùng chung với `api`/`worker`, và gần như không
 đổi code kết nối Go. Chi phí tiền bằng 0.
 
-Forwarder là single point of failure (điểm lỗi duy nhất) nhưng fail-closed:
-forwarder chết hoặc không resolve được upstream thì probe mất readiness, không
-có đường vòng tới database.
+Forwarder là single point of failure (điểm lỗi duy nhất) nhưng fail-closed ở
+tầng job, không có đường vòng tới database. Hành vi quan sát được khi forwarder
+chết hoặc không resolve được upstream:
+
+- Pod probe đang chạy **vẫn `Ready`**: readiness chỉ đặt một lần sau khi khởi
+  động thành công, không kiểm DB định kỳ. `Claim` lỗi thì worker chờ một poll
+  interval rồi thử lại, nên job `MEDIA_PROBE` không được claim và Document ở lại
+  `PROBING`. Job đang xử lý dở ghi log `media_probe_worker.job.failed`; lease
+  hết hạn sẽ trả job về hàng đợi khi DB tới được lại.
+- Pod probe mới hoặc khởi động lại: `Ping` lúc khởi động thất bại, tiến trình
+  dừng với `bootstrap_code=database` và vào `CrashLoopBackOff`.
+- Forwarder khôi phục: pod đang chạy tự claim lại job ở lần poll kế tiếp.
+
+Không thêm readiness theo sức khỏe DB vì nó buộc probe ping database định kỳ qua
+forwarder (thêm kết nối tới Aiven) trong khi pod probe không nhận traffic qua
+Service; readiness chỉ dùng để chặn rollout. Liveness/readiness của chính
+forwarder dùng frontend health cục bộ `:8404/healthz`, không mở kết nối tới
+upstream; HAProxy cũng không bật health check tới database.
 
 Phương án dự phòng: (c) Aiven static IP — giữ `ipBlock` với port đã tham số
 hóa, bỏ forwarder; chỉ dùng khi plan Aiven hỗ trợ (ước tính khoảng

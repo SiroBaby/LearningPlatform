@@ -635,12 +635,24 @@ defaults
   timeout client-fin 10s
   timeout server-fin 10s
 
+# Kubelet probes stop here: a tcpSocket probe on :5432 would open a real
+# upstream connection on every check. This only proves HAProxy is serving.
+frontend health
+  mode http
+  bind :8404
+  timeout client 5s
+  timeout http-request 5s
+  monitor-uri /healthz
+  http-request deny
+
 frontend postgres
   bind :5432
   default_backend database
 
+# No health check: DNS resolution runs without one, and a check would open a
+# connection to the database every interval.
 backend database
-  server database {{ media_probe_database_upstream_host }}:{{ media_probe_database_upstream_port | int }} resolvers cluster-dns resolve-prefer ipv4 init-addr none check inter 10s
+  server database {{ media_probe_database_upstream_host }}:{{ media_probe_database_upstream_port | int }} resolvers cluster-dns resolve-prefer ipv4 init-addr none
 {% endset %}
 ---
 apiVersion: v1
@@ -699,21 +711,26 @@ spec:
           ports:
             - name: postgres
               containerPort: 5432
+            - name: health
+              containerPort: 8404
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+          # Probes use the local health frontend so they never reach the database.
           readinessProbe:
-            tcpSocket:
-              port: postgres
+            httpGet:
+              path: /healthz
+              port: health
             initialDelaySeconds: 3
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
-            tcpSocket:
-              port: postgres
+            httpGet:
+              path: /healthz
+              port: health
             initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 3
@@ -776,6 +793,8 @@ spec:
       app.kubernetes.io/name: learning-platform
       app.kubernetes.io/component: media-probe-db-egress
   policyTypes: [Ingress]
+  # The :8404 health frontend needs no rule: K3s network policy already admits
+  # kubelet probes from the node (the api readiness probe relies on the same).
   ingress:
     - from:
         - podSelector:
@@ -811,8 +830,19 @@ spec:
         - protocol: TCP
           port: 53
     # NetworkPolicy cannot encode the database hostname. The HAProxy server
-    # line is the destination allowlist; this rule only permits its port.
-    - ports:
+    # line is the destination allowlist; this rule only permits its port to
+    # public addresses, never cluster, private, loopback, or metadata ranges.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
         - protocol: TCP
           port: {{ media_probe_database_upstream_port | int }}
 {% endif %}
