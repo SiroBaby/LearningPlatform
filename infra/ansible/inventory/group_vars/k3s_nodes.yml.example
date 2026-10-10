@@ -117,8 +117,13 @@ web_resources:
 api_resources:
   requests: {cpu: 200m, memory: 256Mi}
   limits: {cpu: "1", memory: 512Mi}
+# Measured dev usage is ~10m (worker) and ~3m (go-worker); 100m requests keep
+# the app CPU budget under the 2000m node allocatable (#206). Limits unchanged.
 worker_resources:
-  requests: {cpu: 250m, memory: 512Mi}
+  requests: {cpu: 100m, memory: 512Mi}
+  limits: {cpu: "1", memory: 1Gi}
+go_worker_resources:
+  requests: {cpu: 100m, memory: 512Mi}
   limits: {cpu: "1", memory: 1Gi}
 
 # Existing host Prometheus/Grafana are external to this automation. All values

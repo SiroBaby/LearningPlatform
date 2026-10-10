@@ -9,6 +9,7 @@
       - web_resources is mapping
       - api_resources is mapping
       - worker_resources is mapping
+      - go_worker_resources is mapping
       - deployment_targets is sequence
       - deployment_targets is not string
       - deployment_targets | length > 0
