@@ -318,3 +318,47 @@ func openAIEnvironment(overrides map[string]string) map[string]string {
 	}
 	return env
 }
+
+func TestLoadMediaProbeBoundsTheProbeTimeoutBelowTheJobTimeout(t *testing.T) {
+	tests := []struct {
+		name        string
+		probeMillis string
+		jobMillis   string
+		want        time.Duration
+		wantErr     string
+	}{
+		{name: "default probe timeout", want: 2 * time.Minute},
+		{name: "explicit probe timeout", probeMillis: "90000", want: 90 * time.Second},
+		{name: "probe timeout equal to job timeout", probeMillis: "60000", jobMillis: "60000", wantErr: probeTimeoutEnvironment + " must be shorter than " + jobTimeoutEnvironment},
+		{name: "probe timeout above maximum", probeMillis: "600001", wantErr: probeTimeoutEnvironment + " must be between"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			env := validEnvironment()
+			env[mediaBucketEnvironment] = "media"
+			env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
+			env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+			env[mediaProbeDatabaseUserEnvironment] = "media_probe"
+			env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
+			if test.probeMillis != "" {
+				env[probeTimeoutEnvironment] = test.probeMillis
+			}
+			if test.jobMillis != "" {
+				env[jobTimeoutEnvironment] = test.jobMillis
+			}
+			config, err := LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("LoadMediaProbe() error = %v, want %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadMediaProbe() error = %v", err)
+			}
+			if config.Probe.Timeout != test.want {
+				t.Fatalf("probe timeout = %s, want %s", config.Probe.Timeout, test.want)
+			}
+		})
+	}
+}

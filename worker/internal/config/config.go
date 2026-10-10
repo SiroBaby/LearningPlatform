@@ -134,9 +134,13 @@ func LoadMediaProbe(lookup LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	timeout, err := boundedDuration(lookup, probeTimeoutEnvironment, 10*time.Minute, time.Millisecond, 15*time.Minute)
+	timeout, err := boundedDuration(lookup, probeTimeoutEnvironment, 2*time.Minute, time.Millisecond, 10*time.Minute)
 	if err != nil {
 		return Config{}, err
+	}
+	// A probe timeout at or above the job timeout would surface as a retryable job deadline.
+	if timeout >= loaded.JobTimeout {
+		return Config{}, fmt.Errorf("%s must be shorter than %s", probeTimeoutEnvironment, jobTimeoutEnvironment)
 	}
 	outputBytes, err := boundedInt64(lookup, probeOutputBytesEnvironment, 1024*1024, 1024, 16*1024*1024)
 	if err != nil {

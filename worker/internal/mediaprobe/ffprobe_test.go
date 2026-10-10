@@ -1,9 +1,11 @@
 package mediaprobe
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,6 +105,75 @@ func TestFFProbeRunnerClassifiesTimeoutAndOutputCap(t *testing.T) {
 				t.Fatalf("Run() output cap failure is technical, want non-retryable")
 			}
 		})
+	}
+}
+
+func TestFFProbeRunnerFailsClosedWhenItsOwnTimeoutExpires(t *testing.T) {
+	runner := FFProbeRunner{
+		BinaryPath:     writeExecutable(t, "#!/bin/sh\nsleep 1\n"),
+		OutputMaxBytes: 4096,
+		Timeout:        10 * time.Millisecond,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := runner.Run(ctx, filepath.Join(t.TempDir(), "input"))
+	var failure Failure
+	if !errors.As(err, &failure) || failure.Code != FailureMediaProbeTimeout {
+		t.Fatalf("Run() error = %v, want %s", err, FailureMediaProbeTimeout)
+	}
+	if failure.Technical {
+		t.Fatalf("Run() probe timeout is technical, want non-retryable business failure")
+	}
+}
+
+func TestFFProbeRunnerRestrictsDemuxersToPolicyContainers(t *testing.T) {
+	argumentsPath := filepath.Join(t.TempDir(), "arguments")
+	binary := writeExecutable(t, `#!/bin/sh
+printf '%s\n' "$@" > '`+argumentsPath+`'
+printf '%s' '`+validFFProbeJSON+`'
+`)
+	if _, err := (FFProbeRunner{BinaryPath: binary, OutputMaxBytes: 4096}).Run(context.Background(), filepath.Join(t.TempDir(), "input.mp4")); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	arguments, err := os.ReadFile(argumentsPath)
+	if err != nil {
+		t.Fatalf("read arguments: %v", err)
+	}
+	if !strings.Contains(string(arguments), "-format_whitelist\n"+allowedFFProbeDemuxers+"\n") {
+		t.Fatalf("ffprobe arguments do not restrict demuxers:\n%s", arguments)
+	}
+}
+
+// Uses a real ffprobe because the reference-following behaviour lives in its demuxers.
+func TestFFProbeRunnerRejectsPlaylistReferencingLocalFiles(t *testing.T) {
+	binary, err := exec.LookPath("ffprobe")
+	if err != nil {
+		if os.Getenv("CI") == "true" {
+			t.Fatal("ffprobe is required in CI for the demuxer allowlist regression")
+		}
+		t.Skip("ffprobe is not installed")
+	}
+	directory := t.TempDir()
+	// Silent MPEG-1 Layer III frames: without a demuxer allowlist ffprobe opens
+	// this referenced file through the HLS playlist and reports format "hls".
+	silentFrame := append([]byte{0xFF, 0xFB, 0x90, 0x64}, make([]byte, 413)...)
+	referenced := filepath.Join(directory, "referenced.mp3")
+	if err := os.WriteFile(referenced, bytes.Repeat(silentFrame, 20), 0o600); err != nil {
+		t.Fatalf("write referenced file: %v", err)
+	}
+	playlist := filepath.Join(directory, "upload.m3u8")
+	content := "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nfile://" + referenced + "\n#EXT-X-ENDLIST\n"
+	if err := os.WriteFile(playlist, []byte(content), 0o600); err != nil {
+		t.Fatalf("write playlist: %v", err)
+	}
+	absoluteBinary, err := filepath.Abs(binary)
+	if err != nil {
+		t.Fatalf("resolve ffprobe: %v", err)
+	}
+	_, err = (FFProbeRunner{BinaryPath: absoluteBinary, OutputMaxBytes: 64 * 1024, Timeout: 10 * time.Second}).Run(context.Background(), playlist)
+	var failure Failure
+	if !errors.As(err, &failure) || failure.Code != FailureMediaProbe || failure.Technical {
+		t.Fatalf("Run() error = %v, want non-retryable %s for an HLS playlist", err, FailureMediaProbe)
 	}
 }
 

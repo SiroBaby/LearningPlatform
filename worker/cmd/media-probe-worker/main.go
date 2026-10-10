@@ -87,6 +87,7 @@ func run() error {
 		BinaryPath:      workerConfig.Probe.BinaryPath,
 		ExpectedVersion: workerConfig.Probe.ExpectedVersion,
 		OutputMaxBytes:  workerConfig.Probe.OutputMaxBytes,
+		Timeout:         workerConfig.Probe.Timeout,
 	}
 	probeContext, probeCancel := context.WithTimeout(ctx, workerConfig.Probe.Timeout)
 	err = probeRunner.CheckVersion(probeContext)

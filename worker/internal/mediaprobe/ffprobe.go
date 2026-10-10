@@ -11,12 +11,19 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
+
+// allowedFFProbeDemuxers keeps ffprobe on the MP4 and MP3 demuxers accepted by
+// policy, so playlist or reference formats cannot open other local files.
+const allowedFFProbeDemuxers = "mov,mp4,m4a,3gp,3g2,mj2,mp3"
 
 type FFProbeRunner struct {
 	BinaryPath      string
 	ExpectedVersion string
 	OutputMaxBytes  int64
+	// Timeout bounds one ffprobe execution; zero leaves only the caller deadline.
+	Timeout time.Duration
 }
 
 func (runner FFProbeRunner) CheckVersion(ctx context.Context) error {
@@ -57,11 +64,18 @@ func (runner FFProbeRunner) Run(ctx context.Context, filePath string) (Metadata,
 	if !filepath.IsAbs(filePath) {
 		return Metadata{}, Failure{Code: FailureMediaProbe}
 	}
+	probeCtx := ctx
+	if runner.Timeout > 0 {
+		var cancel context.CancelFunc
+		probeCtx, cancel = context.WithTimeout(ctx, runner.Timeout)
+		defer cancel()
+	}
 	command := exec.CommandContext(
-		ctx,
+		probeCtx,
 		runner.BinaryPath,
 		"-v", "error",
 		"-protocol_whitelist", "file",
+		"-format_whitelist", allowedFFProbeDemuxers,
 		"-show_entries", "stream=codec_type,codec_name,profile,pix_fmt,coded_width,coded_height,avg_frame_rate,channels,disposition:stream_tags:format=format_name,duration:format_tags",
 		"-print_format", "json",
 		"-show_streams",
@@ -75,7 +89,12 @@ func (runner FFProbeRunner) Run(ctx context.Context, filePath string) (Metadata,
 	output, err := readCommandOutput(command, runner.OutputMaxBytes)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// The job deadline also covers download, so it stays retryable.
 			return Metadata{}, Failure{Code: FailureMediaProbeTimeout, Technical: true}
+		}
+		if ctx.Err() == nil && errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
+			// The same bytes would hang ffprobe again; ADR-0031 fails it closed.
+			return Metadata{}, Failure{Code: FailureMediaProbeTimeout}
 		}
 		if errors.Is(err, errOutputLimitExceeded) {
 			// More retries cannot reduce a deterministic oversized ffprobe response.
