@@ -79,12 +79,23 @@ class WorkflowExpressionEvaluator
   end
 end
 
-def workflow_job_runs?(jobs, job_name, context)
-  job = jobs.fetch(job_name)
-  needs = job.fetch('needs', [])
-  needs = [needs] if needs.is_a?(String)
-  expression = job.fetch('if', '')
-  needs_successful = needs.all? { |need| context.fetch('needs').fetch(need).fetch('result') == 'success' }
+def workflow_job_needs(jobs, job_name)
+  needs = jobs.fetch(job_name).fetch('needs', [])
+  needs.is_a?(String) ? [needs] : needs
+end
 
-  (expression.include?('always()') || needs_successful) && WorkflowExpressionEvaluator.new(expression, context).evaluate
+def workflow_job_ancestors(jobs, job_name)
+  workflow_job_needs(jobs, job_name).flat_map { |need| [need] + workflow_job_ancestors(jobs, need) }.uniq
+end
+
+# Without a status function, GitHub applies an implicit success() to every
+# transitive ancestor, not only to direct needs: one skipped quality job skips
+# all downstream jobs that omit always(). Context must list every ancestor.
+def workflow_job_runs?(jobs, job_name, context)
+  expression = jobs.fetch(job_name).fetch('if', '')
+  status_allowed = expression.include?('always()') || workflow_job_ancestors(jobs, job_name).all? do |ancestor|
+    context.fetch('needs').fetch(ancestor).fetch('result') == 'success'
+  end
+
+  status_allowed && WorkflowExpressionEvaluator.new(expression, context).evaluate
 end

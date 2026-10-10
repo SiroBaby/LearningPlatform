@@ -34,7 +34,8 @@ builds = { 'build-api' => ['api', 'backend'], 'build-web' => ['web', 'web'], 'bu
 builds.each do |name, (runtime, output)|
   job = jobs.fetch(name)
   assert(job.fetch('needs') == %w[changes image-quality-gate], "#{name}: retain quality gate without serial image dependencies")
-  assert(job.fetch('if') == "needs.changes.outputs.#{output} == 'true'", "#{name}: build only selected runtime")
+  assert(job.fetch('if') == "always() && needs.image-quality-gate.result == 'success' && needs.changes.outputs.#{output} == 'true'",
+         "#{name}: build only selected runtime after the gate, even when an unrelated quality job is skipped")
   assert(job.fetch('uses') == './.github/workflows/build-image.yml' && job.fetch('with') == { 'runtime' => runtime }, "#{name}: use canonical image builder")
   assert(job.fetch('permissions') == { 'contents' => 'read', 'packages' => 'write' }, "#{name}: scoped registry permissions")
 end
@@ -85,11 +86,17 @@ end
   assert(workflow_job_runs?(jobs, 'build-images', { 'needs' => needs }) == expected, "collector result matrix: #{states}")
 end
 
+# Run 38045911082: frontend-quality was skipped, so implicit success() skipped
+# every selected build behind the successful gate. Cover skipped ancestors.
 builds.each do |name, (_runtime, output)|
   %w[success failure skipped cancelled].each do |gate|
     [true, false].each do |selected|
-      needs = { 'changes' => { 'result' => 'success', 'outputs' => { output => selected.to_s } }, 'image-quality-gate' => { 'result' => gate } }
-      assert(workflow_job_runs?(jobs, name, { 'needs' => needs }) == (gate == 'success' && selected), "#{name}: #{gate}/#{selected}")
+      %w[success skipped].repeated_permutation(quality_names.size) do |quality_states|
+        needs = { 'changes' => { 'result' => 'success', 'outputs' => { output => selected.to_s } }, 'image-quality-gate' => { 'result' => gate } }
+        quality_names.zip(quality_states).each { |quality, state| needs[quality] = { 'result' => state } }
+        assert(workflow_job_runs?(jobs, name, { 'needs' => needs }) == (gate == 'success' && selected),
+               "#{name}: gate=#{gate} selected=#{selected} quality=#{quality_states}")
+      end
     end
   end
 end
