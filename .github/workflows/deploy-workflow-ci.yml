@@ -38,6 +38,8 @@ jobs:
         run: shellcheck deploy/dev/publish-image.sh
       - name: Validate media tools installer and its contract test
         run: shellcheck worker/scripts/install-media-tools.sh deploy/dev/tests/test-media-tools-ci.sh
+      - name: Validate media probe egress verifier shell
+        run: shellcheck deploy/dev/verify-media-probe-egress.sh deploy/dev/tests/test-verify-media-probe-egress.sh
       - name: Verify production workflow and classification contracts
         run: bash deploy/dev/tests/test-deploy-dev-workflow.sh
       - name: Verify bounded registry failures and immutable outputs
@@ -51,7 +53,8 @@ jobs:
             deploy/dev/tests/test-delete-ghcr-versions.sh \
             deploy/dev/tests/test-deploy-state.sh \
             deploy/dev/tests/test-media-tools-ci.sh \
-            deploy/dev/tests/test-select-ghcr-versions.sh; do
+            deploy/dev/tests/test-select-ghcr-versions.sh \
+            deploy/dev/tests/test-verify-media-probe-egress.sh; do
             bash "$test_script"
           done
           python3 deploy/dev/tests/test-ghcr-cleanup-execution.py

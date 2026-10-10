@@ -253,7 +253,7 @@ main() {
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file infra/ansible/vars/dev.yml)"
-  expected=$'web=false\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
+  expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
   (cd "${repository}" && assert_infra_go_worker_output "${before_sha}" "${after_sha}")
   (cd "${repository}" && assert_observability_output auto "${before_sha}" "${after_sha}" false)

@@ -58,7 +58,6 @@ ssm_parameter_keys:
   object_storage_media_probe_secret_key: /learning-platform/dev/object-storage-media-probe-secret-key
   object_storage_full_pipeline_media_access_key: /learning-platform/dev/object-storage-full-pipeline-media-access-key
   object_storage_full_pipeline_media_secret_key: /learning-platform/dev/object-storage-full-pipeline-media-secret-key
-  object_storage_egress_proxy_url: /learning-platform/dev/object-storage-egress-proxy-url
   media_probe_db_user: /learning-platform/dev/media-probe-db-user
   media_probe_db_password: /learning-platform/dev/media-probe-db-password
   ai_credential_encryption_key: /learning-platform/dev/ai-credential-encryption-key
@@ -79,15 +78,24 @@ ingress_tls_secret_name: ''
 deployment_targets: [web, api, worker]
 # Deploy the private proxy workload independently from runtime proxy consumers.
 media_egress_proxy_enabled: true
-object_storage_egress_proxy_enabled: false
-# Enabling the media probe worker is a separate owner decision after #199
-# merges. The probe reaches PostgreSQL only through the media-probe-db-egress
-# forwarder, which is pinned to the single upstream below (ADR-0031 §5). These
-# are the non-secret Aiven endpoint values, not credentials.
-media_probe_worker_enabled: false
+# API media uploads require their runtime to reach S3 only through the
+# in-cluster proxy, so enabling api_media_enabled also routes every API object
+# storage call (document bucket included) through media-egress-proxy (#158).
+# The API runs HeadBucket through the proxy at startup and uses Recreate, so a
+# broken proxy path leaves the API not Ready. Roll back by setting this flag,
+# api_media_enabled and media_probe_worker_enabled all to false together.
+object_storage_egress_proxy_enabled: true
+# Owner enabled media on dev after #199 merged (#158). Uploads create
+# MEDIA_PROBE jobs, so api_media_enabled requires media_probe_worker_enabled.
+media_probe_worker_enabled: true
+api_media_enabled: true
+# Shared in-cluster proxy route for the API, ai-worker and media-probe-worker.
 media_probe_worker_proxy_url: http://media-egress-proxy:3128
 media_probe_worker_dns_ip: 10.43.0.10
 media_probe_worker_egress_proxy_port: 3128
+# The probe reaches PostgreSQL only through the media-probe-db-egress
+# forwarder, which is pinned to the single upstream below (ADR-0031 §5). These
+# are the non-secret Aiven endpoint values, not credentials.
 media_probe_database_upstream_host: pg-15341ed3-ngocphat076-b603.j.aivencloud.com
 media_probe_database_upstream_port: 27158
 

@@ -177,11 +177,9 @@ spec:
                   key: {{ key }}
 {% endfor %}
 {% if object_storage_egress_proxy_enabled | default(false) | bool %}
+            # Non-secret in-cluster proxy route; a manifest literal, not SSM.
             - name: OBJECT_STORAGE_EGRESS_PROXY_URL
-              valueFrom:
-                secretKeyRef:
-                  name: learning-platform-api-runtime
-                  key: OBJECT_STORAGE_EGRESS_PROXY_URL
+              value: {{ media_probe_worker_proxy_url | quote }}
 {% endif %}
 {% if api_media_enabled | default(false) | bool %}
 {% for key in ['OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_API_MEDIA_ACCESS_KEY', 'OBJECT_STORAGE_API_MEDIA_SECRET_KEY'] %}
@@ -395,10 +393,7 @@ spec:
 {% if object_storage_egress_proxy_enabled | default(false) | bool %}
 {% if not media_probe_worker_enabled | default(false) | bool %}
             - name: OBJECT_STORAGE_EGRESS_PROXY_URL
-              valueFrom:
-                secretKeyRef:
-                  name: learning-platform-go-worker-runtime
-                  key: OBJECT_STORAGE_EGRESS_PROXY_URL
+              value: {{ media_probe_worker_proxy_url | quote }}
 {% endif %}
 {% endif %}
           readinessProbe:
