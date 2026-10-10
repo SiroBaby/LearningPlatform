@@ -444,6 +444,65 @@ describe('ContentRepository.deleteOwnedDocument', () => {
     }
   });
 
+  it('takes the media probe lock before the document row so an in-flight enqueue cannot deadlock deletion', async () => {
+    const ownerId = randomUUID();
+    const document = await seedDocument(ownerId, DocumentType.VIDEO);
+    const enqueue = dataSource.createQueryRunner();
+    await enqueue.connect();
+    await enqueue.startTransaction();
+    try {
+      // Same order as MediaProbeJobRepository.enqueue: advisory lock, then an
+      // INSERT whose document foreign key check needs FOR KEY SHARE on the row.
+      await enqueue.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
+        [`media-probe:${document.id}:${ownerId}`],
+      );
+      const deletion = repository.deleteOwnedDocument(ownerId, document.id, {
+        documents: 'learning-platform-dev-documents',
+        media: 'learning-platform-dev-media',
+      });
+
+      let deletionWaitingOnProbeLock = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const [waiter] = await db.client.query<{ readonly waiting: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_locks AS lock
+             JOIN pg_stat_activity AS activity USING (pid)
+             WHERE lock.locktype = 'advisory'
+               AND NOT lock.granted
+               AND activity.query ILIKE '%pg_advisory_xact_lock%'
+           ) AS waiting`,
+        ).then((result) => result.rows);
+        if (waiter.waiting) {
+          deletionWaitingOnProbeLock = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(deletionWaitingOnProbeLock).toBe(true);
+
+      const [enqueued] = await enqueue.query(
+        `INSERT INTO "ai"."media_probe_jobs"
+           ("document_id", "owner_id", "correlation_id", "probe_generation",
+            "policy_version", "deletion_fence", "full_pipeline_job_id",
+            "source_bucket", "source_key", "status", "idempotency_key")
+         VALUES ($1, $2, $3, $4, 'media-v1', 0, $5,
+                 'learning-platform-dev-media', $6, 'PENDING', $7)
+         RETURNING "id"`,
+        [document.id, ownerId, randomUUID(), randomUUID(), document.fullPipelineJobId, document.storageRef, randomUUID()],
+      ) as Array<{ readonly id: string }>;
+      await enqueue.commitTransaction();
+      await expect(deletion).resolves.toMatchObject({ status: DocumentStatus.DELETING });
+
+      await expect(mediaProbeJobs.findOneByOrFail({ id: enqueued.id })).resolves.toMatchObject({
+        status: MediaProbeJobStatus.CANCELLED,
+      });
+    } finally {
+      if (enqueue.isTransactionActive) await enqueue.rollbackTransaction();
+      await enqueue.release();
+    }
+  });
+
   it('keeps a stale Go first-claim persistence fenced behind deletion on PostgreSQL', async () => {
     const ownerId = randomUUID();
     const document = await seedDocument(ownerId, DocumentType.VIDEO);

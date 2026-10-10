@@ -124,6 +124,9 @@ export class ContentRepository extends BaseRepository<Document> {
     preflightMediaLocator?: DocumentPurgeLocator,
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
+      // Lock order: media probe advisory lock, then the Document row. Enqueue
+      // holds the advisory lock while its foreign key check waits on the row.
+      await this.lockMediaProbe(manager, id, ownerId);
       const document = await manager.findOne(Document, {
         where: { id, ownerId },
         lock: { mode: 'pessimistic_write' },
@@ -133,10 +136,6 @@ export class ContentRepository extends BaseRepository<Document> {
       // A committed DELETING tombstone is the idempotent result. Do not create
       // another manifest or outbox row for a repeated request.
       if (document.status === DocumentStatus.DELETING) return document;
-
-      if (this.isMediaDocument(document)) {
-        await this.lockMediaProbe(manager, id, ownerId);
-      }
 
       const persistedMediaLocator = this.isMediaDocument(document)
         ? this.mediaPurgeLocatorFromDocument(document, buckets.media)
