@@ -377,13 +377,24 @@ từ branch hoặc working tree.
   Như vậy local upload `EPIPE` vẫn tái hiện không ổn định; lượt pass chứng minh
   đường nghiệp vụ hoạt động trong một lần, không xác định nguyên nhân và không
   chứng minh lỗi đã được sửa.
-- Trên SHA tích hợp cuối cùng `ea53c93872362ce104a98e9280ccfe64788b6643`, chín
+- Mã triển khai tại SHA `ea53c93872362ce104a98e9280ccfe64788b6643` pass kiểm tra;
+  các lệnh này đã chạy lại sau commit tài liệu `7881750395869210b9b042dd7a569714618aa7fc`
+  khi mã không đổi. Chín
   Jest suite mục tiêu pass với 126 test; `npm run build` pass và xác minh 68
   migration assets; `go test ./...`, `go test -race ./internal/mediaprobe`,
   kiểm tra workflow/classifier, application media contract và
-  `bash infra/scripts/validate.sh` đều pass. Bản ghi tổng hợp kiểm tra mục tiêu:
-  `/tmp/lp158-final-sha-test-results-20261010.txt` SHA-256
-  `7c3518d3707ce52a4a8744318fe84fcde7b5abe9694aa7be6b4a5e24a8d7192a`;
+  `bash infra/scripts/validate.sh` đều pass. Log Nest:
+  `/tmp/lp158-final-nest-tests-20261010.log` SHA-256
+  `2f4b365a8d1faae530fef7631243febc0c0dff9a31e146caad27da9ac548461d`;
+  build `/tmp/lp158-final-app-build-20261010.log` SHA-256
+  `b20a52407781b2fe1dd987b09ab48edb973a0a89bf1f7733a07333cbba31cbfd`;
+  Go `/tmp/lp158-final-go-tests-20261010.log` SHA-256
+  `490148c7d0f64ded30f46a144b5fedc149289a5dde9ebcbfe91ccfeb1e12eca4`;
+  race `/tmp/lp158-final-go-race-20261010.log` SHA-256
+  `c5a9d2e4a52fcb45f3ea64a86f80969830da7fef62586ee98cf1e41ab2255a8c`;
+  workflow/classifier/application-media checks
+  `/tmp/lp158-final-workflow-tests-20261010.log` SHA-256
+  `27727f96dd194f733ac45d83fd78c976be4931af854f783a5d5e63d98513a0fd`;
   log hạ tầng đầy đủ:
   `/tmp/lp158-integration-infra-validation-20261010.log` SHA-256
   `cf8500958e197db83bdcbbb6e36c1bcb0d566db2a0e47b7b35ad4c5ff276f908`.
