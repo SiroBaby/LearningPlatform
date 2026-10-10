@@ -54,6 +54,21 @@ Cả hai lần: 98/98 suite, 614/614 test PASS, không có test flaky. Attempt 2
 
 Nhận xét: hai worker cho 122–169 giây (trung bình 146 giây). Sáu run `--runInBand` cùng ngày cho 170–252 giây (trung vị 200 giây); trung vị lịch sử build-deploy là 191 giây. So với run develop cùng source (175 giây), mức giảm là 6–53 giây. Kết luận: có xu hướng giảm khoảng 25–30% thời gian Jest, nhưng mẫu nhỏ (2 lần) và biên nhiễu của runner lớn (riêng `--runInBand` dao động 82 giây), nên chưa phải benchmark chắc chắn. Install và audit không đổi đáng kể (`npm ci` dao động 13–49 giây theo network). Tốc độ build song song/cache và rollout dev chỉ đo được sau khi PR #184 merge vào develop, vì workflow `deploy-dev.yml` không chạy trên pull request.
 
+## Cài ffmpeg/ffprobe trong CI (10/10/2026)
+
+Nguyên nhân: Backend CI cài `ffmpeg` bằng `sudo apt-get install --yes ffmpeg` (không có `--no-install-recommends`). Run [38032634393](https://github.com/SiroBaby/LearningPlatform/actions/runs/38032634393), SHA `c021cb1`, log apt ghi `99 newly installed` và `Fetched 94.1 MB in 9min 50s (159 kB/s)`: mirror Ubuntu chậm, kéo cả dependency đồ họa/âm thanh không cần. Go worker CI cùng ngày chỉ mất 17 giây cho bước apt tương tự, nên thời gian phụ thuộc mirror, không ổn định.
+
+Thay đổi: mọi job cần ffmpeg/ffprobe gọi `worker/scripts/install-media-tools.sh`. Script đọc pin `FFPROBE_*` trong `worker/Dockerfile` (cùng artifact BtbN của image media-probe), kiểm SHA-256 trước khi giải nén, kiểm version binary sau khi giải nén rồi mới thêm vào `PATH`. Không còn `apt-get install ffmpeg` trong workflow; `deploy/dev/tests/test-media-tools-ci.sh` chặn tái diễn. Test ffprobe thật (demuxer allowlist, `CI=true` bắt buộc có binary) và E2E MinIO vẫn chạy; E2E dò version từ binary nên khớp `8.1.3-16-ge0a878dd70-20261009`.
+
+| Run | SHA | Bước cài ffmpeg/ffprobe | Job |
+| --- | --- | ---: | ---: |
+| Backend CI [38032634393](https://github.com/SiroBaby/LearningPlatform/actions/runs/38032634393) (trước, apt) | `c021cb1` | 603 | 803 |
+| Backend CI [38035033998](https://github.com/SiroBaby/LearningPlatform/actions/runs/38035033998) (sau, artifact pin) | `0edbe6c` | 8 | 265 |
+| Go worker CI [38032428328](https://github.com/SiroBaby/LearningPlatform/actions/runs/38032428328) (trước, apt `--no-install-recommends`) | `007145e` | 17 | — |
+| Go worker CI [38035034020](https://github.com/SiroBaby/LearningPlatform/actions/runs/38035034020) (sau) | `0edbe6c` | 9 | 108 |
+
+Job Backend giảm 538 giây (khoảng 9 phút) trong cặp run này; Jest hai worker ở run sau là 153 giây, nằm trong dải đã đo ở trên. Giới hạn: artifact tải từ GitHub Release của BtbN; nếu release bị xóa thì cả build image media-probe lẫn CI sẽ fail-closed, cần nâng pin trong `worker/Dockerfile`.
+
 ## Cleanup GHCR — ticket #185
 
 Bốn lịch chạy tự động thất bại [30735309780](https://github.com/SiroBaby/LearningPlatform/actions/runs/30735309780), [31294348527](https://github.com/SiroBaby/LearningPlatform/actions/runs/31294348527), [31925249729](https://github.com/SiroBaby/LearningPlatform/actions/runs/31925249729), [32616484622](https://github.com/SiroBaby/LearningPlatform/actions/runs/32616484622) đều ở `Delete selected version IDs`, với `selector emitted invalid version ID`; job chỉ mất 12–15 giây. Đây là lỗi hợp đồng candidate, không phải timeout hay build chậm. Các lịch từ 30/8 đến 4/10 thành công không chứng minh mọi nhánh dữ liệu đã đúng.
