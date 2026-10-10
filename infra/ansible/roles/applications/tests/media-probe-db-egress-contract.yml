@@ -291,6 +291,14 @@
         applications_task_names: "{{ applications_role_tasks | map(attribute='name') | list }}"
         applications_forwarder_select_task: >-
           {{ applications_role_tasks | selectattr('name', 'equalto', 'Select the media probe database forwarder resources') | list }}
+        applications_forwarder_dependencies_task: >-
+          {{ applications_role_tasks | selectattr('name', 'equalto', 'Apply the media probe database forwarder dependencies') | list }}
+        applications_forwarder_read_task: >-
+          {{ applications_role_tasks | selectattr('name', 'equalto', 'Read an existing media probe database forwarder Deployment') | list }}
+        applications_forwarder_detect_task: >-
+          {{ applications_role_tasks | selectattr('name', 'equalto', 'Detect a media probe database forwarder Deployment stuck on FailedCreate') | list }}
+        applications_forwarder_restart_task: >-
+          {{ applications_role_tasks | selectattr('name', 'equalto', 'Restart a media probe database forwarder Deployment stuck on FailedCreate') | list }}
         applications_forwarder_apply_task: >-
           {{ applications_role_tasks | selectattr('name', 'equalto', 'Apply the media probe database forwarder before its consumer') | list }}
         applications_legacy_env_task: >-
@@ -300,15 +308,24 @@
     # exists. Review L3: an older secret-sourced DB_HOST/DB_PORT fails closed
     # before any mutation.
     - name: Require the forwarder to be applied and awaited before the probe workload
+      vars:
+        applications_forwarder_gate: "{{ applications_forwarder_select_task[0].when }}"
       ansible.builtin.assert:
         that:
           - applications_forwarder_select_task | length == 1
-          - applications_forwarder_select_task[0].when == applications_forwarder_apply_task[0].when
+          - applications_forwarder_dependencies_task | length == 1
           - applications_forwarder_apply_task | length == 1
+          - applications_forwarder_gate is search('media_probe_worker_enabled')
+          - applications_forwarder_dependencies_task[0].when == applications_forwarder_gate
+          - applications_forwarder_apply_task[0].when == applications_forwarder_gate
+          - applications_forwarder_dependencies_task[0]['kubernetes.core.k8s'].kubeconfig == '/etc/rancher/k3s/k3s.yaml'
+          - applications_forwarder_dependencies_task[0]['kubernetes.core.k8s'].state == 'present'
+          - applications_forwarder_dependencies_task[0]['kubernetes.core.k8s'].wait == true
+          - applications_forwarder_dependencies_task[0]['kubernetes.core.k8s'].wait_timeout == 180
+          - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].kubeconfig == '/etc/rancher/k3s/k3s.yaml'
           - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].state == 'present'
           - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].wait == true
           - applications_forwarder_apply_task[0]['kubernetes.core.k8s'].wait_timeout == 180
-          - applications_forwarder_apply_task[0].when is search('media_probe_worker_enabled')
           - applications_legacy_env_task | length == 1
           - applications_legacy_env_task[0].when is search('media_probe_worker_enabled')
           - applications_legacy_env_task[0]['ansible.builtin.assert'].that | join(' ') is search('valueFrom')
@@ -317,6 +334,7 @@
             applications_task_names.index('Read an existing media probe worker Deployment')
             < applications_task_names.index('Require no legacy secret-sourced database address on the media probe worker')
             < applications_task_names.index('Select the media probe database forwarder resources')
+            < applications_task_names.index('Apply the media probe database forwarder dependencies')
             < applications_task_names.index('Apply the media probe database forwarder before its consumer')
             < applications_task_names.index('Apply selected stateless Learning Platform workloads')
         fail_msg: >-
@@ -324,10 +342,54 @@
           database address, then select the forwarder resources and apply and
           wait for them before applying media-probe-worker.
 
+    # A ReplicaSet that already failed with FailedCreate stays in a backoff of up
+    # to ~1000s and ignores the new ServiceAccount, so an unchanged apply waits
+    # until timeout. The role must restart exactly that stuck Deployment after its
+    # dependencies exist and before the wait, and nothing else.
+    - name: Require a conditional restart of a stuck forwarder Deployment before the wait
+      vars:
+        applications_forwarder_gate: "{{ applications_forwarder_select_task[0].when }}"
+        applications_read_module: "{{ applications_forwarder_read_task[0]['kubernetes.core.k8s_info'] | default({}) }}"
+        applications_restart_module: "{{ applications_forwarder_restart_task[0]['kubernetes.core.k8s'] | default({}) }}"
+      ansible.builtin.assert:
+        that:
+          - applications_forwarder_read_task | length == 1
+          - applications_forwarder_detect_task | length == 1
+          - applications_forwarder_restart_task | length == 1
+          - applications_forwarder_read_task[0].when == applications_forwarder_gate
+          - applications_forwarder_read_task[0].register == 'applications_existing_forwarder_deployment'
+          - applications_forwarder_read_task[0].no_log == true
+          - applications_read_module.kubeconfig == '/etc/rancher/k3s/k3s.yaml'
+          - applications_read_module.api_version == 'apps/v1'
+          - applications_read_module.kind == 'Deployment'
+          - applications_read_module.namespace is search('learning_platform_namespace')
+          - applications_read_module.name == 'media-probe-db-egress'
+          - applications_forwarder_detect_task[0].when == applications_forwarder_gate
+          - applications_restart_module.kubeconfig == '/etc/rancher/k3s/k3s.yaml'
+          - applications_restart_module.api_version == 'apps/v1'
+          - applications_restart_module.kind == 'Deployment'
+          - applications_restart_module.namespace is search('learning_platform_namespace')
+          - applications_restart_module.name == 'media-probe-db-egress'
+          - applications_restart_module.state == 'patched'
+          - applications_restart_module.definition.spec.template.metadata.annotations.keys() | list == ['kubectl.kubernetes.io/restartedAt']
+          - applications_restart_module.definition | dict2items | map(attribute='key') | list == ['spec']
+          - applications_forwarder_restart_task[0].when == [applications_forwarder_gate, 'applications_forwarder_restart_required | bool']
+          - >-
+            applications_task_names.index('Apply the media probe database forwarder dependencies')
+            < applications_task_names.index('Read an existing media probe database forwarder Deployment')
+            < applications_task_names.index('Detect a media probe database forwarder Deployment stuck on FailedCreate')
+            < applications_task_names.index('Restart a media probe database forwarder Deployment stuck on FailedCreate')
+            < applications_task_names.index('Apply the media probe database forwarder before its consumer')
+        fail_msg: >-
+          After applying the forwarder dependencies and before waiting on its
+          Deployment, the role must read media-probe-db-egress with the explicit
+          kubeconfig and patch only its pod template restartedAt annotation when
+          applications_forwarder_restart_required is true.
+
     # Run 38070362590: with wait, kubernetes.core.k8s applies and awaits each
     # document in list order, so a Deployment listed before its ServiceAccount
-    # never becomes Ready. Execute the role's own select and apply expressions
-    # (not a copy) against the rendered template to prove the applied order.
+    # never becomes Ready. Execute the role's own select, apply, and restart
+    # expressions (not a copy) to prove the applied order and restart decision.
     - name: Execute the role's forwarder expressions against the rendered template
       block:
         - name: Create a scratch directory for the role expressions
@@ -336,7 +398,7 @@
             suffix: forwarder-order
           register: applications_expression_dir
 
-        - name: Write the role's select and apply expressions as templates
+        - name: Write the role's select, apply, and restart expressions as templates
           ansible.builtin.copy:
             dest: "{{ applications_expression_dir.path }}/{{ item.file }}"
             mode: '0600'
@@ -344,8 +406,17 @@
           loop:
             - file: select.j2
               expression: "{{ applications_forwarder_select_task[0]['ansible.builtin.set_fact'].applications_forwarder_resources }}"
+            - file: dependencies.j2
+              expression: "{{ applications_forwarder_dependencies_task[0]['kubernetes.core.k8s'].definition }}"
             - file: apply.j2
               expression: "{{ applications_forwarder_apply_task[0]['kubernetes.core.k8s'].definition }}"
+            - file: detect.j2
+              expression: "{{ applications_forwarder_detect_task[0]['ansible.builtin.set_fact'].applications_forwarder_restart_required }}"
+            - file: restart-when.j2
+              expression: "{{ applications_forwarder_restart_task[0].when[1] }}"
+            - file: restarted-at.j2
+              expression: >-
+                {{ applications_forwarder_restart_task[0]['kubernetes.core.k8s'].definition.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] }}
           loop_control:
             label: "{{ item.file }}"
 
@@ -360,18 +431,20 @@
                                 'media_probe_database_upstream_port': 13039})
                  | from_json }}
 
-        - name: Execute the role's apply expression on the selected resources
+        - name: Execute the role's dependency and Deployment apply expressions in task order
           ansible.builtin.set_fact:
             applications_applied_forwarder: >-
-              {{ lookup('template', applications_expression_dir.path ~ '/apply.j2',
-                 template_vars={'applications_forwarder_resources': applications_selected_forwarder})
-                 | from_json }}
+              {{ (lookup('template', applications_expression_dir.path ~ '/dependencies.j2',
+                  template_vars={'applications_forwarder_resources': applications_selected_forwarder}) | from_json)
+                 + (lookup('template', applications_expression_dir.path ~ '/apply.j2',
+                  template_vars={'applications_forwarder_resources': applications_selected_forwarder}) | from_json) }}
             # Reversed input puts the Deployment before its ConfigMap, so the
-            # reordering is exercised whatever order the template uses.
+            # split is exercised whatever order the template uses.
             applications_applied_reversed_forwarder: >-
-              {{ lookup('template', applications_expression_dir.path ~ '/apply.j2',
-                 template_vars={'applications_forwarder_resources': applications_selected_forwarder | reverse | list})
-                 | from_json }}
+              {{ (lookup('template', applications_expression_dir.path ~ '/dependencies.j2',
+                  template_vars={'applications_forwarder_resources': applications_selected_forwarder | reverse | list}) | from_json)
+                 + (lookup('template', applications_expression_dir.path ~ '/apply.j2',
+                  template_vars={'applications_forwarder_resources': applications_selected_forwarder | reverse | list}) | from_json) }}
 
         - name: Require every forwarder dependency to be applied before its Deployment
           vars:
@@ -391,6 +464,62 @@
               otherwise the pod is rejected and the wait times out. Applied order:
               {{ applications_applied_kinds }}; from reversed input:
               {{ applications_applied_reversed_kinds }}.
+
+        - name: Execute the role's restart decision against live Deployment states
+          ansible.builtin.set_fact:
+            applications_restart_decisions: >-
+              {{ applications_restart_decisions | default({}) | combine({item.key:
+                 lookup('template', applications_expression_dir.path ~ '/restart-when.j2',
+                   template_vars={'applications_forwarder_restart_required':
+                     lookup('template', applications_expression_dir.path ~ '/detect.j2',
+                       template_vars={'applications_existing_forwarder_deployment': item.value}) | from_json})
+                 | from_json}) }}
+          loop: "{{ applications_forwarder_deployment_states | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+          vars:
+            applications_forwarder_deployment_states:
+              stuck:
+                resources:
+                  - status:
+                      conditions:
+                        - {type: Progressing, status: 'True', reason: NewReplicaSetAvailable}
+                        - {type: Available, status: 'False', reason: MinimumReplicasUnavailable}
+                        - {type: ReplicaFailure, status: 'True', reason: FailedCreate}
+              healthy:
+                resources:
+                  - status:
+                      availableReplicas: 1
+                      conditions:
+                        - {type: Progressing, status: 'True', reason: NewReplicaSetAvailable}
+                        - {type: Available, status: 'True', reason: MinimumReplicasAvailable}
+              absent:
+                resources: []
+              without_status:
+                resources:
+                  - metadata: {name: media-probe-db-egress}
+              recovered_replica_failure:
+                resources:
+                  - status:
+                      conditions:
+                        - {type: ReplicaFailure, status: 'False', reason: FailedCreate}
+              other_replica_failure:
+                resources:
+                  - status:
+                      conditions:
+                        - {type: ReplicaFailure, status: 'True', reason: FailedDelete}
+
+        - name: Require a restart only for a Deployment stuck on FailedCreate
+          ansible.builtin.assert:
+            that:
+              - >-
+                applications_restart_decisions == {'stuck': true, 'healthy': false, 'absent': false,
+                'without_status': false, 'recovered_replica_failure': false, 'other_replica_failure': false}
+              - lookup('template', applications_expression_dir.path ~ '/restarted-at.j2') | from_json is match('^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$')
+            fail_msg: >-
+              The forwarder must be restarted only when it exists with
+              ReplicaFailure=True reason FailedCreate, with an RFC 3339 restartedAt
+              value. Decisions: {{ applications_restart_decisions }}.
       always:
         - name: Remove the scratch directory
           ansible.builtin.file:
