@@ -295,7 +295,7 @@ read_go_bootstrap_category() {
   awk -F'"bootstrap_code":"' '
     NF > 1 {
       split($2, category, "\"")
-      if (category[1] ~ /^(configuration|provider|migration|database|storage|consumer|health|unknown)$/) {
+      if (category[1] ~ /^(configuration|provider|migration|database|storage|consumer|probe|worker|health|unknown)$/) {
         print category[1]
         exit
       }
@@ -486,6 +486,10 @@ start_go_worker() {
   go_pid=$!
 }
 
+read_ffprobe_version() {
+  "$1" -version 2>/dev/null | awk 'NR == 1 && $1 == "ffprobe" && $2 == "version" { sub(/^n/, "", $3); print $3 }'
+}
+
 start_media_probe_worker() {
   media_probe_log="$temp_dir/media-probe-worker.log"
   if [[ -n "${LOCAL_DOCUMENT_E2E_MEDIA_PROBE_IMAGE:-}" ]]; then
@@ -535,7 +539,10 @@ start_media_probe_worker() {
     export OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY=minioadmin
     export OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY=minioadmin
     export MEDIA_PROBE_FFPROBE_PATH="${MEDIA_PROBE_FFPROBE_PATH:-$(command -v ffprobe)}"
-    export MEDIA_PROBE_FFPROBE_VERSION=8.1.3-16-ge0a878dd70-20261009
+    # Native runs use the host ffprobe, so pin the version that binary reports instead of the image artifact version.
+    MEDIA_PROBE_FFPROBE_VERSION=$(read_ffprobe_version "$MEDIA_PROBE_FFPROBE_PATH")
+    [[ -n "$MEDIA_PROBE_FFPROBE_VERSION" ]] || exit 1
+    export MEDIA_PROBE_FFPROBE_VERSION
     export MEDIA_PROBE_TEMP_DIR="$temp_dir/media-probe"
     export AI_WORKER_MIGRATIONS_DIR="$root/app/src/database/migrations"
     exec "$temp_dir/media-probe-worker"
