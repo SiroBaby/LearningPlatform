@@ -82,6 +82,64 @@ func TestProcessOneTreatsFalseNilPersistenceAsFenceLoss(t *testing.T) {
 	}
 }
 
+func TestProcessOneStopsProviderCallsWhenFenceIsLostMidGeneration(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		ignoreCancel bool
+	}{
+		{name: "in-flight provider call is cancelled"},
+		{name: "provider ignoring cancellation is not called again", ignoreCancel: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			inputStore := &fencingStore{storeMock: storeMock{
+				job:         &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+				source:      processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+				retryResult: processing.RetryResult{Scheduled: true},
+			}}
+			mockGenerator := &fencingGenerator{store: inputStore, ignoreCancel: test.ignoreCancel}
+			worker := NewWithOptions(inputStore, objectMock{bytes: []byte(multiChunkText())}, mockGenerator, Options{FenceCheckInterval: time.Millisecond})
+			actualErr := worker.processOne(context.Background())
+			if !errors.Is(actualErr, processing.ErrJobFenceLost) {
+				t.Fatalf("processOne() error = %v, want ErrJobFenceLost", actualErr)
+			}
+			if calls := mockGenerator.calls.Load(); calls != 1 {
+				t.Fatalf("provider calls = %d, want 1", calls)
+			}
+			if mockGenerator.timedOut.Load() {
+				t.Fatal("fence monitor did not cancel the provider call")
+			}
+			if inputStore.replaced || inputStore.completed || inputStore.retried || inputStore.failed {
+				t.Fatalf("fenced job mutated durable state: %#v", inputStore.storeMock)
+			}
+		})
+	}
+}
+
+func TestProcessOneIgnoresTransientFenceReadErrors(t *testing.T) {
+	t.Parallel()
+	inputStore := &fencingStore{storeMock: storeMock{
+		job:    &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+		source: processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+	}}
+	mockGenerator := &countingGenerator{store: inputStore, monitorErr: errors.New("connection reset")}
+	worker := NewWithOptions(inputStore, objectMock{bytes: []byte(multiChunkText())}, mockGenerator, Options{FenceCheckInterval: time.Millisecond})
+	if err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	if calls := mockGenerator.calls.Load(); calls < 2 {
+		t.Fatalf("provider calls = %d, want every chunk", calls)
+	}
+	if observed, calls := mockGenerator.observed.Load(), mockGenerator.calls.Load(); observed != calls {
+		t.Fatalf("transient fence reads observed during %d of %d provider calls, want all", observed, calls)
+	}
+	if !inputStore.completed {
+		t.Fatal("transient fence read error discarded generated output")
+	}
+}
+
 func TestDispatchLogsFencedInsteadOfCompleted(t *testing.T) {
 	output := make(chan []byte, 8)
 	store := &storeMock{
@@ -107,6 +165,40 @@ func TestDispatchLogsFencedInsteadOfCompleted(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "worker.processing.completed") {
 		t.Fatalf("fenced job was logged as completed: %s", logs.String())
+	}
+}
+
+func TestDispatchLogsSafeFencedEventWhenFenceIsLostMidGeneration(t *testing.T) {
+	output := make(chan []byte, 8)
+	inputStore := &fencingStore{storeMock: storeMock{
+		job:    &processing.Job{ID: "job", DocumentID: "document-secret", OwnerID: "owner-secret", LeaseID: "lease-secret", Attempt: 1},
+		source: processing.Source{StorageRef: "owners/secret-document.txt", Type: "TEXT"},
+	}}
+	worker := newWithLogger(inputStore, objectMock{bytes: []byte(multiChunkText())}, &fencingGenerator{store: inputStore}, slog.New(slog.NewJSONHandler(logChannelWriter{output: output}, nil)))
+	worker.options.FenceCheckInterval = time.Millisecond
+	worker.slots = make(chan struct{}, 1)
+	worked, err := worker.dispatch(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("dispatch() = (%t, %v), want (true, nil)", worked, err)
+	}
+	var logs strings.Builder
+	deadline := time.After(time.Second)
+	for !strings.Contains(logs.String(), "worker.processing.fenced") {
+		select {
+		case entry := <-output:
+			logs.Write(entry)
+		case <-deadline:
+			t.Fatalf("fenced log not emitted: %s", logs.String())
+		}
+	}
+	for _, unexpected := range []string{"worker.processing.completed", "worker.processing.cancelled", "worker.processing.failed", "worker.processing.retry"} {
+		if strings.Contains(logs.String(), unexpected) {
+			t.Fatalf("fenced generation logged %s: %s", unexpected, logs.String())
+		}
+	}
+	assertLogDoesNotExposeJobData(t, logs.String())
+	if strings.Contains(logs.String(), "Deletion fence stops") {
+		t.Fatalf("fenced log leaked source text: %s", logs.String())
 	}
 }
 
@@ -1043,4 +1135,69 @@ func waitUntil(timeout time.Duration, condition func() bool) bool {
 		time.Sleep(time.Millisecond)
 	}
 	return condition()
+}
+
+func multiChunkText() string {
+	return strings.Repeat("Deletion fence stops provider generation early. ", 80)
+}
+
+// fencingStore reports a lost fence once the Document is marked deleted.
+type fencingStore struct {
+	storeMock
+	fenced     atomic.Bool
+	monitorErr atomic.Value
+	checks     atomic.Int64
+}
+
+func (store *fencingStore) CheckActive(context.Context, processing.Job) error {
+	store.checks.Add(1)
+	if store.fenced.Load() {
+		return processing.ErrJobFenceLost
+	}
+	if err, ok := store.monitorErr.Load().(error); ok {
+		return err
+	}
+	return nil
+}
+
+// fencingGenerator deletes the Document during the first provider call and
+// waits for the fence monitor to cancel it.
+type fencingGenerator struct {
+	store        *fencingStore
+	ignoreCancel bool
+	calls        atomic.Int64
+	timedOut     atomic.Bool
+}
+
+func (generator *fencingGenerator) Generate(ctx context.Context, _ string) (processing.Question, error) {
+	generator.calls.Add(1)
+	generator.store.fenced.Store(true)
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		generator.timedOut.Store(true)
+	}
+	if generator.ignoreCancel {
+		return validQuestion(), nil
+	}
+	return processing.Question{}, ctx.Err()
+}
+
+// countingGenerator makes fence reads fail transiently during generation and
+// records whether the monitor performed at least one such read per call.
+type countingGenerator struct {
+	store      *fencingStore
+	monitorErr error
+	calls      atomic.Int64
+	observed   atomic.Int64
+}
+
+func (generator *countingGenerator) Generate(context.Context, string) (processing.Question, error) {
+	generator.store.monitorErr.Store(generator.monitorErr)
+	checks := generator.store.checks.Load()
+	generator.calls.Add(1)
+	if waitUntil(time.Second, func() bool { return generator.store.checks.Load() > checks }) {
+		generator.observed.Add(1)
+	}
+	return validQuestion(), nil
 }
