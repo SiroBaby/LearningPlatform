@@ -73,6 +73,10 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
   });
 
   afterAll(async () => {
+    // Diagnostics for unexpected storage failures seen in CI (#221).
+    if (process.env.CI && objectStorage) {
+      console.warn(`minio logs:\n${await objectStorage.readLogs()}`);
+    }
     await dataSource?.destroy();
     await Promise.all([db?.stop(), objectStorage?.stop()]);
   });
@@ -129,7 +133,8 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
         return await next(args);
       } catch (error) {
         const shape = error as { name?: string; code?: string; message?: string; $metadata?: { httpStatusCode?: number } };
-        const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+        const cause = (error as { cause?: { code?: string; message?: string } }).cause
+          ?? { code: (error as { $metadata?: unknown; errno?: string; syscall?: string }).errno, message: `${new Date().toISOString()}` };
         const description = `${shape.name}/${shape.$metadata?.httpStatusCode ?? '-'}/${shape.code ?? '-'}/${String(shape.message).slice(0, 160)}/cause=${cause?.code ?? '-'}:${String(cause?.message ?? '').slice(0, 120)}`;
         storageFailures.push(description);
         // Test-only diagnostics: fixture data, no credentials.

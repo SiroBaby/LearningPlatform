@@ -28,6 +28,8 @@ export interface TestObjectStorage {
   /** Uploads bytes and returns the VersionId (undefined on an unversioned bucket). */
   putObject(bucket: string, key: string, body: string): Promise<string | undefined>;
   listVersions(bucket: string, key: string): Promise<TestObjectVersions>;
+  /** Container log tail, for diagnosing storage failures in CI. */
+  readLogs(): Promise<string>;
   stop(): Promise<void>;
 }
 
@@ -84,6 +86,19 @@ export async function startTestObjectStorage(): Promise<TestObjectStorage> {
           .filter((version) => version.Key === key)
           .map((version) => version.VersionId ?? 'null'),
       };
+    },
+    async readLogs() {
+      const chunks: string[] = [];
+      const stream = await container.logs({ tail: 200 });
+      await new Promise<void>((resolve) => {
+        stream.on('data', (chunk: Buffer | string) => chunks.push(chunk.toString()));
+        stream.on('end', () => resolve());
+        setTimeout(() => {
+          stream.destroy();
+          resolve();
+        }, 2_000);
+      });
+      return chunks.join('');
     },
     async stop() {
       admin.destroy();
