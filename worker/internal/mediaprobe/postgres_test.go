@@ -2,12 +2,19 @@ package mediaprobe
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
+	"slices"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -156,4 +163,146 @@ func (row fakeRow) Scan(dest ...any) error {
 		}
 	}
 	return nil
+}
+
+type fakePingClock struct {
+	current time.Time
+	sleeps  []time.Duration
+}
+
+func (clock *fakePingClock) retryClock() pingRetryClock {
+	return pingRetryClock{
+		now: func() time.Time { return clock.current },
+		sleep: func(ctx context.Context, delay time.Duration) error {
+			clock.sleeps = append(clock.sleeps, delay)
+			clock.current = clock.current.Add(delay)
+			return ctx.Err()
+		},
+	}
+}
+
+func scriptedPing(results ...error) (func(context.Context) error, *int) {
+	calls := 0
+	return func(context.Context) error {
+		result := results[min(calls, len(results)-1)]
+		calls++
+		return result
+	}, &calls
+}
+
+var errRefused = &net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
+
+func TestPingWithRetrySucceedsAfterTransientRefusals(t *testing.T) {
+	mockPing, actualCalls := scriptedPing(errRefused, errRefused, nil)
+	mockClock := &fakePingClock{}
+	err := pingWithRetry(context.Background(), mockPing, defaultPingRetry, mockClock.retryClock())
+	if err != nil {
+		t.Fatalf("pingWithRetry() error = %v", err)
+	}
+	expectedSleeps := []time.Duration{500 * time.Millisecond, time.Second}
+	if *actualCalls != 3 || !slices.Equal(mockClock.sleeps, expectedSleeps) {
+		t.Fatalf("calls = %d sleeps = %v, want 3 calls and %v", *actualCalls, mockClock.sleeps, expectedSleeps)
+	}
+}
+
+func TestPingWithRetryRetriesTransientServerStates(t *testing.T) {
+	mockPing, actualCalls := scriptedPing(&pgconn.PgError{Code: "57P03"}, &pgconn.PgError{Code: "53300"}, nil)
+	mockClock := &fakePingClock{}
+	if err := pingWithRetry(context.Background(), mockPing, defaultPingRetry, mockClock.retryClock()); err != nil {
+		t.Fatalf("pingWithRetry() error = %v", err)
+	}
+	if *actualCalls != 3 {
+		t.Fatalf("calls = %d, want 3", *actualCalls)
+	}
+}
+
+func TestPingWithRetryFailsFastOnNonTransientErrors(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    error
+		expected DatabaseStage
+	}{
+		{"wrong password", &pgconn.PgError{Code: "28P01"}, DatabaseStageAuth},
+		{"unknown database", &pgconn.PgError{Code: "3D000"}, DatabaseStageServer},
+		{"missing privilege", &pgconn.PgError{Code: "42501"}, DatabaseStageServer},
+		{"untrusted certificate", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}, DatabaseStageTLSVerify},
+		{"tls alert", tls.AlertError(40), DatabaseStageTLS},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			mockPing, actualCalls := scriptedPing(testCase.input, nil)
+			mockClock := &fakePingClock{}
+			err := pingWithRetry(context.Background(), mockPing, defaultPingRetry, mockClock.retryClock())
+			var actual DatabaseConnectError
+			if !errors.As(err, &actual) || actual.Stage != testCase.expected || actual.Attempts != 1 {
+				t.Fatalf("pingWithRetry() = %#v, want stage %s after 1 attempt", err, testCase.expected)
+			}
+			if *actualCalls != 1 || len(mockClock.sleeps) != 0 {
+				t.Fatalf("calls = %d sleeps = %v, want a single attempt without backoff", *actualCalls, mockClock.sleeps)
+			}
+		})
+	}
+}
+
+func TestPingWithRetryStopsWithinTotalBudget(t *testing.T) {
+	mockPing, actualCalls := scriptedPing(errRefused)
+	mockClock := &fakePingClock{}
+	err := pingWithRetry(context.Background(), mockPing, defaultPingRetry, mockClock.retryClock())
+	var actual DatabaseConnectError
+	if !errors.As(err, &actual) || actual.Stage != DatabaseStageConnectRefused || actual.Attempts != *actualCalls {
+		t.Fatalf("pingWithRetry() = %#v, want connect_refused with attempts = calls (%d)", err, *actualCalls)
+	}
+	var actualElapsed time.Duration
+	for _, delay := range mockClock.sleeps {
+		actualElapsed += delay
+		if delay > defaultPingRetry.MaxDelay {
+			t.Fatalf("delay %v exceeds max %v", delay, defaultPingRetry.MaxDelay)
+		}
+	}
+	if actualElapsed > defaultPingRetry.MaxElapsed || *actualCalls < 3 {
+		t.Fatalf("elapsed = %v over %d calls, want several attempts within %v", actualElapsed, *actualCalls, defaultPingRetry.MaxElapsed)
+	}
+}
+
+func TestPingWithRetryStopsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	mockPing := func(context.Context) error {
+		calls++
+		cancel()
+		return errRefused
+	}
+	err := pingWithRetry(ctx, mockPing, defaultPingRetry, (&fakePingClock{}).retryClock())
+	var actual DatabaseConnectError
+	if !errors.As(err, &actual) || actual.Stage != DatabaseStageCanceled || calls != 1 {
+		t.Fatalf("pingWithRetry() = %#v after %d calls, want canceled after 1 call", err, calls)
+	}
+}
+
+func TestNewPostgresStoreFailsFastOnAuthenticationWithoutLeakingSettings(t *testing.T) {
+	address := startFakeServer(t, rejectStartup("28P01"))
+	poolConfig, err := pgxpool.ParseConfig("postgres://" + fakeServerSecret + ":" + fakeServerSecret + "@" + address + "/media?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	started := time.Now()
+	store, err := NewPostgresStore(ctx, poolConfig)
+	if store != nil {
+		store.Close()
+	}
+	var actual DatabaseConnectError
+	if !errors.As(err, &actual) || actual.Stage != DatabaseStageAuth || actual.SQLState != "28P01" || actual.Attempts != 1 {
+		t.Fatalf("NewPostgresStore() = %#v, want auth 28P01 after 1 attempt", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("NewPostgresStore() took %v, want an immediate failure", elapsed)
+	}
+	if strings.Contains(err.Error(), fakeServerSecret) || strings.Contains(err.Error(), address) {
+		t.Fatalf("Error() leaks connection settings: %q", err.Error())
+	}
+	if poolConfig.ConnConfig.ConnectTimeout != databaseConnectTimeout {
+		t.Fatalf("ConnectTimeout = %v, want %v", poolConfig.ConnConfig.ConnectTimeout, databaseConnectTimeout)
+	}
 }

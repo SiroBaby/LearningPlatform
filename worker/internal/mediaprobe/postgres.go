@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,16 +18,99 @@ type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
+// databaseConnectTimeout bounds one dial + TLS + startup so a dropped SYN cannot
+// consume the whole retry budget. Known limit: it is shorter than the
+// media-probe-db-egress forwarder's `timeout connect 10s`, which HAProxy also
+// retries (default `retries 3`, up to ~40s), so an upstream that drops SYNs is
+// logged as connect_timeout, the same as a dropped SYN to the forwarder; check
+// the forwarder logs to tell them apart. No client timeout inside the 30s budget
+// could outwait the forwarder, while an upstream that refuses or resets is still
+// reported quickly as upstream_closed.
+const databaseConnectTimeout = 5 * time.Second
+
+// defaultPingRetry covers the few seconds a new pod's first connection is
+// rejected before kube-router admits its IP to the NetworkPolicy allow set.
+var defaultPingRetry = pingRetryPolicy{
+	InitialDelay: 500 * time.Millisecond,
+	MaxDelay:     5 * time.Second,
+	MaxElapsed:   30 * time.Second,
+}
+
+type pingRetryPolicy struct {
+	InitialDelay time.Duration
+	MaxDelay     time.Duration
+	MaxElapsed   time.Duration
+}
+
+type pingRetryClock struct {
+	now   func() time.Time
+	sleep func(context.Context, time.Duration) error
+}
+
+// DatabaseConnectError reports a failed bootstrap connection with only
+// log-safe fields; Error never includes the raw pgx message.
+type DatabaseConnectError struct {
+	DatabaseErrorClass
+	Attempts int
+	err      error
+}
+
+func (connectError DatabaseConnectError) Error() string {
+	return "media probe database unavailable: " + string(connectError.Stage)
+}
+
+func (connectError DatabaseConnectError) Unwrap() error { return connectError.err }
+
 func NewPostgresStore(ctx context.Context, poolConfig *pgxpool.Config) (*PostgresStore, error) {
+	if poolConfig.ConnConfig.ConnectTimeout == 0 {
+		poolConfig.ConnConfig.ConnectTimeout = databaseConnectTimeout
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
-		return nil, fmt.Errorf("connect media probe database: %w", err)
+		return nil, DatabaseConnectError{DatabaseErrorClass: DatabaseErrorClass{Stage: DatabaseStageConfig}, err: err}
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := pingWithRetry(ctx, pool.Ping, defaultPingRetry, pingRetryClock{now: time.Now, sleep: sleepContext}); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("ping media probe database: %w", err)
+		return nil, err
 	}
 	return &PostgresStore{pool: pool}, nil
+}
+
+// pingWithRetry retries only transient failures with exponential backoff until
+// MaxElapsed would be exceeded; ctx cancellation (SIGTERM) stops it at once.
+func pingWithRetry(ctx context.Context, ping func(context.Context) error, policy pingRetryPolicy, clock pingRetryClock) error {
+	started := clock.now()
+	delay := policy.InitialDelay
+	for attempt := 1; ; attempt++ {
+		err := ping(ctx)
+		if err == nil {
+			return nil
+		}
+		class := ClassifyDatabaseError(err)
+		if ctx.Err() != nil {
+			class = DatabaseErrorClass{Stage: DatabaseStageCanceled}
+		}
+		failure := DatabaseConnectError{DatabaseErrorClass: class, Attempts: attempt, err: err}
+		if !class.Retryable || clock.now().Sub(started)+delay > policy.MaxElapsed {
+			return failure
+		}
+		if err := clock.sleep(ctx, delay); err != nil {
+			failure.DatabaseErrorClass = DatabaseErrorClass{Stage: DatabaseStageCanceled}
+			return failure
+		}
+		delay = min(delay*2, policy.MaxDelay)
+	}
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (store *PostgresStore) Close() { store.pool.Close() }
