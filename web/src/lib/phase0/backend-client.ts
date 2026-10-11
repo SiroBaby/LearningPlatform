@@ -7,7 +7,7 @@ import {
 } from "@/lib/phase0/backend-error";
 
 interface BackendRequest {
-  readonly method: "GET" | "POST";
+  readonly method: "GET" | "POST" | "DELETE";
   readonly path: string;
   readonly body?: unknown;
 }

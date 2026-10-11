@@ -2,7 +2,7 @@ export const phase0DocumentTypes = ["PDF", "TEXT", "AUDIO", "VIDEO"] as const;
 
 export type Phase0DocumentType = (typeof phase0DocumentTypes)[number];
 
-export const phase0DocumentStatuses = ["UPLOADED", "PROBING", "PROCESSING", "READY", "FAILED"] as const;
+export const phase0DocumentStatuses = ["UPLOADED", "PROBING", "PROCESSING", "READY", "FAILED", "DELETING"] as const;
 
 export type Phase0DocumentStatus = (typeof phase0DocumentStatuses)[number];
 

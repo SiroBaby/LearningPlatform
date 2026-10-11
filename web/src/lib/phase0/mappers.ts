@@ -86,6 +86,8 @@ function readDocumentStatus(value: unknown, field: string): Phase0DocumentStatus
       return "READY";
     case "FAILED":
       return "FAILED";
+    case "DELETING":
+      return "DELETING";
     default:
       throw new TypeError(`Expected ${field} to be a valid document status.`);
   }

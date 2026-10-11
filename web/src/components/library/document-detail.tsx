@@ -8,6 +8,7 @@ import { Phase0ClientError, getPhase0DocumentQuiz } from "@/lib/phase0/client";
 import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
 import type { DocumentType, DocumentStatus } from "@/lib/types";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
+import { DeleteDocumentButton } from "./delete-document-button";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
 
@@ -61,6 +62,8 @@ function mapStatus(status: Phase0Document["status"]): DocumentStatus {
       return "ready";
     case "FAILED":
       return "failed";
+    case "DELETING":
+      return "deleting";
   }
 }
 
@@ -163,6 +166,7 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
               <LinkButton href={routes.library} variant="outline">
                 Về thư viện
               </LinkButton>
+              <DeleteDocumentButton documentId={document.id} documentName={document.originalName} />
             </div>
           </div>
 

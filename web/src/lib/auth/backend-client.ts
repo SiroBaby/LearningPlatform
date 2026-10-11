@@ -7,7 +7,7 @@ import type { ClientRequest } from "node:http";
 import { cookies } from "next/headers";
 
 interface AuthBackendRequest {
-  readonly method: "GET" | "POST" | "PATCH";
+  readonly method: "GET" | "POST" | "PATCH" | "DELETE";
   readonly path: string;
   readonly body?: unknown;
   readonly authorization?: string;

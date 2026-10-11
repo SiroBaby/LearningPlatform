@@ -10,3 +10,8 @@ export async function GET(_request: Request, context: DocumentRouteContext): Pro
   const { id } = await context.params;
   return proxyPhase0Request({ method: "GET", path: `/documents/${encodeURIComponent(id)}` });
 }
+
+export async function DELETE(_request: Request, context: DocumentRouteContext): Promise<Response> {
+  const { id } = await context.params;
+  return proxyPhase0Request({ method: "DELETE", path: `/documents/${encodeURIComponent(id)}` });
+}

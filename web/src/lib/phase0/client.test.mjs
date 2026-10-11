@@ -15,6 +15,15 @@ test("uses the dedicated retry command and keeps the bounded client request", ()
   assert.match(source, /new Phase0ClientError\(408/u);
 });
 
+test("sends document deletion as a bounded DELETE request", () => {
+  assert.match(source, /export function deletePhase0Document/u);
+  assert.match(
+    source,
+    /requestPhase0Api\(`\/api\/phase0\/documents\/\$\{documentId\}`, "DELETE", mapConfirmDocumentResponse\)/u,
+  );
+  assert.match(source, /method: "GET" \| "POST" \| "DELETE"/u);
+});
+
 test("keeps attempt history as a top-level response contract", () => {
   assert.match(source, /export function getPhase0AttemptHistory/u);
   assert.match(source, /`\/api\/phase0\/quizzes\/\$\{quizId\}\/attempts`/u);

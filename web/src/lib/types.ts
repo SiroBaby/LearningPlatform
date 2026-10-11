@@ -4,7 +4,7 @@
  */
 
 export type DocumentType = "pdf" | "text" | "video" | "audio";
-export type DocumentStatus = "uploaded" | "probing" | "processing" | "ready" | "failed";
+export type DocumentStatus = "uploaded" | "probing" | "processing" | "ready" | "failed" | "deleting";
 export type OutputKind = "quiz" | "flashcards" | "tutor" | "checkpoints";
 
 export type ProcessingStepKey =

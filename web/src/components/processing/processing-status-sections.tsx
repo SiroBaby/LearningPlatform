@@ -2,6 +2,7 @@ import type { RefObject } from "react";
 import { CircleAlert, Loader2, RefreshCcw } from "lucide-react";
 import { Badge, Button, Card, CardBody, CardHeader, CardTitle, LinkButton, StatusPill, TypeBadge } from "@/components/ui";
 import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
+import { DeleteDocumentButton } from "@/components/library/delete-document-button";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
 import { routes } from "@/lib/routes";
 import {
@@ -72,6 +73,7 @@ export function ProcessingHeader({ document, detailHref, libraryHref, error }: P
             <LinkButton href={libraryHref} variant="outline">
               Về thư viện
             </LinkButton>
+            {document ? <DeleteDocumentButton documentId={document.id} documentName={document.originalName} /> : null}
           </div>
         </div>
 
