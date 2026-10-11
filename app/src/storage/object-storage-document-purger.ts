@@ -22,21 +22,14 @@ const HTTP_STATUS_TOO_MANY_REQUESTS = 429;
 const HTTP_STATUS_SERVER_ERROR_MIN = 500;
 const HTTP_STATUS_CLIENT_ERROR_MIN = 400;
 
-const ALREADY_DELETED_ERROR_NAMES = new Set(['NoSuchKey', 'NoSuchVersion']);
-/**
- * Names the SDK invents when the response carried no S3 error document, e.g.
- * a proxy refusing the CONNECT tunnel (403) or a gateway answering 404. Such a
- * response proves nothing about the object, so it is never "already deleted"
- * nor a permanent permission failure; it is retried until the attempt cap.
- */
-const NON_S3_RESPONSE_ERROR_NAMES = new Set(['', 'Unknown', 'UnknownError', 'NotFound']);
-const ACCESS_DENIED_ERROR_NAMES = new Set([
+const ALREADY_DELETED_S3_CODES = new Set(['NoSuchKey', 'NoSuchVersion']);
+const ACCESS_DENIED_S3_CODES = new Set([
   'AccessDenied',
   'AllAccessDisabled',
   'InvalidAccessKeyId',
   'SignatureDoesNotMatch',
 ]);
-const CONFIGURATION_ERROR_NAMES = new Set([
+const CONFIGURATION_S3_CODES = new Set([
   'AuthorizationHeaderMalformed',
   'InvalidArgument',
   'InvalidBucketName',
@@ -44,21 +37,21 @@ const CONFIGURATION_ERROR_NAMES = new Set([
   'NoSuchBucket',
   'PermanentRedirect',
 ]);
-const TEMPORARY_ERROR_NAMES = new Set([
+const TEMPORARY_S3_CODES = new Set([
   'InternalError',
   'RequestTimeout',
   'RequestTimeTooSkewed',
   'ServiceUnavailable',
   'SlowDown',
   'ThrottlingException',
-  'TimeoutError',
 ]);
 
 /** Classification outcome: a stable failure code, or "nothing left to delete". */
 export type PurgeStorageErrorClassification = DocumentPurgeErrorCode | 'ALREADY_DELETED';
 
 interface SdkErrorShape {
-  readonly name?: unknown;
+  /** Set by the SDK only when the body was an S3 error document. */
+  readonly Code?: unknown;
   readonly $metadata?: { readonly httpStatusCode?: unknown };
 }
 
@@ -68,16 +61,20 @@ interface SdkErrorShape {
  */
 export function classifyPurgeStorageError(error: unknown): PurgeStorageErrorClassification {
   const shape = (error && typeof error === 'object' ? error : {}) as SdkErrorShape;
-  const name = typeof shape.name === 'string' ? shape.name : '';
+  const s3Code = typeof shape.Code === 'string' && shape.Code !== '' ? shape.Code : undefined;
   const status = typeof shape.$metadata?.httpStatusCode === 'number'
     ? shape.$metadata.httpStatusCode
     : undefined;
 
-  if (ALREADY_DELETED_ERROR_NAMES.has(name)) return 'ALREADY_DELETED';
-  if (ACCESS_DENIED_ERROR_NAMES.has(name)) return DocumentPurgeErrorCode.ACCESS_DENIED;
-  if (CONFIGURATION_ERROR_NAMES.has(name)) return DocumentPurgeErrorCode.CONFIGURATION;
-  if (TEMPORARY_ERROR_NAMES.has(name)) return DocumentPurgeErrorCode.STORAGE_TEMPORARY;
-  if (NON_S3_RESPONSE_ERROR_NAMES.has(name)) return DocumentPurgeErrorCode.STORAGE_TEMPORARY;
+  // No S3 error document: a proxy refusing the CONNECT tunnel (Squid's HTML
+  // page makes the SDK throw a plain `Error`), a gateway page or a network
+  // failure. It proves nothing about the object or the credential, so it is
+  // never "already deleted" nor final; it is retried until the attempt cap.
+  if (s3Code === undefined) return DocumentPurgeErrorCode.STORAGE_TEMPORARY;
+  if (ALREADY_DELETED_S3_CODES.has(s3Code)) return 'ALREADY_DELETED';
+  if (ACCESS_DENIED_S3_CODES.has(s3Code)) return DocumentPurgeErrorCode.ACCESS_DENIED;
+  if (CONFIGURATION_S3_CODES.has(s3Code)) return DocumentPurgeErrorCode.CONFIGURATION;
+  if (TEMPORARY_S3_CODES.has(s3Code)) return DocumentPurgeErrorCode.STORAGE_TEMPORARY;
   if (status === undefined) return DocumentPurgeErrorCode.STORAGE_TEMPORARY;
   if (status === HTTP_STATUS_TOO_MANY_REQUESTS || status >= HTTP_STATUS_SERVER_ERROR_MIN) {
     return DocumentPurgeErrorCode.STORAGE_TEMPORARY;

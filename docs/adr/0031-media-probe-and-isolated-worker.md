@@ -192,9 +192,13 @@ tồn tại sau khi Document row bị xóa.
   4xx khác) và `PURGE_UNVERSIONED_LOCATOR` dead-letter ngay; hết số lần thử (kể
   cả crash liên tục) là `PURGE_ATTEMPTS_EXHAUSTED`. Chỉ `NoSuchVersion`,
   `NoSuchKey` và `204` là thành công. Không lưu raw error message.
-- **Phản hồi không phải của S3**: proxy từ chối tunnel `CONNECT` (403) hoặc
-  gateway trả 404/4xx không có body S3 thì SDK đặt tên `Unknown`/`NotFound`.
-  Phản hồi đó không chứng minh object đã mất hay credential sai, nên không coi
+- **Phản hồi không phải của S3**: phân biệt bằng trường `Code` trên exception,
+  vì SDK chỉ gắn trường này khi body là S3 error document (đã kiểm với MinIO
+  thật: `NoSuchBucket`, `SignatureDoesNotMatch`, `InvalidAccessKeyId` đều có
+  `Code`). Tên exception không đáng tin: proxy từ chối tunnel `CONNECT` hoặc
+  gateway trả 4xx thì SDK tự đặt `Unknown`/`NotFound` (body rỗng) hoặc `Error`
+  (body HTML không parse được, như trang `ERR_ACCESS_DENIED` 403 của Squid 6.13
+  trong image deploy đang pin), đều không có `Code`. Phản hồi đó không chứng minh object đã mất hay credential sai, nên không coi
   là "đã xóa" và không dead-letter ngay; worker retry đến trần rồi
   `PURGE_ATTEMPTS_EXHAUSTED`. Allowlist proxy bị đổi sai lúc đang chạy vì vậy
   không làm dead-letter hàng loạt trong một chu kỳ.

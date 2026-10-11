@@ -376,7 +376,7 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
     });
   });
 
-  it('retries with a cap when the egress proxy refuses the tunnel (403 without S3 code)', async () => {
+  it('retries with a cap when the egress proxy refuses the tunnel (Squid 403 page, no S3 code)', async () => {
     const proxy = await useProxy(false);
     const settings = settingsFor({ maxAttempts: 2 }, { egressProxyUrl: proxy.url });
     const manifest = await seedManifest([mediaLocator('media/a/b.mp4', randomUUID())]);
