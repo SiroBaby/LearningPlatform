@@ -25,16 +25,10 @@ export interface DocumentPurgeStorage {
   getBucketVersioning(bucket: string): Promise<BucketVersioningState>;
 }
 
-/**
- * Storage failure already classified into a stable code by the adapter. The
- * raw `cause` is kept for debugging only; it is never logged or persisted.
- */
+/** Storage failure already classified into a stable code by the adapter. */
 export class DocumentPurgeStorageError extends Error {
-  constructor(readonly code: DocumentPurgeErrorCode, options?: { readonly cause?: unknown }) {
+  constructor(readonly code: DocumentPurgeErrorCode) {
     super(`Document purge storage failed: ${code}`);
     this.name = DocumentPurgeStorageError.name;
-    if (options?.cause !== undefined) {
-      Object.defineProperty(this, 'cause', { value: options.cause });
-    }
   }
 }

@@ -11,6 +11,13 @@ import { GenericContainer, StartedTestContainer, Wait } from 'testcontainers';
 const MINIO_IMAGE =
   'bitnamilegacy/minio@sha256:8343eea75f4f7ef6394e3e1f1a5447706bac719bf8b0731cbbf4c473f3050712';
 const MINIO_PORT = 9000;
+/**
+ * Runs the MinIO binary directly. The Bitnami entrypoint first starts a
+ * temporary MinIO for setup, answers health checks, then stops and restarts
+ * it, so requests sent right after the wait strategy could be reset.
+ */
+const MINIO_ENTRYPOINT = ['/opt/bitnami/minio/bin/minio'];
+const MINIO_COMMAND = ['server', '/tmp/minio-data', '--address', `:${MINIO_PORT}`];
 export const TEST_OBJECT_STORAGE_ROOT_USER = 'minioadmin';
 export const TEST_OBJECT_STORAGE_ROOT_PASSWORD = 'minioadmin';
 export const TEST_OBJECT_STORAGE_REGION = 'us-east-1';
@@ -28,8 +35,6 @@ export interface TestObjectStorage {
   /** Uploads bytes and returns the VersionId (undefined on an unversioned bucket). */
   putObject(bucket: string, key: string, body: string): Promise<string | undefined>;
   listVersions(bucket: string, key: string): Promise<TestObjectVersions>;
-  /** Container log tail, for diagnosing storage failures in CI. */
-  readLogs(): Promise<string>;
   stop(): Promise<void>;
 }
 
@@ -40,7 +45,8 @@ export async function startTestObjectStorage(): Promise<TestObjectStorage> {
       MINIO_ROOT_PASSWORD: TEST_OBJECT_STORAGE_ROOT_PASSWORD,
       MINIO_ROOT_USER: TEST_OBJECT_STORAGE_ROOT_USER,
     })
-    .withCommand(['/opt/bitnami/scripts/minio/run.sh'])
+    .withEntrypoint(MINIO_ENTRYPOINT)
+    .withCommand(MINIO_COMMAND)
     .withExposedPorts(MINIO_PORT)
     .withWaitStrategy(Wait.forHttp('/minio/health/live', MINIO_PORT).forStatusCode(200))
     .start();
@@ -86,19 +92,6 @@ export async function startTestObjectStorage(): Promise<TestObjectStorage> {
           .filter((version) => version.Key === key)
           .map((version) => version.VersionId ?? 'null'),
       };
-    },
-    async readLogs() {
-      const chunks: string[] = [];
-      const stream = await container.logs({ tail: 200 });
-      await new Promise<void>((resolve) => {
-        stream.on('data', (chunk: Buffer | string) => chunks.push(chunk.toString()));
-        stream.on('end', () => resolve());
-        setTimeout(() => {
-          stream.destroy();
-          resolve();
-        }, 2_000);
-      });
-      return chunks.join('');
     },
     async stop() {
       admin.destroy();

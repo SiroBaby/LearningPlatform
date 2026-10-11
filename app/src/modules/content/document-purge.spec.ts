@@ -73,10 +73,6 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
   });
 
   afterAll(async () => {
-    // Diagnostics for unexpected storage failures seen in CI (#221).
-    if (process.env.CI && objectStorage) {
-      console.warn(`minio logs:\n${await objectStorage.readLogs()}`);
-    }
     await dataSource?.destroy();
     await Promise.all([db?.stop(), objectStorage?.stop()]);
   });
@@ -90,7 +86,6 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
   });
 
   afterEach(async () => {
-    storageFailures.splice(0);
     await Promise.all(stoppables.splice(0).map((stoppable) => stoppable.stop()));
   });
 
@@ -123,26 +118,8 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
     return { documentPurge: settings } as unknown as ApplicationConfigService;
   }
 
-  /** SDK failures seen by purge clients, so an unexpected one is visible in the assertion diff. */
-  const storageFailures: string[] = [];
-
   function purgerFor(settings: DocumentPurgeSettings): DocumentPurgeStorage {
-    const client = createDocumentPurgeS3Client(settings.storage);
-    client.middlewareStack.add((next) => async (args) => {
-      try {
-        return await next(args);
-      } catch (error) {
-        const shape = error as { name?: string; code?: string; message?: string; $metadata?: { httpStatusCode?: number } };
-        const cause = (error as { cause?: { code?: string; message?: string } }).cause
-          ?? { code: (error as { $metadata?: unknown; errno?: string; syscall?: string }).errno, message: `${new Date().toISOString()}` };
-        const description = `${shape.name}/${shape.$metadata?.httpStatusCode ?? '-'}/${shape.code ?? '-'}/${String(shape.message).slice(0, 160)}/cause=${cause?.code ?? '-'}:${String(cause?.message ?? '').slice(0, 120)}`;
-        storageFailures.push(description);
-        // Test-only diagnostics: fixture data, no credentials.
-        console.warn(`purge storage failure: ${description}`);
-        throw error;
-      }
-    }, { step: 'finalizeRequest' });
-    return new ObjectStorageDocumentPurger(client);
+    return new ObjectStorageDocumentPurger(createDocumentPurgeS3Client(settings.storage));
   }
 
   function serviceFor(settings: DocumentPurgeSettings = settingsFor()): DocumentPurgeService {
@@ -581,7 +558,6 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
 
     const processed = await Promise.all([serviceFor(settings).purgeDueManifests(), serviceFor(settings).purgeDueManifests()]);
 
-    expect(storageFailures).toEqual([]);
     expect(processed[0] + processed[1]).toBe(seeded.length);
     const rows = await manifests.findBy(seeded.map((manifest) => ({ id: manifest.id })));
     expect(rows.map((row) => [row.status, row.attempts])).toEqual(
@@ -590,8 +566,6 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
   });
 
   it('fails closed at startup unless media bucket versioning is Enabled', async () => {
-    await serviceFor().assertMediaBucketVersioned().catch(() => undefined);
-    expect(storageFailures).toEqual([]);
     await expect(serviceFor().assertMediaBucketVersioned()).resolves.toBeUndefined();
     for (const mediaBucket of [SUSPENDED_BUCKET, UNVERSIONED_MEDIA_BUCKET]) {
       const settings = settingsFor({ mediaBucket });

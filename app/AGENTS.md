@@ -74,6 +74,7 @@
 - Trong `.spec.ts`, nếu VS Code không áp dụng legacy decorator configuration, đăng ký custom `PropertyDecorator` trực tiếp trên prototype (ví dụ `IsNonBlankString()(TestDto.prototype, 'value')`) thay vì decorator syntax. Test DTO vẫn phải dùng `value!: Type` cho property được gán trong test.
 - Fixture document flow phải dùng `app/test/support/test-database-cleanup.ts`; credit wallet và credit ledger thuộc schema `course`, không được cleanup bằng tên bảng tương ứng trong schema `ai`.
 - Test làm hỏng dữ liệu (tamper test) phải đổi byte một cách tất định ở đúng vùng cần kiểm, ví dụ decode rồi lật một bit của auth tag rồi encode lại; không thay ký tự cuối của chuỗi base64/base64url, vì ký tự đó có thể đã trùng hoặc chỉ mang bit đệm, khiến test fail ngẫu nhiên.
+- Testcontainers chạy image Bitnami MinIO phải bỏ qua entrypoint Bitnami và chạy thẳng binary `minio server`; entrypoint Bitnami khởi động MinIO tạm cho setup (health đã trả 200), rồi dừng và khởi động lại, nên request ngay sau wait strategy có thể bị `socket hang up` hoặc reset ngẫu nhiên.
 
 ## Swagger Security
 
