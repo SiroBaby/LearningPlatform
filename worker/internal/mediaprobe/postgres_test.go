@@ -205,6 +205,17 @@ func TestPingWithRetrySucceedsAfterTransientRefusals(t *testing.T) {
 	}
 }
 
+func TestPingWithRetryRetriesTransientServerStates(t *testing.T) {
+	mockPing, actualCalls := scriptedPing(&pgconn.PgError{Code: "57P03"}, &pgconn.PgError{Code: "53300"}, nil)
+	mockClock := &fakePingClock{}
+	if err := pingWithRetry(context.Background(), mockPing, defaultPingRetry, mockClock.retryClock()); err != nil {
+		t.Fatalf("pingWithRetry() error = %v", err)
+	}
+	if *actualCalls != 3 {
+		t.Fatalf("calls = %d, want 3", *actualCalls)
+	}
+}
+
 func TestPingWithRetryFailsFastOnNonTransientErrors(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -215,6 +226,7 @@ func TestPingWithRetryFailsFastOnNonTransientErrors(t *testing.T) {
 		{"unknown database", &pgconn.PgError{Code: "3D000"}, DatabaseStageServer},
 		{"missing privilege", &pgconn.PgError{Code: "42501"}, DatabaseStageServer},
 		{"untrusted certificate", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}, DatabaseStageTLSVerify},
+		{"tls alert", tls.AlertError(40), DatabaseStageTLS},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

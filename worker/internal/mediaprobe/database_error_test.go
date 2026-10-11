@@ -29,7 +29,9 @@ func TestClassifyDatabaseErrorMapsConstructedErrors(t *testing.T) {
 		{"auth no login", &pgconn.PgError{Code: "28000"}, DatabaseErrorClass{Stage: DatabaseStageAuth, SQLState: "28000"}},
 		{"unknown database", &pgconn.PgError{Code: "3D000"}, DatabaseErrorClass{Stage: DatabaseStageServer, SQLState: "3D000"}},
 		{"missing connect privilege", &pgconn.PgError{Code: "42501"}, DatabaseErrorClass{Stage: DatabaseStageServer, SQLState: "42501"}},
-		{"too many connections", &pgconn.PgError{Code: "53300"}, DatabaseErrorClass{Stage: DatabaseStageServer, SQLState: "53300"}},
+		{"too many connections", &pgconn.PgError{Code: "53300"}, DatabaseErrorClass{Stage: DatabaseStageServer, SQLState: "53300", Retryable: true}},
+		{"cannot connect now", &pgconn.PgError{Code: "57P03"}, DatabaseErrorClass{Stage: DatabaseStageServer, SQLState: "57P03", Retryable: true}},
+		{"admin shutdown", &pgconn.PgError{Code: "57P01"}, DatabaseErrorClass{Stage: DatabaseStageServer, SQLState: "57P01", Retryable: true}},
 		{"malformed sqlstate dropped", &pgconn.PgError{Code: "28P01 " + fakeServerSecret}, DatabaseErrorClass{Stage: DatabaseStageServer}},
 		{"unknown authority", fmt.Errorf("tls error: %w", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}), DatabaseErrorClass{Stage: DatabaseStageTLSVerify}},
 		{"hostname mismatch", fmt.Errorf("tls error: %w", x509.HostnameError{Host: fakeServerSecret}), DatabaseErrorClass{Stage: DatabaseStageTLSVerify}},
@@ -79,6 +81,60 @@ func TestClassifyDatabaseErrorMapsRealPgconnErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClassifyDatabaseErrorMapsRealTLSPhaseErrors(t *testing.T) {
+	cases := []struct {
+		name     string
+		handle   func(net.Conn)
+		expected DatabaseErrorClass
+	}{
+		{"forwarder closing before the SSLRequest reply is EOF", closeAfterSSLRequest, DatabaseErrorClass{Stage: DatabaseStageUpstreamClosed, Retryable: true}},
+		{"server refusing TLS is tls", refuseSSLRequest, DatabaseErrorClass{Stage: DatabaseStageTLS}},
+		{"server resetting mid-handshake is tls", acceptSSLThenClose(resetConnection), DatabaseErrorClass{Stage: DatabaseStageTLS}},
+		{"server closing after the ClientHello is tls", acceptSSLThenClose(readClientHello), DatabaseErrorClass{Stage: DatabaseStageTLS}},
+		{"server hanging mid-handshake is tls", acceptSSLThenClose(holdConnection), DatabaseErrorClass{Stage: DatabaseStageTLS}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			config := fakeServerConfig(t, startFakeServer(t, testCase.handle))
+			config.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: x509.NewCertPool(), ServerName: "database.invalid"}
+			_, err := pgconn.ConnectConfig(ctx, config)
+			if err == nil {
+				t.Fatal("ConnectConfig() succeeded, want error")
+			}
+			actual := ClassifyDatabaseError(err)
+			if actual != testCase.expected {
+				t.Fatalf("ClassifyDatabaseError(%v) = %+v, want %+v", err, actual, testCase.expected)
+			}
+		})
+	}
+}
+
+// A startup write failure on a plaintext connection is not a TLS handshake, so
+// it keeps its network stage.
+func TestClassifyDatabaseErrorKeepsPlaintextStartupWriteAsNetwork(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	config := fakeServerConfig(t, startFakeServer(t, holdConnection))
+	dial := config.DialFunc
+	config.DialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
+		connection, err := dial(ctx, network, address)
+		return resetOnWriteConn{Conn: connection}, err
+	}
+	_, err := pgconn.ConnectConfig(ctx, config)
+	expected := DatabaseErrorClass{Stage: DatabaseStageConnectReset, Retryable: true}
+	if actual := ClassifyDatabaseError(err); actual != expected {
+		t.Fatalf("ClassifyDatabaseError(%v) = %+v, want %+v", err, actual, expected)
+	}
+}
+
+type resetOnWriteConn struct{ net.Conn }
+
+func (resetOnWriteConn) Write([]byte) (int, error) {
+	return 0, &net.OpError{Op: "write", Net: "tcp", Err: os.NewSyscallError("write", syscall.ECONNRESET)}
 }
 
 func fakeServerConfig(t *testing.T, address string) *pgconn.Config {
@@ -152,4 +208,58 @@ func rejectStartup(code string) func(net.Conn) {
 		})
 		_ = backend.Flush()
 	}
+}
+
+// sslRequestLength is the fixed size of a PostgreSQL SSLRequest packet.
+const sslRequestLength = 8
+
+func readSSLRequest(connection net.Conn) bool {
+	_, err := io.ReadFull(connection, make([]byte, sslRequestLength))
+	return err == nil
+}
+
+// closeAfterSSLRequest mimics HAProxy closing the client before the upstream answered.
+func closeAfterSSLRequest(connection net.Conn) {
+	readSSLRequest(connection)
+	_ = connection.Close()
+}
+
+func refuseSSLRequest(connection net.Conn) {
+	if readSSLRequest(connection) {
+		_, _ = connection.Write([]byte{'N'})
+	}
+}
+
+// acceptSSLThenClose answers 'S' like PostgreSQL, then ends the TLS handshake with close.
+func acceptSSLThenClose(close func(net.Conn)) func(net.Conn) {
+	return func(connection net.Conn) {
+		if !readSSLRequest(connection) {
+			return
+		}
+		if _, err := connection.Write([]byte{'S'}); err != nil {
+			return
+		}
+		close(connection)
+	}
+}
+
+// resetConnection closes with linger 0 so the client receives a RST mid-handshake.
+func resetConnection(connection net.Conn) {
+	if tcpConnection, isTCP := connection.(*net.TCPConn); isTCP {
+		_ = tcpConnection.SetLinger(0)
+	}
+	_ = connection.Close()
+}
+
+// tlsRecordHeaderLength is the size of a TLS record header (type, version, length).
+const tlsRecordHeaderLength = 5
+
+// readClientHello consumes the whole ClientHello record, then closes cleanly (EOF).
+func readClientHello(connection net.Conn) {
+	header := make([]byte, tlsRecordHeaderLength)
+	if _, err := io.ReadFull(connection, header); err == nil {
+		recordLength := int(header[3])<<8 | int(header[4])
+		_, _ = io.ReadFull(connection, make([]byte, recordLength))
+	}
+	_ = connection.Close()
 }

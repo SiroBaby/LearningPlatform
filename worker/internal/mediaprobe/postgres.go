@@ -19,7 +19,13 @@ type PostgresStore struct {
 }
 
 // databaseConnectTimeout bounds one dial + TLS + startup so a dropped SYN cannot
-// consume the whole retry budget.
+// consume the whole retry budget. Known limit: it is shorter than the
+// media-probe-db-egress forwarder's `timeout connect 10s`, which HAProxy also
+// retries (default `retries 3`, up to ~40s), so an upstream that drops SYNs is
+// logged as connect_timeout, the same as a dropped SYN to the forwarder; check
+// the forwarder logs to tell them apart. No client timeout inside the 30s budget
+// could outwait the forwarder, while an upstream that refuses or resets is still
+// reported quickly as upstream_closed.
 const databaseConnectTimeout = 5 * time.Second
 
 // defaultPingRetry covers the few seconds a new pod's first connection is

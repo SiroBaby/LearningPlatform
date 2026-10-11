@@ -79,6 +79,24 @@ func TestLogBootstrapFailureDoesNotLeakRealConnectionSettings(t *testing.T) {
 	}
 }
 
+func TestDatabaseBootstrapResultTreatsCanceledContextAsShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	inputError := mediaprobe.DatabaseConnectError{DatabaseErrorClass: mediaprobe.DatabaseErrorClass{Stage: mediaprobe.DatabaseStageCanceled}, Attempts: 2}
+	if actual := databaseBootstrapResult(ctx, inputError); actual != nil {
+		t.Fatalf("databaseBootstrapResult() = %v, want nil after SIGTERM", actual)
+	}
+}
+
+func TestDatabaseBootstrapResultReportsFailureWhileContextIsLive(t *testing.T) {
+	inputError := mediaprobe.DatabaseConnectError{DatabaseErrorClass: mediaprobe.DatabaseErrorClass{Stage: mediaprobe.DatabaseStageConnectRefused, Retryable: true}, Attempts: 9}
+	actual := databaseBootstrapResult(context.Background(), inputError)
+	var failure bootstrapFailure
+	if !errors.As(actual, &failure) || failure.code != bootstrapDatabase || failure.database == nil || failure.database.Stage != mediaprobe.DatabaseStageConnectRefused {
+		t.Fatalf("databaseBootstrapResult() = %#v, want database failure with connect_refused", actual)
+	}
+}
+
 func captureBootstrapLog(t *testing.T, err error) map[string]any {
 	t.Helper()
 	var buffer bytes.Buffer

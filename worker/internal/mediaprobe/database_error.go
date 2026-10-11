@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -36,6 +37,24 @@ const (
 
 const sqlStateAuthorizationClass = "28"
 
+// transientServerSQLStates are server states that clear on their own within
+// seconds: an Aiven failover or restart answers new connections with
+// cannot_connect_now/admin_shutdown, and too_many_connections clears as other
+// clients disconnect. They retry inside the same bounded budget; a state that
+// persists still fails the bootstrap after MaxElapsed.
+var transientServerSQLStates = map[string]bool{
+	"57P01": true, // admin_shutdown
+	"57P03": true, // cannot_connect_now
+	"53300": true, // too_many_connections
+}
+
+// pgx exposes no typed error for the TLS phase, so these fixed pgx messages
+// identify it. They are only compared, never logged.
+const (
+	pgxTLSRefusedMessage  = "server refused TLS connection"
+	pgxStartupWritePrefix = "failed to write startup message: "
+)
+
 var sqlStatePattern = regexp.MustCompile(`^[0-9A-Z]{5}$`)
 
 // DatabaseErrorClass is the log-safe classification of a connection error.
@@ -47,8 +66,15 @@ type DatabaseErrorClass struct {
 
 // ClassifyDatabaseError maps a pgx connection error to a log-safe stage. Only
 // transient network failures (refused, reset, timeout, EOF from the forwarder)
-// are retryable; server-reported errors such as SQLSTATE class 28/3D/42 and
-// certificate verification failures need an operator and fail at once.
+// and the transient server SQLSTATEs above are retryable; SQLSTATE class
+// 28/3D/42, certificate verification and TLS handshake failures need an
+// operator and fail at once.
+//
+// A failure after the server accepted the SSLRequest is stage tls whatever the
+// socket error: the 'S' reply comes from upstream PostgreSQL through the
+// forwarder, so the network path is already proven and a reset or EOF there
+// means the TLS setup (SNI, version, cipher) was rejected, not the kube-router
+// race. A failure before that reply keeps its network stage.
 func ClassifyDatabaseError(err error) DatabaseErrorClass {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
@@ -59,6 +85,9 @@ func ClassifyDatabaseError(err error) DatabaseErrorClass {
 	}
 	if isTLSVerificationError(err) {
 		return DatabaseErrorClass{Stage: DatabaseStageTLSVerify}
+	}
+	if isTLSHandshakeFailure(err) {
+		return DatabaseErrorClass{Stage: DatabaseStageTLS}
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return DatabaseErrorClass{Stage: DatabaseStageConnectRefused, Retryable: true}
@@ -91,7 +120,36 @@ func classifyPgError(pgError *pgconn.PgError) DatabaseErrorClass {
 	if strings.HasPrefix(sqlState, sqlStateAuthorizationClass) {
 		stage = DatabaseStageAuth
 	}
-	return DatabaseErrorClass{Stage: stage, SQLState: sqlState}
+	return DatabaseErrorClass{Stage: stage, SQLState: sqlState, Retryable: transientServerSQLStates[sqlState]}
+}
+
+// isTLSHandshakeFailure reports a TLS connection whose server refused TLS or
+// failed while writing the startup message. crypto/tls runs the handshake
+// lazily on that first write, so its error is the handshake error.
+func isTLSHandshakeFailure(err error) bool {
+	var connectError *pgconn.ConnectError
+	if !errors.As(err, &connectError) || connectError.Config == nil || connectError.Config.TLSConfig == nil {
+		return false
+	}
+	return hasWrappedMessage(connectError, func(message string) bool {
+		return message == pgxTLSRefusedMessage || strings.HasPrefix(message, pgxStartupWritePrefix)
+	})
+}
+
+func hasWrappedMessage(err error, matches func(string) bool) bool {
+	if err == nil {
+		return false
+	}
+	if matches(err.Error()) {
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() error }:
+		return hasWrappedMessage(wrapped.Unwrap(), matches)
+	case interface{ Unwrap() []error }:
+		return slices.ContainsFunc(wrapped.Unwrap(), func(inner error) bool { return hasWrappedMessage(inner, matches) })
+	}
+	return false
 }
 
 func isTLSVerificationError(err error) bool {

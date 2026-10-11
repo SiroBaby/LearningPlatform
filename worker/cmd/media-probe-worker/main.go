@@ -59,6 +59,15 @@ func newDatabaseBootstrapFailure(err error) error {
 	return bootstrapFailure{code: bootstrapDatabase, database: &databaseError}
 }
 
+// databaseBootstrapResult returns nil when SIGTERM canceled ctx while the
+// database was still retrying: that is a clean shutdown, not a bootstrap failure.
+func databaseBootstrapResult(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return newDatabaseBootstrapFailure(err)
+}
+
 func bootstrapFailureCodeOf(err error) bootstrapFailureCode {
 	var failure bootstrapFailure
 	if errors.As(err, &failure) {
@@ -128,11 +137,11 @@ func run() error {
 	}
 	store, err := mediaprobe.NewPostgresStore(ctx, poolConfig)
 	if err != nil {
-		if ctx.Err() != nil {
+		bootstrapError := databaseBootstrapResult(ctx, err)
+		if bootstrapError == nil {
 			slog.Info("media_probe_worker.shutdown.completed", "event", "media_probe_worker.shutdown.completed", "runtime", "media-probe-worker")
-			return nil
 		}
-		return newDatabaseBootstrapFailure(err)
+		return bootstrapError
 	}
 	defer store.Close()
 	objects, err := mediaprobe.NewS3Store(
