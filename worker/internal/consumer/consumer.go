@@ -37,21 +37,25 @@ type Options struct {
 	PollInterval    time.Duration
 	PersistTimeout  time.Duration
 	ShutdownTimeout time.Duration
+	// FenceCheckInterval bounds how long provider generation keeps running
+	// after a deletion or lease fence is committed.
+	FenceCheckInterval time.Duration
 }
 
 const (
-	defaultConcurrency     = 2
-	maxConcurrency         = 32
-	defaultJobTimeout      = 10 * time.Minute
-	minJobTimeout          = time.Millisecond
-	maxJobTimeout          = 14 * time.Minute
-	defaultPollInterval    = time.Second
-	minPollInterval        = 100 * time.Millisecond
-	maxPollInterval        = time.Minute
-	defaultPersistTimeout  = 30 * time.Second
-	defaultShutdownTimeout = 30 * time.Second
-	minShutdownTimeout     = time.Second
-	maxShutdownTimeout     = 2 * time.Minute
+	defaultConcurrency        = 2
+	maxConcurrency            = 32
+	defaultJobTimeout         = 10 * time.Minute
+	minJobTimeout             = time.Millisecond
+	maxJobTimeout             = 14 * time.Minute
+	defaultPollInterval       = time.Second
+	minPollInterval           = 100 * time.Millisecond
+	maxPollInterval           = time.Minute
+	defaultPersistTimeout     = 30 * time.Second
+	defaultShutdownTimeout    = 30 * time.Second
+	minShutdownTimeout        = time.Second
+	maxShutdownTimeout        = 2 * time.Minute
+	defaultFenceCheckInterval = 5 * time.Second
 )
 
 type processOutcome uint8
@@ -278,16 +282,25 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
 	questions := make([]processing.Question, 0, len(chunks))
-	for index, chunk := range chunks {
-		question, err := bootstrap.generator.Generate(ctx, chunk.Text)
-		if err != nil {
-			return bootstrap.finish(ctx, job, err, failureComponentProvider)
+	err = bootstrap.withActiveFence(ctx, job, func(generationCtx context.Context) error {
+		for index, chunk := range chunks {
+			if err := generationCtx.Err(); err != nil {
+				return err
+			}
+			question, err := bootstrap.generator.Generate(generationCtx, chunk.Text)
+			if err != nil {
+				return err
+			}
+			question.ChunkID = chunk.ID
+			question.ChunkIndex = chunk.Index
+			question.Ordinal = index
+			question.Citation = processing.Citation{ChunkID: chunk.ID, Locator: chunk.Locator, Snippet: chunk.Text}
+			questions = append(questions, question)
 		}
-		question.ChunkID = chunk.ID
-		question.ChunkIndex = chunk.Index
-		question.Ordinal = index
-		question.Citation = processing.Citation{ChunkID: chunk.ID, Locator: chunk.Locator, Snippet: chunk.Text}
-		questions = append(questions, question)
+		return nil
+	})
+	if err != nil {
+		return bootstrap.finish(ctx, job, err, failureComponentProvider)
 	}
 	persisted, err := bootstrap.store.PersistAndComplete(ctx, job, chunks, questions)
 	if err == nil {
@@ -302,6 +315,42 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 		return processOutcomeUnknown, err, failureComponentPersistence
 	}
 	return bootstrap.finish(ctx, job, err, failureComponentPersistence)
+}
+
+// withActiveFence polls the job fence on a fixed interval while provider
+// generation runs, so a deleted Document or cancelled job stops further paid
+// provider calls without one database read per chunk. Only a confirmed fence
+// loss cancels generation; a transient read error leaves the transactional
+// fence in PersistAndComplete as the authority instead of discarding output.
+func (bootstrap *Bootstrap) withActiveFence(ctx context.Context, job processing.Job, operation func(context.Context) error) error {
+	operationCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var fenceLost atomic.Bool
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		ticker := time.NewTicker(bootstrap.options.FenceCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-operationCtx.Done():
+				return
+			case <-ticker.C:
+				if errors.Is(bootstrap.store.CheckActive(operationCtx, job), processing.ErrJobFenceLost) {
+					fenceLost.Store(true)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	err := operation(operationCtx)
+	cancel()
+	<-monitorDone
+	if fenceLost.Load() {
+		return processing.ErrJobFenceLost
+	}
+	return err
 }
 
 func readSource(ctx context.Context, objects processing.ObjectReader, source processing.Source, max int64) ([]byte, error) {
@@ -451,6 +500,9 @@ func normalizeOptions(options Options) Options {
 		options.PollInterval = minPollInterval
 	} else if options.PollInterval > maxPollInterval {
 		options.PollInterval = maxPollInterval
+	}
+	if options.FenceCheckInterval <= 0 {
+		options.FenceCheckInterval = defaultFenceCheckInterval
 	}
 	if options.PersistTimeout <= 0 {
 		options.PersistTimeout = defaultPersistTimeout
