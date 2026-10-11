@@ -83,7 +83,7 @@ export function getDocumentFailurePresentation(
     case "MEDIA_PROBE_FAILED":
       return {
         title: "Không đọc được file video hoặc âm thanh",
-        description: "File có thể bị hỏng hoặc quá dài. Hãy kiểm tra file phát được trên máy, cắt ngắn nếu cần rồi tải lại.",
+        description: "File có thể bị hỏng hoặc dài quá 2 giờ. Hãy kiểm tra file phát được trên máy, cắt ngắn nếu cần rồi tải lại.",
         retryable: false,
       };
     case "MEDIA_PROBE_OUTPUT_CAP_EXCEEDED":
@@ -107,19 +107,19 @@ export function getDocumentFailurePresentation(
     case "MEDIA_UNSUPPORTED_AUDIO_CODEC":
       return {
         title: "Định dạng âm thanh chưa được hỗ trợ",
-        description: "Hãy xuất lại MP4 với âm thanh AAC-LC (1 hoặc 2 kênh), hoặc dùng file MP3 thông thường rồi tải lại.",
+        description: "Hãy xuất lại MP4 với âm thanh AAC-LC (1 hoặc 2 kênh), hoặc dùng file MP3 không kèm ảnh bìa rồi tải lại.",
         retryable: false,
       };
     case "MEDIA_UNSUPPORTED_CONTAINER":
       return {
         title: "Định dạng file chưa được hỗ trợ",
-        description: "Hãy chuyển file sang MP4 hoặc MP3 rồi tải lại.",
+        description: "Hãy dùng file MP4 hoặc MP3 không bị khóa bản quyền. Nếu là MP4, hãy xuất lại chỉ gồm hình và tiếng (bỏ phụ đề, track phụ) rồi tải lại.",
         retryable: false,
       };
     case "MEDIA_UNSUPPORTED_VIDEO_CODEC":
       return {
         title: "Định dạng video chưa được hỗ trợ",
-        description: "Hãy xuất lại MP4 với video H.264; video 4K hoặc 60 fps chưa được hỗ trợ.",
+        description: "Hãy xuất lại MP4 với một luồng video H.264 8-bit (yuv420p), tối đa 1080p (cạnh dài 1920 px) và tối đa 30 fps rồi tải lại.",
         retryable: false,
       };
     case "PDF_INVALID":
@@ -155,7 +155,7 @@ export function getDocumentFailurePresentation(
     case null:
       return {
         title: "Chưa thể xử lý tài liệu",
-        description: "Hãy thử lại sau hoặc tải lại file nếu tình trạng này tiếp tục.",
+        description: "Hãy kiểm tra file rồi tải lại.",
         retryable: false,
       };
   }

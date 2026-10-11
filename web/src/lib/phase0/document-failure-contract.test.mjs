@@ -17,13 +17,17 @@ function readBackendContract() {
 function readBackendFailureCodes(source) {
   const enumBody = source.match(/export enum DocumentProcessingFailureCode \{([^}]*)\}/u)?.[1];
   assert.ok(enumBody, "Không tìm thấy enum DocumentProcessingFailureCode ở backend.");
-  return [...enumBody.matchAll(/^\s*([A-Z_]+) = '\1',?$/gmu)].map((match) => match[1]);
+  const memberLines = enumBody.split("\n").map((line) => line.trim()).filter(Boolean);
+  const codes = memberLines.map((line) => line.match(/^([A-Z0-9_]+) = '\1',?$/u)?.[1]);
+  const unparsedLines = memberLines.filter((_, index) => !codes[index]);
+  assert.deepEqual(unparsedLines, [], "Có member enum backend không parse được.");
+  return codes;
 }
 
 function readBackendRetryableCodes(source) {
   const functionBody = source.match(/export function isDocumentProcessingFailureRetryable\([^)]*\)[^{]*\{([^}]*)\}/u)?.[1];
   assert.ok(functionBody, "Không tìm thấy isDocumentProcessingFailureRetryable ở backend.");
-  return [...functionBody.matchAll(/DocumentProcessingFailureCode\.([A-Z_]+)/gu)].map((match) => match[1]);
+  return [...functionBody.matchAll(/DocumentProcessingFailureCode\.([A-Z0-9_]+)/gu)].map((match) => match[1]);
 }
 
 test("web failure codes match the backend DocumentProcessingFailureCode enum", () => {

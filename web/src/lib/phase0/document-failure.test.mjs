@@ -36,7 +36,8 @@ test("returns safe fallback presentation for null error code", () => {
 
   assert.equal(presentation.retryable, false);
   assert.match(presentation.title, /Chưa thể xử lý tài liệu/);
-  assert.match(presentation.description, /thử lại sau|tải lại file/i);
+  assert.doesNotMatch(presentation.description, /thử lại/i);
+  assert.match(presentation.description, /tải lại/i);
 });
 
 test("never marks null error code as retryable", () => {
@@ -65,4 +66,25 @@ test("guides the learner to AAC-LC for unsupported media audio", () => {
 
   assert.equal(presentation.retryable, false);
   assert.match(presentation.description, /AAC-LC/u);
+});
+
+test("states the probe video limits for unsupported media video", () => {
+  const presentation = getDocumentFailurePresentation("MEDIA_UNSUPPORTED_VIDEO_CODEC");
+
+  assert.equal(presentation.retryable, false);
+  assert.match(presentation.description, /H\.264 8-bit/u);
+  assert.match(presentation.description, /1080p/u);
+  assert.match(presentation.description, /30 fps/u);
+});
+
+test("covers protected and extra-track causes for unsupported media container", () => {
+  const presentation = getDocumentFailurePresentation("MEDIA_UNSUPPORTED_CONTAINER");
+
+  assert.equal(presentation.retryable, false);
+  assert.match(presentation.description, /khóa bản quyền/u);
+  assert.match(presentation.description, /phụ đề/u);
+});
+
+test("states the 2-hour duration limit when media probe fails", () => {
+  assert.match(getDocumentFailurePresentation("MEDIA_PROBE_FAILED").description, /2 giờ/u);
 });
