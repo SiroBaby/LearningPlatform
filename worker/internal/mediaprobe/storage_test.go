@@ -85,12 +85,33 @@ func TestS3StoreKeepsConfiguredHostBehindEgressProxy(t *testing.T) {
 			t.Fatalf("requested hosts = %v, want only %s", hosts, expectedHost)
 		}
 	}
+	// HEAD for Head, then HEAD for the versioned Stat in OpenVersion (the body
+	// is not read); a GET ?location would mean minio-go is discovering the
+	// region instead of using the pinned one.
+	expectedRequests := []string{"HEAD ", "HEAD versionId=version-1"}
+	if requests := proxy.requests(); strings.Join(requests, "|") != strings.Join(expectedRequests, "|") {
+		t.Fatalf("requests = %v, want %v", requests, expectedRequests)
+	}
+}
+
+func TestNewS3StoreRejectsAmazonEndpointWithoutRegion(t *testing.T) {
+	for _, endpoint := range []string{"https://s3.amazonaws.com", "https://s3-external-1.amazonaws.com"} {
+		if _, err := NewS3Store(endpoint, "access", "secret", ""); err == nil {
+			t.Fatalf("NewS3Store(%q) error = nil, want region error", endpoint)
+		}
+	}
+	for _, endpoint := range []string{"https://s3.ap-southeast-1.amazonaws.com", "https://s3.ap-southeast-1.amazonaws.com:443", "http://localhost:9000"} {
+		if _, err := NewS3Store(endpoint, "access", "secret", ""); err != nil {
+			t.Fatalf("NewS3Store(%q) error = %v", endpoint, err)
+		}
+	}
 }
 
 type recordingS3Proxy struct {
 	server    *httptest.Server
 	mutex     sync.Mutex
 	requested []string
+	methods   []string
 }
 
 func newRecordingS3Proxy(t *testing.T) *recordingS3Proxy {
@@ -104,6 +125,7 @@ func newRecordingS3Proxy(t *testing.T) *recordingS3Proxy {
 func (proxy *recordingS3Proxy) serve(writer http.ResponseWriter, request *http.Request) {
 	proxy.mutex.Lock()
 	proxy.requested = append(proxy.requested, request.Host)
+	proxy.methods = append(proxy.methods, request.Method+" "+request.URL.RawQuery)
 	proxy.mutex.Unlock()
 	switch {
 	case strings.Contains(request.Host, "dualstack"):
@@ -123,4 +145,10 @@ func (proxy *recordingS3Proxy) hosts() []string {
 	proxy.mutex.Lock()
 	defer proxy.mutex.Unlock()
 	return append([]string(nil), proxy.requested...)
+}
+
+func (proxy *recordingS3Proxy) requests() []string {
+	proxy.mutex.Lock()
+	defer proxy.mutex.Unlock()
+	return append([]string(nil), proxy.methods...)
 }

@@ -47,7 +47,9 @@ readonly CHECK_POD="media-probe-egress-check-$3"
 readonly CHECK_IMAGE=ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
 readonly S3_ENDPOINT=s3.ap-southeast-1.amazonaws.com
 # minio-go switches Amazon endpoints to this host unless dualstack is disabled
-# (#210); Squid must keep rejecting it so such a client fails loudly.
+# (#210). This check guards against widening the Squid ACL to work around such a
+# client; it passes before and after the client fix, so it does not prove the
+# client stopped using dualstack (a completed media probe job does).
 readonly S3_DUALSTACK_ENDPOINT=s3.dualstack.ap-southeast-1.amazonaws.com
 readonly NOT_ALLOWLISTED_HOST=example.com
 readonly INTERNET_IP=1.1.1.1

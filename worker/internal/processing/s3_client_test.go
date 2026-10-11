@@ -44,9 +44,25 @@ func TestS3MediaReaderKeepsConfiguredHostBehindEgressProxy(t *testing.T) {
 	if err != nil || string(data) != "data" {
 		t.Fatalf("ReadVersion() = %q, %v; requested hosts %v", data, err, hosts)
 	}
+	if len(hosts) == 0 {
+		t.Fatal("no request reached the proxy")
+	}
 	for _, host := range hosts {
 		if host != "media-bucket.s3.ap-southeast-1.amazonaws.com" {
 			t.Fatalf("requested hosts = %v, want only media-bucket.s3.ap-southeast-1.amazonaws.com", hosts)
+		}
+	}
+}
+
+func TestNewS3ReaderRejectsAmazonEndpointWithoutRegion(t *testing.T) {
+	for _, endpoint := range []string{"https://s3.amazonaws.com", "s3.amazonaws.com"} {
+		if _, err := NewS3Reader(endpoint, "access", "secret", "document-bucket"); err == nil {
+			t.Fatalf("NewS3Reader(%q) error = nil, want region error", endpoint)
+		}
+	}
+	for _, endpoint := range []string{"https://s3.ap-southeast-1.amazonaws.com", "s3.ap-southeast-1.amazonaws.com:443", "localhost:9000"} {
+		if _, err := NewS3Reader(endpoint, "access", "secret", "document-bucket"); err != nil {
+			t.Fatalf("NewS3Reader(%q) error = %v", endpoint, err)
 		}
 	}
 }
