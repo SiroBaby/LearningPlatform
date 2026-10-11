@@ -11,6 +11,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/s3utils"
 )
 
 type S3Store struct {
@@ -30,15 +31,35 @@ func NewS3Store(endpoint, accessKey, secretKey, proxyURL string) (*S3Store, erro
 		}
 		transport.Proxy = http.ProxyURL(proxy)
 	}
+	region, err := resolveS3Region(*parsed)
+	if err != nil {
+		return nil, err
+	}
 	client, err := minio.New(parsed.Host, &minio.Options{
 		Creds:     credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure:    parsed.Scheme == "https",
 		Transport: transport,
+		Region:    region,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create media object storage client: %w", err)
 	}
+	// minio-go rewrites Amazon endpoints to s3.dualstack.* by default; the
+	// egress proxy allowlists only the configured host, so keep that host.
+	client.SetS3EnableDualstack(false)
 	return &S3Store{client: client}, nil
+}
+
+// resolveS3Region pins the region parsed from an Amazon endpoint. Without it
+// minio-go discovers the region via GET ?location; the least-privilege media
+// credential gets AccessDenied there, minio-go falls back to us-east-1 and
+// sends requests to a host the egress proxy does not allowlist.
+func resolveS3Region(endpoint url.URL) (string, error) {
+	region := s3utils.GetRegionFromURL(endpoint)
+	if region == "" && strings.HasSuffix(endpoint.Hostname(), ".amazonaws.com") {
+		return "", errors.New("object storage endpoint must be a regional Amazon S3 endpoint")
+	}
+	return region, nil
 }
 
 func (store *S3Store) Head(ctx context.Context, bucket, key string) (Locator, error) {

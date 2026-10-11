@@ -9,6 +9,7 @@ import (
 	"github.com/ledongthuc/pdf"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"io"
 	"net/http"
 	"net/url"
@@ -59,7 +60,11 @@ func newS3Client(endpoint, accessKey, secretKey, proxyURL string) (*minio.Client
 		server = parsed.Host
 		secure = parsed.Scheme == "https"
 	}
-	options := &minio.Options{Creds: credentials.NewStaticV4(accessKey, secretKey, ""), Secure: secure}
+	region, err := resolveS3Region(url.URL{Host: server})
+	if err != nil {
+		return nil, err
+	}
+	options := &minio.Options{Creds: credentials.NewStaticV4(accessKey, secretKey, ""), Secure: secure, Region: region}
 	if strings.TrimSpace(proxyURL) != "" {
 		proxy, err := url.Parse(proxyURL)
 		if err != nil || proxy.Host == "" || (proxy.Scheme != "http" && proxy.Scheme != "https") {
@@ -73,8 +78,24 @@ func newS3Client(endpoint, accessKey, secretKey, proxyURL string) (*minio.Client
 	if err != nil {
 		return nil, fmt.Errorf("create object storage client: %w", err)
 	}
+	// minio-go rewrites Amazon endpoints to s3.dualstack.* by default; the
+	// egress proxy allowlists only the configured host, so keep that host.
+	client.SetS3EnableDualstack(false)
 	return client, nil
 }
+
+// resolveS3Region pins the region parsed from an Amazon endpoint. Without it
+// minio-go discovers the region via GET ?location; a least-privilege credential
+// gets AccessDenied there, minio-go falls back to us-east-1 and sends requests
+// to a host the egress proxy does not allowlist.
+func resolveS3Region(endpoint url.URL) (string, error) {
+	region := s3utils.GetRegionFromURL(endpoint)
+	if region == "" && strings.HasSuffix(endpoint.Hostname(), ".amazonaws.com") {
+		return "", fmt.Errorf("object storage endpoint must be a regional Amazon S3 endpoint")
+	}
+	return region, nil
+}
+
 func (reader *S3Reader) Read(ctx context.Context, key string, max int64) ([]byte, error) {
 	object, err := reader.client.GetObject(ctx, reader.bucket, key, minio.GetObjectOptions{})
 	if err != nil {

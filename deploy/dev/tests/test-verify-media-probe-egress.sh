@@ -106,6 +106,8 @@ case "$1" in
       if [[ "$host" == media-probe-db-egress || "${MOCK_LEAKY_HOST:-}" == "$host" ]]; then port="$MOCK_OPEN_PORT"; else port="$MOCK_CLOSED_PORT"; fi
     fi
     script="${script//media-egress-proxy\/3128/127.0.0.1\/${MOCK_SQUID_PORT}}"
+    # Simulates a widened Squid ACL: the fake Squid sees the allowlisted host.
+    if [[ "$script" == *CONNECT* && "${MOCK_PROXY_ALLOWED_HOST:-}" == "$host" ]]; then host=s3.ap-southeast-1.amazonaws.com; fi
     exec bash -c "$script" "$host" "$port" ;;
   *) exit 2 ;;
 esac
@@ -148,7 +150,8 @@ secure="$(run_fixture secure)"
 [[ "$(<"$secure/status")" == 0 ]] || fail "secure: expected success, got $(<"$secure/status"): $(<"$secure/stdout")"
 for check in ready:media-egress-proxy ready:media-probe-db-egress ready:media-probe-worker \
   reachable:proxy-connect-s3 reachable:forwarder blocked:direct-database blocked:direct-s3 \
-  blocked:direct-internet-ip blocked:proxy-connect-database blocked:proxy-connect-not-allowlisted; do
+  blocked:direct-internet-ip blocked:proxy-connect-database blocked:proxy-connect-not-allowlisted \
+  blocked:proxy-connect-dualstack; do
   grep -Fxq "PASS ${check}" "$secure/stdout" || fail "secure: missing PASS ${check}"
 done
 grep -Fxq 'RESULT PASS' "$secure/stdout" || fail 'secure: missing RESULT PASS'
@@ -177,7 +180,7 @@ for exec_status in 1 124; do
   grep -Fxq 'PASS reachable:forwarder' "$exec_failure/stdout" || fail "exec-failure ${exec_status}: positive controls should still pass"
   grep -Eq '^PASS blocked:' "$exec_failure/stdout" && fail "exec-failure ${exec_status}: a failed kubectl exec was reported as blocked"
   grep -Fxq "FAIL blocked:direct-database (inconclusive: exit ${exec_status})" "$exec_failure/stdout" || fail "exec-failure ${exec_status}: missing inconclusive failure"
-  grep -Fxq 'RESULT FAIL 5' "$exec_failure/stdout" || fail "exec-failure ${exec_status}: missing RESULT FAIL 5"
+  grep -Fxq 'RESULT FAIL 6' "$exec_failure/stdout" || fail "exec-failure ${exec_status}: missing RESULT FAIL 6"
   assert_cleaned_up "$exec_failure" "exec-failure ${exec_status}"
 done
 
@@ -193,6 +196,12 @@ leaky="$(run_fixture leaky MOCK_LEAKY_HOST=1.1.1.1)"
 grep -Fxq 'FAIL blocked:direct-internet-ip (connected)' "$leaky/stdout" || fail 'leaky: missing direct Internet failure'
 grep -Fxq 'RESULT FAIL 1' "$leaky/stdout" || fail 'leaky: missing RESULT FAIL 1'
 assert_cleaned_up "$leaky" leaky
+
+dualstack="$(run_fixture dualstack MOCK_PROXY_ALLOWED_HOST=s3.dualstack.ap-southeast-1.amazonaws.com)"
+[[ "$(<"$dualstack/status")" != 0 ]] || fail 'dualstack: a proxy allowing the dualstack S3 host must fail'
+grep -Fxq 'FAIL blocked:proxy-connect-dualstack (exit 0)' "$dualstack/stdout" || fail 'dualstack: missing dualstack proxy failure'
+grep -Fxq 'RESULT FAIL 1' "$dualstack/stdout" || fail 'dualstack: missing RESULT FAIL 1'
+assert_cleaned_up "$dualstack" dualstack
 
 dns="$(run_fixture dns MOCK_DNS_FAILURE_HOST=pg-15341ed3-ngocphat076-b603.j.aivencloud.com)"
 [[ "$(<"$dns/status")" != 0 ]] || fail 'dns: an unresolved target must not count as blocked'
