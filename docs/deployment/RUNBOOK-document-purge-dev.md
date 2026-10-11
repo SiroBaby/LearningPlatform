@@ -49,7 +49,7 @@ Chỉ bật khi **tất cả** đã xong và có bằng chứng ghi vào ticket 
    phải bằng cổng này và `/learning-platform/dev/db-host` phải là cùng host
    `media_probe_database_upstream_host`. Ansible không đọc được giá trị SSM nên
    không tự kiểm được; nếu lệch, pod sẽ restart liên tục ở bước migration.
-6. Ticket follow-up về alert (bật Loki ruler, rule `document.purge.dead_lettered`
+6. Ticket #222 về alert (bật Loki ruler, rule `document.purge.dead_lettered`
    và rule pod-health cho `document-purge-worker`) đã hoàn tất. Xem mục 8.
 
 ## 3. Owner tạo IAM user purge
@@ -273,7 +273,7 @@ PR-3 chưa thêm alert, vì:
   `web|api|worker`, không khớp `document-purge-worker`. Sửa rule sẽ chạy lại Helm
   release observability khi merge, nên tách sang ticket riêng.
 
-Ticket follow-up về alert là **điều kiện bắt buộc trước khi bật cờ**
+Ticket #222 (alert purge) là **điều kiện bắt buộc trước khi bật cờ**
 (mục 2.6). Nội dung đề xuất:
 
 1. Bật Loki ruler trong release monolithic (`loki.rulerConfig` với

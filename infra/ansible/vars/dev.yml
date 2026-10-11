@@ -101,8 +101,8 @@ media_probe_worker_egress_proxy_port: 3128
 media_probe_database_upstream_host: pg-15341ed3-ngocphat076-b603.j.aivencloud.com
 media_probe_database_upstream_port: 27158
 # The document purge worker hard-deletes manifest versions with its own S3
-# identity (#159). Keep it false until the owner has created the purge IAM user
-# and both purge SSM parameters; turning it back to false deletes the purge
+# identity (#159). Keep it false until the owner has created the purge IAM user,
+# both purge SSM parameters and the purge alerts (#222); turning it back to false deletes the purge
 # workload and its runtime Secret on the next worker rollout.
 document_purge_enabled: false
 
