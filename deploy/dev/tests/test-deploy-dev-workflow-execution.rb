@@ -322,43 +322,52 @@ Dir.mktmpdir('deploy-dev-workflow-execution') do |directory|
     'media_probe_worker_image' => "ghcr.io/sirobaby/learningplatform-media-probe@#{digest}"
   }, 'worker overrides must include the media probe image')
   {
-    'true' => %w[worker media-probe-db-egress media-probe-worker],
-    'false' => %w[worker]
-  }.each do |flag, expected_targets|
-    dev_vars = File.join(directory, "dev-vars-media-probe-#{flag}.yml")
-    File.write(dev_vars, "deployment_targets: [web, api, worker]\nmedia_probe_worker_enabled: #{flag}\n")
-    rollout_trace = File.join(directory, "rollout-targets-#{flag}.trace")
+    %w[true false] => %w[worker media-probe-db-egress media-probe-worker],
+    %w[false false] => %w[worker],
+    %w[true true] => %w[worker media-probe-db-egress media-probe-worker document-purge-worker],
+    %w[false true] => %w[worker document-purge-worker]
+  }.each do |(flag, purge_flag), expected_targets|
+    dev_vars = File.join(directory, "dev-vars-media-probe-#{flag}-purge-#{purge_flag}.yml")
+    File.write(dev_vars, "deployment_targets: [web, api, worker]\nmedia_probe_worker_enabled: #{flag}\ndocument_purge_enabled: #{purge_flag}\n")
+    rollout_trace = File.join(directory, "rollout-targets-#{flag}-#{purge_flag}.trace")
     _stdout, stderr, status = run_step(rollout_wait, bootstrap_environment.merge(
       'DEV_ANSIBLE_VARS' => dev_vars,
       'MOCK_ROLLOUT_SUCCESS' => 'true',
       'MOCK_ROLLOUT_TRACE' => rollout_trace
     ))
-    assert(status.success?, "worker rollout wait failed with media probe flag #{flag}: #{stderr}")
+    assert(status.success?, "worker rollout wait failed with media probe flag #{flag} and purge flag #{purge_flag}: #{stderr}")
     worker_rollout_targets = File.readlines(File.join(worker_deployment_dir, 'selected-targets'), chomp: true)
     worker_rollout_trace = File.readlines(rollout_trace, chomp: true)
-    assert(worker_rollout_targets == expected_targets, "worker rollout targets must follow media probe flag #{flag}: #{worker_rollout_targets.inspect}")
+    assert(worker_rollout_targets == expected_targets,
+           "worker rollout targets must follow media probe flag #{flag} and purge flag #{purge_flag}: #{worker_rollout_targets.inspect}")
     assert(worker_rollout_trace == expected_targets.map { |target| "deployment/#{target}" },
-           "worker rollout wait must follow media probe flag #{flag}: #{worker_rollout_trace.inspect}")
+           "worker rollout wait must follow media probe flag #{flag} and purge flag #{purge_flag}: #{worker_rollout_trace.inspect}")
   end
 
   {
-    'missing' => "deployment_targets: [worker]\n",
-    'duplicated' => "media_probe_worker_enabled: false\nmedia_probe_worker_enabled: true\n",
-    'non-boolean' => "media_probe_worker_enabled: maybe\n"
-  }.each do |label, content|
-    dev_vars = File.join(directory, "dev-vars-media-probe-#{label}.yml")
+    'missing' => ["deployment_targets: [worker]\ndocument_purge_enabled: false\n", 'media_probe_worker_enabled'],
+    'duplicated' => ["media_probe_worker_enabled: false\nmedia_probe_worker_enabled: true\ndocument_purge_enabled: false\n", 'media_probe_worker_enabled'],
+    'non-boolean' => ["media_probe_worker_enabled: maybe\ndocument_purge_enabled: false\n", 'media_probe_worker_enabled'],
+    'missing purge' => ["media_probe_worker_enabled: false\n", 'document_purge_enabled'],
+    'duplicated purge' => ["media_probe_worker_enabled: false\ndocument_purge_enabled: false\ndocument_purge_enabled: true\n", 'document_purge_enabled'],
+    'quoted purge' => ["media_probe_worker_enabled: false\ndocument_purge_enabled: 'true'\n", 'document_purge_enabled']
+  }.each do |label, (content, flag_name)|
+    dev_vars = File.join(directory, "dev-vars-flag-#{label.tr(' ', '-')}.yml")
     File.write(dev_vars, content)
     _stdout, stderr, status = run_step(rollout_wait, bootstrap_environment.merge(
       'DEV_ANSIBLE_VARS' => dev_vars,
       'MOCK_ROLLOUT_SUCCESS' => 'true',
-      'MOCK_ROLLOUT_TRACE' => File.join(directory, "rollout-targets-#{label}.trace")
+      'MOCK_ROLLOUT_TRACE' => File.join(directory, "rollout-targets-#{label.tr(' ', '-')}.trace")
     ))
-    assert(!status.success? && stderr.include?('media_probe_worker_enabled must be declared exactly once'),
-           "a #{label} media probe flag must fail the rollout wait closed: #{stderr}")
+    assert(!status.success? && stderr.include?("#{flag_name} must be declared exactly once"),
+           "a #{label} flag must fail the rollout wait closed: #{stderr}")
   end
 
-  production_flag = File.read(File.join(root, 'infra', 'ansible', 'vars', 'dev.yml')).scan(/^media_probe_worker_enabled: (true|false)$/)
+  production_vars = File.read(File.join(root, 'infra', 'ansible', 'vars', 'dev.yml'))
+  production_flag = production_vars.scan(/^media_probe_worker_enabled: (true|false)$/)
   assert(production_flag.length == 1, 'production dev vars must declare media_probe_worker_enabled exactly once for the rollout wait')
+  production_purge_flag = production_vars.scan(/^document_purge_enabled: (true|false)$/)
+  assert(production_purge_flag.length == 1, 'production dev vars must declare document_purge_enabled exactly once for the rollout wait')
 
   broken = app_inventory.sub("\nhost, user", "\n host, user")
   broken_runner_temp = File.join(directory, 'broken-runner-temp')

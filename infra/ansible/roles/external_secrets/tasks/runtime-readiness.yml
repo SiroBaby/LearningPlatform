@@ -35,6 +35,7 @@
          + (['learning-platform-api-runtime'] if 'api' in deployment_targets else [])
          + (['learning-platform-go-worker-runtime', 'learning-platform-worker-runtime']
             + (['learning-platform-media-probe-runtime'] if media_probe_worker_enabled | default(false) | bool else [])
+            + (['learning-platform-document-purge-runtime'] if document_purge_enabled | default(false) | bool else [])
             if 'worker' in deployment_targets else []) }}
     external_secrets_runtime_documents: >-
       {{ lookup('template', 'external-secrets.yaml.j2') | from_yaml_all | list }}

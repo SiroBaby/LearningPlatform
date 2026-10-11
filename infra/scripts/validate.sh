@@ -410,8 +410,8 @@ check_application_edge_contract() {
     fi
   done
 
-  if [ "$(grep -c "'DB_SSL_MODE': ssm_parameter_keys.db_ssl_mode" "${eso_template}")" -ne 3 ] \
-    || [ "$(grep -c "'DB_SSL_CA': ssm_parameter_keys.db_ssl_ca" "${eso_template}")" -ne 3 ] \
+  if [ "$(grep -c "'DB_SSL_MODE': ssm_parameter_keys.db_ssl_mode" "${eso_template}")" -ne 4 ] \
+    || [ "$(grep -c "'DB_SSL_CA': ssm_parameter_keys.db_ssl_ca" "${eso_template}")" -ne 4 ] \
     || [ "$(grep -c "'GOOGLE_CLIENT_ID': ssm_parameter_keys.google_client_id" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c "'GOOGLE_CLIENT_SECRET': ssm_parameter_keys.google_client_secret" "${eso_template}")" -ne 1 ] \
     || [ "$(grep -c "'GOOGLE_REDIRECT_URI': ssm_parameter_keys.google_redirect_uri" "${eso_template}")" -ne 1 ] \
@@ -449,7 +449,7 @@ check_application_edge_contract() {
         has_pull_secret = 1
       }
       END { emit_deployment() }
-    ' "${app_template}" | LC_ALL=C sort | paste -sd, -)" != "api,media-egress-proxy,media-probe-db-egress,media-probe-worker,web,worker" ] \
+    ' "${app_template}" | LC_ALL=C sort | paste -sd, -)" != "api,document-purge-worker,media-egress-proxy,media-probe-db-egress,media-probe-worker,web,worker" ] \
     || ! grep -q 'kind: Ingress' "${app_template}" \
     || ! grep -q 'ingressClassName: traefik' "${app_template}" \
     || ! grep -q 'name: api' "${app_template}" \
@@ -507,7 +507,7 @@ check_application_edge_contract() {
     fail 'Unselected workload images must not block selective application deployment.'
   fi
 
-  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 5 ] \
+  if [ "$(grep -Fxc '          env:' "${app_template}")" -ne 6 ] \
     || grep -Fqx '           env:' "${app_template}"; then
     fail 'Each workload container env block must use exactly 10 leading spaces; one-extra-space env indentation is forbidden.'
   fi
@@ -667,6 +667,107 @@ check_application_edge_contract() {
   fi
 }
 
+# The purge worker hard-deletes object versions (#159). Its workload must stay
+# behind one flag, run least-privilege, receive only its own runtime Secret,
+# and egress only to DNS, the S3 proxy, and the PostgreSQL port.
+check_document_purge_contract() {
+  local app_template="${1:-${INFRA_DIR}/k8s/apps.yaml.j2}"
+  local eso_template="${2:-${ANSIBLE_DIR}/roles/external_secrets/templates/external-secrets.yaml.j2}"
+  local dev_vars="${3:-${ANSIBLE_DIR}/vars/dev.yml}"
+  local app_vars="${ANSIBLE_DIR}/inventory/group_vars/k3s_nodes.yml.example"
+  local gate="{% if 'worker' in deployment_targets and document_purge_enabled | default(false) | bool %}"
+  local purge_block eso_block
+
+  purge_block="$(awk -v gate="${gate}" '$0 == gate { capture = 1 } capture { print } capture && /^{% endif %}$/ { exit }' "${app_template}")"
+  eso_block="$(awk -v gate="${gate}" '$0 == gate { capture = 1 } capture { print } capture && /^{% endif %}$/ { exit }' "${eso_template}")"
+
+  # Outside its gated block the purge worker may appear only once: as the
+  # flag-gated client selector of the media-egress-proxy ingress policy.
+  local proxy_client_gate='{% if document_purge_enabled | default(false) | bool %}'
+  local outside_mentions
+  outside_mentions="$(( $(grep -Fc 'document-purge' "${app_template}") - $(grep -Fc 'document-purge' <<<"${purge_block}") ))"
+  if [ "$(grep -Fxc "${gate}" "${app_template}")" -ne 1 ] \
+    || [ "$(grep -Fxc "${gate}" "${eso_template}")" -ne 1 ] \
+    || [ "${outside_mentions}" -ne 1 ] \
+    || [ "$(grep -Fxc "${proxy_client_gate}" "${app_template}")" -ne 1 ] \
+    || ! grep -Fx -A 4 "${proxy_client_gate}" "${app_template}" | grep -Fxq '              app.kubernetes.io/component: document-purge-worker' \
+    || [ "$(grep -Fc 'document-purge' "${eso_template}")" -ne "$(grep -Fc 'document-purge' <<<"${eso_block}")" ]; then
+    fail 'The document purge workload and its runtime Secret must render only behind the single document_purge_enabled gate.'
+  fi
+
+  local service_account_line network_policy_line deployment_line
+  service_account_line="$(grep -n '^kind: ServiceAccount$' <<<"${purge_block}" | head -n 1 | cut -d: -f1)"
+  network_policy_line="$(grep -n '^kind: NetworkPolicy$' <<<"${purge_block}" | tail -n 1 | cut -d: -f1)"
+  deployment_line="$(grep -n '^kind: Deployment$' <<<"${purge_block}" | cut -d: -f1)"
+  if [ -z "${service_account_line}" ] || [ -z "${network_policy_line}" ] || [ -z "${deployment_line}" ] \
+    || [ "${service_account_line}" -ge "${deployment_line}" ] || [ "${network_policy_line}" -ge "${deployment_line}" ]; then
+    fail 'The document purge ServiceAccount and NetworkPolicies must precede its Deployment.'
+  fi
+
+  if [ "$(grep -Fxc 'automountServiceAccountToken: false' <<<"${purge_block}")" -ne 1 ] \
+    || [ "$(grep -Fxc '      automountServiceAccountToken: false' <<<"${purge_block}")" -ne 1 ] \
+    || grep -q 'automountServiceAccountToken: true' <<<"${purge_block}" \
+    || ! grep -Fxq '      serviceAccountName: document-purge-worker' <<<"${purge_block}" \
+    || ! grep -Fxq '        runAsNonRoot: true' <<<"${purge_block}" \
+    || ! grep -Fxq '          type: RuntimeDefault' <<<"${purge_block}" \
+    || ! grep -Fxq '            allowPrivilegeEscalation: false' <<<"${purge_block}" \
+    || ! grep -Fxq '            readOnlyRootFilesystem: true' <<<"${purge_block}" \
+    || ! grep -Fxq '              drop: [ALL]' <<<"${purge_block}" \
+    || grep -q 'privileged: true' <<<"${purge_block}" \
+    || ! grep -Fxq '  replicas: 1' <<<"${purge_block}" \
+    || ! grep -Fxq '    type: Recreate' <<<"${purge_block}" \
+    || ! grep -Fxq '    rollingUpdate: null' <<<"${purge_block}" \
+    || ! grep -Fxq "          command: ['node', 'dist/worker.js']" <<<"${purge_block}" \
+    || ! grep -Fxq '          image: {{ worker_image }}' <<<"${purge_block}" \
+    || ! grep -A 1 -Fx '            - name: WORKER_EXECUTION_MODE' <<<"${purge_block}" | grep -Fxq '              value: document-purge' \
+    || ! grep -Fxq '          resources: {{ document_purge_worker_resources | to_json }}' <<<"${purge_block}"; then
+    fail 'The document purge worker must run one non-root Recreate replica in document-purge mode with a read-only root, RuntimeDefault seccomp, no capabilities, and no ServiceAccount token.'
+  fi
+
+  if grep -Eq 'OPENAI|AI_LLM|AI_CREDENTIAL|MEDIA_PROBE|API_MEDIA|FULL_PIPELINE|GOOGLE_|AUTH_|SWAGGER|OBJECT_STORAGE_(ACCESS|SECRET)_KEY|learning-platform-(api|worker|go-worker|media-probe|swagger)-runtime' <<<"${purge_block}${eso_block}" \
+    || [ "$(grep -Fc '                  name: learning-platform-document-purge-runtime' <<<"${purge_block}")" -ne 1 ] \
+    || ! grep -Fq "'OBJECT_STORAGE_PURGE_ACCESS_KEY', 'OBJECT_STORAGE_PURGE_SECRET_KEY'] %}" <<<"${purge_block}" \
+    || ! grep -Fq "'OBJECT_STORAGE_PURGE_ACCESS_KEY': ssm_parameter_keys.object_storage_media_purge_access_key," <<<"${eso_block}" \
+    || ! grep -Fq "'OBJECT_STORAGE_PURGE_SECRET_KEY': ssm_parameter_keys.object_storage_media_purge_secret_key" <<<"${eso_block}"; then
+    fail 'The document purge worker must read only learning-platform-document-purge-runtime: shared database keys, bucket locations, and its dedicated purge identity, never API, probe, or LLM credentials.'
+  fi
+
+  local egress_block
+  egress_block="$(awk '/^  name: document-purge-worker-egress$/ { capture = 1 } capture { print } capture && /^---$/ { exit }' <<<"${purge_block}")"
+  if [ "$(grep -Fxc '    - to:' <<<"${egress_block}")" -ne 3 ] \
+    || grep -Eq '^    - ports:' <<<"${egress_block}" \
+    || ! grep -Fxq '              k8s-app: kube-dns' <<<"${egress_block}" \
+    || ! grep -Fxq '              app.kubernetes.io/component: media-egress-proxy' <<<"${egress_block}" \
+    || ! grep -Fxq '          port: 3128' <<<"${egress_block}" \
+    || ! grep -Fxq '            cidr: 0.0.0.0/0' <<<"${egress_block}" \
+    || ! grep -Fxq '          port: {{ media_probe_database_upstream_port | int }}' <<<"${egress_block}"; then
+    fail 'The document purge egress NetworkPolicy must allow only CoreDNS, media-egress-proxy:3128, and the PostgreSQL port.'
+  fi
+  local excluded_range
+  for excluded_range in 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16; do
+    if ! grep -Fxq "              - ${excluded_range}" <<<"${egress_block}"; then
+      fail "The document purge database egress must exclude ${excluded_range}."
+    fi
+  done
+  if ! grep -Fxq '  name: document-purge-worker-ingress' <<<"${purge_block}" \
+    || ! grep -Fxq '  ingress: []' <<<"${purge_block}"; then
+    fail 'The document purge worker must deny all ingress except kubelet probes.'
+  fi
+
+  if grep -Eq "'DOCUMENT_PURGE_|document_purge_(batch|poll|lease|max|backoff)" "${eso_template}" "${dev_vars}" "${app_vars}"; then
+    fail 'Non-secret document purge tuning must stay a manifest literal, never an ExternalSecret or SSM key.'
+  fi
+
+  if [ "$(grep -Ec '^document_purge_enabled: (true|false)$' "${dev_vars}")" -ne 1 ] \
+    || ! grep -Fxq 'document_purge_enabled: false' "${app_vars}" \
+    || ! grep -Fxq '  object_storage_media_purge_access_key: /learning-platform/dev/object-storage-media-purge-access-key' "${dev_vars}" \
+    || ! grep -Fxq '  object_storage_media_purge_secret_key: /learning-platform/dev/object-storage-media-purge-secret-key' "${dev_vars}" \
+    || ! grep -Fxq '  object_storage_media_purge_access_key: /REPLACE/WITH/EXACT/object-storage-media-purge-access-key' "${app_vars}" \
+    || ! grep -Fxq '  object_storage_media_purge_secret_key: /REPLACE/WITH/EXACT/object-storage-media-purge-secret-key' "${app_vars}"; then
+    fail 'The document purge flag must be declared once as a boolean and both purge SSM paths must be exact.'
+  fi
+}
+
 check_yaml_when_supported() {
   if command -v yamllint >/dev/null 2>&1; then
     yamllint -d '{extends: default, rules: {line-length: disable, truthy: disable}}' \
@@ -715,6 +816,8 @@ check_ansible_when_installed() {
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/secret-key-reference-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/document-purge-flag-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/external_secrets/tests/target-render.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/external_secrets/tests/target-render.yml" \
@@ -758,7 +861,9 @@ check_artifact_integrity_contract
 check_monitoring_jobs
 check_k3s_edge_contract
 check_application_edge_contract
+check_document_purge_contract
 bash "${INFRA_DIR}/scripts/tests/test-application-media-contract.sh"
+bash "${INFRA_DIR}/scripts/tests/test-document-purge-contract.sh"
 bash "${INFRA_DIR}/scripts/tests/test-go-worker-provider-profile-contract.sh"
 check_yaml_when_supported
 check_ansible_when_installed

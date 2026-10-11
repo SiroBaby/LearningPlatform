@@ -214,7 +214,15 @@ tồn tại sau khi Document row bị xóa.
 - **Log**: chỉ `manifestId`, `documentId`, mã lỗi, `attempts`, số version; không
   ghi bucket, key hay VersionId thô.
 - Hàng Document giữ `DELETING` làm tombstone (Q3, dọn ở #214); không đụng credit
-  (Q7, #215). Deployment, IAM và SSM của runtime này làm ở PR-3.
+  (Q7, #215).
+- **Triển khai dev (#159 PR-3)**: Deployment `document-purge-worker` chỉ render khi
+  `document_purge_enabled` (mặc định `false`), dùng image backend, ServiceAccount
+  riêng không mount token, Secret `learning-platform-document-purge-runtime` chỉ
+  chứa khóa PostgreSQL dùng chung, vị trí hai bucket và credential purge. Egress
+  chỉ tới CoreDNS, `media-egress-proxy` và cổng PostgreSQL public: Node runtime
+  không ghim được TLS server name nên không đi qua `media-probe-db-egress`. Tắt cờ
+  thì Ansible xóa đúng các object đã đặt tên. IAM, SSM, kiểm quyền và xử lý
+  `DEAD_LETTER` ở `docs/deployment/RUNBOOK-document-purge-dev.md`.
 
 Orphan scanner sau 24 giờ chỉ là safety net (lưới an toàn), không thay purge
 chính. Scanner chỉ quét namespace/tag do hệ thống quản lý, chỉ xóa version

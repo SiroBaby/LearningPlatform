@@ -58,6 +58,8 @@ ssm_parameter_keys:
   object_storage_media_probe_secret_key: /learning-platform/dev/object-storage-media-probe-secret-key
   object_storage_full_pipeline_media_access_key: /learning-platform/dev/object-storage-full-pipeline-media-access-key
   object_storage_full_pipeline_media_secret_key: /learning-platform/dev/object-storage-full-pipeline-media-secret-key
+  object_storage_media_purge_access_key: /learning-platform/dev/object-storage-media-purge-access-key
+  object_storage_media_purge_secret_key: /learning-platform/dev/object-storage-media-purge-secret-key
   media_probe_db_user: /learning-platform/dev/media-probe-db-user
   media_probe_db_password: /learning-platform/dev/media-probe-db-password
   ai_credential_encryption_key: /learning-platform/dev/ai-credential-encryption-key
@@ -98,6 +100,11 @@ media_probe_worker_egress_proxy_port: 3128
 # are the non-secret Aiven endpoint values, not credentials.
 media_probe_database_upstream_host: pg-15341ed3-ngocphat076-b603.j.aivencloud.com
 media_probe_database_upstream_port: 27158
+# The document purge worker hard-deletes manifest versions with its own S3
+# identity (#159). Keep it false until the owner has created the purge IAM user
+# and both purge SSM parameters; turning it back to false deletes the purge
+# workload and its runtime Secret on the next worker rollout.
+document_purge_enabled: false
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}
@@ -118,6 +125,10 @@ media_probe_worker_resources:
   requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 550Mi}
   limits: {cpu: 500m, memory: 512Mi, ephemeral-storage: 550Mi}
 go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:REPLACE_WITH_64_HEX_DIGEST
+# A poll loop that issues a few S3 deletes; 25m keeps the dev CPU budget (#206).
+document_purge_worker_resources:
+  requests: {cpu: 25m, memory: 192Mi}
+  limits: {cpu: 250m, memory: 384Mi}
 
 monitoring_enabled: false
 

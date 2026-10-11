@@ -41,6 +41,7 @@
       - [external-system, external-secrets, 10m, 1]
     applications_expected_deployments:
       - api
+      - document-purge-worker
       - media-egress-proxy
       - media-probe-db-egress
       - media-probe-worker
@@ -160,6 +161,7 @@
         object_storage_egress_proxy_enabled: true
         media_probe_worker_enabled: true
         api_media_enabled: true
+        document_purge_enabled: true
         web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

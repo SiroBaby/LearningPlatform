@@ -122,7 +122,7 @@ main() {
   git -C "${repository}" config user.name test
   git -C "${repository}" config user.email test@example.com
   git -C "${repository}" commit --allow-empty -qm initial
-  local before_sha after_sha expected
+  local before_sha after_sha expected actual
   before_sha="$(git -C "${repository}" rev-parse HEAD)"
   after_sha="$(cd "${repository}" && commit_file web/page.tsx)"
   expected=$'web=true\napi=false\nworker=false\nbackend=false\ndeploy_any=true'
@@ -158,6 +158,20 @@ main() {
   after_sha="$(cd "${repository}" && commit_file app/src/modules/users/users.service.ts)"
   expected=$'web=true\napi=true\nworker=true\nbackend=true\ndeploy_any=true'
   (cd "${repository}" && assert_output auto "${before_sha}" "${after_sha}" "${expected}")
+
+  # document-purge-worker runs the backend image under the worker target, so
+  # every purge runtime source must select worker for its rollout (#159).
+  local purge_source
+  for purge_source in \
+    app/src/modules/content/document-purge.service.ts \
+    app/src/storage/object-storage-document-purger.ts \
+    app/src/config/document-purge.config.ts \
+    app/src/worker/document-purge-runner.service.ts; do
+    before_sha="${after_sha}"
+    after_sha="$(cd "${repository}" && commit_file "${purge_source}")"
+    actual="$(cd "${repository}" && "${CLASSIFIER}" auto "${before_sha}" "${after_sha}")"
+    grep -Fxq 'worker=true' <<<"${actual}" || fail "${purge_source} must select the worker target that rolls out document-purge-worker: ${actual}"
+  done
 
   before_sha="${after_sha}"
   after_sha="$(cd "${repository}" && commit_file app/src/database/migrate.ts)"

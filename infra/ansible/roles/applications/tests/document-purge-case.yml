@@ -1,0 +1,24 @@
+---
+# Include params outrank vars_files and set_fact, so each case replaces the
+# production values only for this contract run.
+- name: Attempt the document purge contract for one case
+  block:
+    - name: Run the production document purge contract for the case
+      ansible.builtin.include_tasks: ../tasks/document-purge-contract.yml
+
+    - name: Record that the document purge case was accepted
+      ansible.builtin.set_fact:
+        applications_purge_case_accepted: true
+  rescue:
+    - name: Record that the document purge case was rejected
+      ansible.builtin.set_fact:
+        applications_purge_case_accepted: false
+
+- name: Require the expected contract outcome for the document purge case
+  ansible.builtin.assert:
+    that:
+      - applications_purge_case_accepted == purge_case_expected_accepted
+    fail_msg: >-
+      Document purge case {{ purge_case_label }} was
+      {{ applications_purge_case_accepted | ternary('accepted', 'rejected') }};
+      expected {{ purge_case_expected_accepted | ternary('accepted', 'rejected') }}.

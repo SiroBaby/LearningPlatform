@@ -175,8 +175,11 @@ assert(failures, rollout_wait.include?("if 'worker' in deployment_targets:") && 
 assert(failures, step_by_name(deploy, 'Wait for selected K3s rollouts').dig('env', 'DEV_ANSIBLE_VARS') == 'infra/ansible/vars/dev.yml' &&
                  rollout_wait.include?("if flags[0] == 'true':"),
        'media-probe-worker rollout must follow media_probe_worker_enabled from the same vars file Ansible loads')
-assert(failures, rollout_wait.include?('web|api|worker|media-probe-db-egress|media-probe-worker'),
-       'rollout target allowlist and diagnostics must accept media-probe-db-egress and media-probe-worker')
+assert(failures, rollout_wait.include?('web|api|worker|media-probe-db-egress|media-probe-worker|document-purge-worker'),
+       'rollout target allowlist and diagnostics must accept media-probe-db-egress, media-probe-worker, and document-purge-worker')
+assert(failures, rollout_wait.include?("purge_flags = re.findall(r'^document_purge_enabled: (true|false)$', dev_vars_text, re.MULTILINE)") &&
+                 rollout_wait.include?("if purge_flags[0] == 'true':\n        print('document-purge-worker')"),
+       'document-purge-worker rollout must follow document_purge_enabled from the same vars file Ansible loads')
 
 observability = jobs.fetch('deploy-observability')
 observability_if = observability.fetch('if')

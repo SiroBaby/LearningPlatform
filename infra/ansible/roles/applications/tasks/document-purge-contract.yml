@@ -1,0 +1,43 @@
+---
+# The purge worker hard-deletes object versions (#159), so the flag must be an
+# explicit boolean: a quoted "false" would render the workload.
+- name: Require the document purge flag to be an explicit boolean
+  ansible.builtin.assert:
+    that:
+      - document_purge_enabled | default(false) is boolean
+    fail_msg: document_purge_enabled must be the YAML boolean true or false.
+
+- name: Validate the enabled document purge worker contract
+  ansible.builtin.assert:
+    that:
+      - ssm_parameter_keys.object_storage_media_purge_access_key is string
+      - ssm_parameter_keys.object_storage_media_purge_secret_key is string
+      - ssm_parameter_keys.object_storage_media_purge_access_key is search('^/')
+      - ssm_parameter_keys.object_storage_media_purge_secret_key is search('^/')
+      - ssm_parameter_keys.object_storage_media_purge_access_key is not search('REPLACE')
+      - ssm_parameter_keys.object_storage_media_purge_secret_key is not search('REPLACE')
+      - ssm_parameter_keys.object_storage_media_purge_access_key != ssm_parameter_keys.object_storage_media_probe_access_key
+      - ssm_parameter_keys.object_storage_media_purge_access_key != ssm_parameter_keys.object_storage_api_media_access_key
+      - ssm_parameter_keys.object_storage_media_purge_access_key != ssm_parameter_keys.object_storage_access_key
+      - ssm_parameter_keys.object_storage_media_bucket is string
+      - ssm_parameter_keys.object_storage_media_bucket is search('^/')
+      - ssm_parameter_keys.object_storage_media_bucket is not search('REPLACE')
+      - document_purge_worker_resources is mapping
+      - document_purge_worker_resources.requests.cpu is defined
+      - document_purge_worker_resources.limits.memory is defined
+      - media_egress_proxy_enabled | default(false) | bool
+      - media_probe_worker_proxy_url is string
+      - media_probe_worker_proxy_url is match('^https?://[A-Za-z0-9.-]+:[0-9]+$')
+      - media_probe_worker_proxy_url is not search('REPLACE_WITH')
+      - media_probe_database_upstream_port is not string
+      - media_probe_database_upstream_port is not boolean
+      - media_probe_database_upstream_port is integer
+      - media_probe_database_upstream_port | int >= 1
+      - media_probe_database_upstream_port | int <= 65535
+    fail_msg: >-
+      The document-purge-worker requires its two dedicated purge SSM paths
+      (never the API, probe, or document credentials), the canonical media
+      bucket path, bounded resources, the enabled in-cluster media egress
+      proxy with its explicit URL literal, and the integer PostgreSQL port its
+      egress NetworkPolicy allows.
+  when: "'worker' in deployment_targets and document_purge_enabled | default(false) | bool"

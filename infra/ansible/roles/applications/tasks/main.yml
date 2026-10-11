@@ -92,6 +92,9 @@
 - name: Validate the media probe worker contract when it is enabled
   ansible.builtin.include_tasks: media-probe-contract.yml
 
+- name: Validate the document purge worker contract when it is enabled
+  ansible.builtin.include_tasks: document-purge-contract.yml
+
 - name: Validate enabled API media storage contract
   ansible.builtin.assert:
     that:
@@ -254,6 +257,57 @@
       | selectattr('status', 'equalto', 'True')
       | list | length) == 1
   when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
+
+- name: Wait for document purge runtime ExternalSecret readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    namespace: '{{ learning_platform_namespace }}'
+    name: learning-platform-document-purge-runtime
+  register: applications_document_purge_runtime_external_secret
+  retries: 30
+  delay: 2
+  until: >-
+    applications_document_purge_runtime_external_secret.resources | length == 1 and
+    (applications_document_purge_runtime_external_secret.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  when: "'worker' in deployment_targets and document_purge_enabled | default(false) | bool"
+
+# Turning document_purge_enabled back to false must stop every hard delete.
+# Applying the template only creates or updates objects, so remove the purge
+# workload first (waiting for its pod to stop), then its exact named network,
+# identity, and runtime ExternalSecret; ESO garbage-collects the owned Secret.
+- name: Remove the document purge workload when its flag is disabled
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ learning_platform_namespace }}'
+    name: document-purge-worker
+    state: absent
+    wait: true
+    wait_timeout: 120
+  when: "'worker' in deployment_targets and not (document_purge_enabled | default(false) | bool)"
+
+- name: Remove the document purge network, identity, and runtime Secret when its flag is disabled
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: '{{ item.api_version }}'
+    kind: '{{ item.kind }}'
+    namespace: '{{ learning_platform_namespace }}'
+    name: '{{ item.name }}'
+    state: absent
+  loop:
+    - {api_version: networking.k8s.io/v1, kind: NetworkPolicy, name: document-purge-worker-egress}
+    - {api_version: networking.k8s.io/v1, kind: NetworkPolicy, name: document-purge-worker-ingress}
+    - {api_version: v1, kind: ServiceAccount, name: document-purge-worker}
+    - {api_version: external-secrets.io/v1beta1, kind: ExternalSecret, name: learning-platform-document-purge-runtime}
+  loop_control:
+    label: "{{ item.kind }}/{{ item.name }}"
+  when: "'worker' in deployment_targets and not (document_purge_enabled | default(false) | bool)"
 
 # DB_HOST/DB_PORT of media-probe-worker are now literal values. A strategic
 # merge onto an older Deployment that still sources them from secretKeyRef

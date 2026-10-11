@@ -340,16 +340,24 @@ jobs:
               # Ansible renders media-probe-worker and its media-probe-db-egress
               # forwarder only when the same vars file enables it.
               with open(os.environ['DEV_ANSIBLE_VARS'], encoding='utf-8') as dev_vars:
-                  flags = re.findall(r'^media_probe_worker_enabled: (true|false)$', dev_vars.read(), re.MULTILINE)
+                  dev_vars_text = dev_vars.read()
+              flags = re.findall(r'^media_probe_worker_enabled: (true|false)$', dev_vars_text, re.MULTILINE)
               if len(flags) != 1:
                   sys.exit('media_probe_worker_enabled must be declared exactly once as true or false')
               if flags[0] == 'true':
                   print('media-probe-db-egress')
                   print('media-probe-worker')
+              # The document purge worker runs the backend image and renders
+              # only when the same vars file enables it (#159).
+              purge_flags = re.findall(r'^document_purge_enabled: (true|false)$', dev_vars_text, re.MULTILINE)
+              if len(purge_flags) != 1:
+                  sys.exit('document_purge_enabled must be declared exactly once as true or false')
+              if purge_flags[0] == 'true':
+                  print('document-purge-worker')
           PY
           while IFS= read -r target; do
             case "$target" in
-              web|api|worker|media-probe-db-egress|media-probe-worker) ;;
+              web|api|worker|media-probe-db-egress|media-probe-worker|document-purge-worker) ;;
               *) printf 'unsupported rollout target: %s\n' "$target" >&2; exit 1 ;;
             esac
             if ! ssh -n -o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" "$VPS_USER@$VPS_HOST" "sudo timeout 190s k3s kubectl rollout status deployment/$target --namespace learning-platform-dev --timeout=180s"; then
