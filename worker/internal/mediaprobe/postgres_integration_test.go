@@ -69,17 +69,14 @@ func TestPostgresStoreDeletionFenceIntegration(t *testing.T) {
 		}
 		database.deleteDocument(t, ctx, probe)
 
-		completed, err := database.store.Complete(ctx, job, ProbeResult{DurationSec: integrationDuration, Locator: locator})
-		if completed || !errors.Is(err, ErrJobFenceLost) {
-			t.Fatalf("Complete() = (%t, %v), want (false, ErrJobFenceLost)", completed, err)
-		}
-		if count := database.count(t, ctx, `SELECT count(*) FROM ai.media_probe_results WHERE media_probe_job_id=$1`, job.ID); count != 0 {
-			t.Fatalf("media_probe_results rows = %d, want 0", count)
-		}
-		if count := database.count(t, ctx, `SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1`, job.ID); count != 0 {
-			t.Fatalf("ai.outbox rows = %d, want 0", count)
-		}
+		database.assertCompleteFenced(t, ctx, job, locator)
 		database.assertJobStatus(t, ctx, probe, "CANCELLED")
+		// Pin Complete's own tombstone predicate, not just the status guard of
+		// its final UPDATE: a row still RUNNING under the worker's live lease
+		// must be rejected because the Document was deleted.
+		database.exec(t, ctx, `UPDATE ai.media_probe_jobs SET status='RUNNING', lease_id=$2::uuid, lease_until=now()+interval '1 minute' WHERE id=$1`, probe.jobID, job.LeaseID)
+		database.assertCompleteFenced(t, ctx, job, locator)
+		database.assertJobStatus(t, ctx, probe, "RUNNING")
 	})
 
 	t.Run("deletion waiting behind an in-flight completion commits a newer fence", func(t *testing.T) {
@@ -219,6 +216,22 @@ func (database *mediaProbeIntegration) assertNothingClaimable(t *testing.T, ctx 
 	}
 }
 
+// assertCompleteFenced expects Complete to reject the job without writing a
+// result or a DocumentProbeCompleted outbox row.
+func (database *mediaProbeIntegration) assertCompleteFenced(t *testing.T, ctx context.Context, job Job, locator Locator) {
+	t.Helper()
+	completed, err := database.store.Complete(ctx, job, ProbeResult{DurationSec: integrationDuration, Locator: locator})
+	if completed || !errors.Is(err, ErrJobFenceLost) {
+		t.Fatalf("Complete() = (%t, %v), want (false, ErrJobFenceLost)", completed, err)
+	}
+	if count := database.count(t, ctx, `SELECT count(*) FROM ai.media_probe_results WHERE media_probe_job_id=$1`, job.ID); count != 0 {
+		t.Fatalf("media_probe_results rows = %d, want 0", count)
+	}
+	if count := database.count(t, ctx, `SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1`, job.ID); count != 0 {
+		t.Fatalf("ai.outbox rows = %d, want 0", count)
+	}
+}
+
 func (database *mediaProbeIntegration) assertJobStatus(t *testing.T, ctx context.Context, probe seededProbe, want string) {
 	t.Helper()
 	var status string
@@ -246,8 +259,10 @@ func (database *mediaProbeIntegration) deleteDocument(t *testing.T, ctx context.
 // (app/src/modules/content/repositories/content.repository.ts): advisory lock,
 // Document row lock, FOR UPDATE on every media probe job while collecting purge
 // locators, fence bump to DELETING, then cancelAiWork's tombstone and job
-// cancellation. Course outbox and purge manifest rows are omitted because the
-// worker never reads them.
+// cancellation. Course outbox and purge manifest rows, and cancelAiWork's
+// ai.processing_jobs cancellation/placeholder insert, are omitted: the
+// media-probe worker never reads them and they run after every media-probe
+// lock, so they cannot change the interleavings exercised here.
 func runDeletion(ctx context.Context, conn *pgx.Conn, probe seededProbe) error {
 	tx, err := conn.Begin(ctx)
 	if err != nil {

@@ -132,6 +132,9 @@ func TestProcessOneIgnoresTransientFenceReadErrors(t *testing.T) {
 	if calls := mockGenerator.calls.Load(); calls < 2 {
 		t.Fatalf("provider calls = %d, want every chunk", calls)
 	}
+	if observed, calls := mockGenerator.observed.Load(), mockGenerator.calls.Load(); observed != calls {
+		t.Fatalf("transient fence reads observed during %d of %d provider calls, want all", observed, calls)
+	}
 	if !inputStore.completed {
 		t.Fatal("transient fence read error discarded generated output")
 	}
@@ -1181,17 +1184,20 @@ func (generator *fencingGenerator) Generate(ctx context.Context, _ string) (proc
 }
 
 // countingGenerator makes fence reads fail transiently during generation and
-// waits for at least one such read per call.
+// records whether the monitor performed at least one such read per call.
 type countingGenerator struct {
 	store      *fencingStore
 	monitorErr error
 	calls      atomic.Int64
+	observed   atomic.Int64
 }
 
 func (generator *countingGenerator) Generate(context.Context, string) (processing.Question, error) {
 	generator.store.monitorErr.Store(generator.monitorErr)
 	checks := generator.store.checks.Load()
 	generator.calls.Add(1)
-	waitUntil(5*time.Second, func() bool { return generator.store.checks.Load() > checks })
+	if waitUntil(time.Second, func() bool { return generator.store.checks.Load() > checks }) {
+		generator.observed.Add(1)
+	}
 	return validQuestion(), nil
 }
