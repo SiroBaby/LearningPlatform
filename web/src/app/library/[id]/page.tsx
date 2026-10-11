@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { LearnerShell } from "@/components/layout";
 import { DocumentDetail } from "@/components/library/document-detail";
+import { isDocumentDeleting } from "@/lib/phase0/document-deletion";
 import { getPhase0DocumentServer, Phase0ServerError } from "@/lib/phase0/server-data";
 
 interface LibraryDetailPageProps {
@@ -10,7 +11,11 @@ interface LibraryDetailPageProps {
 
 async function loadDocument(id: string) {
   try {
-    return await getPhase0DocumentServer(id);
+    const document = await getPhase0DocumentServer(id);
+    if (isDocumentDeleting(document)) {
+      notFound();
+    }
+    return document;
   } catch (error) {
     if (error instanceof Phase0ServerError && error.status === 404) {
       notFound();

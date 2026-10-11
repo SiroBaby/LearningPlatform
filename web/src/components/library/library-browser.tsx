@@ -16,6 +16,7 @@ import type {
   Phase0DocumentType,
 } from "@/lib/phase0/contracts";
 import type { DocumentStatus, DocumentType } from "@/lib/types";
+import { excludeDeletingDocuments } from "@/lib/phase0/document-deletion";
 import { getDocumentFailurePresentation } from "@/lib/phase0/document-failure";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
@@ -55,6 +56,7 @@ const STATUS_ORDER: Readonly<Record<Phase0DocumentPresentation["status"], number
   processing: 2,
   uploaded: 3,
   failed: 4,
+  deleting: 5,
 };
 
 function mapDocumentType(type: Phase0DocumentType): Phase0DocumentPresentation["type"] {
@@ -82,6 +84,8 @@ function mapDocumentStatus(status: Phase0DocumentStatus): Phase0DocumentPresenta
       return "ready";
     case "FAILED":
       return "failed";
+    case "DELETING":
+      return "deleting";
   }
 }
 
@@ -207,7 +211,7 @@ function usePhase0Documents() {
         if (cancelled) {
           return;
         }
-        setDocuments(response.map(toPresentationDocument));
+        setDocuments(excludeDeletingDocuments(response).map(toPresentationDocument));
       } catch (loadError) {
         if (cancelled) {
           return;

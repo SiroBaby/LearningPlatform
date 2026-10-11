@@ -3,6 +3,7 @@ import { formatVietnameseDateTime } from "@/lib/date-time";
 import { getPhase0Document } from "@/lib/phase0/client";
 import type { Phase0BudgetStatus, Phase0Document, Phase0ModelSelectionKind } from "@/lib/phase0/contracts";
 import type { DocumentStatus, DocumentType } from "@/lib/types";
+import { isDocumentNotFoundError, isPollingStopStatus } from "@/lib/phase0/document-deletion";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 
 export function formatDateTime(iso: string): string {
@@ -51,6 +52,8 @@ export function mapStatus(status: Phase0Document["status"]): DocumentStatus {
       return "ready";
     case "FAILED":
       return "failed";
+    case "DELETING":
+      return "deleting";
   }
 }
 
@@ -66,6 +69,8 @@ export function getStatusLabel(status: Phase0Document["status"]): string {
       return "Sẵn sàng";
     case "FAILED":
       return "Xử lý chưa thành công";
+    case "DELETING":
+      return "Đang xóa";
   }
 }
 
@@ -150,6 +155,7 @@ interface UseProcessingDocumentStatusResult {
   readonly document: Phase0Document | null;
   readonly isLoading: boolean;
   readonly error: string | null;
+  readonly isDocumentMissing: boolean;
   readonly refresh: () => Promise<void>;
 }
 
@@ -157,6 +163,7 @@ export function useProcessingDocumentStatus(documentId: string): UseProcessingDo
   const [document, setDocument] = useState<Phase0Document | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isDocumentMissing, setIsDocumentMissing] = useState(false);
   const pollingTimerRef = useRef<number | null>(null);
   const pollingGenerationRef = useRef(0);
   const schedulePollRef = useRef<((generation: number) => void) | null>(null);
@@ -171,12 +178,18 @@ export function useProcessingDocumentStatus(documentId: string): UseProcessingDo
       setDocument(nextDocument);
       setError(null);
 
-      if (nextDocument.status === "READY" || nextDocument.status === "FAILED") {
+      if (isPollingStopStatus(nextDocument.status)) {
         setIsLoading(false);
         return;
       }
     } catch (pollError) {
       if (pollingGenerationRef.current !== generation) {
+        return;
+      }
+
+      if (isDocumentNotFoundError(pollError)) {
+        setIsDocumentMissing(true);
+        setIsLoading(false);
         return;
       }
 
@@ -229,6 +242,7 @@ export function useProcessingDocumentStatus(documentId: string): UseProcessingDo
     document,
     isLoading,
     error,
+    isDocumentMissing,
     refresh,
   };
 }

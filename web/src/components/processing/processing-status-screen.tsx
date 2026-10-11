@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
+import { EmptyState, LinkButton } from "@/components/ui";
 import { getPhase0DocumentQuiz, Phase0ClientError, retryPhase0Document } from "@/lib/phase0/client";
 import type { Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
+import { isDocumentDeleting } from "@/lib/phase0/document-deletion";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
 import { ProcessingDocumentInfoPanel, ProcessingHeader, ProcessingStatusPanel } from "./processing-status-sections";
@@ -15,7 +18,7 @@ interface ProcessingStatusScreenProps {
 }
 
 export function ProcessingStatusScreen({ documentId }: ProcessingStatusScreenProps) {
-  const { document, isLoading, error, refresh } = useProcessingDocumentStatus(documentId);
+  const { document, isLoading, error, isDocumentMissing, refresh } = useProcessingDocumentStatus(documentId);
   const detailHref = routes.document(documentId);
   const libraryHref = routes.library;
   const [isRetrySubmitting, setIsRetrySubmitting] = useState(false);
@@ -90,6 +93,17 @@ export function ProcessingStatusScreen({ documentId }: ProcessingStatusScreenPro
       cancelled = true;
     };
   }, [document?.id, document?.status, quizReloadKey]);
+
+  if (isDocumentMissing || (document && isDocumentDeleting(document))) {
+    return (
+      <EmptyState
+        icon={Trash2}
+        title="Không tìm thấy tài liệu"
+        description="Không tìm thấy tài liệu này hoặc tài liệu đã bị xóa. Bạn có thể quay lại thư viện để chọn tài liệu khác."
+        action={<LinkButton href={libraryHref}>Về thư viện</LinkButton>}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

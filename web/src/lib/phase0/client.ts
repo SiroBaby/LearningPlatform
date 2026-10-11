@@ -70,7 +70,7 @@ async function readResponseBody(response: Response): Promise<unknown> {
 
 async function requestPhase0Api<T>(
   path: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   mapResponse: (value: unknown) => T,
   body?: unknown,
 ): Promise<T> {
@@ -131,6 +131,10 @@ export function confirmPhase0Document(documentId: string): Promise<Phase0Confirm
 
 export function retryPhase0Document(documentId: string): Promise<Phase0ConfirmDocumentResponse> {
   return requestPhase0Api(`/api/phase0/documents/${documentId}/retry`, "POST", mapConfirmDocumentResponse);
+}
+
+export function deletePhase0Document(documentId: string): Promise<Phase0ConfirmDocumentResponse> {
+  return requestPhase0Api(`/api/phase0/documents/${documentId}`, "DELETE", mapConfirmDocumentResponse);
 }
 
 export function getPhase0DocumentQuiz(documentId: string): Promise<Phase0DocumentQuizResponse> {

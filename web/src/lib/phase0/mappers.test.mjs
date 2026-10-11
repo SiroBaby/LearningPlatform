@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { phase0DocumentProcessingFailureCodes } from "./contracts.ts";
-import { mapAttemptHistoryResponse, mapDocumentResponse, mapDocumentsResponse } from "./mappers.ts";
+import { phase0DocumentProcessingFailureCodes, phase0DocumentStatuses } from "./contracts.ts";
+import {
+  mapAttemptHistoryResponse,
+  mapConfirmDocumentResponse,
+  mapDocumentResponse,
+  mapDocumentsResponse,
+} from "./mappers.ts";
 
 const budgetStatuses = [
   "NOT_RESERVED",
@@ -112,6 +117,45 @@ test("maps a document list containing a failed media document", () => {
   assert.deepEqual(
     documents.map((document) => [document.id, document.errorCode]),
     [["pdf-id", null], ["media-id", "MEDIA_UNSUPPORTED_AUDIO_CODEC"], ["future-id", null]],
+  );
+});
+
+const backendDocumentStatuses = ["UPLOADED", "PROBING", "PROCESSING", "READY", "FAILED", "DELETING"];
+
+test("keeps the document status union aligned with backend DocumentStatus", () => {
+  assert.deepEqual([...phase0DocumentStatuses], backendDocumentStatuses);
+});
+
+for (const status of backendDocumentStatuses) {
+  test(`maps a document with ${status} status`, () => {
+    const document = mapDocumentResponse(buildDocumentOverrides({ status }));
+
+    assert.equal(document.status, status);
+  });
+}
+
+test("maps a document list containing a DELETING document without failing the library", () => {
+  const documents = mapDocumentsResponse([
+    buildDocumentOverrides({ id: "ready-id", status: "READY" }),
+    buildDocumentOverrides({ id: "deleting-id", status: "DELETING" }),
+  ]);
+
+  assert.deepEqual(
+    documents.map((document) => [document.id, document.status]),
+    [["ready-id", "READY"], ["deleting-id", "DELETING"]],
+  );
+});
+
+test("maps the accepted delete response with DELETING status", () => {
+  const response = mapConfirmDocumentResponse({ documentId: "document-id", status: "DELETING" });
+
+  assert.deepEqual(response, { documentId: "document-id", status: "DELETING" });
+});
+
+test("rejects an unknown document status", () => {
+  assert.throws(
+    () => mapDocumentResponse(buildDocumentOverrides({ status: "PURGED" })),
+    /document\.status to be a valid document status/u,
   );
 });
 
