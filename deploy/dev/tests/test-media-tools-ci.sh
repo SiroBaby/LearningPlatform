@@ -101,8 +101,8 @@ installers.each do |label, (steps, command)|
 end
 web = load.call('web-quality.yml')
 triggers = web['on'] || web[true]
-check.call(triggers.dig('pull_request', 'paths') == ['web/**', 'deploy/dev/**', '.github/workflows/web-quality.yml'],
-           'web-quality.yml must run on pull requests that change web/** or deploy/dev/**')
+check.call(triggers.dig('pull_request', 'paths') == ['web/**', 'deploy/dev/**', 'app/src/modules/ai/contracts/document-processing-result.ts', '.github/workflows/web-quality.yml'],
+           'web-quality.yml must run on pull requests that change web/**, deploy/dev/** or the backend failure-code contract')
 check.call(triggers.key?('workflow_call'), 'web-quality.yml must stay reusable by deploy-dev.yml')
 web_steps = web.dig('jobs', 'quality', 'steps')
 web_commands = web_steps.map { |step| step['run'] }.compact

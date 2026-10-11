@@ -10,6 +10,8 @@ const RETRYABLE_FAILURE_CODES: readonly Phase0DocumentProcessingFailureCode[] = 
   "BUDGET_EXHAUSTED",
   "GENERATION_OUTPUT_INVALID",
   "GENERATION_OUTPUT_TRUNCATED",
+  "MEDIA_PROBE_STORAGE_TEMPORARY",
+  "MEDIA_PROBE_TIMEOUT",
   "PROCESSING_TIMED_OUT",
   "PROVIDER_UNAVAILABLE",
 ] as const;
@@ -66,6 +68,60 @@ export function getDocumentFailurePresentation(
         description: "Hãy bổ sung thêm nội dung rõ ràng, có ý chính đầy đủ rồi tải lại.",
         retryable: false,
       };
+    case "MEDIA_AUDIO_TRACK_REQUIRED":
+      return {
+        title: "Video chưa có âm thanh phù hợp",
+        description: "Hãy dùng video có một luồng âm thanh chính chứa lời giảng rồi tải lại.",
+        retryable: false,
+      };
+    case "MEDIA_OBJECT_TOO_LARGE":
+      return {
+        title: "File quá lớn",
+        description: "MP4 tối đa 500 MiB, MP3 tối đa 300 MiB. Hãy cắt ngắn hoặc nén file rồi tải lại.",
+        retryable: false,
+      };
+    case "MEDIA_PROBE_FAILED":
+      return {
+        title: "Không đọc được file video hoặc âm thanh",
+        description: "File có thể bị hỏng hoặc dài quá 2 giờ. Hãy kiểm tra file phát được trên máy, cắt ngắn nếu cần rồi tải lại.",
+        retryable: false,
+      };
+    case "MEDIA_PROBE_OUTPUT_CAP_EXCEEDED":
+      return {
+        title: "File có cấu trúc quá phức tạp",
+        description: "Hãy xuất lại thành MP4 chỉ gồm một luồng video và một luồng âm thanh rồi tải lại.",
+        retryable: false,
+      };
+    case "MEDIA_PROBE_STORAGE_TEMPORARY":
+      return {
+        title: "Chưa thể đọc file lúc này",
+        description: "Đây là lỗi tạm thời. Hãy chờ một lúc rồi thử lại.",
+        retryable: true,
+      };
+    case "MEDIA_PROBE_TIMEOUT":
+      return {
+        title: "Kiểm tra file mất lâu hơn dự kiến",
+        description: "Hãy thử lại sau. Nếu vẫn lỗi, bạn có thể cắt ngắn file rồi tải lại.",
+        retryable: true,
+      };
+    case "MEDIA_UNSUPPORTED_AUDIO_CODEC":
+      return {
+        title: "Định dạng âm thanh chưa được hỗ trợ",
+        description: "Hãy xuất lại MP4 với âm thanh AAC-LC (1 hoặc 2 kênh), hoặc dùng file MP3 không kèm ảnh bìa rồi tải lại.",
+        retryable: false,
+      };
+    case "MEDIA_UNSUPPORTED_CONTAINER":
+      return {
+        title: "Định dạng file chưa được hỗ trợ",
+        description: "Hãy dùng file MP4 hoặc MP3 không bị khóa bản quyền. Nếu là MP4, hãy xuất lại chỉ gồm hình và tiếng (bỏ phụ đề, track phụ) rồi tải lại.",
+        retryable: false,
+      };
+    case "MEDIA_UNSUPPORTED_VIDEO_CODEC":
+      return {
+        title: "Định dạng video chưa được hỗ trợ",
+        description: "Hãy xuất lại MP4 với một luồng video H.264 8-bit (yuv420p), tối đa 1080p (cạnh dài 1920 px) và tối đa 30 fps rồi tải lại.",
+        retryable: false,
+      };
     case "PDF_INVALID":
       return {
         title: "File PDF không hợp lệ",
@@ -99,7 +155,7 @@ export function getDocumentFailurePresentation(
     case null:
       return {
         title: "Chưa thể xử lý tài liệu",
-        description: "Hãy thử lại sau hoặc tải lại file nếu tình trạng này tiếp tục.",
+        description: "Hãy kiểm tra file rồi tải lại.",
         retryable: false,
       };
   }
