@@ -38,6 +38,9 @@ func NewS3Store(endpoint, accessKey, secretKey, proxyURL string) (*S3Store, erro
 	if err != nil {
 		return nil, fmt.Errorf("create media object storage client: %w", err)
 	}
+	// minio-go rewrites Amazon endpoints to s3.dualstack.* by default; the
+	// egress proxy allowlists only the configured host, so keep that host.
+	client.SetS3EnableDualstack(false)
 	return &S3Store{client: client}, nil
 }
 

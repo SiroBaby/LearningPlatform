@@ -46,6 +46,9 @@ readonly CHECK_POD="media-probe-egress-check-$3"
 # Kept equal to infra/k8s/apps.yaml.j2 by test-verify-media-probe-egress.sh.
 readonly CHECK_IMAGE=ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
 readonly S3_ENDPOINT=s3.ap-southeast-1.amazonaws.com
+# minio-go switches Amazon endpoints to this host unless dualstack is disabled
+# (#210); Squid must keep rejecting it so such a client fails loudly.
+readonly S3_DUALSTACK_ENDPOINT=s3.dualstack.ap-southeast-1.amazonaws.com
 readonly NOT_ALLOWLISTED_HOST=example.com
 readonly INTERNET_IP=1.1.1.1
 readonly CHECK_LABEL=learning-platform.io/egress-check=true
@@ -167,6 +170,7 @@ expect_blocked 'blocked:direct-s3' "$S3_ENDPOINT" 443
 expect_blocked 'blocked:direct-internet-ip' "$INTERNET_IP" 443
 expect_proxy_status 'blocked:proxy-connect-database' "$PROXY_FORBIDDEN" "$DATABASE_HOST" "$DATABASE_PORT"
 expect_proxy_status 'blocked:proxy-connect-not-allowlisted' "$PROXY_FORBIDDEN" "$NOT_ALLOWLISTED_HOST" 443
+expect_proxy_status 'blocked:proxy-connect-dualstack' "$PROXY_FORBIDDEN" "$S3_DUALSTACK_ENDPOINT" 443
 
 if [[ "$failures" -eq 0 ]]; then
   printf 'RESULT PASS\n'

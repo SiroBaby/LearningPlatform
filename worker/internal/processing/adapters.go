@@ -73,6 +73,9 @@ func newS3Client(endpoint, accessKey, secretKey, proxyURL string) (*minio.Client
 	if err != nil {
 		return nil, fmt.Errorf("create object storage client: %w", err)
 	}
+	// minio-go rewrites Amazon endpoints to s3.dualstack.* by default; the
+	// egress proxy allowlists only the configured host, so keep that host.
+	client.SetS3EnableDualstack(false)
 	return client, nil
 }
 func (reader *S3Reader) Read(ctx context.Context, key string, max int64) ([]byte, error) {
