@@ -86,6 +86,7 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
   });
 
   afterEach(async () => {
+    storageFailures.splice(0);
     await Promise.all(stoppables.splice(0).map((stoppable) => stoppable.stop()));
   });
 
@@ -118,8 +119,21 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
     return { documentPurge: settings } as unknown as ApplicationConfigService;
   }
 
+  /** SDK failures seen by purge clients, so an unexpected one is visible in the assertion diff. */
+  const storageFailures: string[] = [];
+
   function purgerFor(settings: DocumentPurgeSettings): DocumentPurgeStorage {
-    return new ObjectStorageDocumentPurger(createDocumentPurgeS3Client(settings.storage));
+    const client = createDocumentPurgeS3Client(settings.storage);
+    client.middlewareStack.add((next) => async (args) => {
+      try {
+        return await next(args);
+      } catch (error) {
+        const shape = error as { name?: string; code?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+        storageFailures.push(`${shape.name}/${shape.$metadata?.httpStatusCode ?? '-'}/${shape.code ?? '-'}/${String(shape.message).slice(0, 160)}`);
+        throw error;
+      }
+    }, { step: 'finalizeRequest' });
+    return new ObjectStorageDocumentPurger(client);
   }
 
   function serviceFor(settings: DocumentPurgeSettings = settingsFor()): DocumentPurgeService {
@@ -558,6 +572,7 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
 
     const processed = await Promise.all([serviceFor(settings).purgeDueManifests(), serviceFor(settings).purgeDueManifests()]);
 
+    expect(storageFailures).toEqual([]);
     expect(processed[0] + processed[1]).toBe(seeded.length);
     const rows = await manifests.findBy(seeded.map((manifest) => ({ id: manifest.id })));
     expect(rows.map((row) => [row.status, row.attempts])).toEqual(
@@ -566,6 +581,8 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
   });
 
   it('fails closed at startup unless media bucket versioning is Enabled', async () => {
+    await serviceFor().assertMediaBucketVersioned().catch(() => undefined);
+    expect(storageFailures).toEqual([]);
     await expect(serviceFor().assertMediaBucketVersioned()).resolves.toBeUndefined();
     for (const mediaBucket of [SUSPENDED_BUCKET, UNVERSIONED_MEDIA_BUCKET]) {
       const settings = settingsFor({ mediaBucket });

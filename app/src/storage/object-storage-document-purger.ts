@@ -134,6 +134,7 @@ export class ObjectStorageDocumentPurger implements DocumentPurgeStorage {
       const classification = classifyPurgeStorageError(error);
       throw new DocumentPurgeStorageError(
         classification === 'ALREADY_DELETED' ? DocumentPurgeErrorCode.CONFIGURATION : classification,
+        { cause: error },
       );
     }
     if (status === 'Enabled') return BucketVersioningState.ENABLED;
@@ -147,7 +148,7 @@ export class ObjectStorageDocumentPurger implements DocumentPurgeStorage {
     } catch (error) {
       const classification = classifyPurgeStorageError(error);
       if (classification === 'ALREADY_DELETED') return;
-      throw new DocumentPurgeStorageError(classification);
+      throw new DocumentPurgeStorageError(classification, { cause: error });
     }
   }
 }
