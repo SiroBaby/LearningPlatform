@@ -412,7 +412,7 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
-          resources: {{ worker_resources | to_json }}
+          resources: {{ go_worker_resources | to_json }}
       volumes:
         - name: go-worker-tls
           secret:

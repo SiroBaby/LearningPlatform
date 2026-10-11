@@ -146,7 +146,7 @@ IAM bootstrap cho ESO phải giới hạn như sau:
 - `web_public_host`, `api_public_host`
 - `ingress_tls_secret_name`
 - `deployment_targets`
-- `web_resources`, `api_resources`, `worker_resources`
+- `web_resources`, `api_resources`, `worker_resources`, `go_worker_resources`
 - `observability_namespace`
 - `observability_aws_credentials_secret_name`
 - `grafana_admin_secret_name`
