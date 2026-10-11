@@ -1,0 +1,289 @@
+---
+# The dev node schedules every workload on a single 2000m allocatable node. A
+# Recreate rollout of the worker went Pending with "Insufficient cpu" once the
+# media probe workloads were enabled (#206), so the summed application CPU
+# requests plus rollout surge and a buffer must fit inside the share left after
+# platform requests read from their repo-owned sources.
+- name: Verify application CPU requests fit the dev node budget
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    applications_node_allocatable_cpu_millicores: 2000
+    applications_observability_values_dir: "{{ playbook_dir }}/../../../../observability"
+    applications_cert_manager_tasks_file: "{{ playbook_dir }}/../../cert_manager/tasks/main.yml"
+    applications_traefik_config_template: "{{ playbook_dir }}/../../k3s/templates/traefik-config.yaml.j2"
+    # Reviewed platform totals. Changing a request in the observability Helm
+    # values or the cert-manager resource patch changes the computed sum and
+    # turns the contract red until the new value is reviewed against the budget.
+    applications_expected_platform_cpu_millicores:
+      observability: 660
+      cert-manager: 250
+      external-system: 210
+    # CPU requests (not measured usage) of pods whose manifests are not stored
+    # in this repository, pinned to the versions asserted in the first task.
+    # Each entry is [group, component, CPU request, pod count].
+    applications_external_system_cpu_requests:
+      # k3s v1.31.8+k3s1 manifests/coredns.yaml, container coredns.
+      - [external-system, coredns, 100m, 1]
+      # k3s v1.31.8+k3s1 manifests/metrics-server/metrics-server-deployment.yaml.
+      - [external-system, metrics-server, 100m, 1]
+      # k3s bundled traefik chart 27.0.2 values.yaml sets `resources: {}` and
+      # roles/k3s/templates/traefik-config.yaml.j2 does not override it.
+      - [external-system, traefik, 0m, 1]
+      # k3s v1.31.8+k3s1 manifests/local-storage.yaml sets no resources.
+      - [external-system, local-path-provisioner, 0m, 1]
+      # external-secrets v0.15.1 release manifest: the controller requests 10m;
+      # cert-controller and webhook set no resources.
+      - [external-system, external-secrets, 10m, 1]
+    applications_expected_deployments:
+      - api
+      - media-egress-proxy
+      - media-probe-db-egress
+      - media-probe-worker
+      - web
+      - worker
+  tasks:
+    - name: Require the external system request sources to stay pinned
+      ansible.builtin.assert:
+        that:
+          - k3s_version == 'v1.31.8+k3s1'
+          - external_secrets_version == 'v0.15.1'
+          - external_secrets_manifest_sha256 == '3e88bee2008ca2700c0511fe02573033d4cc7c1e05a994e7f1affca779785106'
+          - "'resources' not in lookup('file', applications_traefik_config_template)"
+        fail_msg: >-
+          k3s, external-secrets or the Traefik HelmChartConfig changed. Re-read
+          the CPU requests of coredns, metrics-server, traefik, local-path and
+          external-secrets from the new sources, then update
+          applications_external_system_cpu_requests deliberately (#206).
+
+    - name: Read observability Helm values and the cert-manager resource patch
+      ansible.builtin.set_fact:
+        applications_monitoring_values: "{{ lookup('file', applications_observability_values_dir ~ '/kube-prometheus-stack-values.yml') | from_yaml }}"
+        applications_loki_values: "{{ lookup('file', applications_observability_values_dir ~ '/loki-values.yml') | from_yaml }}"
+        applications_alloy_values: "{{ lookup('file', applications_observability_values_dir ~ '/alloy-values.yml') | from_yaml }}"
+        applications_cert_manager_controllers: >-
+          {{ (lookup('file', applications_cert_manager_tasks_file) | from_yaml
+              | selectattr('name', 'equalto', 'Apply approved aggregate resources to cert-manager controllers')
+              | first).loop }}
+
+    - name: Require the platform topology the CPU request sources assume
+      ansible.builtin.assert:
+        that:
+          - (applications_monitoring_values.prometheus.prometheusSpec.replicas | default(1)) == 1
+          - applications_monitoring_values.alertmanager.alertmanagerSpec.replicas == 1
+          - (applications_monitoring_values.grafana.replicas | default(1)) == 1
+          - applications_loki_values.singleBinary.replicas == 1
+          - applications_loki_values.singleBinary.sidecar == false
+          - applications_loki_values.gateway.enabled == false
+          - applications_loki_values.lokiCanary.enabled == false
+          - applications_loki_values.chunksCache.enabled == false
+          - applications_loki_values.resultsCache.enabled == false
+          - applications_loki_values.minio.enabled == false
+          - applications_alloy_values.controller.type == 'daemonset'
+          - >-
+            applications_cert_manager_controllers | map(attribute='name') | list
+            == ['cert-manager', 'cert-manager-cainjector', 'cert-manager-webhook']
+        fail_msg: >-
+          The observability or cert-manager topology changed; extend the CPU
+          request sources in this contract before changing replicas or enabling
+          extra pods (#206).
+
+    - name: Collect observability CPU requests from the Helm values
+      ansible.builtin.set_fact:
+        applications_platform_cpu_requests:
+          - [observability, prometheus, "{{ applications_monitoring_values.prometheus.prometheusSpec.resources.requests.cpu | default('missing') }}", 1]
+          # The operator injects config-reloader into both the Prometheus and Alertmanager pods.
+          - [observability, prometheus-config-reloader, "{{ applications_monitoring_values.prometheusOperator.prometheusConfigReloader.resources.requests.cpu | default('missing') }}", 2]
+          - [observability, prometheus-operator, "{{ applications_monitoring_values.prometheusOperator.resources.requests.cpu | default('missing') }}", 1]
+          - [observability, alertmanager, "{{ applications_monitoring_values.alertmanager.alertmanagerSpec.resources.requests.cpu | default('missing') }}", 1]
+          - [observability, grafana, "{{ applications_monitoring_values.grafana.resources.requests.cpu | default('missing') }}", 1]
+          - [observability, kube-state-metrics, "{{ applications_monitoring_values['kube-state-metrics'].resources.requests.cpu | default('missing') }}", 1]
+          - [observability, node-exporter, "{{ applications_monitoring_values['prometheus-node-exporter'].resources.requests.cpu | default('missing') }}", 1]
+          - [observability, loki, "{{ applications_loki_values.singleBinary.resources.requests.cpu | default('missing') }}", 1]
+          - [observability, alloy, "{{ applications_alloy_values.alloy.resources.requests.cpu | default('missing') }}", 1]
+          - [observability, alloy-config-reloader, "{{ applications_alloy_values.configReloader.resources.requests.cpu | default('missing') }}", 1]
+
+    - name: Collect cert-manager CPU requests from the controller resource patch
+      ansible.builtin.set_fact:
+        applications_platform_cpu_requests: >-
+          {{ applications_platform_cpu_requests
+             + [['cert-manager', item.name, item.resources.requests.cpu | default('missing'), 1]] }}
+      loop: "{{ applications_cert_manager_controllers }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Sum platform CPU requests per group in millicores
+      vars:
+        applications_component_cpu: "{{ item[2] | string }}"
+        applications_component_millicores: >-
+          {{ applications_component_cpu
+             | regex_replace('^([0-9]+)$', '\g<1>000')
+             | regex_replace('^([0-9]+)m$', '\1')
+             | int }}
+      ansible.builtin.set_fact:
+        applications_platform_cpu_millicores: >-
+          {{ applications_platform_cpu_millicores | default({})
+             | combine({item[0]: (applications_platform_cpu_millicores | default({})).get(item[0], 0)
+                 + (applications_component_millicores | int) * (item[3] | int)}) }}
+        applications_platform_invalid_cpu_requests: >-
+          {{ applications_platform_invalid_cpu_requests | default([])
+             + ([item[1] ~ '=' ~ applications_component_cpu]
+                if applications_component_cpu is not match('^[0-9]+m?$') else []) }}
+      loop: "{{ applications_platform_cpu_requests + applications_external_system_cpu_requests }}"
+      loop_control:
+        label: "{{ item[0] }}/{{ item[1] }}={{ item[2] }}x{{ item[3] }}"
+
+    - name: Require platform CPU requests to match the reviewed totals
+      ansible.builtin.assert:
+        that:
+          - applications_platform_invalid_cpu_requests | length == 0
+          - applications_platform_cpu_millicores == applications_expected_platform_cpu_millicores
+          - >-
+            applications_platform_cpu_millicores['cert-manager']
+            == (cert_manager_resources.requests.cpu | regex_replace('m$', '') | int)
+        fail_msg: >-
+          Platform CPU requests {{ applications_platform_cpu_millicores }} differ
+          from the reviewed {{ applications_expected_platform_cpu_millicores }}
+          (invalid: {{ applications_platform_invalid_cpu_requests }};
+          cert_manager_resources {{ cert_manager_resources.requests.cpu }}).
+          Re-check the dev node budget before changing observability, cert-manager
+          or system requests (#206).
+
+    - name: Enable every application workload and pin fixture image digests
+      ansible.builtin.set_fact:
+        deployment_targets: [web, api, worker]
+        media_egress_proxy_enabled: true
+        object_storage_egress_proxy_enabled: true
+        media_probe_worker_enabled: true
+        api_media_enabled: true
+        web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+
+    - name: Render every application Deployment from the production dev vars
+      ansible.builtin.set_fact:
+        applications_budget_deployments: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2')
+             | from_yaml_all | list
+             | selectattr('kind', 'equalto', 'Deployment')
+             | list }}
+      no_log: true
+
+    - name: Require the worker and go-worker CPU requests and unchanged limits
+      vars:
+        applications_worker_containers: >-
+          {{ (applications_budget_deployments
+              | selectattr('metadata.name', 'equalto', 'worker')
+              | first).spec.template.spec.containers }}
+        applications_relay_worker: "{{ applications_worker_containers | selectattr('name', 'equalto', 'worker') | first }}"
+        applications_go_worker: "{{ applications_worker_containers | selectattr('name', 'equalto', 'go-worker') | first }}"
+      ansible.builtin.assert:
+        that:
+          - applications_relay_worker.resources.requests.cpu == '100m'
+          - applications_relay_worker.resources.limits.cpu | string == '1'
+          - applications_relay_worker.resources.limits.memory == '1Gi'
+          - applications_go_worker.resources.requests.cpu == '100m'
+          - applications_go_worker.resources.limits.cpu | string == '1'
+          - applications_go_worker.resources.limits.memory == '1Gi'
+        fail_msg: >-
+          The relay-only worker and go-worker containers must each request 100m
+          CPU from their own resource variables while keeping 1 CPU and 1Gi
+          limits (#206).
+
+    - name: Require explicit replicas and a known rollout strategy on every Deployment
+      ansible.builtin.assert:
+        that:
+          - item.spec.replicas is defined
+          - item.spec.replicas | int >= 1
+          - item.spec.strategy.type | default('') in ['Recreate', 'RollingUpdate']
+        fail_msg: >-
+          Deployment {{ item.metadata.name }} must declare replicas and a
+          Recreate or RollingUpdate strategy so the budget can size its rollout
+          surge (#206).
+      loop: "{{ applications_budget_deployments }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Compute per-Deployment CPU requests and rollout surge in millicores
+      vars:
+        applications_pod_spec: "{{ item.spec.template.spec }}"
+        applications_container_cpu_millicores: >-
+          {{ (applications_pod_spec.containers + applications_pod_spec.initContainers | default([]))
+             | map(attribute='resources.requests.cpu') | map('string')
+             | map('regex_replace', '^([0-9]+)$', '\g<1>000')
+             | map('regex_replace', '^([0-9]+)m$', '\1')
+             | map('int') | list }}
+        applications_container_count: "{{ applications_pod_spec.containers | length }}"
+        # Kubernetes sizes a pod by max(sum of containers, largest init container).
+        applications_pod_cpu_millicores: >-
+          {{ ([applications_container_cpu_millicores[:applications_container_count | int] | sum]
+              + applications_container_cpu_millicores[applications_container_count | int:])
+             | max }}
+        applications_replicas: "{{ item.spec.replicas | int }}"
+        # Recreate deletes old pods before creating new ones. RollingUpdate keeps
+        # old pods while maxSurge new pods start (default 25%, rounded up).
+        applications_max_surge: "{{ ((item.spec.strategy.rollingUpdate | default({}, true)).maxSurge | default('25%')) | string }}"
+        applications_surge_pods: >-
+          {{ 0 if item.spec.strategy.type == 'Recreate'
+             else ((applications_replicas | int) * (applications_max_surge | regex_replace('%$', '') | int) / 100) | round(0, 'ceil') | int
+             if applications_max_surge is match('^[0-9]+%$')
+             else applications_max_surge | int }}
+      ansible.builtin.set_fact:
+        applications_budget_deployment_cpu: >-
+          {{ applications_budget_deployment_cpu | default({})
+             | combine({item.metadata.name: (applications_pod_cpu_millicores | int) * (applications_replicas | int)}) }}
+        applications_budget_deployment_pod_cpu: >-
+          {{ applications_budget_deployment_pod_cpu | default({})
+             | combine({item.metadata.name: applications_pod_cpu_millicores | int}) }}
+        applications_budget_deployment_surge_cpu: >-
+          {{ applications_budget_deployment_surge_cpu | default({})
+             | combine({item.metadata.name: (applications_pod_cpu_millicores | int) * (applications_surge_pods | int)}) }}
+      loop: "{{ applications_budget_deployments }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Require application CPU requests, rollout surge and buffer to fit the budget
+      vars:
+        applications_platform_total_cpu_millicores: "{{ applications_platform_cpu_millicores.values() | sum }}"
+        applications_cpu_budget_millicores: >-
+          {{ applications_node_allocatable_cpu_millicores - (applications_platform_total_cpu_millicores | int) }}
+        applications_total_cpu_millicores: "{{ applications_budget_deployment_cpu.values() | sum }}"
+        applications_surge_cpu_millicores: "{{ applications_budget_deployment_surge_cpu.values() | sum }}"
+        # Safety buffer for ad-hoc pods such as the verify-media-probe-egress
+        # check (10m) or diagnostics, sized as the largest application pod.
+        applications_buffer_cpu_millicores: "{{ applications_budget_deployment_pod_cpu.values() | max }}"
+        applications_required_cpu_millicores: >-
+          {{ (applications_total_cpu_millicores | int)
+             + (applications_surge_cpu_millicores | int)
+             + (applications_buffer_cpu_millicores | int) }}
+      ansible.builtin.assert:
+        that:
+          - applications_budget_deployment_cpu.keys() | sort == applications_expected_deployments
+          - >-
+            ((applications_budget_deployments | map(attribute='spec.template.spec.containers') | flatten)
+             + (applications_budget_deployments | map(attribute='spec.template.spec')
+                | map(attribute='initContainers', default=[]) | flatten))
+            | map(attribute='resources.requests.cpu') | map('string')
+            | reject('match', '^[0-9]+m?$') | list | length == 0
+          - (applications_required_cpu_millicores | int) <= (applications_cpu_budget_millicores | int)
+        fail_msg: >-
+          Application CPU requests {{ applications_budget_deployment_cpu }} total
+          {{ applications_total_cpu_millicores }}m, rollout surge
+          {{ applications_budget_deployment_surge_cpu }} adds
+          {{ applications_surge_cpu_millicores }}m and the buffer adds
+          {{ applications_buffer_cpu_millicores }}m; together they must fit the
+          {{ applications_cpu_budget_millicores }}m left after platform requests
+          {{ applications_platform_cpu_millicores }} on the 2000m dev node (#206).
+          Lower requests or review the budget deliberately.
+        success_msg: >-
+          Application CPU requests total {{ applications_total_cpu_millicores }}m
+          plus {{ applications_surge_cpu_millicores }}m rollout surge and
+          {{ applications_buffer_cpu_millicores }}m buffer fit the
+          {{ applications_cpu_budget_millicores }}m budget left after platform
+          requests {{ applications_platform_cpu_millicores }}.
