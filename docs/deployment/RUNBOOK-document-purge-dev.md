@@ -43,7 +43,13 @@ Chỉ bật khi **tất cả** đã xong và có bằng chứng ghi vào ticket 
    (worker không đoán version vì quyết định Q1 cấm list version).
 3. IAM user purge và policy ở mục 3 đã tạo; negative check ở mục 5 đạt.
 4. Hai SSM `SecureString` ở mục 4 đã tạo và credential bootstrap ESO đọc được.
-5. Ticket follow-up về alert (bật Loki ruler, rule `document.purge.dead_lettered`
+5. Đường PostgreSQL khớp NetworkPolicy: NetworkPolicy của purge worker chỉ mở
+   cổng `media_probe_database_upstream_port` (hiện là `27158` trong
+   `infra/ansible/vars/dev.yml`). Giá trị SSM `/learning-platform/dev/db-port`
+   phải bằng cổng này và `/learning-platform/dev/db-host` phải là cùng host
+   `media_probe_database_upstream_host`. Ansible không đọc được giá trị SSM nên
+   không tự kiểm được; nếu lệch, pod sẽ restart liên tục ở bước migration.
+6. Ticket follow-up về alert (bật Loki ruler, rule `document.purge.dead_lettered`
    và rule pod-health cho `document-purge-worker`) đã hoàn tất. Xem mục 8.
 
 ## 3. Owner tạo IAM user purge
@@ -76,7 +82,7 @@ Policy tối thiểu (gắn trực tiếp vào IAM user purge):
     {
       "Sid": "PurgeMediaVersions",
       "Effect": "Allow",
-      "Action": ["s3:DeleteObjectVersion", "s3:DeleteObject"],
+      "Action": ["s3:DeleteObjectVersion"],
       "Resource": "arn:aws:s3:::<MEDIA_BUCKET>/media/*"
     },
     {
@@ -106,6 +112,17 @@ Policy tối thiểu (gắn trực tiếp vào IAM user purge):
   ]
 }
 ```
+
+Policy này khớp đúng các lệnh S3 mà purger gọi
+(`app/src/storage/object-storage-document-purger.ts`):
+
+- Media: chỉ `DeleteObject` **kèm** `VersionId`, cần quyền `s3:DeleteObjectVersion`.
+  Không cấp `s3:DeleteObject` trên media bucket: purger không bao giờ xóa media
+  theo key (media bucket phải `Enabled`, locator media thiếu `VersionId` vào
+  `DEAD_LETTER`), và quyền này chỉ cho phép tạo delete marker (ẩn object hiện tại).
+- PDF: `DeleteObject` theo key, chỉ chạy khi documents bucket chưa từng bật
+  versioning, cần `s3:DeleteObject`.
+- Preflight và nhánh PDF: `GetBucketVersioning` trên hai bucket.
 
 Không cấp: `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `s3:ListBucketVersions`,
 quyền trên bucket khác, wildcard bucket. Bucket dùng SSE-KMS thì xóa không cần
@@ -256,8 +273,8 @@ PR-3 chưa thêm alert, vì:
   `web|api|worker`, không khớp `document-purge-worker`. Sửa rule sẽ chạy lại Helm
   release observability khi merge, nên tách sang ticket riêng.
 
-Ticket follow-up do coordinator tạo là **điều kiện bắt buộc trước khi bật cờ**
-(mục 2.5). Nội dung đề xuất:
+Ticket follow-up về alert là **điều kiện bắt buộc trước khi bật cờ**
+(mục 2.6). Nội dung đề xuất:
 
 1. Bật Loki ruler trong release monolithic (`loki.rulerConfig` với
    `alertmanager_url` trỏ Alertmanager của `kube-prometheus-stack`, rule lưu ở
@@ -313,10 +330,14 @@ Ticket follow-up do coordinator tạo là **điều kiện bắt buộc trước
   khi cờ còn `true` sẽ đưa replica về 1.
 - **Tắt có kiểm soát (bền vững)**: PR đổi `document_purge_enabled: false` rồi
   merge. Khi deploy target `worker`, Ansible xóa `deployment/document-purge-worker`
-  (chờ pod dừng), rồi xóa đúng NetworkPolicy `document-purge-worker-egress`,
-  `document-purge-worker-ingress`, ServiceAccount `document-purge-worker` và
-  ExternalSecret `learning-platform-document-purge-runtime` (ESO tự xóa Secret
-  thuộc sở hữu). Rule ingress của `media-egress-proxy` không còn cho purge
+  theo kiểu Foreground (xóa ReplicaSet và pod trước), chờ tới khi không còn pod
+  nào có label `app.kubernetes.io/component=document-purge-worker`, rồi mới xóa
+  đúng NetworkPolicy `document-purge-worker-egress`, `document-purge-worker-ingress`,
+  ServiceAccount `document-purge-worker` và ExternalSecret
+  `learning-platform-document-purge-runtime` (ESO tự xóa Secret thuộc sở hữu).
+  Thứ tự này cần vì namespace không có default deny: xóa NetworkPolicy trước khi
+  pod dừng sẽ để pod giữ credential purge mà không bị giới hạn mạng. Sau khi apply,
+  Ansible đọc lại `media-egress-proxy-ingress` và fail nếu còn rule cho purge
   worker.
 - **Thu hồi quyền ở S3**: vô hiệu hóa access key của IAM user purge. Làm **sau**
   khi đã scale về 0; nếu worker còn chạy, các manifest đang xử lý sẽ vào

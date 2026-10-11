@@ -28,6 +28,11 @@
     external_secrets_runtime_operator.resources | length == 1 and
     (external_secrets_runtime_operator.resources[0].status.availableReplicas | default(0) | int) > 0
 
+# The purge credential must never sync into the cluster for a rollout that the
+# applications role would then reject, so check its contract before rendering.
+- name: Validate the document purge contract before its runtime Secret renders
+  ansible.builtin.import_tasks: ../../applications/tasks/document-purge-contract.yml
+
 - name: Render selected namespace-scoped runtime ExternalSecrets once
   ansible.builtin.set_fact:
     external_secrets_runtime_expected_names: >-

@@ -54,7 +54,7 @@ expect_rejected 'retained capabilities' apps.yaml.j2 \
 expect_rejected 'relay-only execution mode' apps.yaml.j2 \
   "text.sub('              value: document-purge', '              value: relay-only')"
 expect_rejected 'open egress port rule' apps.yaml.j2 \
-  "text.sub(\"  name: document-purge-worker-egress\n\", \"  name: document-purge-worker-egress\n\").sub(/(name: document-purge-worker-egress\n.*?)  egress:\n/m) { \"#{\$1}  egress:\n    - ports:\n        - protocol: TCP\n          port: 443\n\" }"
+  "text.sub(/(name: document-purge-worker-egress\n.*?)  egress:\n/m) { \"#{\$1}  egress:\n    - ports:\n        - protocol: TCP\n          port: 443\n\" }"
 expect_rejected 'private range allowed for the database rule' apps.yaml.j2 \
   "text.sub(/(name: document-purge-worker-egress\n.*?)              - 10\\.0\\.0\\.0\\/8\n/m) { \$1 }"
 expect_rejected 'Deployment before its ServiceAccount' apps.yaml.j2 \

@@ -313,6 +313,18 @@
           flag: true
           ssm: {object_storage_media_purge_access_key: /learning-platform/dev/object-storage-api-media-access-key}
           accepted: false
+        - label: reused full-pipeline media identity
+          flag: true
+          ssm: {object_storage_media_purge_access_key: /learning-platform/dev/object-storage-full-pipeline-media-access-key}
+          accepted: false
+        - label: reused API document secret key
+          flag: true
+          ssm: {object_storage_media_purge_secret_key: /learning-platform/dev/object-storage-secret-key}
+          accepted: false
+        - label: same path for access and secret key
+          flag: true
+          ssm: {object_storage_media_purge_secret_key: /learning-platform/dev/object-storage-media-purge-access-key}
+          accepted: false
         - label: placeholder paths while disabled
           flag: false
           ssm: {object_storage_media_purge_access_key: /REPLACE/WITH/EXACT/object-storage-media-purge-access-key}

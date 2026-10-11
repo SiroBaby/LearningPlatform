@@ -89,18 +89,18 @@
                 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL',
                 'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_MEDIA_BUCKET',
                 'OBJECT_STORAGE_PURGE_ACCESS_KEY', 'OBJECT_STORAGE_PURGE_SECRET_KEY']
+          # Exact key-to-path map: a swapped DB, bucket, or credential path fails here.
           - >-
-            (external_secrets_purge_runtime.spec.data
-             | selectattr('secretKey', 'equalto', 'OBJECT_STORAGE_PURGE_ACCESS_KEY') | first).remoteRef.key
-            == '/learning-platform/dev/object-storage-media-purge-access-key'
-          - >-
-            (external_secrets_purge_runtime.spec.data
-             | selectattr('secretKey', 'equalto', 'OBJECT_STORAGE_PURGE_SECRET_KEY') | first).remoteRef.key
-            == '/learning-platform/dev/object-storage-media-purge-secret-key'
-          - >-
-            external_secrets_purge_runtime.spec.data | map(attribute='remoteRef.key')
-            | select('search', 'openai|media-probe|api-media|full-pipeline|object-storage-access-key|object-storage-secret-key|google|auth-|swagger')
-            | list | length == 0
+            external_secrets_purge_runtime.spec.data | map(attribute='remoteRef.key') | list
+            == ['/learning-platform/dev/db-host', '/learning-platform/dev/db-port',
+                '/learning-platform/dev/db-user', '/learning-platform/dev/db-password',
+                '/learning-platform/dev/db-name', '/learning-platform/dev/db-ssl-mode',
+                '/learning-platform/dev/db-ssl-ca', '/learning-platform/dev/object-storage-endpoint',
+                '/learning-platform/dev/object-storage-port', '/learning-platform/dev/object-storage-region',
+                '/learning-platform/dev/object-storage-use-ssl', '/learning-platform/dev/object-storage-bucket',
+                '/learning-platform/dev/object-storage-media-bucket',
+                '/learning-platform/dev/object-storage-media-purge-access-key',
+                '/learning-platform/dev/object-storage-media-purge-secret-key']
           - >-
             external_secrets_purge_disabled_resources
             | selectattr('metadata.name', 'equalto', 'learning-platform-document-purge-runtime')

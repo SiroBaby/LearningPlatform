@@ -16,9 +16,23 @@
       - ssm_parameter_keys.object_storage_media_purge_secret_key is search('^/')
       - ssm_parameter_keys.object_storage_media_purge_access_key is not search('REPLACE')
       - ssm_parameter_keys.object_storage_media_purge_secret_key is not search('REPLACE')
-      - ssm_parameter_keys.object_storage_media_purge_access_key != ssm_parameter_keys.object_storage_media_probe_access_key
-      - ssm_parameter_keys.object_storage_media_purge_access_key != ssm_parameter_keys.object_storage_api_media_access_key
-      - ssm_parameter_keys.object_storage_media_purge_access_key != ssm_parameter_keys.object_storage_access_key
+      # Ansible cannot read SSM values, so the paths are the only identity
+      # guard: the purge pod never receives another credential to compare.
+      - >-
+        [ssm_parameter_keys.object_storage_media_purge_access_key]
+        | intersect([ssm_parameter_keys.object_storage_access_key,
+                     ssm_parameter_keys.object_storage_api_media_access_key,
+                     ssm_parameter_keys.object_storage_media_probe_access_key,
+                     ssm_parameter_keys.object_storage_full_pipeline_media_access_key])
+        | length == 0
+      - >-
+        [ssm_parameter_keys.object_storage_media_purge_secret_key]
+        | intersect([ssm_parameter_keys.object_storage_secret_key,
+                     ssm_parameter_keys.object_storage_api_media_secret_key,
+                     ssm_parameter_keys.object_storage_media_probe_secret_key,
+                     ssm_parameter_keys.object_storage_full_pipeline_media_secret_key])
+        | length == 0
+      - ssm_parameter_keys.object_storage_media_purge_access_key != ssm_parameter_keys.object_storage_media_purge_secret_key
       - ssm_parameter_keys.object_storage_media_bucket is string
       - ssm_parameter_keys.object_storage_media_bucket is search('^/')
       - ssm_parameter_keys.object_storage_media_bucket is not search('REPLACE')
