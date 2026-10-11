@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { phase0DocumentProcessingFailureCodes } from "./contracts.ts";
-import { mapAttemptHistoryResponse, mapDocumentResponse } from "./mappers.ts";
+import { mapAttemptHistoryResponse, mapDocumentResponse, mapDocumentsResponse } from "./mappers.ts";
 
 const budgetStatuses = [
   "NOT_RESERVED",
@@ -79,6 +79,40 @@ test("maps a document with truncated generation failure code", () => {
   }));
 
   assert.equal(document.errorCode, "GENERATION_OUTPUT_TRUNCATED");
+});
+
+test("maps an unknown error code to null instead of failing the document", () => {
+  const document = mapDocumentResponse(buildDocumentOverrides({
+    errorCode: "MEDIA_SOMETHING_NEW",
+    status: "FAILED",
+  }));
+
+  assert.equal(document.status, "FAILED");
+  assert.equal(document.errorCode, null);
+});
+
+test("rejects a non-string error code", () => {
+  assert.throws(() => mapDocumentResponse(buildDocumentOverrides({ errorCode: 42, status: "FAILED" })), TypeError);
+});
+
+test("maps a document list containing a failed media document", () => {
+  const documents = mapDocumentsResponse([
+    buildDocumentOverrides({ id: "pdf-id", status: "READY" }),
+    buildDocumentOverrides({
+      durationSec: null,
+      errorCode: "MEDIA_UNSUPPORTED_AUDIO_CODEC",
+      id: "media-id",
+      originalName: "lesson.mp4",
+      status: "FAILED",
+      type: "VIDEO",
+    }),
+    buildDocumentOverrides({ errorCode: "FUTURE_FAILURE_CODE", id: "future-id", status: "FAILED" }),
+  ]);
+
+  assert.deepEqual(
+    documents.map((document) => [document.id, document.errorCode]),
+    [["pdf-id", null], ["media-id", "MEDIA_UNSUPPORTED_AUDIO_CODEC"], ["future-id", null]],
+  );
 });
 
 test("maps attempt history returned as a top-level array", () => {

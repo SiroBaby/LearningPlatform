@@ -142,10 +142,17 @@ function readNullableBudgetStatus(value: unknown, field: string): Phase0BudgetSt
   return value === null ? null : readBudgetStatus(value, field);
 }
 
-function readDocumentProcessingFailureCode(
+/**
+ * Mã lỗi chưa có trong contract web (backend thêm mã mới trước khi web cập nhật) được đọc thành `null`
+ * để UI hiển thị thông báo lỗi chung, thay vì throw làm hỏng cả tài liệu hoặc cả danh sách thư viện.
+ */
+function readNullableDocumentProcessingFailureCode(
   value: unknown,
   field: string,
-): Phase0DocumentProcessingFailureCode {
+): Phase0DocumentProcessingFailureCode | null {
+  if (value === null) {
+    return null;
+  }
   switch (readString(value, field)) {
     case "BUDGET_EXHAUSTED":
       return "BUDGET_EXHAUSTED";
@@ -161,6 +168,24 @@ function readDocumentProcessingFailureCode(
       return "GENERATION_OUTPUT_TRUNCATED";
     case "INSUFFICIENT_VALID_QUESTIONS":
       return "INSUFFICIENT_VALID_QUESTIONS";
+    case "MEDIA_AUDIO_TRACK_REQUIRED":
+      return "MEDIA_AUDIO_TRACK_REQUIRED";
+    case "MEDIA_OBJECT_TOO_LARGE":
+      return "MEDIA_OBJECT_TOO_LARGE";
+    case "MEDIA_PROBE_FAILED":
+      return "MEDIA_PROBE_FAILED";
+    case "MEDIA_PROBE_OUTPUT_CAP_EXCEEDED":
+      return "MEDIA_PROBE_OUTPUT_CAP_EXCEEDED";
+    case "MEDIA_PROBE_STORAGE_TEMPORARY":
+      return "MEDIA_PROBE_STORAGE_TEMPORARY";
+    case "MEDIA_PROBE_TIMEOUT":
+      return "MEDIA_PROBE_TIMEOUT";
+    case "MEDIA_UNSUPPORTED_AUDIO_CODEC":
+      return "MEDIA_UNSUPPORTED_AUDIO_CODEC";
+    case "MEDIA_UNSUPPORTED_CONTAINER":
+      return "MEDIA_UNSUPPORTED_CONTAINER";
+    case "MEDIA_UNSUPPORTED_VIDEO_CODEC":
+      return "MEDIA_UNSUPPORTED_VIDEO_CODEC";
     case "PDF_INVALID":
       return "PDF_INVALID";
     case "PDF_TEXT_NOT_FOUND":
@@ -172,15 +197,8 @@ function readDocumentProcessingFailureCode(
     case "PROVIDER_UNAVAILABLE":
       return "PROVIDER_UNAVAILABLE";
     default:
-      throw new TypeError(`Expected ${field} to be a valid document processing failure code.`);
+      return null;
   }
-}
-
-function readNullableDocumentProcessingFailureCode(
-  value: unknown,
-  field: string,
-): Phase0DocumentProcessingFailureCode | null {
-  return value === null ? null : readDocumentProcessingFailureCode(value, field);
 }
 
 function mapCitationLocator(value: unknown): Phase0CitationLocator {

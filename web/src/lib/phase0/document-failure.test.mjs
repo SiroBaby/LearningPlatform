@@ -11,6 +11,8 @@ const retryableCodes = new Set([
   "BUDGET_EXHAUSTED",
   "GENERATION_OUTPUT_INVALID",
   "GENERATION_OUTPUT_TRUNCATED",
+  "MEDIA_PROBE_STORAGE_TEMPORARY",
+  "MEDIA_PROBE_TIMEOUT",
   "PROCESSING_TIMED_OUT",
   "PROVIDER_UNAVAILABLE",
 ]);
@@ -56,4 +58,11 @@ test("uses coherent failed copy for generic processing failure", () => {
   assert.equal(presentation.title, "Chưa thể xử lý tài liệu");
   assert.doesNotMatch(presentation.description, /đang xử lý|xử lý xong/i);
   assert.match(presentation.description, /kiểm tra lại file|tải lại/i);
+});
+
+test("guides the learner to AAC-LC for unsupported media audio", () => {
+  const presentation = getDocumentFailurePresentation("MEDIA_UNSUPPORTED_AUDIO_CODEC");
+
+  assert.equal(presentation.retryable, false);
+  assert.match(presentation.description, /AAC-LC/u);
 });

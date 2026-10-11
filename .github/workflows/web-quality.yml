@@ -5,6 +5,8 @@ on:
     paths:
       - web/**
       - deploy/dev/**
+      # Contract test của web đọc enum mã lỗi backend để phát hiện lệch đồng bộ.
+      - app/src/modules/ai/contracts/document-processing-result.ts
       - .github/workflows/web-quality.yml
   workflow_call:
 
