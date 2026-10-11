@@ -98,8 +98,8 @@ export function ProcessingStatusScreen({ documentId }: ProcessingStatusScreenPro
     return (
       <EmptyState
         icon={Trash2}
-        title="Tài liệu này không còn trong thư viện"
-        description="Tài liệu đã bị xóa nên không thể tiếp tục xử lý. Bạn có thể quay lại thư viện để chọn tài liệu khác."
+        title="Không tìm thấy tài liệu"
+        description="Không tìm thấy tài liệu này hoặc tài liệu đã bị xóa. Bạn có thể quay lại thư viện để chọn tài liệu khác."
         action={<LinkButton href={libraryHref}>Về thư viện</LinkButton>}
       />
     );

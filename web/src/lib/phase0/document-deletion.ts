@@ -16,6 +16,22 @@ export function isDocumentDeleting(document: Pick<Phase0Document, "status">): bo
   return document.status === "DELETING";
 }
 
+/** Polling stops once the Document can no longer change on its own or is being deleted. */
+export function isPollingStopStatus(status: Phase0Document["status"]): boolean {
+  return status === "READY" || status === "FAILED" || status === "DELETING";
+}
+
+/** Focus returns to the confirm button after a failed deletion so it stays inside the dialog. */
+export function shouldFocusDeletionConfirm({
+  deletionError,
+  isDeleting,
+}: {
+  readonly deletionError: string | null;
+  readonly isDeleting: boolean;
+}): boolean {
+  return deletionError !== null && !isDeleting;
+}
+
 export function excludeDeletingDocuments<T extends Pick<Phase0Document, "status">>(
   documents: readonly T[],
 ): T[] {

@@ -3,7 +3,7 @@ import { formatVietnameseDateTime } from "@/lib/date-time";
 import { getPhase0Document } from "@/lib/phase0/client";
 import type { Phase0BudgetStatus, Phase0Document, Phase0ModelSelectionKind } from "@/lib/phase0/contracts";
 import type { DocumentStatus, DocumentType } from "@/lib/types";
-import { isDocumentNotFoundError } from "@/lib/phase0/document-deletion";
+import { isDocumentNotFoundError, isPollingStopStatus } from "@/lib/phase0/document-deletion";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 
 export function formatDateTime(iso: string): string {
@@ -178,7 +178,7 @@ export function useProcessingDocumentStatus(documentId: string): UseProcessingDo
       setDocument(nextDocument);
       setError(null);
 
-      if (nextDocument.status === "READY" || nextDocument.status === "FAILED" || nextDocument.status === "DELETING") {
+      if (isPollingStopStatus(nextDocument.status)) {
         setIsLoading(false);
         return;
       }

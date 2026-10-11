@@ -6,6 +6,8 @@ import {
   getDocumentDeletionErrorMessage,
   isDocumentDeleting,
   isDocumentNotFoundError,
+  isPollingStopStatus,
+  shouldFocusDeletionConfirm,
 } from "./document-deletion.ts";
 
 function createClientError({ status, code, retryable }) {
@@ -68,4 +70,19 @@ test("never shows backend text for unknown failures", () => {
   assert.equal(getDocumentDeletionErrorMessage(mockClientError), "Chưa thể xóa tài liệu. Bạn hãy thử lại sau.");
   assert.equal(getDocumentDeletionErrorMessage(new Error("boom")), "Chưa thể xóa tài liệu. Bạn hãy thử lại sau.");
   assert.equal(getDocumentDeletionErrorMessage("boom"), "Chưa thể xóa tài liệu. Bạn hãy thử lại sau.");
+});
+
+test("stops polling once the document is READY, FAILED or DELETING", () => {
+  for (const status of ["READY", "FAILED", "DELETING"]) {
+    assert.equal(isPollingStopStatus(status), true, status);
+  }
+  for (const status of ["UPLOADED", "PROBING", "PROCESSING"]) {
+    assert.equal(isPollingStopStatus(status), false, status);
+  }
+});
+
+test("returns focus to the confirm button only after a failed deletion settles", () => {
+  assert.equal(shouldFocusDeletionConfirm({ deletionError: "Chưa thể xóa tài liệu.", isDeleting: false }), true);
+  assert.equal(shouldFocusDeletionConfirm({ deletionError: "Chưa thể xóa tài liệu.", isDeleting: true }), false);
+  assert.equal(shouldFocusDeletionConfirm({ deletionError: null, isDeleting: false }), false);
 });

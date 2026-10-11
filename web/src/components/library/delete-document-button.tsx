@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Trash2 } from "lucide-react";
 import { Button, Dialog, useToast } from "@/components/ui";
 import { deletePhase0Document } from "@/lib/phase0/client";
-import { getDocumentDeletionErrorMessage, isDocumentNotFoundError } from "@/lib/phase0/document-deletion";
+import {
+  getDocumentDeletionErrorMessage,
+  isDocumentNotFoundError,
+  shouldFocusDeletionConfirm,
+} from "@/lib/phase0/document-deletion";
 import { routes } from "@/lib/routes";
 
 interface DeleteDocumentButtonProps {
@@ -20,7 +24,14 @@ export function DeleteDocumentButton({ documentId, documentName }: DeleteDocumen
   const [isDeleting, setIsDeleting] = useState(false);
   const [deletionError, setDeletionError] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
   const isDeletingRef = useRef(false);
+
+  useEffect(() => {
+    if (shouldFocusDeletionConfirm({ deletionError, isDeleting })) {
+      confirmButtonRef.current?.focus();
+    }
+  }, [deletionError, isDeleting]);
 
   const openDialog = useCallback((): void => {
     setDeletionError(null);
@@ -76,6 +87,7 @@ export function DeleteDocumentButton({ documentId, documentName }: DeleteDocumen
               Giữ lại
             </Button>
             <Button
+              ref={confirmButtonRef}
               type="button"
               variant="danger"
               onClick={() => {
