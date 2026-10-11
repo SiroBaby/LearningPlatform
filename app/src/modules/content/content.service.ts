@@ -10,6 +10,7 @@ import {
   Optional,
 } from '@nestjs/common';
 
+import { DateTimeUtil } from '../../common/datetime.util';
 import { ApplicationConfigService } from '../../config/application-config.service';
 import { StorageService } from '../../storage/storage.service';
 import { normalizeStorageVersionId } from '../../storage/storage-version-id';
@@ -23,6 +24,7 @@ import {
   type StorageVerifier,
 } from '../../storage/contracts/storage-verifier.port';
 import { CreateUploadUrlCommand } from './contracts/create-upload-url.command';
+import { calculatePurgeNotBefore } from './contracts/document-purge-policy';
 import { DocumentQuizResult } from './contracts/document-quiz.result';
 import { DocumentEstimateResult } from './contracts/document-estimate.result';
 import {
@@ -181,6 +183,7 @@ export class ContentService {
       id,
       buckets,
       mediaLocator,
+      calculatePurgeNotBefore(DateTimeUtil.nowUtc(), this.storage.presignExpirySeconds),
     );
     if (!deleted) {
       throw new NotFoundException({

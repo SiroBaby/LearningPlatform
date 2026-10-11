@@ -61,6 +61,15 @@ export class DocumentPurgeManifest {
   @Column({ name: 'purged_at', type: 'timestamptz', nullable: true })
   purgedAt!: Date | null;
 
+  @Column({ name: 'lease_id', type: 'uuid', nullable: true })
+  leaseId!: string | null;
+
+  @Column({ name: 'lease_until', type: 'timestamptz', nullable: true })
+  leaseUntil!: Date | null;
+
+  @Column({ name: 'dead_lettered_at', type: 'timestamptz', nullable: true })
+  deadLetteredAt!: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

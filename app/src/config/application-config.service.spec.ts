@@ -671,7 +671,7 @@ describe('ApplicationConfigService', () => {
 
     expect(relayOnly.worker.executionMode).toBe('relay-only');
     expect(() => invalid.worker).toThrow(
-      'WORKER_EXECUTION_MODE must be relay-only or legacy-processing',
+      'WORKER_EXECUTION_MODE must be relay-only, document-purge or legacy-processing',
     );
   });
 

@@ -122,6 +122,7 @@ export class ContentRepository extends BaseRepository<Document> {
     id: string,
     buckets: DocumentStorageBuckets,
     preflightMediaLocator?: DocumentPurgeLocator,
+    purgeNotBefore?: Date,
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       // Lock order: media probe advisory lock, then the Document row. Enqueue
@@ -206,6 +207,8 @@ export class ContentRepository extends BaseRepository<Document> {
         deletionFence: nextDeletionFence,
         idempotencyKey: `document-purge:${id}:${nextDeletionFence}`,
         locators,
+        // Wait for presigned uploads issued before deletion to expire.
+        ...(purgeNotBefore ? { nextAttemptAt: purgeNotBefore } : {}),
       });
       const savedManifest = await manager.save(manifest);
 

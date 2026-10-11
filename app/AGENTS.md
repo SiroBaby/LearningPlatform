@@ -41,6 +41,9 @@
 - Go worker phải persist mọi thay đổi `ai` và `ai.outbox` result trong cùng transaction khi `attempt` + `lease_id` còn hiệu lực, rồi mới ACK/finalize. Node return relay là owner duy nhất của course write và phải project idempotent mọi course/document/budget outcome.
 - Production Go worker tái sử dụng các key database hiện có từ Secret `learning-platform-api-runtime` để kết nối cùng PostgreSQL. Consumer store và tracked migration runner dùng cùng một database URL; không tạo SSM parameter, Secret hay PostgreSQL role riêng cho Go worker.
 - Return-relay payload validation must accept every value of its versioned domain error-code enum; add a FAILED relay test whenever a producer introduces a new code.
+- Purge object storage trên bucket có versioning chỉ dùng `DeleteObject` kèm `VersionId` lấy từ purge manifest; locator thiếu `VersionId` chỉ được xóa theo key khi `GetBucketVersioning` cho thấy bucket chưa từng bật versioning. Regression phải kiểm bằng `ListObjectVersions` thật rằng version đã mất và không sinh delete marker.
+- Phân loại lỗi S3 cho thao tác xóa không hoàn tác được theo trường `Code` mà SDK chỉ gắn khi body là S3 error document, không theo HTTP status hay `name` (SDK tự đặt `Unknown`/`NotFound`/`Error` cho phản hồi không phải của S3; trang 403 HTML của Squid cho ra `Error`): chỉ `Code` `NoSuchKey`/`NoSuchVersion` hoặc `204` là đã xóa, chỉ `Code` S3 thật mới được dead-letter ngay; exception không có `Code` (proxy từ chối, gateway, lỗi mạng) phải retry có trần rồi `PURGE_ATTEMPTS_EXHAUSTED`. Manifest không có locator không được đánh `COMPLETED`; regression phải dùng fake proxy/gateway trả đúng body thật (trang lỗi Squid, không dùng body rỗng).
+- Node S3 client chạy sau egress proxy phải đặt `useDualstackEndpoint: false`, `useAccelerateEndpoint: false`, region cố định và để worker sở hữu retry (`maxAttempts: 1`); test qua fake CONNECT proxy ghi host thật mà client tunnel tới.
 - Không tạo/sửa migration nếu không có yêu cầu rõ. Migration SQL thuần có cặp `.up.sql`/`.down.sql` trong `src/database/migrations/`.
 
 ## Validation, Time And API Contract
@@ -72,6 +75,7 @@
 - Trong `.spec.ts`, nếu VS Code không áp dụng legacy decorator configuration, đăng ký custom `PropertyDecorator` trực tiếp trên prototype (ví dụ `IsNonBlankString()(TestDto.prototype, 'value')`) thay vì decorator syntax. Test DTO vẫn phải dùng `value!: Type` cho property được gán trong test.
 - Fixture document flow phải dùng `app/test/support/test-database-cleanup.ts`; credit wallet và credit ledger thuộc schema `course`, không được cleanup bằng tên bảng tương ứng trong schema `ai`.
 - Test làm hỏng dữ liệu (tamper test) phải đổi byte một cách tất định ở đúng vùng cần kiểm, ví dụ decode rồi lật một bit của auth tag rồi encode lại; không thay ký tự cuối của chuỗi base64/base64url, vì ký tự đó có thể đã trùng hoặc chỉ mang bit đệm, khiến test fail ngẫu nhiên.
+- Testcontainers chạy image Bitnami MinIO phải bỏ qua entrypoint Bitnami và chạy thẳng binary `minio server`; entrypoint Bitnami khởi động MinIO tạm cho setup (health đã trả 200), rồi dừng và khởi động lại, nên request ngay sau wait strategy có thể bị `socket hang up` hoặc reset ngẫu nhiên.
 
 ## Swagger Security
 
