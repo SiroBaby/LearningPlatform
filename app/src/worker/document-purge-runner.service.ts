@@ -9,7 +9,11 @@ import {
 
 import { createApplicationLogger } from '../common/logging/application-logger.factory';
 import { ApplicationConfigService } from '../config/application-config.service';
+import { DocumentPurgeStorageError } from '../modules/content/contracts/document-purge-storage.port';
 import { DocumentPurgeService } from '../modules/content/document-purge.service';
+
+/** Logged when preflight fails with an error the storage adapter did not classify. */
+const UNCLASSIFIED_PREFLIGHT_ERROR = 'PURGE_PREFLIGHT_UNCLASSIFIED';
 
 /**
  * Poll loop for `WORKER_EXECUTION_MODE=document-purge`. Startup fails closed
@@ -35,7 +39,11 @@ export class DocumentPurgeRunner implements OnModuleInit, OnApplicationBootstrap
     try {
       await this.purge.assertMediaBucketVersioned();
     } catch (error) {
-      this.logger.error({ event: 'document.purge.preflight.failed', runtime: 'document-purge' });
+      this.logger.error({
+        errorCode: error instanceof DocumentPurgeStorageError ? error.code : UNCLASSIFIED_PREFLIGHT_ERROR,
+        event: 'document.purge.preflight.failed',
+        runtime: 'document-purge',
+      });
       throw error;
     }
   }

@@ -156,6 +156,20 @@ tồn tại sau khi Document row bị xóa.
   Khi manifest kết thúc (`COMPLETED` hoặc `DEAD_LETTER`), outbox
   `DocumentPurgeRequested` được đánh dấu published trong cùng transaction.
   Cột `locators` không bao giờ bị UPDATE.
+- **Gia hạn lease theo locator**: trước mỗi locator, worker gia hạn lease
+  (`lease_until = now() + lease`) với cùng fence `lease_id` + `RUNNING` + lease
+  còn hạn. Gia hạn thất bại (worker khác đã claim lại) thì dừng ngay, không xóa
+  locator tiếp theo và không ghi trạng thái. Nhờ vậy số locator không giới hạn
+  bởi một lease; config chỉ cần `DOCUMENT_PURGE_LEASE_MS > 5 ×
+  DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS` (một locator tối đa 2 request, mỗi
+  request có timeout kết nối và timeout phản hồi, cộng lần ghi cuối).
+- **Manifest không có locator** (`locators = []`, outbox ghi
+  `locatorStatus: 'PENDING'`): lúc xóa hệ thống không chứng minh được version
+  nào thuộc Document, nhưng bytes vẫn có thể nằm trên storage (upload bằng URL
+  ký sẵn còn hạn, hoặc version chưa ghi locator). Q1 cấm list key nên worker
+  không được báo "đã purge": manifest vào `DEAD_LETTER`
+  `PURGE_LOCATORS_UNRESOLVED`, không ghi `purged_at`, không gọi storage. Orphan
+  scanner (PR-4) hoặc owner xử lý các version này.
 - **Chờ presigned hết hạn**: transaction xóa đặt `next_attempt_at = now() +
   presign expiry + 60 giây` để upload bằng URL ký sẵn đã cấp trước khi xóa
   không còn tạo bytes sau lần purge đầu.
@@ -171,13 +185,24 @@ tồn tại sau khi Document row bị xóa.
   `Enabled`/`Suspended` thì không đoán version (Q1 cấm list) mà dead-letter
   `PURGE_UNVERSIONED_LOCATOR`, bytes giữ nguyên chờ owner xử lý.
 - **Mã lỗi ổn định**: `PURGE_STORAGE_TEMPORARY` (throttling, 5xx, timeout,
-  mạng) retry với backoff mũ có trần; `PURGE_ACCESS_DENIED`,
-  `PURGE_CONFIGURATION` (bucket ngoài cấu hình, `NoSuchBucket`, 4xx khác) và
-  `PURGE_UNVERSIONED_LOCATOR` dead-letter ngay; hết số lần thử (kể cả crash
-  liên tục) là `PURGE_ATTEMPTS_EXHAUSTED`. `NoSuchVersion`/`NoSuchKey`/`204` là
-  thành công. Không lưu raw error message.
+  mạng, và mọi phản hồi không có S3 error code) retry với backoff mũ có trần;
+  `PURGE_ACCESS_DENIED` (chỉ khi S3 trả mã `AccessDenied`,
+  `InvalidAccessKeyId`, `SignatureDoesNotMatch`, `AllAccessDisabled`),
+  `PURGE_CONFIGURATION` (bucket ngoài cấu hình, `NoSuchBucket`, S3 error code
+  4xx khác) và `PURGE_UNVERSIONED_LOCATOR` dead-letter ngay; hết số lần thử (kể
+  cả crash liên tục) là `PURGE_ATTEMPTS_EXHAUSTED`. Chỉ `NoSuchVersion`,
+  `NoSuchKey` và `204` là thành công. Không lưu raw error message.
+- **Phản hồi không phải của S3**: proxy từ chối tunnel `CONNECT` (403) hoặc
+  gateway trả 404/4xx không có body S3 thì SDK đặt tên `Unknown`/`NotFound`.
+  Phản hồi đó không chứng minh object đã mất hay credential sai, nên không coi
+  là "đã xóa" và không dead-letter ngay; worker retry đến trần rồi
+  `PURGE_ATTEMPTS_EXHAUSTED`. Allowlist proxy bị đổi sai lúc đang chạy vì vậy
+  không làm dead-letter hàng loạt trong một chu kỳ.
 - **Preflight**: khi khởi động, `GetBucketVersioning` của media bucket phải là
-  `Enabled`; nếu không, worker không khởi động (fail-closed).
+  `Enabled`; nếu không, worker không khởi động (fail-closed). Log
+  `document.purge.preflight.failed` có `errorCode` ổn định
+  (`PURGE_MEDIA_BUCKET_NOT_VERSIONED`, mã lỗi storage, hoặc
+  `PURGE_PREFLIGHT_UNCLASSIFIED`), không có bucket/key hay raw error.
 - **Đường mạng (Q5)**: client S3 đi qua `OBJECT_STORAGE_EGRESS_PROXY_URL`, tắt
   dualstack và transfer acceleration, pin region; endpoint Amazon phải là
   `s3.<region>.amazonaws.com`. SDK không tự retry (`maxAttempts=1`); request có

@@ -74,7 +74,8 @@ describe('ApplicationConfigService.documentPurge', () => {
     ['zero batch size', { documentPurge: { batchSize: 0 } }, 'documentPurge.batchSize must be a positive integer'],
     ['NaN max attempts', { documentPurge: { maxAttempts: Number.NaN } }, 'documentPurge.maxAttempts must be a positive integer'],
     ['backoff base above max', { documentPurge: { backoffBaseMs: 10_000, backoffMaxMs: 5_000 } }, 'DOCUMENT_PURGE_BACKOFF_BASE_MS must not exceed'],
-    ['lease shorter than storage requests', { documentPurge: { leaseMs: 20_000 } }, 'DOCUMENT_PURGE_LEASE_MS must cover several storage requests'],
+    ['lease shorter than storage requests', { documentPurge: { leaseMs: 20_000 } }, 'DOCUMENT_PURGE_LEASE_MS must exceed 5 x DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS'],
+    ['lease equal to one locator budget', { documentPurge: { leaseMs: 50_000 } }, 'DOCUMENT_PURGE_LEASE_MS must exceed 5 x DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS'],
     ['non-regional Amazon endpoint', { storage: { endpoint: 's3.amazonaws.com' } }, 'OBJECT_STORAGE_ENDPOINT must be the regional S3 endpoint'],
     ['dualstack Amazon endpoint', { storage: { endpoint: 's3.dualstack.ap-southeast-1.amazonaws.com' } }, 'OBJECT_STORAGE_ENDPOINT must be the regional S3 endpoint'],
     ['proxy with credentials', { storage: { egressProxyUrl: 'http://user:pass@proxy:3128' } }, 'OBJECT_STORAGE_EGRESS_PROXY_URL must be an absolute HTTP or HTTPS URL'],
@@ -91,6 +92,10 @@ describe('ApplicationConfigService.documentPurge', () => {
   ])('rejects production %s', (_name, overrides, message) => {
     expect(() => purgeConfig({ ...overrides, environment: 'production' } as PurgeConfigOverrides).documentPurge)
       .toThrow(message);
+  });
+
+  it('accepts a lease just above one locator budget', () => {
+    expect(purgeConfig({ documentPurge: { leaseMs: 50_001 } }).documentPurge.leaseMs).toBe(50_001);
   });
 
   it('allows a local MinIO endpoint without a proxy outside production', () => {

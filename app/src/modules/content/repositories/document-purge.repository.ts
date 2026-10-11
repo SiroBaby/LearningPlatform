@@ -30,6 +30,12 @@ export interface DocumentPurgeReferenceQuery {
   readonly documentsBucket: string;
 }
 
+export interface RenewDocumentPurgeLease {
+  readonly id: string;
+  readonly leaseId: string;
+  readonly leaseMs: number;
+}
+
 export interface ScheduleDocumentPurgeRetry {
   readonly id: string;
   readonly leaseId: string;
@@ -151,6 +157,22 @@ export class DocumentPurgeRepository extends BaseRepository<DocumentPurgeManifes
       ],
     ));
     return rows[0]?.referenced === true;
+  }
+
+  /**
+   * Extends a lease that is still held and unexpired, so a long manifest
+   * never outlives its lease. Returns false when the lease was lost.
+   */
+  async renewLease(input: RenewDocumentPurgeLease): Promise<boolean> {
+    const rows = queryRows<{ readonly id: string }>(await this.dataSource.query(
+      `UPDATE "course"."document_purge_manifests"
+          SET "lease_until" = now() + ($3::bigint * interval '1 millisecond'),
+              "updated_at" = now()
+        WHERE ${ACTIVE_LEASE_PREDICATE}
+        RETURNING "id"`,
+      [input.id, input.leaseId, input.leaseMs],
+    ));
+    return rows.length === 1;
   }
 
   /** Returns false when the lease was lost; nothing is written then. */

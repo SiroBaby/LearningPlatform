@@ -27,8 +27,11 @@ export interface DocumentPurgeStorage {
 
 /** Storage failure already classified into a stable code by the adapter. */
 export class DocumentPurgeStorageError extends Error {
-  constructor(readonly code: DocumentPurgeErrorCode) {
-    super(`Document purge storage failed: ${code}`);
+  constructor(
+    readonly code: DocumentPurgeErrorCode,
+    message = `Document purge storage failed: ${code}`,
+  ) {
+    super(message);
     this.name = DocumentPurgeStorageError.name;
   }
 }

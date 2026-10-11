@@ -12,4 +12,11 @@ export enum DocumentPurgeErrorCode {
   ATTEMPTS_EXHAUSTED = 'PURGE_ATTEMPTS_EXHAUSTED',
   /** A locator without VersionId points at a bucket that has versioning. */
   UNVERSIONED_LOCATOR = 'PURGE_UNVERSIONED_LOCATOR',
+  /**
+   * The manifest captured no version (deletion saw no confirmed upload), so
+   * nothing proves which bytes belong to the Document; left to the orphan scanner.
+   */
+  LOCATORS_UNRESOLVED = 'PURGE_LOCATORS_UNRESOLVED',
+  /** Startup preflight only: media bucket versioning is not Enabled. Never persisted. */
+  MEDIA_BUCKET_NOT_VERSIONED = 'PURGE_MEDIA_BUCKET_NOT_VERSIONED',
 }

@@ -126,7 +126,7 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
     return new DocumentPurgeService(repository, purgerFor(settings), configFor(settings));
   }
 
-  async function useFakeS3(code: string, status: number): Promise<FakeS3Server> {
+  async function useFakeS3(code: string | null, status: number): Promise<FakeS3Server> {
     const server = await startFakeS3Server({ code, status });
     stoppables.push(server);
     return server;
@@ -208,6 +208,28 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
     expect(completed.purgedAt).toBeInstanceOf(Date);
     expect(completed.locators).toEqual([mediaLocator(key, firstVersion)]);
     expect(await purgeOutboxPublishedAt(manifest.documentId)).toBeInstanceOf(Date);
+  });
+
+  it('dead-letters a manifest without locators instead of reporting it purged', async () => {
+    // Deletion committed with locatorStatus PENDING: no version was proven.
+    const fakeS3 = await useFakeS3('InternalError', 500);
+    const settings = settingsFor({}, { endpoint: fakeS3.host, port: fakeS3.port });
+    const manifest = await seedManifest([]);
+
+    await expect(serviceFor(settings).purgeDueManifests()).resolves.toBe(1);
+
+    const row = await manifests.findOneByOrFail({ id: manifest.id });
+    expect(row).toMatchObject({
+      attempts: 1,
+      lastErrorCode: DocumentPurgeErrorCode.LOCATORS_UNRESOLVED,
+      purgedAt: null,
+      status: DocumentPurgeManifestStatus.DEAD_LETTER,
+    });
+    expect(row.deadLetteredAt).toBeInstanceOf(Date);
+    expect(fakeS3.requests).toEqual([]);
+    expect(await purgeOutboxPublishedAt(manifest.documentId)).toBeInstanceOf(Date);
+    await makeDue(manifest.id);
+    await expect(repository.claimDue({ leaseMs: LEASE_MS, limit: 10 })).resolves.toEqual([]);
   });
 
   it('deletes a PDF by key on a documents bucket without versioning', async () => {
@@ -320,6 +342,60 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
     });
     expect(fakeS3.requests).toHaveLength(1);
     expect(await purgeOutboxPublishedAt(manifest.documentId)).toBeInstanceOf(Date);
+  });
+
+  it('retries a bare 404 without an S3 error code instead of treating it as deleted', async () => {
+    const gateway = await useFakeS3(null, 404);
+    const settings = settingsFor({}, { endpoint: gateway.host, port: gateway.port });
+    const manifest = await seedManifest([mediaLocator('media/a/b.mp4', randomUUID())]);
+
+    await serviceFor(settings).purgeDueManifests();
+
+    const row = await manifests.findOneByOrFail({ id: manifest.id });
+    expect(row).toMatchObject({
+      attempts: 1,
+      lastErrorCode: DocumentPurgeErrorCode.STORAGE_TEMPORARY,
+      purgedAt: null,
+      status: DocumentPurgeManifestStatus.FAILED,
+    });
+    expect(gateway.requests).toHaveLength(1);
+    expect(await purgeOutboxPublishedAt(manifest.documentId)).toBeNull();
+  });
+
+  it('dead-letters NoSuchBucket as a configuration error', async () => {
+    const fakeS3 = await useFakeS3('NoSuchBucket', 404);
+    const settings = settingsFor({}, { endpoint: fakeS3.host, port: fakeS3.port });
+    const manifest = await seedManifest([mediaLocator('media/a/b.mp4', randomUUID())]);
+
+    await serviceFor(settings).purgeDueManifests();
+
+    await expect(manifests.findOneByOrFail({ id: manifest.id })).resolves.toMatchObject({
+      lastErrorCode: DocumentPurgeErrorCode.CONFIGURATION,
+      purgedAt: null,
+      status: DocumentPurgeManifestStatus.DEAD_LETTER,
+    });
+  });
+
+  it('retries with a cap when the egress proxy refuses the tunnel (403 without S3 code)', async () => {
+    const proxy = await useProxy(false);
+    const settings = settingsFor({ maxAttempts: 2 }, { egressProxyUrl: proxy.url });
+    const manifest = await seedManifest([mediaLocator('media/a/b.mp4', randomUUID())]);
+
+    await serviceFor(settings).purgeDueManifests();
+    await expect(manifests.findOneByOrFail({ id: manifest.id })).resolves.toMatchObject({
+      attempts: 1,
+      lastErrorCode: DocumentPurgeErrorCode.STORAGE_TEMPORARY,
+      status: DocumentPurgeManifestStatus.FAILED,
+    });
+
+    await makeDue(manifest.id);
+    await serviceFor(settings).purgeDueManifests();
+    await expect(manifests.findOneByOrFail({ id: manifest.id })).resolves.toMatchObject({
+      attempts: 2,
+      lastErrorCode: DocumentPurgeErrorCode.ATTEMPTS_EXHAUSTED,
+      status: DocumentPurgeManifestStatus.DEAD_LETTER,
+    });
+    expect(proxy.connectTargets).toHaveLength(2);
   });
 
   it('dead-letters a rejected purge credential against real storage', async () => {
@@ -499,6 +575,83 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
     await expireLease(manifest.id);
 
     await expect(repository.complete(manifest.id, claimed.leaseId)).resolves.toBe(false);
+    await expect(repository.renewLease({ id: manifest.id, leaseId: claimed.leaseId, leaseMs: LEASE_MS }))
+      .resolves.toBe(false);
+  });
+
+  it('renews the lease before every locator so a long manifest still completes', async () => {
+    const keys = [0, 1, 2].map((index) => `media/${randomUUID()}/${index}.mp4`);
+    const locators: DocumentPurgeLocator[] = [];
+    for (const key of keys) {
+      const versionId = await objectStorage.putObject(MEDIA_BUCKET, key, key);
+      if (!versionId) throw new Error('expected versioned upload');
+      locators.push(mediaLocator(key, versionId));
+    }
+    const manifest = await seedManifest(locators);
+    const settings = settingsFor();
+    const purger = purgerFor(settings);
+    // Each locator uses 60% of the lease, so three of them outlive one lease.
+    const slowStorage: DocumentPurgeStorage = {
+      deleteObject: (target) => purger.deleteObject(target),
+      deleteObjectVersion: async (target) => {
+        await purger.deleteObjectVersion(target);
+        await db.client.query(
+          `UPDATE "course"."document_purge_manifests"
+              SET "lease_until" = "lease_until" - ($2::bigint * interval '1 millisecond')
+            WHERE "id" = $1`,
+          [manifest.id, LEASE_MS * 0.6],
+        );
+      },
+      getBucketVersioning: (bucket) => purger.getBucketVersioning(bucket),
+    };
+
+    await new DocumentPurgeService(repository, slowStorage, configFor(settings)).purgeDueManifests();
+
+    await expect(manifests.findOneByOrFail({ id: manifest.id })).resolves.toMatchObject({
+      attempts: 1,
+      status: DocumentPurgeManifestStatus.COMPLETED,
+    });
+    for (const key of keys) {
+      await expect(objectStorage.listVersions(MEDIA_BUCKET, key)).resolves.toEqual({
+        deleteMarkerCount: 0,
+        versionIds: [],
+      });
+    }
+  });
+
+  it('stops deleting further locators once another worker took the lease', async () => {
+    const keys = [0, 1].map((index) => `media/${randomUUID()}/${index}.mp4`);
+    const locators: DocumentPurgeLocator[] = [];
+    for (const key of keys) {
+      const versionId = await objectStorage.putObject(MEDIA_BUCKET, key, key);
+      if (!versionId) throw new Error('expected versioned upload');
+      locators.push(mediaLocator(key, versionId));
+    }
+    const manifest = await seedManifest(locators);
+    const settings = settingsFor();
+    const purger = purgerFor(settings);
+    let reclaimedLeaseId: string | undefined;
+    const stalledStorage: DocumentPurgeStorage = {
+      deleteObject: (target) => purger.deleteObject(target),
+      deleteObjectVersion: async (target) => {
+        await purger.deleteObjectVersion(target);
+        // This worker stalls past its lease; another worker reclaims.
+        await expireLease(manifest.id);
+        [{ leaseId: reclaimedLeaseId }] = await repository.claimDue({ leaseMs: LEASE_MS, limit: 1 });
+      },
+      getBucketVersioning: (bucket) => purger.getBucketVersioning(bucket),
+    };
+
+    await new DocumentPurgeService(repository, stalledStorage, configFor(settings)).purgeDueManifests();
+
+    await expect(objectStorage.listVersions(MEDIA_BUCKET, keys[0])).resolves.toMatchObject({ versionIds: [] });
+    await expect(objectStorage.listVersions(MEDIA_BUCKET, keys[1])).resolves.toMatchObject({
+      versionIds: [locators[1].versionId],
+    });
+    await expect(manifests.findOneByOrFail({ id: manifest.id })).resolves.toMatchObject({
+      leaseId: reclaimedLeaseId,
+      status: DocumentPurgeManifestStatus.RUNNING,
+    });
   });
 
   it('dead-letters a manifest whose workers kept crashing past the attempt cap', async () => {

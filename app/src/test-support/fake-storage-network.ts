@@ -3,7 +3,8 @@ import { AddressInfo, connect, Socket } from 'node:net';
 
 export interface FakeStorageError {
   readonly status: number;
-  readonly code: string;
+  /** `null` answers with an empty body, like a gateway that is not S3. */
+  readonly code: string | null;
 }
 
 export interface FakeS3Server {
@@ -23,13 +24,15 @@ export interface FakeEgressProxy {
 
 const LOOPBACK_HOST = '127.0.0.1';
 
-/** S3-compatible endpoint that answers every request with one S3 error document. */
+/** S3-compatible endpoint that answers every request with one S3 error document (or none). */
 export async function startFakeS3Server(error: FakeStorageError): Promise<FakeS3Server> {
   const requests: string[] = [];
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     requests.push(`${request.method ?? ''} ${request.url ?? ''}`);
     request.resume();
-    const body = `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${error.code}</Code><Message>fake</Message></Error>`;
+    const body = error.code === null
+      ? ''
+      : `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${error.code}</Code><Message>fake</Message></Error>`;
     response.writeHead(error.status, {
       'Content-Length': Buffer.byteLength(body),
       'Content-Type': 'application/xml',

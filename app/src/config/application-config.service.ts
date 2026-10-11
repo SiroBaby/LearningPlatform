@@ -19,8 +19,12 @@ import {
   WorkerSettings,
 } from './configuration.types';
 
-/** The purge lease must outlive several sequential storage requests. */
-const MIN_PURGE_LEASE_REQUESTS = 3;
+/**
+ * The purge lease is renewed before every locator, so it only has to cover
+ * one locator: up to two storage requests (GetBucketVersioning + DeleteObject),
+ * each bounded by a connection and a response timeout, plus the final write.
+ */
+const MIN_PURGE_LEASE_REQUEST_TIMEOUTS = 5;
 
 @Injectable()
 export class ApplicationConfigService {
@@ -312,8 +316,10 @@ export class ApplicationConfigService {
     if (settings.backoffBaseMs > settings.backoffMaxMs) {
       throw new Error('DOCUMENT_PURGE_BACKOFF_BASE_MS must not exceed DOCUMENT_PURGE_BACKOFF_MAX_MS');
     }
-    if (settings.leaseMs <= settings.storage.requestTimeoutMs * MIN_PURGE_LEASE_REQUESTS) {
-      throw new Error('DOCUMENT_PURGE_LEASE_MS must cover several storage requests');
+    if (settings.leaseMs <= settings.storage.requestTimeoutMs * MIN_PURGE_LEASE_REQUEST_TIMEOUTS) {
+      throw new Error(
+        `DOCUMENT_PURGE_LEASE_MS must exceed ${MIN_PURGE_LEASE_REQUEST_TIMEOUTS} x DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS`,
+      );
     }
     return settings;
   }

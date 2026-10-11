@@ -24,11 +24,14 @@ describe('classifyPurgeStorageError', () => {
     [sdkError('AccessDenied', 403), DocumentPurgeErrorCode.ACCESS_DENIED],
     [sdkError('InvalidAccessKeyId', 403), DocumentPurgeErrorCode.ACCESS_DENIED],
     [sdkError('SignatureDoesNotMatch', 403), DocumentPurgeErrorCode.ACCESS_DENIED],
-    [sdkError('Unknown', 403), DocumentPurgeErrorCode.ACCESS_DENIED],
+    // No S3 error document (proxy/gateway reply): retried, never final.
+    [sdkError('Unknown', 403), DocumentPurgeErrorCode.STORAGE_TEMPORARY],
+    [sdkError('NotFound', 404), DocumentPurgeErrorCode.STORAGE_TEMPORARY],
+    [sdkError('Unknown', 400), DocumentPurgeErrorCode.STORAGE_TEMPORARY],
     [sdkError('NoSuchBucket', 404), DocumentPurgeErrorCode.CONFIGURATION],
     [sdkError('InvalidArgument', 400), DocumentPurgeErrorCode.CONFIGURATION],
     [sdkError('PermanentRedirect', 301), DocumentPurgeErrorCode.CONFIGURATION],
-    [sdkError('Unknown', 400), DocumentPurgeErrorCode.CONFIGURATION],
+    [sdkError('MalformedXML', 400), DocumentPurgeErrorCode.CONFIGURATION],
     ['not an error', DocumentPurgeErrorCode.STORAGE_TEMPORARY],
   ])('classifies %p as %s', (error, expected) => {
     expect(classifyPurgeStorageError(error)).toBe(expected);

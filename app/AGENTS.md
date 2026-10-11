@@ -42,6 +42,7 @@
 - Production Go worker tái sử dụng các key database hiện có từ Secret `learning-platform-api-runtime` để kết nối cùng PostgreSQL. Consumer store và tracked migration runner dùng cùng một database URL; không tạo SSM parameter, Secret hay PostgreSQL role riêng cho Go worker.
 - Return-relay payload validation must accept every value of its versioned domain error-code enum; add a FAILED relay test whenever a producer introduces a new code.
 - Purge object storage trên bucket có versioning chỉ dùng `DeleteObject` kèm `VersionId` lấy từ purge manifest; locator thiếu `VersionId` chỉ được xóa theo key khi `GetBucketVersioning` cho thấy bucket chưa từng bật versioning. Regression phải kiểm bằng `ListObjectVersions` thật rằng version đã mất và không sinh delete marker.
+- Phân loại lỗi S3 cho thao tác xóa không hoàn tác được theo S3 error code, không theo HTTP status: chỉ `NoSuchKey`/`NoSuchVersion`/`204` là đã xóa; phản hồi không có S3 error code (SDK đặt `Unknown`/`NotFound`, ví dụ proxy 403 hoặc gateway 404) phải retry có trần, không coi là thành công hay dead-letter vĩnh viễn. Manifest không có locator không được đánh `COMPLETED`; regression phải dùng fake proxy/gateway thật.
 - Node S3 client chạy sau egress proxy phải đặt `useDualstackEndpoint: false`, `useAccelerateEndpoint: false`, region cố định và để worker sở hữu retry (`maxAttempts: 1`); test qua fake CONNECT proxy ghi host thật mà client tunnel tới.
 - Không tạo/sửa migration nếu không có yêu cầu rõ. Migration SQL thuần có cặp `.up.sql`/`.down.sql` trong `src/database/migrations/`.
 

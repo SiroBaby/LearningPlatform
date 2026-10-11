@@ -43,7 +43,10 @@ export class DocumentPurgeService {
   async assertMediaBucketVersioned(): Promise<void> {
     const state = await this.storage.getBucketVersioning(this.config.documentPurge.mediaBucket);
     if (state !== BucketVersioningState.ENABLED) {
-      throw new Error('Media bucket versioning must be Enabled before document purge can start');
+      throw new DocumentPurgeStorageError(
+        DocumentPurgeErrorCode.MEDIA_BUCKET_NOT_VERSIONED,
+        'Media bucket versioning must be Enabled before document purge can start',
+      );
     }
   }
 
@@ -73,6 +76,13 @@ export class DocumentPurgeService {
       await this.deadLetter(manifest, DocumentPurgeErrorCode.ATTEMPTS_EXHAUSTED);
       return;
     }
+    // No captured version means the deletion could not prove which bytes
+    // belong to the Document (e.g. a presigned upload may still land). Q1
+    // forbids listing the key, so it must not be reported as purged.
+    if (manifest.locators.length === 0) {
+      await this.deadLetter(manifest, DocumentPurgeErrorCode.LOCATORS_UNRESOLVED);
+      return;
+    }
     if (await this.repository.hasActiveReference({
       documentId: manifest.documentId,
       documentsBucket: settings.documentsBucket,
@@ -85,6 +95,15 @@ export class DocumentPurgeService {
 
     try {
       for (const locator of manifest.locators) {
+        // Each locator starts with a full lease, however many the manifest has.
+        if (!(await this.repository.renewLease({
+          id: manifest.id,
+          leaseId: manifest.leaseId,
+          leaseMs: settings.leaseMs,
+        }))) {
+          this.logLeaseLost(manifest);
+          return;
+        }
         await this.deleteLocator(locator, settings);
       }
     } catch (error) {
