@@ -7,6 +7,7 @@ import {
   CONFIG_PATH,
   DatabaseSslMode,
   DatabaseSettings,
+  DocumentPurgeSettings,
   GoogleOAuthSettings,
   LlmProviderSettings,
   LlmCapabilityVersion,
@@ -17,6 +18,9 @@ import {
   WorkerExecutionMode,
   WorkerSettings,
 } from './configuration.types';
+
+/** The purge lease must outlive several sequential storage requests. */
+const MIN_PURGE_LEASE_REQUESTS = 3;
 
 @Injectable()
 export class ApplicationConfigService {
@@ -243,6 +247,77 @@ export class ApplicationConfigService {
     return storage;
   }
 
+  /**
+   * Purge worker settings. Validated only when the purge runtime asks for
+   * them, so API and relay processes never need the delete identity.
+   */
+  get documentPurge(): DocumentPurgeSettings {
+    const environment = this.required<string>(CONFIG_PATH.app.environment);
+    const documentsBucket = this.nonBlankString(CONFIG_PATH.storage.bucket);
+    const mediaBucket = this.config.get<string>(CONFIG_PATH.storage.mediaBucket)?.trim();
+    if (!mediaBucket) {
+      throw new Error('OBJECT_STORAGE_MEDIA_BUCKET is required for the document purge worker');
+    }
+    if (mediaBucket === documentsBucket) {
+      throw new Error('OBJECT_STORAGE_MEDIA_BUCKET must differ from OBJECT_STORAGE_BUCKET');
+    }
+    const accessKey = this.config.get<string>(CONFIG_PATH.documentPurge.accessKey)?.trim();
+    const secretKey = this.config.get<string>(CONFIG_PATH.documentPurge.secretKey)?.trim();
+    if (!accessKey || !secretKey) {
+      throw new Error('OBJECT_STORAGE_PURGE_ACCESS_KEY and OBJECT_STORAGE_PURGE_SECRET_KEY are required for the document purge worker');
+    }
+    const egressProxyUrl = this.config.get<string>(CONFIG_PATH.storage.egressProxyUrl)?.trim() || undefined;
+    if (egressProxyUrl) {
+      this.assertProxyUrl('OBJECT_STORAGE_EGRESS_PROXY_URL', egressProxyUrl);
+    }
+    const endpoint = this.storageEndpoint();
+    const region = this.nonBlankString(CONFIG_PATH.storage.region);
+    const useSSL = this.required<boolean>(CONFIG_PATH.storage.useSSL);
+    this.assertRegionalAmazonEndpoint(endpoint, region);
+    if (environment === 'production') {
+      const apiAccessKeys = [
+        this.config.get<string>(CONFIG_PATH.storage.accessKey)?.trim(),
+        this.config.get<string>(CONFIG_PATH.storage.mediaApiAccessKey)?.trim(),
+      ];
+      if (accessKey === 'minioadmin' || secretKey === 'minioadmin' || apiAccessKeys.includes(accessKey)) {
+        throw new Error('OBJECT_STORAGE_PURGE_ACCESS_KEY must be a dedicated purge identity');
+      }
+      if (!egressProxyUrl) {
+        throw new Error('OBJECT_STORAGE_EGRESS_PROXY_URL is required for the document purge worker in production');
+      }
+      if (!useSSL) {
+        throw new Error('OBJECT_STORAGE_USE_SSL must be true in production');
+      }
+    }
+    const settings: DocumentPurgeSettings = {
+      backoffBaseMs: this.positiveInteger(CONFIG_PATH.documentPurge.backoffBaseMs),
+      backoffMaxMs: this.positiveInteger(CONFIG_PATH.documentPurge.backoffMaxMs),
+      batchSize: this.positiveInteger(CONFIG_PATH.documentPurge.batchSize),
+      documentsBucket,
+      leaseMs: this.positiveInteger(CONFIG_PATH.documentPurge.leaseMs),
+      maxAttempts: this.positiveInteger(CONFIG_PATH.documentPurge.maxAttempts),
+      mediaBucket,
+      pollIntervalMs: this.positiveInteger(CONFIG_PATH.documentPurge.pollIntervalMs),
+      storage: {
+        accessKey,
+        egressProxyUrl,
+        endpoint,
+        port: this.networkPort(CONFIG_PATH.storage.port),
+        region,
+        requestTimeoutMs: this.positiveInteger(CONFIG_PATH.documentPurge.storageRequestTimeoutMs),
+        secretKey,
+        useSSL,
+      },
+    };
+    if (settings.backoffBaseMs > settings.backoffMaxMs) {
+      throw new Error('DOCUMENT_PURGE_BACKOFF_BASE_MS must not exceed DOCUMENT_PURGE_BACKOFF_MAX_MS');
+    }
+    if (settings.leaseMs <= settings.storage.requestTimeoutMs * MIN_PURGE_LEASE_REQUESTS) {
+      throw new Error('DOCUMENT_PURGE_LEASE_MS must cover several storage requests');
+    }
+    return settings;
+  }
+
   get worker(): WorkerSettings {
     const worker = {
       chunkInsertBatchSize: this.positiveInteger(CONFIG_PATH.worker.chunkInsertBatchSize),
@@ -301,8 +376,12 @@ export class ApplicationConfigService {
 
   private workerExecutionMode(): WorkerExecutionMode {
     const executionMode = this.required<string>(CONFIG_PATH.worker.executionMode);
-    if (executionMode !== 'legacy-processing' && executionMode !== 'relay-only') {
-      throw new Error('WORKER_EXECUTION_MODE must be relay-only or legacy-processing');
+    if (
+      executionMode !== 'document-purge' &&
+      executionMode !== 'legacy-processing' &&
+      executionMode !== 'relay-only'
+    ) {
+      throw new Error('WORKER_EXECUTION_MODE must be relay-only, document-purge or legacy-processing');
     }
     return executionMode;
   }
@@ -432,6 +511,17 @@ export class ApplicationConfigService {
       );
     }
     return endpoint;
+  }
+
+  /**
+   * An Amazon endpoint must name its region so the SDK never resolves another
+   * host (for example a global or dualstack endpoint) behind the egress proxy.
+   */
+  private assertRegionalAmazonEndpoint(endpoint: string, region: string): void {
+    if (!endpoint.toLowerCase().endsWith('.amazonaws.com')) return;
+    if (endpoint.toLowerCase() !== `s3.${region.toLowerCase()}.amazonaws.com`) {
+      throw new Error('OBJECT_STORAGE_ENDPOINT must be the regional S3 endpoint for OBJECT_STORAGE_REGION');
+    }
   }
 
   private assertProxyUrl(name: string, raw: string): void {

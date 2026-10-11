@@ -5,6 +5,7 @@ import appConfig from './app.config';
 import aiConfig from './ai.config';
 import { ApplicationConfigService } from './application-config.service';
 import databaseConfig from './database.config';
+import documentPurgeConfig from './document-purge.config';
 import storageConfig from './storage.config';
 import workerConfig from './worker.config';
 
@@ -13,7 +14,7 @@ import workerConfig from './worker.config';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [aiConfig, appConfig, databaseConfig, storageConfig, workerConfig],
+      load: [aiConfig, appConfig, databaseConfig, documentPurgeConfig, storageConfig, workerConfig],
     }),
   ],
   providers: [ApplicationConfigService],

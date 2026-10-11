@@ -41,6 +41,8 @@
 - Go worker phải persist mọi thay đổi `ai` và `ai.outbox` result trong cùng transaction khi `attempt` + `lease_id` còn hiệu lực, rồi mới ACK/finalize. Node return relay là owner duy nhất của course write và phải project idempotent mọi course/document/budget outcome.
 - Production Go worker tái sử dụng các key database hiện có từ Secret `learning-platform-api-runtime` để kết nối cùng PostgreSQL. Consumer store và tracked migration runner dùng cùng một database URL; không tạo SSM parameter, Secret hay PostgreSQL role riêng cho Go worker.
 - Return-relay payload validation must accept every value of its versioned domain error-code enum; add a FAILED relay test whenever a producer introduces a new code.
+- Purge object storage trên bucket có versioning chỉ dùng `DeleteObject` kèm `VersionId` lấy từ purge manifest; locator thiếu `VersionId` chỉ được xóa theo key khi `GetBucketVersioning` cho thấy bucket chưa từng bật versioning. Regression phải kiểm bằng `ListObjectVersions` thật rằng version đã mất và không sinh delete marker.
+- Node S3 client chạy sau egress proxy phải đặt `useDualstackEndpoint: false`, `useAccelerateEndpoint: false`, region cố định và để worker sở hữu retry (`maxAttempts: 1`); test qua fake CONNECT proxy ghi host thật mà client tunnel tới.
 - Không tạo/sửa migration nếu không có yêu cầu rõ. Migration SQL thuần có cặp `.up.sql`/`.down.sql` trong `src/database/migrations/`.
 
 ## Validation, Time And API Contract

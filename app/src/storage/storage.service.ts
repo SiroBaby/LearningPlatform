@@ -186,6 +186,11 @@ export class StorageService implements OnModuleInit {
     return Buffer.concat(chunks, receivedBytes);
   }
 
+  /** Lifetime in seconds of every presigned upload URL issued by this service. */
+  get presignExpirySeconds(): number {
+    return this.presignExpiry;
+  }
+
   getBucketName(bucketKind: StorageBucketKind = 'documents'): string {
     const bucket = this.buckets[bucketKind];
     if (!bucket) {

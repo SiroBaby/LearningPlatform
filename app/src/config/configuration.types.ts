@@ -44,7 +44,7 @@ export type LlmCapabilityVersion = 'chat-completions-json-v1' | 'responses-json-
 export type LlmStructuredOutputMode = 'json-object' | 'json-schema-strict';
 export type LlmTransport = 'chat-completions' | 'responses';
 export type DatabaseSslMode = 'disabled' | 'verify-ca';
-export type WorkerExecutionMode = 'legacy-processing' | 'relay-only';
+export type WorkerExecutionMode = 'document-purge' | 'legacy-processing' | 'relay-only';
 
 export interface OpenAiGeneralSettings {
   apiKey: string | undefined;
@@ -126,6 +126,30 @@ export interface StorageSettings {
   useSSL: boolean;
 }
 
+/** Settings for `WORKER_EXECUTION_MODE=document-purge` only. */
+export interface DocumentPurgeSettings {
+  readonly backoffBaseMs: number;
+  readonly backoffMaxMs: number;
+  readonly batchSize: number;
+  readonly documentsBucket: string;
+  readonly leaseMs: number;
+  readonly maxAttempts: number;
+  readonly mediaBucket: string;
+  readonly pollIntervalMs: number;
+  readonly storage: DocumentPurgeStorageConnection;
+}
+
+export interface DocumentPurgeStorageConnection {
+  readonly accessKey: string;
+  readonly egressProxyUrl: string | undefined;
+  readonly endpoint: string;
+  readonly port: number;
+  readonly region: string;
+  readonly requestTimeoutMs: number;
+  readonly secretKey: string;
+  readonly useSSL: boolean;
+}
+
 export interface WorkerSettings {
   chunkInsertBatchSize: number;
   chunkMaxChars: number;
@@ -200,6 +224,17 @@ export const CONFIG_PATH = {
       mode: 'database.ssl.mode',
     },
     user: 'database.user',
+  },
+  documentPurge: {
+    accessKey: 'documentPurge.accessKey',
+    backoffBaseMs: 'documentPurge.backoffBaseMs',
+    backoffMaxMs: 'documentPurge.backoffMaxMs',
+    batchSize: 'documentPurge.batchSize',
+    leaseMs: 'documentPurge.leaseMs',
+    maxAttempts: 'documentPurge.maxAttempts',
+    pollIntervalMs: 'documentPurge.pollIntervalMs',
+    secretKey: 'documentPurge.secretKey',
+    storageRequestTimeoutMs: 'documentPurge.storageRequestTimeoutMs',
   },
   storage: {
     accessKey: 'storage.accessKey',

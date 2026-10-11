@@ -141,6 +141,52 @@ backoff và giới hạn; lỗi quyền hoặc cấu hình vào dead-letter và 
 retry vô hạn. Manifest/tombstone giữ metadata tối thiểu để retry/audit và vẫn
 tồn tại sau khi Document row bị xóa.
 
+#### Purge worker (triển khai #159 PR-2)
+
+- **Runtime**: Node worker `WORKER_EXECUTION_MODE=document-purge`, module
+  `DocumentPurgeWorkerModule`. Mode này không khởi tạo relay, LLM provider hay
+  `StorageService` của API. Credential S3 riêng
+  `OBJECT_STORAGE_PURGE_ACCESS_KEY`/`OBJECT_STORAGE_PURGE_SECRET_KEY`; production
+  từ chối nếu trùng credential API, thiếu egress proxy hoặc tắt TLS.
+- **Nguồn việc** là bảng `course.document_purge_manifests`, không phải outbox.
+  Worker claim từng manifest bằng `FOR UPDATE SKIP LOCKED`, cấp lease
+  (`lease_id`, `lease_until`) và tăng `attempts` ngay khi claim. Manifest
+  `RUNNING` hết lease (pod crash) được claim lại. Mọi ghi `COMPLETED`, `FAILED`,
+  `DEAD_LETTER` phải khớp `lease_id`, `status='RUNNING'` và lease còn hạn.
+  Khi manifest kết thúc (`COMPLETED` hoặc `DEAD_LETTER`), outbox
+  `DocumentPurgeRequested` được đánh dấu published trong cùng transaction.
+  Cột `locators` không bao giờ bị UPDATE.
+- **Chờ presigned hết hạn**: transaction xóa đặt `next_attempt_at = now() +
+  presign expiry + 60 giây` để upload bằng URL ký sẵn đã cấp trước khi xóa
+  không còn tạo bytes sau lần purge đầu.
+- **Guard tham chiếu**: trước khi xóa, nếu còn Document khác có trạng thái khác
+  `DELETING` trỏ cùng bucket + key thì manifest vào `DEAD_LETTER`
+  `PURGE_ACTIVE_REFERENCE`, không xóa gì.
+- **Q1 (owner chốt 2026-10-11)**: purge chỉ xóa version có trong manifest
+  (`DeleteObject` kèm `VersionId`, không tạo delete marker). Worker không gọi
+  `ListObjectVersions`; version phát sinh ngoài manifest để orphan scanner dọn.
+- **Q2 (owner chốt 2026-10-11)**: locator PDF có `versionId = null` ở documents
+  bucket. Worker đọc `GetBucketVersioning` của đúng bucket đó: bucket chưa từng
+  bật versioning thì `DeleteObject` theo key là hard-delete; bucket
+  `Enabled`/`Suspended` thì không đoán version (Q1 cấm list) mà dead-letter
+  `PURGE_UNVERSIONED_LOCATOR`, bytes giữ nguyên chờ owner xử lý.
+- **Mã lỗi ổn định**: `PURGE_STORAGE_TEMPORARY` (throttling, 5xx, timeout,
+  mạng) retry với backoff mũ có trần; `PURGE_ACCESS_DENIED`,
+  `PURGE_CONFIGURATION` (bucket ngoài cấu hình, `NoSuchBucket`, 4xx khác) và
+  `PURGE_UNVERSIONED_LOCATOR` dead-letter ngay; hết số lần thử (kể cả crash
+  liên tục) là `PURGE_ATTEMPTS_EXHAUSTED`. `NoSuchVersion`/`NoSuchKey`/`204` là
+  thành công. Không lưu raw error message.
+- **Preflight**: khi khởi động, `GetBucketVersioning` của media bucket phải là
+  `Enabled`; nếu không, worker không khởi động (fail-closed).
+- **Đường mạng (Q5)**: client S3 đi qua `OBJECT_STORAGE_EGRESS_PROXY_URL`, tắt
+  dualstack và transfer acceleration, pin region; endpoint Amazon phải là
+  `s3.<region>.amazonaws.com`. SDK không tự retry (`maxAttempts=1`); request có
+  timeout cấu hình.
+- **Log**: chỉ `manifestId`, `documentId`, mã lỗi, `attempts`, số version; không
+  ghi bucket, key hay VersionId thô.
+- Hàng Document giữ `DELETING` làm tombstone (Q3, dọn ở #214); không đụng credit
+  (Q7, #215). Deployment, IAM và SSM của runtime này làm ở PR-3.
+
 Orphan scanner sau 24 giờ chỉ là safety net (lưới an toàn), không thay purge
 chính. Scanner chỉ quét namespace/tag do hệ thống quản lý, chỉ xóa version
 không còn reference trong DB hoặc purge manifest, không có job/lease hợp lệ và

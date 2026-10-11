@@ -5,6 +5,7 @@ import { DataSource, Repository } from 'typeorm';
 
 import { startTestDb, TestDb } from '../../test-support/test-db';
 import { createTestDataSource } from '../../test-support/test-data-source';
+import { PRESIGNED_UPLOAD_CLOCK_SKEW_SECONDS } from './contracts/document-purge-policy';
 import { ContentService } from './content.service';
 import { DocumentPurgeManifest } from './entities/document-purge-manifest.entity';
 import { Document } from './entities/document.entity';
@@ -44,6 +45,7 @@ describe('ContentService.delete', () => {
         getBucketName: (kind: 'documents' | 'media') => kind === 'media'
           ? 'learning-platform-dev-media'
           : 'learning-platform-dev-documents',
+        presignExpirySeconds: 300,
       } as never,
       verifier,
       null as never,
@@ -55,6 +57,7 @@ describe('ContentService.delete', () => {
 
   it('reads exact media metadata before deleting an unconfirmed upload', async () => {
     const document = await seedMediaDocument();
+    const deletionStartedAt = Date.now();
 
     const deleted = await service.delete(document.ownerId, document.id);
 
@@ -73,6 +76,11 @@ describe('ContentService.delete', () => {
         contentLength: 1024,
       }],
     });
+    // The first purge waits for presigned uploads (300 s) plus clock skew.
+    const manifest = await manifests.findOneByOrFail({ documentId: document.id });
+    expect(manifest.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(
+      deletionStartedAt + (300 + PRESIGNED_UPLOAD_CLOCK_SKEW_SECONDS) * 1_000,
+    );
     expect(await outbox.countBy({ aggregateId: document.id, eventType: 'DocumentPurgeRequested' })).toBe(1);
     const persisted = await documents.findOneByOrFail({ id: document.id });
     expect(persisted).toMatchObject({
