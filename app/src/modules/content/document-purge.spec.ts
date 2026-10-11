@@ -129,7 +129,11 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
         return await next(args);
       } catch (error) {
         const shape = error as { name?: string; code?: string; message?: string; $metadata?: { httpStatusCode?: number } };
-        storageFailures.push(`${shape.name}/${shape.$metadata?.httpStatusCode ?? '-'}/${shape.code ?? '-'}/${String(shape.message).slice(0, 160)}`);
+        const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+        const description = `${shape.name}/${shape.$metadata?.httpStatusCode ?? '-'}/${shape.code ?? '-'}/${String(shape.message).slice(0, 160)}/cause=${cause?.code ?? '-'}:${String(cause?.message ?? '').slice(0, 120)}`;
+        storageFailures.push(description);
+        // Test-only diagnostics: fixture data, no credentials.
+        console.warn(`purge storage failure: ${description}`);
         throw error;
       }
     }, { step: 'finalizeRequest' });
