@@ -703,6 +703,14 @@ check_document_purge_contract() {
     || [ "${service_account_line}" -ge "${deployment_line}" ] || [ "${network_policy_line}" -ge "${deployment_line}" ]; then
     fail 'The document purge ServiceAccount and NetworkPolicies must precede its Deployment.'
   fi
+  # The purge client rule of media-egress-proxy-ingress is a network dependency
+  # too: the whole purge block must render after the proxy block.
+  local proxy_client_gate_line gate_line
+  proxy_client_gate_line="$(grep -Fxn "${proxy_client_gate}" "${app_template}" | head -n 1 | cut -d: -f1)"
+  gate_line="$(grep -Fxn "${gate}" "${app_template}" | head -n 1 | cut -d: -f1)"
+  if [ -z "${proxy_client_gate_line}" ] || [ -z "${gate_line}" ] || [ "${proxy_client_gate_line}" -ge "${gate_line}" ]; then
+    fail 'The media-egress-proxy ingress client rule for the purge worker must precede the purge Deployment.'
+  fi
 
   if [ "$(grep -Fxc 'automountServiceAccountToken: false' <<<"${purge_block}")" -ne 1 ] \
     || [ "$(grep -Fxc '      automountServiceAccountToken: false' <<<"${purge_block}")" -ne 1 ] \
@@ -724,7 +732,10 @@ check_document_purge_contract() {
     fail 'The document purge worker must run one non-root Recreate replica in document-purge mode with a read-only root, RuntimeDefault seccomp, no capabilities, and no ServiceAccount token.'
   fi
 
-  if grep -Eq 'OPENAI|AI_LLM|AI_CREDENTIAL|MEDIA_PROBE|API_MEDIA|FULL_PIPELINE|GOOGLE_|AUTH_|SWAGGER|OBJECT_STORAGE_(ACCESS|SECRET)_KEY|learning-platform-(api|worker|go-worker|media-probe|swagger)-runtime' <<<"${purge_block}${eso_block}" \
+  # Case-insensitive so SSM key names such as ssm_parameter_keys.openai_api_key
+  # are caught; only the two shared non-secret media-probe variables are exempt.
+  if sed -e 's/media_probe_database_upstream_port//g' -e 's/media_probe_worker_proxy_url//g' <<<"${purge_block}${eso_block}" \
+    | grep -Eiq 'OPENAI|AI_LLM|AI_CREDENTIAL|MEDIA_PROBE|API_MEDIA|FULL_PIPELINE|GOOGLE_|AUTH_|SWAGGER|OBJECT_STORAGE_(ACCESS|SECRET)_KEY|learning-platform-(api|worker|go-worker|media-probe|swagger)-runtime' \
     || [ "$(grep -Fc '                  name: learning-platform-document-purge-runtime' <<<"${purge_block}")" -ne 1 ] \
     || ! grep -Fq "'OBJECT_STORAGE_PURGE_ACCESS_KEY', 'OBJECT_STORAGE_PURGE_SECRET_KEY'] %}" <<<"${purge_block}" \
     || ! grep -Fq "'OBJECT_STORAGE_PURGE_ACCESS_KEY': ssm_parameter_keys.object_storage_media_purge_access_key," <<<"${eso_block}" \
@@ -735,6 +746,7 @@ check_document_purge_contract() {
   local egress_block
   egress_block="$(awk '/^  name: document-purge-worker-egress$/ { capture = 1 } capture { print } capture && /^---$/ { exit }' <<<"${purge_block}")"
   if [ "$(grep -Fxc '    - to:' <<<"${egress_block}")" -ne 3 ] \
+    || [ "$(grep -Ec '^ +port: ' <<<"${egress_block}")" -ne 4 ] \
     || grep -Eq '^    - ports:' <<<"${egress_block}" \
     || ! grep -Fxq '              k8s-app: kube-dns' <<<"${egress_block}" \
     || ! grep -Fxq '              app.kubernetes.io/component: media-egress-proxy' <<<"${egress_block}" \

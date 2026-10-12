@@ -841,183 +841,6 @@ spec:
         - protocol: TCP
           port: {{ media_probe_database_upstream_port | int }}
 {% endif %}
-{% if 'worker' in deployment_targets and document_purge_enabled | default(false) | bool %}
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: document-purge-worker
-  namespace: {{ learning_platform_namespace }}
-automountServiceAccountToken: false
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: document-purge-worker-ingress
-  namespace: {{ learning_platform_namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: learning-platform
-      app.kubernetes.io/component: document-purge-worker
-  policyTypes: [Ingress]
-  ingress: []
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: document-purge-worker-egress
-  namespace: {{ learning_platform_namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: learning-platform
-      app.kubernetes.io/component: document-purge-worker
-  policyTypes: [Egress]
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    # S3 is reachable only through the Squid allowlist (#159 Q5).
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: learning-platform
-              app.kubernetes.io/component: media-egress-proxy
-      ports:
-        - protocol: TCP
-          port: 3128
-    # The Node runtime cannot pin a TLS server name behind media-probe-db-egress,
-    # so it dials PostgreSQL directly like the relay worker. NetworkPolicy cannot
-    # encode the database hostname: this rule only permits the pinned upstream
-    # port to public addresses, never cluster, private, loopback, or metadata ranges.
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-              - 10.0.0.0/8
-              - 100.64.0.0/10
-              - 127.0.0.0/8
-              - 169.254.0.0/16
-              - 172.16.0.0/12
-              - 192.168.0.0/16
-      ports:
-        - protocol: TCP
-          port: {{ media_probe_database_upstream_port | int }}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: document-purge-worker
-  namespace: {{ learning_platform_namespace }}
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-    rollingUpdate: null
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: learning-platform
-      app.kubernetes.io/component: document-purge-worker
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: learning-platform
-        app.kubernetes.io/component: document-purge-worker
-    spec:
-      serviceAccountName: document-purge-worker
-      automountServiceAccountToken: false
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
-        seccompProfile:
-          type: RuntimeDefault
-      imagePullSecrets:
-        - name: {{ ghcr_pull_secret_name }}
-      containers:
-        - name: document-purge-worker
-          image: {{ worker_image }}
-          imagePullPolicy: IfNotPresent
-          command: ['node', 'dist/worker.js']
-          ports:
-            - name: health
-              containerPort: 3403
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: [ALL]
-          env:
-            - name: NODE_ENV
-              value: production
-            - name: WORKER_HEALTH_HOST
-              value: 0.0.0.0
-            - name: WORKER_HEALTH_PORT
-              value: '3403'
-            - name: WORKER_EXECUTION_MODE
-              value: document-purge
-            # Non-secret purge tuning; manifest literals, never SSM.
-            - name: DOCUMENT_PURGE_BATCH_SIZE
-              value: '10'
-            - name: DOCUMENT_PURGE_POLL_INTERVAL_MS
-              value: '5000'
-            - name: DOCUMENT_PURGE_LEASE_MS
-              value: '300000'
-            - name: DOCUMENT_PURGE_MAX_ATTEMPTS
-              value: '8'
-            - name: DOCUMENT_PURGE_BACKOFF_BASE_MS
-              value: '30000'
-            - name: DOCUMENT_PURGE_BACKOFF_MAX_MS
-              value: '3600000'
-            - name: DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS
-              value: '10000'
-            - name: OBJECT_STORAGE_EGRESS_PROXY_URL
-              value: {{ media_probe_worker_proxy_url | quote }}
-{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_PURGE_ACCESS_KEY', 'OBJECT_STORAGE_PURGE_SECRET_KEY'] %}
-            - name: {{ key }}
-              valueFrom:
-                secretKeyRef:
-                  name: learning-platform-document-purge-runtime
-                  key: {{ key }}
-{% endfor %}
-          volumeMounts:
-            - name: document-purge-temp
-              mountPath: /tmp
-          # The health server starts only after the media bucket versioning
-          # preflight passed, so /health doubles as readiness.
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: health
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: health
-            initialDelaySeconds: 15
-            periodSeconds: 20
-            timeoutSeconds: 3
-            failureThreshold: 3
-          resources: {{ document_purge_worker_resources | to_json }}
-      volumes:
-        - name: document-purge-temp
-          emptyDir:
-            sizeLimit: 16Mi
-{% endif %}
 {% endif %}
 {% if media_egress_proxy_enabled | default(false) | bool %}
 ---
@@ -1237,6 +1060,183 @@ spec:
     - ports:
         - protocol: TCP
           port: 443
+{% endif %}
+{% if 'worker' in deployment_targets and document_purge_enabled | default(false) | bool %}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: document-purge-worker
+  namespace: {{ learning_platform_namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: document-purge-worker-ingress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: document-purge-worker
+  policyTypes: [Ingress]
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: document-purge-worker-egress
+  namespace: {{ learning_platform_namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: document-purge-worker
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # S3 is reachable only through the Squid allowlist (#159 Q5).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: learning-platform
+              app.kubernetes.io/component: media-egress-proxy
+      ports:
+        - protocol: TCP
+          port: 3128
+    # The Node runtime cannot pin a TLS server name behind media-probe-db-egress,
+    # so it dials PostgreSQL directly like the relay worker. NetworkPolicy cannot
+    # encode the database hostname: this rule only permits the pinned upstream
+    # port to public addresses, never cluster, private, loopback, or metadata ranges.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: {{ media_probe_database_upstream_port | int }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: document-purge-worker
+  namespace: {{ learning_platform_namespace }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: learning-platform
+      app.kubernetes.io/component: document-purge-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: learning-platform
+        app.kubernetes.io/component: document-purge-worker
+    spec:
+      serviceAccountName: document-purge-worker
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: {{ ghcr_pull_secret_name }}
+      containers:
+        - name: document-purge-worker
+          image: {{ worker_image }}
+          imagePullPolicy: IfNotPresent
+          command: ['node', 'dist/worker.js']
+          ports:
+            - name: health
+              containerPort: 3403
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: WORKER_HEALTH_HOST
+              value: 0.0.0.0
+            - name: WORKER_HEALTH_PORT
+              value: '3403'
+            - name: WORKER_EXECUTION_MODE
+              value: document-purge
+            # Non-secret purge tuning; manifest literals, never SSM.
+            - name: DOCUMENT_PURGE_BATCH_SIZE
+              value: '10'
+            - name: DOCUMENT_PURGE_POLL_INTERVAL_MS
+              value: '5000'
+            - name: DOCUMENT_PURGE_LEASE_MS
+              value: '300000'
+            - name: DOCUMENT_PURGE_MAX_ATTEMPTS
+              value: '8'
+            - name: DOCUMENT_PURGE_BACKOFF_BASE_MS
+              value: '30000'
+            - name: DOCUMENT_PURGE_BACKOFF_MAX_MS
+              value: '3600000'
+            - name: DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS
+              value: '10000'
+            - name: OBJECT_STORAGE_EGRESS_PROXY_URL
+              value: {{ media_probe_worker_proxy_url | quote }}
+{% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_PURGE_ACCESS_KEY', 'OBJECT_STORAGE_PURGE_SECRET_KEY'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-document-purge-runtime
+                  key: {{ key }}
+{% endfor %}
+          volumeMounts:
+            - name: document-purge-temp
+              mountPath: /tmp
+          # The health server starts only after the media bucket versioning
+          # preflight passed, so /health doubles as readiness.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources: {{ document_purge_worker_resources | to_json }}
+      volumes:
+        - name: document-purge-temp
+          emptyDir:
+            sizeLimit: 16Mi
 {% endif %}
 {% if 'web' in deployment_targets or 'api' in deployment_targets %}
 ---

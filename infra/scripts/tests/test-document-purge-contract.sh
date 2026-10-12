@@ -59,6 +59,12 @@ expect_rejected 'private range allowed for the database rule' apps.yaml.j2 \
   "text.sub(/(name: document-purge-worker-egress\n.*?)              - 10\\.0\\.0\\.0\\/8\n/m) { \$1 }"
 expect_rejected 'Deployment before its ServiceAccount' apps.yaml.j2 \
   "text.sub(\"{% if 'worker' in deployment_targets and document_purge_enabled | default(false) | bool %}\n---\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: document-purge-worker\n  namespace: {{ learning_platform_namespace }}\nautomountServiceAccountToken: false\n\", \"{% if 'worker' in deployment_targets and document_purge_enabled | default(false) | bool %}\n\").sub(\"          emptyDir:\n            sizeLimit: 16Mi\n{% endif %}\", \"          emptyDir:\n            sizeLimit: 16Mi\n---\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: document-purge-worker\n  namespace: {{ learning_platform_namespace }}\nautomountServiceAccountToken: false\n{% endif %}\")"
+expect_rejected 'lowercase OpenAI SSM key in the purge Secret' external-secrets.yaml.j2 \
+  "text.sub(\"  'OBJECT_STORAGE_PURGE_SECRET_KEY': ssm_parameter_keys.object_storage_media_purge_secret_key\n\", \"  'OBJECT_STORAGE_PURGE_SECRET_KEY': ssm_parameter_keys.object_storage_media_purge_secret_key,\n  'LLM_TOKEN': ssm_parameter_keys.openai_api_key\n\")"
+expect_rejected 'extra port on the database egress rule' apps.yaml.j2 \
+  "text.sub(\"          port: {{ media_probe_database_upstream_port | int }}\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: document-purge-worker\n\", \"          port: {{ media_probe_database_upstream_port | int }}\n        - protocol: TCP\n          port: 443\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: document-purge-worker\n\")"
+expect_rejected 'purge Deployment before the proxy ingress client rule' apps.yaml.j2 \
+  "block = text[/^\\{% if 'worker' in deployment_targets and document_purge_enabled.*?\\n\\{% endif %\\}\\n/m]; text.sub(block, '').sub(\"{% endif %}\n{% if media_egress_proxy_enabled\", \"#{block}{% endif %}\n{% if media_egress_proxy_enabled\")"
 expect_rejected 'purge workload outside the flag gate' apps.yaml.j2 \
   "text.sub(\"{% if 'worker' in deployment_targets and document_purge_enabled | default(false) | bool %}\", \"{% if 'worker' in deployment_targets %}\")"
 expect_rejected 'purge tuning sourced from SSM' dev.yml \

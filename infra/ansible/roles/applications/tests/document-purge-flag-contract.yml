@@ -126,6 +126,10 @@
           {{ applications_purge_enabled_manifests
              | selectattr('kind', 'equalto', 'NetworkPolicy')
              | selectattr('metadata.name', 'equalto', 'media-egress-proxy-ingress') | first }}
+        applications_purge_deployment_index: >-
+          {{ (applications_purge_enabled_manifests | map(attribute='kind')
+              | zip(applications_purge_enabled_manifests | map(attribute='metadata.name'))
+              | map('join', '/') | list).index('Deployment/document-purge-worker') }}
       no_log: true
 
     # The apply task awaits nothing, but list order still decides whether the
@@ -142,6 +146,16 @@
                 'document-purge-worker-egress', 'document-purge-worker']
           - applications_purge_resources | map(attribute='metadata.namespace') | unique | list == ['learning-platform-dev']
           - (applications_purge_resources | first).automountServiceAccountToken == false
+          # The media-egress-proxy ingress client rule is a purge network
+          # dependency too: all three policies naming the purge pod come first.
+          - >-
+            applications_purge_enabled_manifests
+            | selectattr('kind', 'equalto', 'NetworkPolicy')
+            | map('to_json') | select('search', 'document-purge-worker') | list | length == 3
+          - >-
+            applications_purge_enabled_manifests[:applications_purge_deployment_index | int]
+            | selectattr('kind', 'equalto', 'NetworkPolicy')
+            | map('to_json') | select('search', 'document-purge-worker') | list | length == 3
           # An API-only rollout re-applies the proxy ingress, so its purge client
           # rule follows the flag alone; only the purge workload needs the worker target.
           - >-

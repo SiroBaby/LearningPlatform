@@ -43,12 +43,15 @@ Chỉ bật khi **tất cả** đã xong và có bằng chứng ghi vào ticket 
    (worker không đoán version vì quyết định Q1 cấm list version).
 3. IAM user purge và policy ở mục 3 đã tạo; negative check ở mục 5 đạt.
 4. Hai SSM `SecureString` ở mục 4 đã tạo và credential bootstrap ESO đọc được.
-5. Đường PostgreSQL khớp NetworkPolicy: NetworkPolicy của purge worker chỉ mở
+5. **Xác nhận (chỉ đọc), không sửa SSM**: NetworkPolicy của purge worker chỉ mở
    cổng `media_probe_database_upstream_port` (hiện là `27158` trong
-   `infra/ansible/vars/dev.yml`). Giá trị SSM `/learning-platform/dev/db-port`
-   phải bằng cổng này và `/learning-platform/dev/db-host` phải là cùng host
-   `media_probe_database_upstream_host`. Ansible không đọc được giá trị SSM nên
-   không tự kiểm được; nếu lệch, pod sẽ restart liên tục ở bước migration.
+   `infra/ansible/vars/dev.yml`). Đọc và đối chiếu SSM `/learning-platform/dev/db-port`
+   với cổng này, `/learning-platform/dev/db-host` với `media_probe_database_upstream_host`.
+   Bình thường hai giá trị đã khớp vì `api`/`worker` dùng chính hai SSM này để vào
+   cùng database. **Không sửa** hai SSM này: `api` và `worker` đang chạy đọc chúng,
+   đổi sẽ ảnh hưởng runtime hiện có. Nếu lệch, dừng việc bật cờ và mở ticket riêng.
+   Ansible không đọc được giá trị SSM nên không tự kiểm được; nếu bật cờ khi lệch,
+   pod sẽ restart liên tục ở bước migration.
 6. Ticket #222 về alert (bật Loki ruler, rule `document.purge.dead_lettered`
    và rule pod-health cho `document-purge-worker`) đã hoàn tất. Xem mục 8.
 
@@ -192,6 +195,21 @@ object thật, nên lệnh không làm mất dữ liệu kể cả khi quyền b
 3. **Purge identity không đọc/ghi/list được object**: `get-object`,
    `put-object` và `list-object-versions` bằng profile `lp-dev-purge` đều phải
    `AccessDenied`.
+4. **Purge identity không xóa được ngoài prefix cho phép** (bắt buộc): xác nhận
+   resource `<MEDIA_BUCKET>/media/*` không bị nới thành `<MEDIA_BUCKET>/*` khi tạo policy.
+
+   ```bash
+   aws s3api delete-object --profile lp-dev-purge --region ap-southeast-1 \
+     --bucket <MEDIA_BUCKET> \
+     --key negative-check/00000000-0000-0000-0000-000000000000/negative-check.mp4 \
+     --version-id negative-check-version
+   ```
+
+   Kỳ vọng: `AccessDenied` (key nằm ngoài `media/`). Thêm một lệnh
+   `delete-object` **không** có `--version-id` với key giả trong `media/` của media
+   bucket: cũng phải `AccessDenied`, vì purge identity không có `s3:DeleteObject`
+   trên media bucket. Kết quả khác `AccessDenied` nghĩa là policy rộng hơn mục 3:
+   dừng lại và sửa IAM.
 
 ## 6. Bật cờ và xác nhận
 
@@ -201,7 +219,8 @@ object thật, nên lệnh không làm mất dữ liệu kể cả khi quyền b
    `vars/dev.yml` đổi). Ansible:
    - kiểm `document-purge-contract.yml` (SSM path đúng, proxy bật, port hợp lệ);
    - tạo ExternalSecret `learning-platform-document-purge-runtime` và chờ `Ready`;
-   - apply ServiceAccount, NetworkPolicy, rồi Deployment `document-purge-worker`;
+   - apply ServiceAccount, NetworkPolicy (gồm rule client trên
+     `media-egress-proxy-ingress`), rồi mới tới Deployment `document-purge-worker`;
    - bước `Wait for selected K3s rollouts` chờ thêm `deployment/document-purge-worker`.
 3. Xác nhận (chỉ đọc, không in Secret):
 
