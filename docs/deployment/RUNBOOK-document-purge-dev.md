@@ -168,7 +168,10 @@ Tạo access key cho user này, không lưu vào file trong repo, chỉ nhập t
 
 Dùng AWS CLI với profile tạm của từng credential; không dán key vào terminal được
 ghi log hay vào ticket. Key và VersionId dưới đây là giá trị giả, không trỏ tới
-object thật, nên lệnh không làm mất dữ liệu kể cả khi quyền bị cấp sai.
+object thật, nên lệnh không làm mất dữ liệu kể cả khi quyền bị cấp sai. Ngoại lệ
+duy nhất là lệnh xóa **không** kèm `--version-id` ở mục 4: nếu policy cấp sai,
+lệnh đó tạo một delete marker (dấu xóa) trên key giả trong media bucket; dữ liệu
+thật không mất nhưng phải dọn marker như hướng dẫn ở mục 4.
 
 1. **Negative check media-probe** (bắt buộc): credential media-probe gọi
    `DeleteObjectVersion` phải bị từ chối.
@@ -205,11 +208,35 @@ object thật, nên lệnh không làm mất dữ liệu kể cả khi quyền b
      --version-id negative-check-version
    ```
 
-   Kỳ vọng: `AccessDenied` (key nằm ngoài `media/`). Thêm một lệnh
-   `delete-object` **không** có `--version-id` với key giả trong `media/` của media
-   bucket: cũng phải `AccessDenied`, vì purge identity không có `s3:DeleteObject`
-   trên media bucket. Kết quả khác `AccessDenied` nghĩa là policy rộng hơn mục 3:
-   dừng lại và sửa IAM.
+   Kỳ vọng: `AccessDenied` (key nằm ngoài `media/`).
+
+   Tiếp theo, xóa key giả trong `media/` **không** kèm `--version-id`:
+
+   ```bash
+   aws s3api delete-object --profile lp-dev-purge --region ap-southeast-1 \
+     --bucket <MEDIA_BUCKET> \
+     --key media/negative-check/00000000-0000-0000-0000-000000000000/negative-check.mp4
+   ```
+
+   Kỳ vọng: `AccessDenied`, vì purge identity không có `s3:DeleteObject` trên
+   media bucket. Kết quả khác `AccessDenied` ở một trong hai lệnh nghĩa là policy
+   rộng hơn mục 3: dừng lại và sửa IAM.
+
+   Nếu lệnh thứ hai **thành công** (in ra `"DeleteMarker": true`), media bucket
+   đang bật versioning nên S3 đã tạo một delete marker trên key giả. Sau khi siết
+   IAM, dọn marker bằng credential admin (không dùng `lp-dev-purge`):
+
+   ```bash
+   aws s3api list-object-versions --profile <ADMIN_PROFILE> --region ap-southeast-1 \
+     --bucket <MEDIA_BUCKET> --prefix media/negative-check/ \
+     --query 'DeleteMarkers[].[Key,VersionId]' --output text
+   aws s3api delete-object --profile <ADMIN_PROFILE> --region ap-southeast-1 \
+     --bucket <MEDIA_BUCKET> \
+     --key media/negative-check/00000000-0000-0000-0000-000000000000/negative-check.mp4 \
+     --version-id <VERSION_ID_CỦA_MARKER>
+   ```
+
+   Chạy lại `list-object-versions` ở trên: kết quả phải rỗng.
 
 ## 6. Bật cờ và xác nhận
 
