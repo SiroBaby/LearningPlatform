@@ -56,6 +56,61 @@
             | length == 0
       no_log: true
 
+    - name: Render worker runtime resources with the document purge worker enabled
+      ansible.builtin.set_fact:
+        external_secrets_purge_resources: >-
+          {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['worker'], 'media_probe_worker_enabled': true,
+                            'document_purge_enabled': true}) | from_yaml_all | list }}
+        external_secrets_purge_disabled_resources: >-
+          {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['api', 'worker'], 'media_probe_worker_enabled': true,
+                            'document_purge_enabled': false}) | from_yaml_all | list }}
+      no_log: true
+
+    # The purge identity gets the shared database keys, both bucket locations
+    # and its own delete credential only; never API, probe, or LLM secrets.
+    - name: Require the document purge runtime Secret to carry only its own contract
+      vars:
+        external_secrets_purge_runtime: >-
+          {{ external_secrets_purge_resources
+             | selectattr('metadata.name', 'equalto', 'learning-platform-document-purge-runtime') | first }}
+      ansible.builtin.assert:
+        that:
+          - >-
+            external_secrets_purge_resources | map(attribute='metadata.name') | list
+            == ['aws-parameter-store', 'learning-platform-go-worker-runtime', 'learning-platform-worker-runtime',
+                'learning-platform-media-probe-runtime', 'learning-platform-document-purge-runtime']
+          - external_secrets_purge_runtime.spec.target.name == 'learning-platform-document-purge-runtime'
+          - external_secrets_purge_runtime.spec.target.creationPolicy == 'Owner'
+          - >-
+            external_secrets_purge_runtime.spec.data | map(attribute='secretKey') | list
+            == ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA',
+                'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL',
+                'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_MEDIA_BUCKET',
+                'OBJECT_STORAGE_PURGE_ACCESS_KEY', 'OBJECT_STORAGE_PURGE_SECRET_KEY']
+          # Exact key-to-path map: a swapped DB, bucket, or credential path fails here.
+          - >-
+            external_secrets_purge_runtime.spec.data | map(attribute='remoteRef.key') | list
+            == ['/learning-platform/dev/db-host', '/learning-platform/dev/db-port',
+                '/learning-platform/dev/db-user', '/learning-platform/dev/db-password',
+                '/learning-platform/dev/db-name', '/learning-platform/dev/db-ssl-mode',
+                '/learning-platform/dev/db-ssl-ca', '/learning-platform/dev/object-storage-endpoint',
+                '/learning-platform/dev/object-storage-port', '/learning-platform/dev/object-storage-region',
+                '/learning-platform/dev/object-storage-use-ssl', '/learning-platform/dev/object-storage-bucket',
+                '/learning-platform/dev/object-storage-media-bucket',
+                '/learning-platform/dev/object-storage-media-purge-access-key',
+                '/learning-platform/dev/object-storage-media-purge-secret-key']
+          - >-
+            external_secrets_purge_disabled_resources
+            | selectattr('metadata.name', 'equalto', 'learning-platform-document-purge-runtime')
+            | list | length == 0
+        fail_msg: >-
+          learning-platform-document-purge-runtime must render only with
+          document_purge_enabled and map exactly the shared database keys, the
+          bucket locations and the dedicated purge SSM paths.
+      no_log: true
+
     - name: Render web-only runtime resources
       ansible.builtin.set_fact:
         external_secrets_web_resources: >-
@@ -150,13 +205,14 @@
         external_secrets_example_resources: >-
           {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
              template_vars={'deployment_targets': ['api', 'worker'], 'api_media_enabled': true,
-                            'media_probe_worker_enabled': true, 'object_storage_egress_proxy_enabled': true}) | from_yaml_all | list }}
+                            'media_probe_worker_enabled': true, 'object_storage_egress_proxy_enabled': true,
+                            'document_purge_enabled': true}) | from_yaml_all | list }}
       no_log: true
 
     - name: Require the example inventory to define every referenced SSM key
       ansible.builtin.assert:
         that:
-          - external_secrets_example_resources | length == 5
+          - external_secrets_example_resources | length == 6
           - >-
             external_secrets_example_resources[1:]
             | map(attribute='spec.data')

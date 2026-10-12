@@ -92,6 +92,9 @@
 - name: Validate the media probe worker contract when it is enabled
   ansible.builtin.include_tasks: media-probe-contract.yml
 
+- name: Validate the document purge worker contract when it is enabled
+  ansible.builtin.include_tasks: document-purge-contract.yml
+
 - name: Validate enabled API media storage contract
   ansible.builtin.assert:
     that:
@@ -255,6 +258,78 @@
       | list | length) == 1
   when: "'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool"
 
+- name: Wait for document purge runtime ExternalSecret readiness
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    namespace: '{{ learning_platform_namespace }}'
+    name: learning-platform-document-purge-runtime
+  register: applications_document_purge_runtime_external_secret
+  retries: 30
+  delay: 2
+  until: >-
+    applications_document_purge_runtime_external_secret.resources | length == 1 and
+    (applications_document_purge_runtime_external_secret.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True')
+      | list | length) == 1
+  when: "'worker' in deployment_targets and document_purge_enabled | default(false) | bool"
+
+# Turning document_purge_enabled back to false must stop every hard delete.
+# Applying the template only creates or updates objects, so remove the purge
+# workload first and wait until its pod is gone: the namespace has no default
+# deny, so deleting the NetworkPolicies earlier would leave a running pod that
+# holds the purge credential with unrestricted egress. Then remove its exact
+# named network, identity, and runtime ExternalSecret; ESO garbage-collects the
+# owned Secret.
+- name: Remove the document purge workload when its flag is disabled
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: apps/v1
+    kind: Deployment
+    namespace: '{{ learning_platform_namespace }}'
+    name: document-purge-worker
+    state: absent
+    delete_options:
+      propagationPolicy: Foreground
+    wait: true
+    wait_timeout: 120
+  when: "'worker' in deployment_targets and not (document_purge_enabled | default(false) | bool)"
+
+- name: Wait until no document purge pod is left before removing its NetworkPolicies
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: v1
+    kind: Pod
+    namespace: '{{ learning_platform_namespace }}'
+    label_selectors:
+      - app.kubernetes.io/name=learning-platform
+      - app.kubernetes.io/component=document-purge-worker
+  register: applications_document_purge_pods
+  retries: 30
+  delay: 5
+  until: applications_document_purge_pods.resources | length == 0
+  when: "'worker' in deployment_targets and not (document_purge_enabled | default(false) | bool)"
+  no_log: true
+
+- name: Remove the document purge network, identity, and runtime Secret when its flag is disabled
+  kubernetes.core.k8s:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: '{{ item.api_version }}'
+    kind: '{{ item.kind }}'
+    namespace: '{{ learning_platform_namespace }}'
+    name: '{{ item.name }}'
+    state: absent
+  loop:
+    - {api_version: networking.k8s.io/v1, kind: NetworkPolicy, name: document-purge-worker-egress}
+    - {api_version: networking.k8s.io/v1, kind: NetworkPolicy, name: document-purge-worker-ingress}
+    - {api_version: v1, kind: ServiceAccount, name: document-purge-worker}
+    - {api_version: external-secrets.io/v1beta1, kind: ExternalSecret, name: learning-platform-document-purge-runtime}
+  loop_control:
+    label: "{{ item.kind }}/{{ item.name }}"
+  when: "'worker' in deployment_targets and not (document_purge_enabled | default(false) | bool)"
+
 # DB_HOST/DB_PORT of media-probe-worker are now literal values. A strategic
 # merge onto an older Deployment that still sources them from secretKeyRef
 # would produce an env entry with both value and valueFrom, which the API
@@ -368,6 +443,37 @@
     kubeconfig: /etc/rancher/k3s/k3s.yaml
     state: present
     definition: "{{ lookup('template', playbook_dir ~ '/../../k8s/apps.yaml.j2') | from_yaml_all | list }}"
+
+# The proxy ingress client list has no merge key, so the apply above replaces
+# it; read it back to prove a disabled flag left no purge client rule behind.
+- name: Read back the media egress proxy ingress policy
+  kubernetes.core.k8s_info:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    api_version: networking.k8s.io/v1
+    kind: NetworkPolicy
+    namespace: '{{ learning_platform_namespace }}'
+    name: media-egress-proxy-ingress
+  register: applications_media_egress_proxy_ingress_after_apply
+  when:
+    - media_egress_proxy_enabled | default(false) | bool
+    - not (document_purge_enabled | default(false) | bool)
+
+- name: Require a disabled purge flag to leave no purge client on the proxy ingress
+  ansible.builtin.assert:
+    that:
+      - applications_media_egress_proxy_ingress_after_apply.resources | length == 1
+      - >-
+        applications_media_egress_proxy_ingress_after_apply.resources[0].spec.ingress
+        | map(attribute='from', default=[]) | flatten
+        | map(attribute='podSelector.matchLabels', default={})
+        | map('to_json') | select('search', 'document-purge-worker')
+        | list | length == 0
+    fail_msg: >-
+      media-egress-proxy-ingress still admits document-purge-worker although
+      document_purge_enabled is false.
+  when:
+    - media_egress_proxy_enabled | default(false) | bool
+    - not (document_purge_enabled | default(false) | bool)
 
 - name: Remove obsolete Phase 0 web BFF environment variables
   kubernetes.core.k8s:

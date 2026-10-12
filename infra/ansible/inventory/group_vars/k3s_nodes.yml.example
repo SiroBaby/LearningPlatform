@@ -72,6 +72,8 @@ ssm_parameter_keys:
   object_storage_media_probe_secret_key: /REPLACE/WITH/EXACT/object-storage-media-probe-secret-key
   object_storage_full_pipeline_media_access_key: /REPLACE/WITH/EXACT/object-storage-full-pipeline-media-access-key
   object_storage_full_pipeline_media_secret_key: /REPLACE/WITH/EXACT/object-storage-full-pipeline-media-secret-key
+  object_storage_media_purge_access_key: /REPLACE/WITH/EXACT/object-storage-media-purge-access-key
+  object_storage_media_purge_secret_key: /REPLACE/WITH/EXACT/object-storage-media-purge-secret-key
   media_probe_db_user: /REPLACE/WITH/EXACT/media-probe-db-user
   media_probe_db_password: /REPLACE/WITH/EXACT/media-probe-db-password
   ai_credential_encryption_key: /REPLACE/WITH/EXACT/ai-credential-encryption-key
@@ -110,6 +112,9 @@ media_probe_worker_egress_proxy_port: 3128
 # media-probe-db-egress forwards to exactly this PostgreSQL host and port.
 media_probe_database_upstream_host: REPLACE_WITH_DATABASE_FQDN
 media_probe_database_upstream_port: REPLACE_WITH_DATABASE_PORT
+# The document purge worker needs a dedicated purge IAM identity; see
+# docs/deployment/RUNBOOK-document-purge-dev.md before enabling it.
+document_purge_enabled: false
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}
@@ -125,6 +130,9 @@ worker_resources:
 go_worker_resources:
   requests: {cpu: 100m, memory: 512Mi}
   limits: {cpu: "1", memory: 1Gi}
+document_purge_worker_resources:
+  requests: {cpu: 25m, memory: 192Mi}
+  limits: {cpu: 250m, memory: 384Mi}
 
 # Existing host Prometheus/Grafana are external to this automation. All values
 # below must be explicit because their paths and service name are host-specific.

@@ -1,0 +1,348 @@
+---
+# The document purge worker hard-deletes object versions (#159). It must render
+# nothing while its flag is off and, when on, run as an isolated least-privilege
+# workload that reads only its own runtime Secret.
+- name: Verify the document purge worker flag against the production dev vars
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+    applications_purge_secret_name: learning-platform-document-purge-runtime
+    applications_purge_secret_keys:
+      - DB_HOST
+      - DB_PORT
+      - DB_USER
+      - DB_PASSWORD
+      - DB_NAME
+      - DB_SSL_MODE
+      - DB_SSL_CA
+      - OBJECT_STORAGE_ENDPOINT
+      - OBJECT_STORAGE_PORT
+      - OBJECT_STORAGE_REGION
+      - OBJECT_STORAGE_USE_SSL
+      - OBJECT_STORAGE_BUCKET
+      - OBJECT_STORAGE_MEDIA_BUCKET
+      - OBJECT_STORAGE_PURGE_ACCESS_KEY
+      - OBJECT_STORAGE_PURGE_SECRET_KEY
+    applications_purge_literals:
+      NODE_ENV: production
+      WORKER_HEALTH_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: '3403'
+      WORKER_EXECUTION_MODE: document-purge
+      DOCUMENT_PURGE_BATCH_SIZE: '10'
+      DOCUMENT_PURGE_POLL_INTERVAL_MS: '5000'
+      DOCUMENT_PURGE_LEASE_MS: '300000'
+      DOCUMENT_PURGE_MAX_ATTEMPTS: '8'
+      DOCUMENT_PURGE_BACKOFF_BASE_MS: '30000'
+      DOCUMENT_PURGE_BACKOFF_MAX_MS: '3600000'
+      DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS: '10000'
+      OBJECT_STORAGE_EGRESS_PROXY_URL: http://media-egress-proxy:3128
+  tasks:
+    - name: Require the production dev vars to keep the purge worker disabled
+      ansible.builtin.assert:
+        that:
+          - document_purge_enabled is boolean
+          - not document_purge_enabled
+        fail_msg: >-
+          vars/dev.yml must keep document_purge_enabled false until the owner
+          has created the purge IAM user and both purge SSM parameters (#159).
+
+    - name: Run the production document purge contract with the flag disabled
+      ansible.builtin.include_tasks: ../tasks/document-purge-contract.yml
+
+    - name: Render the production manifests with the flag disabled
+      ansible.builtin.set_fact:
+        applications_purge_disabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2')
+             | from_yaml_all | list }}
+        applications_purge_disabled_secrets: >-
+          {{ lookup('template', playbook_dir ~ '/../../external_secrets/templates/external-secrets.yaml.j2')
+             | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require a disabled flag to render no purge workload, policy, identity, or Secret
+      ansible.builtin.assert:
+        that:
+          - >-
+            applications_purge_disabled_manifests
+            | selectattr('metadata.name', 'search', 'document-purge')
+            | list | length == 0
+          - >-
+            applications_purge_disabled_secrets
+            | selectattr('metadata.name', 'search', 'document-purge')
+            | list | length == 0
+          - >-
+            applications_purge_disabled_manifests | to_json is not search('document-purge')
+          - >-
+            applications_purge_disabled_secrets | to_json is not search('purge')
+        fail_msg: >-
+          With document_purge_enabled false the rollout must not render the
+          document-purge-worker, its NetworkPolicies, its ServiceAccount, its
+          media-egress-proxy client rule, or its runtime ExternalSecret.
+
+    - name: Enable the purge flag for a worker rollout
+      ansible.builtin.set_fact:
+        document_purge_enabled: true
+
+    - name: Run the production document purge contract with the flag enabled
+      ansible.builtin.include_tasks: ../tasks/document-purge-contract.yml
+
+    - name: Render the worker manifests with the flag enabled
+      ansible.builtin.set_fact:
+        applications_purge_enabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2')
+             | from_yaml_all | list }}
+        applications_purge_web_api_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['web', 'api']})
+             | from_yaml_all | list }}
+        applications_purge_enabled_secrets: >-
+          {{ lookup('template', playbook_dir ~ '/../../external_secrets/templates/external-secrets.yaml.j2')
+             | from_yaml_all | list }}
+      no_log: true
+
+    - name: Select the rendered purge resources
+      ansible.builtin.set_fact:
+        applications_purge_resources: >-
+          {{ applications_purge_enabled_manifests
+             | selectattr('metadata.name', 'search', '^document-purge-worker') | list }}
+        applications_purge_deployment: >-
+          {{ applications_purge_enabled_manifests
+             | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'document-purge-worker') | first }}
+        applications_purge_egress: >-
+          {{ applications_purge_enabled_manifests
+             | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'document-purge-worker-egress') | first }}
+        applications_purge_proxy_ingress: >-
+          {{ applications_purge_enabled_manifests
+             | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy-ingress') | first }}
+        applications_purge_deployment_index: >-
+          {{ (applications_purge_enabled_manifests | map(attribute='kind')
+              | zip(applications_purge_enabled_manifests | map(attribute='metadata.name'))
+              | map('join', '/') | list).index('Deployment/document-purge-worker') }}
+      no_log: true
+
+    # The apply task awaits nothing, but list order still decides whether the
+    # Deployment's pods can be admitted on their first attempt.
+    - name: Require the purge dependencies to precede the Deployment in apply order
+      ansible.builtin.assert:
+        that:
+          - >-
+            applications_purge_resources | map(attribute='kind') | list
+            == ['ServiceAccount', 'NetworkPolicy', 'NetworkPolicy', 'Deployment']
+          - >-
+            applications_purge_resources | map(attribute='metadata.name') | list
+            == ['document-purge-worker', 'document-purge-worker-ingress',
+                'document-purge-worker-egress', 'document-purge-worker']
+          - applications_purge_resources | map(attribute='metadata.namespace') | unique | list == ['learning-platform-dev']
+          - (applications_purge_resources | first).automountServiceAccountToken == false
+          # The media-egress-proxy ingress client rule is a purge network
+          # dependency too: all three policies naming the purge pod come first.
+          - >-
+            applications_purge_enabled_manifests
+            | selectattr('kind', 'equalto', 'NetworkPolicy')
+            | map('to_json') | select('search', 'document-purge-worker') | list | length == 3
+          - >-
+            applications_purge_enabled_manifests[:applications_purge_deployment_index | int]
+            | selectattr('kind', 'equalto', 'NetworkPolicy')
+            | map('to_json') | select('search', 'document-purge-worker') | list | length == 3
+          # An API-only rollout re-applies the proxy ingress, so its purge client
+          # rule follows the flag alone; only the purge workload needs the worker target.
+          - >-
+            applications_purge_web_api_manifests
+            | selectattr('metadata.name', 'search', 'document-purge') | list | length == 0
+          - >-
+            (applications_purge_web_api_manifests
+             | selectattr('metadata.name', 'equalto', 'media-egress-proxy-ingress') | first)
+            | to_json is search('document-purge-worker')
+        fail_msg: >-
+          The purge ServiceAccount and NetworkPolicies must render before its
+          Deployment, and only when the worker target is selected.
+
+    - name: Require the purge Deployment to run least-privilege in document-purge mode
+      vars:
+        applications_purge_pod: "{{ applications_purge_deployment.spec.template.spec }}"
+        applications_purge_container: "{{ applications_purge_pod.containers | first }}"
+      ansible.builtin.assert:
+        that:
+          - applications_purge_deployment.spec.replicas == 1
+          - >-
+            applications_purge_deployment.spec.strategy == {'type': 'Recreate', 'rollingUpdate': None}
+          - applications_purge_pod.serviceAccountName == 'document-purge-worker'
+          - applications_purge_pod.automountServiceAccountToken == false
+          - applications_purge_pod.securityContext.runAsNonRoot == true
+          - applications_purge_pod.securityContext.runAsUser == 1000
+          - applications_purge_pod.securityContext.seccompProfile.type == 'RuntimeDefault'
+          - applications_purge_pod.containers | length == 1
+          - applications_purge_pod.initContainers is not defined
+          - applications_purge_container.image == worker_image
+          - applications_purge_container.command == ['node', 'dist/worker.js']
+          - applications_purge_container.securityContext.allowPrivilegeEscalation == false
+          - applications_purge_container.securityContext.readOnlyRootFilesystem == true
+          - applications_purge_container.securityContext.capabilities.drop == ['ALL']
+          - applications_purge_container.securityContext.capabilities.add is not defined
+          - applications_purge_container.resources == document_purge_worker_resources
+          - >-
+            applications_purge_container.readinessProbe.httpGet == {'path': '/health', 'port': 'health'}
+          - >-
+            applications_purge_container.livenessProbe.httpGet == {'path': '/health', 'port': 'health'}
+          - >-
+            applications_purge_container.ports == [{'name': 'health', 'containerPort': 3403}]
+          - >-
+            applications_purge_container.volumeMounts == [{'name': 'document-purge-temp', 'mountPath': '/tmp'}]
+          - >-
+            applications_purge_pod.volumes == [{'name': 'document-purge-temp', 'emptyDir': {'sizeLimit': '16Mi'}}]
+        fail_msg: >-
+          document-purge-worker must run one non-root Recreate replica of the
+          backend image in document-purge mode with a read-only root, a bounded
+          writable /tmp, RuntimeDefault seccomp, no capabilities, no
+          ServiceAccount token, and the worker /health probes.
+
+    - name: Require the purge container to receive only its literals and its own Secret keys
+      vars:
+        applications_purge_env: "{{ (applications_purge_deployment.spec.template.spec.containers | first).env }}"
+        applications_purge_secret_env: "{{ applications_purge_env | selectattr('valueFrom', 'defined') | list }}"
+        applications_purge_literal_env: "{{ applications_purge_env | rejectattr('valueFrom', 'defined') | list }}"
+        applications_purge_forbidden_env: >-
+          OPENAI|AI_LLM|AI_CREDENTIAL|MEDIA_PROBE|API_MEDIA|FULL_PIPELINE|GOOGLE|AUTH_|SWAGGER|^OBJECT_STORAGE_(ACCESS|SECRET)_KEY$|PROXY$
+      ansible.builtin.assert:
+        that:
+          - >-
+            applications_purge_literal_env | items2dict(key_name='name', value_name='value')
+            == applications_purge_literals
+          - applications_purge_secret_env | map(attribute='name') | list == applications_purge_secret_keys
+          - >-
+            applications_purge_secret_env | map(attribute='valueFrom.secretKeyRef.name') | unique | list
+            == [applications_purge_secret_name]
+          - >-
+            applications_purge_secret_env | map(attribute='valueFrom.secretKeyRef.key') | list
+            == applications_purge_secret_keys
+          - >-
+            applications_purge_env | map(attribute='name')
+            | select('search', applications_purge_forbidden_env)
+            | list | length == 0
+        fail_msg: >-
+          document-purge-worker must receive only its manifest literals and the
+          keys of learning-platform-document-purge-runtime: no OpenAI, media-probe,
+          API, or document-bucket credential.
+
+    - name: Require the purge egress policy to allow only DNS, the S3 proxy, and PostgreSQL
+      ansible.builtin.assert:
+        that:
+          - applications_purge_egress.spec.policyTypes == ['Egress']
+          - applications_purge_egress.spec.egress | length == 3
+          - applications_purge_egress.spec.egress | selectattr('to', 'undefined') | list | length == 0
+          - applications_purge_egress.spec.egress | selectattr('ports', 'undefined') | list | length == 0
+          - >-
+            applications_purge_egress.spec.egress[0].to
+            == [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}},
+                 'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}]
+          - >-
+            applications_purge_egress.spec.egress[0].ports
+            == [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]
+          - >-
+            applications_purge_egress.spec.egress[1]
+            == {'to': [{'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'learning-platform',
+                                                        'app.kubernetes.io/component': 'media-egress-proxy'}}}],
+                'ports': [{'protocol': 'TCP', 'port': 3128}]}
+          - >-
+            applications_purge_egress.spec.egress[2]
+            == {'to': [{'ipBlock': {'cidr': '0.0.0.0/0',
+                                    'except': ['10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
+                                               '169.254.0.0/16', '172.16.0.0/12', '192.168.0.0/16']}}],
+                'ports': [{'protocol': 'TCP', 'port': media_probe_database_upstream_port}]}
+          - >-
+            applications_purge_enabled_manifests
+            | selectattr('metadata.name', 'equalto', 'document-purge-worker-ingress')
+            | map(attribute='spec') | list
+            == [{'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'learning-platform',
+                                                 'app.kubernetes.io/component': 'document-purge-worker'}},
+                 'policyTypes': ['Ingress'], 'ingress': []}]
+          - >-
+            applications_purge_proxy_ingress.spec.ingress[0].from | map(attribute='podSelector.matchLabels')
+            | map('dict2items') | map('selectattr', 'key', 'equalto', 'app.kubernetes.io/component')
+            | map('first') | map(attribute='value') | list
+            == ['api', 'worker', 'media-probe-worker', 'document-purge-worker']
+        fail_msg: >-
+          document-purge-worker egress must allow only CoreDNS, media-egress-proxy
+          on 3128, and the PostgreSQL port to public addresses, deny ingress, and
+          be admitted by the media-egress-proxy ingress policy.
+
+    - name: Require the enabled purge runtime ExternalSecret to provide every referenced key
+      vars:
+        applications_purge_runtime_documents: >-
+          {{ applications_purge_enabled_secrets
+             | selectattr('metadata.name', 'equalto', applications_purge_secret_name) | list }}
+      ansible.builtin.assert:
+        that:
+          - applications_purge_runtime_documents | length == 1
+          - (applications_purge_runtime_documents | first).spec.target.name == applications_purge_secret_name
+          - >-
+            (applications_purge_runtime_documents | first).spec.data | map(attribute='secretKey') | list
+            == applications_purge_secret_keys
+        fail_msg: learning-platform-document-purge-runtime must provide exactly the purge Deployment keys.
+
+    - name: Keep the production SSM keys as the base of every contract case
+      ansible.builtin.set_fact:
+        applications_purge_base_ssm_parameter_keys: "{{ ssm_parameter_keys }}"
+
+    - name: Accept or reject each document purge contract case
+      ansible.builtin.include_tasks: document-purge-case.yml
+      vars:
+        purge_case_label: "{{ purge_case.label }}"
+        purge_case_expected_accepted: "{{ purge_case.accepted }}"
+        document_purge_enabled: "{{ purge_case.flag }}"
+        media_egress_proxy_enabled: "{{ purge_case.proxy | default(true) }}"
+        media_probe_database_upstream_port: "{{ purge_case.port | default(27158) }}"
+        ssm_parameter_keys: "{{ applications_purge_base_ssm_parameter_keys | combine(purge_case.ssm | default({})) }}"
+      loop:
+        - {label: production enabled, flag: true, accepted: true}
+        - {label: quoted false flag, flag: 'false', accepted: false}
+        - {label: quoted true flag, flag: 'true', accepted: false}
+        - {label: proxy workload disabled, flag: true, proxy: false, accepted: false}
+        - {label: string database port, flag: true, port: '27158', accepted: false}
+        - label: placeholder access key path
+          flag: true
+          ssm: {object_storage_media_purge_access_key: /REPLACE/WITH/EXACT/object-storage-media-purge-access-key}
+          accepted: false
+        - label: relative secret key path
+          flag: true
+          ssm: {object_storage_media_purge_secret_key: learning-platform/dev/object-storage-media-purge-secret-key}
+          accepted: false
+        - label: reused media probe identity
+          flag: true
+          ssm: {object_storage_media_purge_access_key: /learning-platform/dev/object-storage-media-probe-access-key}
+          accepted: false
+        - label: reused API media identity
+          flag: true
+          ssm: {object_storage_media_purge_access_key: /learning-platform/dev/object-storage-api-media-access-key}
+          accepted: false
+        - label: reused full-pipeline media identity
+          flag: true
+          ssm: {object_storage_media_purge_access_key: /learning-platform/dev/object-storage-full-pipeline-media-access-key}
+          accepted: false
+        - label: reused API document secret key
+          flag: true
+          ssm: {object_storage_media_purge_secret_key: /learning-platform/dev/object-storage-secret-key}
+          accepted: false
+        - label: same path for access and secret key
+          flag: true
+          ssm: {object_storage_media_purge_secret_key: /learning-platform/dev/object-storage-media-purge-access-key}
+          accepted: false
+        - label: placeholder paths while disabled
+          flag: false
+          ssm: {object_storage_media_purge_access_key: /REPLACE/WITH/EXACT/object-storage-media-purge-access-key}
+          accepted: true
+      loop_control:
+        loop_var: purge_case
+        label: "{{ purge_case.label }}"
