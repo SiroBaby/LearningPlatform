@@ -5,14 +5,11 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Bell, CircleAlert, MoreHorizontal, Sparkles, X } from "lucide-react";
 import { LogoutButton } from "@/components/auth/logout-button";
-import { learnerBottomNav, learnerPrimaryNav, learnerSecondaryNav } from "@/lib/nav";
+import { isLearnerRouteActive } from "@/lib/learner-nav-active";
+import { learnerBottomNav, learnerMobileMoreNav, learnerPrimaryNav, learnerSecondaryNav } from "@/lib/nav";
 import { routes } from "@/lib/routes";
 import { cn } from "@/lib/cn";
 import { Badge } from "@/components/ui";
-
-function isLearnerRouteActive(pathname: string, href: string) {
-  return pathname === href || (href !== routes.home && pathname.startsWith(`${href}/`));
-}
 
 function NavLink({
   href,
@@ -76,7 +73,8 @@ export function LearnerShell({
   const showDemoLabel = !isPhase0Route;
   const pendingPathname = pendingNavigation?.from === pathname ? pendingNavigation.to : null;
   const activePathname = pendingPathname ?? pathname;
-  const isPersonalRoute = learnerSecondaryNav.some(({ href }) => isLearnerRouteActive(activePathname, href));
+  const isPersonalRoute = learnerMobileMoreNav.some(({ href }) => isLearnerRouteActive(activePathname, href));
+  const isNotificationsActive = isLearnerRouteActive(activePathname, routes.notifications);
   const isNavigationPending = pendingPathname !== null;
 
   function handleNavigate(href: string) {
@@ -245,8 +243,15 @@ export function LearnerShell({
                 {actions}
                 <Link
                   href={routes.notifications}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-ink-200 bg-white text-ink-600 hover:bg-ink-50"
+                  onNavigate={() => handleNavigate(routes.notifications)}
+                  className={cn(
+                    "inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white",
+                    isNotificationsActive
+                      ? "border-brand-600 text-brand-700"
+                      : "border-ink-200 text-ink-600 hover:bg-ink-50",
+                  )}
                   aria-label="Thông báo"
+                  aria-current={isNotificationsActive ? "page" : undefined}
                 >
                   <Bell className="h-4 w-4" />
                 </Link>
@@ -292,7 +297,7 @@ export function LearnerShell({
             </button>
           </div>
           <nav aria-label="Điều hướng cá nhân" className="grid gap-1">
-            {learnerSecondaryNav.map(({ href, label, icon: Icon }) => (
+            {learnerMobileMoreNav.map(({ href, label, icon: Icon }) => (
               <Link
                 key={href}
                 href={href}
