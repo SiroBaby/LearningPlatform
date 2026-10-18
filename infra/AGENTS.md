@@ -18,6 +18,11 @@
 - Inhibit only `severity=info` from a source with `severity=warning|critical`, requiring equal `namespace` and `cluster` labels; never inhibit warning or critical alerts.
 - Preserve the `alertmanager-telegram-config` Secret and its two SSM-backed placeholders; never add raw Telegram credentials to source or validation output.
 
+## Loki Alert Rules
+
+- Keep the Loki ruler inside the monolithic pod: `ruler.enabled: true` with `ruler.replicas: 0`, local rule storage at `/etc/loki/rules`, rules from the `learning-platform-loki-alert-rules` ConfigMap mounted read-only at `/etc/loki/rules/fake`, and `alertmanager_url` pinned to the in-cluster Alertmanager. Do not add a rules sidecar or a separate ruler workload without updating the CPU budget.
+- Any new or changed Loki or application Prometheus alert must update the exact contract in `validate-rendered-observability.rb` and add a negative fixture case; prove a new LogQL rule loads (`health: ok`) and fires on a pinned Loki binary before merge.
+
 ## Validation
 
 - Any Alloy ingest change must update or preserve the static config-contract test. The test must check CRI parsing order, every supported level normalization mapping, unknown-level behavior, and the absence of `level`/correlation fields from Loki labels.

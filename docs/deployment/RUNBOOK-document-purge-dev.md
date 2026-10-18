@@ -52,8 +52,9 @@ Chỉ bật khi **tất cả** đã xong và có bằng chứng ghi vào ticket 
    đổi sẽ ảnh hưởng runtime hiện có. Nếu lệch, dừng việc bật cờ và mở ticket riêng.
    Ansible không đọc được giá trị SSM nên không tự kiểm được; nếu bật cờ khi lệch,
    pod sẽ restart liên tục ở bước migration.
-6. Ticket #222 về alert (bật Loki ruler, rule `document.purge.dead_lettered`
-   và rule pod-health cho `document-purge-worker`) đã hoàn tất. Xem mục 8.
+6. Alert của ticket #222 (Loki ruler, rule `document.purge.dead_lettered`,
+   `document.purge.preflight.failed` và rule pod-health cho
+   `document-purge-worker`) đã deploy lên dev và kiểm tra theo mục 8.
 
 ## 3. Owner tạo IAM user purge
 
@@ -309,59 +310,52 @@ WHERE id = '<manifest-id>' AND status = 'DEAD_LETTER'
 
 Lệnh phải trả `UPDATE 1`. Ghi manifest id, mã lỗi và lý do vào ticket.
 
-## 8. Alert: giới hạn hiện tại
+## 8. Alert cho purge worker
 
-PR-3 chưa thêm alert, vì:
+Ticket #222 thêm alert. Alert đi theo route Telegram hiện có của Alertmanager
+(`warning`/`critical` gửi ngay, nhóm theo `alertname`, `namespace`, `severity`).
 
-- Loki ruler đang tắt (`infra/observability/loki-values.yml`: `ruler.enabled: false`),
-  nên chưa có rule nào chạy trên log `document.purge.dead_lettered`.
-- Rule PrometheusRule hiện có chỉ khớp pod `api-.*|web-.*|worker-.*` và deployment
-  `web|api|worker`, không khớp `document-purge-worker`. Sửa rule sẽ chạy lại Helm
-  release observability khi merge, nên tách sang ticket riêng.
+**Alert dựa trên log (Loki ruler):**
 
-Ticket #222 (alert purge) là **điều kiện bắt buộc trước khi bật cờ**
-(mục 2.6). Nội dung đề xuất:
+- Ruler chạy **bên trong** pod Loki monolithic (`-target=all`), không có workload
+  ruler riêng (`ruler.replicas: 0`). Rule nằm trong ConfigMap
+  `learning-platform-loki-alert-rules`, mount chỉ đọc tại
+  `/etc/loki/rules/fake` (tenant `fake` vì `auth_enabled: false`). Ruler gửi alert
+  tới `learning-platform-monitori-alertmanager` trong namespace `observability`.
+- `DocumentPurgeDeadLettered` (`warning`): có ít nhất một log
+  `document.purge.dead_lettered` từ container `document-purge-worker` trong 10 phút
+  gần nhất. Xử lý theo mục 7.
+- `DocumentPurgePreflightFailed` (`critical`): có log
+  `document.purge.preflight.failed` trong 10 phút gần nhất. Worker không xác nhận
+  được versioning của media bucket nên sẽ không Ready; kiểm tra IAM (mục 3) và
+  versioning bucket (mục 2).
+- Hai alert tự resolve khoảng 10 phút sau log cuối cùng.
 
-1. Bật Loki ruler trong release monolithic (`loki.rulerConfig` với
-   `alertmanager_url` trỏ Alertmanager của `kube-prometheus-stack`, rule lưu ở
-   `/var/loki/rules`) và gửi về receiver Telegram hiện có.
-2. LogQL cho dead-letter (`severity: warning`):
+**Alert pod-health (PrometheusRule `learning-platform.application`):**
+`LearningPlatformPodNotReady`, `LearningPlatformContainerCrashLoop` và
+`LearningPlatformDeploymentUnavailable` đã bao gồm pod `document-purge-worker-.*`
+và deployment `document-purge-worker` (`for: 10m`).
 
-   ```logql
-   sum by (namespace) (
-     count_over_time({namespace="learning-platform-dev", container="document-purge-worker"}
-       |= "document.purge.dead_lettered" [10m])
-   ) > 0
-   ```
+**Kiểm tra chỉ đọc sau khi deploy observability:**
 
-3. LogQL cho preflight thất bại (`severity: critical`):
+```bash
+sudo k3s kubectl get --raw \
+  /api/v1/namespaces/observability/services/learning-platform-loki:3100/proxy/prometheus/api/v1/rules
+```
 
-   ```logql
-   sum by (namespace) (
-     count_over_time({namespace="learning-platform-dev", container="document-purge-worker"}
-       |= "document.purge.preflight.failed" [10m])
-   ) > 0
-   ```
+Kỳ vọng: nhóm `learning-platform.document-purge` có 2 rule, `health` là `ok`.
 
-4. PromQL pod-health (thêm vào nhóm `learning-platform.application`, `for: 10m`):
+**Giới hạn còn lại:** chưa có alert cho manifest `PENDING`/`FAILED` quá 1 giờ.
+App chưa phát metric hay log định kỳ về số manifest tồn đọng; cần một thay đổi ở
+app (ví dụ log `document.purge.backlog` có `oldestPendingAgeSeconds`) hoặc exporter
+SQL rồi mới viết rule. Trước khi có, owner chạy truy vấn:
 
-   ```promql
-   kube_pod_status_ready{namespace="learning-platform-dev",pod=~"document-purge-worker-.*",condition="true"} == 0
-   kube_deployment_status_replicas_unavailable{namespace="learning-platform-dev",deployment="document-purge-worker"} > 0
-   sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace="learning-platform-dev",pod=~"document-purge-worker-.*"}[15m])) > 3
-   ```
-
-5. Manifest `PENDING`/`FAILED` quá 1 giờ: chưa có metric hay log định kỳ cho số
-   manifest tồn đọng. Cần một thay đổi ở app (log tổng hợp định kỳ, ví dụ
-   `document.purge.backlog` có `oldestPendingAgeSeconds`) hoặc exporter SQL, rồi
-   mới viết rule. Trước khi có, owner chạy truy vấn:
-
-   ```sql
-   SELECT status, count(*), min(next_attempt_at)
-   FROM course.document_purge_manifests
-   WHERE status IN ('PENDING', 'FAILED') AND next_attempt_at < now() - interval '1 hour'
-   GROUP BY status;
-   ```
+```sql
+SELECT status, count(*), min(next_attempt_at)
+FROM course.document_purge_manifests
+WHERE status IN ('PENDING', 'FAILED') AND next_attempt_at < now() - interval '1 hour'
+GROUP BY status;
+```
 
 ## 9. Tắt nhanh
 
