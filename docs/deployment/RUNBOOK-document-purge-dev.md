@@ -388,17 +388,53 @@ thể chạy trước khi ring sẵn sàng và tạm báo `health: err` (`empty 
 Kỳ vọng: nhóm `learning-platform.document-purge` có 4 rule, `health` là `ok`,
 `lastError` rỗng.
 
-Ruler còn phải thấy Alertmanager và chưa gửi lỗi. Đọc metric của Loki (chỉ đọc):
+Ruler còn phải thấy Alertmanager và chưa gửi lỗi. Prometheus thu metric của Loki
+(ServiceMonitor `learning-platform-loki`, chỉ giữ 3 metric ruler cần dùng) và có 4
+meta-alert tự động trong PrometheusRule `learning-platform-loki-ruler`:
+`LokiTargetDown` (critical, `for` 5m), `LokiRulerEvaluationFailures` và
+`LokiRulerNotificationErrors` (warning, chỉ báo khi lỗi kéo dài ít nhất 10 phút nên
+một lần restart Loki hoặc Alertmanager không gây báo giả; restart lặp lại khoảng 3 lần
+trong 10 phút vẫn báo, và lỗi đơn lẻ cách nhau hơn 5 phút sẽ không bao giờ báo),
+`LokiRulerAlertmanagerMissing`
+(warning, `for` 10m). Sau rollout, xác nhận target Loki `up` và 4 alert này không
+firing (chỉ đọc):
+
+```bash
+sudo k3s kubectl get --raw \
+  "/api/v1/namespaces/observability/services/learning-platform-monitori-prometheus:9090/proxy/api/v1/query?query=up%7Bnamespace%3D%22observability%22%2Cservice%3D%22learning-platform-loki%22%7D"
+sudo k3s kubectl get --raw \
+  "/api/v1/namespaces/observability/services/learning-platform-monitori-prometheus:9090/proxy/api/v1/query?query=ALERTS%7Balertname%3D~%22Loki.*%22%7D"
+```
+
+Kỳ vọng: truy vấn `up` trả một series có giá trị `1`; truy vấn `ALERTS` trả danh sách
+rỗng (`"result":[]`).
+
+Khi Loki mất target quá 10 phút, bạn có thể nhận 2 tin: `TargetDown` mặc định của
+kube-prometheus-stack và `LokiTargetDown`. Không thêm inhibit (quy tắc Alertmanager
+cấm inhibit warning/critical). `LokiTargetDown` vẫn có giá trị riêng vì nhánh
+`absent()` báo cả khi target không còn tồn tại (ví dụ ServiceMonitor không được chọn).
+Nhánh `absent()` của `LokiRulerAlertmanagerMissing` sẽ báo nếu cố ý gỡ hết rule Loki
+(ruler không còn Alertmanager notifier); đây là hành vi đúng, hãy tắt alert này có chủ
+đích nếu thật sự gỡ rule.
+
+Khi cần kiểm tra tay hoặc điều tra một meta-alert đang firing, đọc metric của Loki
+(chỉ đọc):
 
 ```bash
 sudo k3s kubectl get --raw \
   /api/v1/namespaces/observability/services/learning-platform-loki:3100/proxy/metrics \
-  | grep -E '^loki_prometheus_notifications_(alertmanagers_discovered|errors_total)'
+  | grep -E '^loki_prometheus_(notifications_(alertmanagers_discovered|errors_total)|rule_evaluation_failures_total)'
 ```
 
-Kỳ vọng: `loki_prometheus_notifications_alertmanagers_discovered{user="fake"} 1` và
-mọi dòng `loki_prometheus_notifications_errors_total` bằng `0`. Nếu sai, alert purge
+Kỳ vọng: `loki_prometheus_notifications_alertmanagers_discovered{user="fake"} 1`, mọi
+dòng `loki_prometheus_notifications_errors_total` và
+`loki_prometheus_rule_evaluation_failures_total` không tăng. Nếu sai, alert purge
 sẽ không tới Telegram dù rule vẫn `ok`: dừng việc bật cờ.
+
+Meta-alert đi qua Prometheus, không đi qua Loki ruler, nên vẫn báo được khi ruler
+hỏng. Chúng dùng chung đường Alertmanager tới Telegram: nếu chính Alertmanager hỏng
+thì cả hai đều im lặng, và chỉ `Watchdog` (không gửi Telegram) mới chứng minh
+Prometheus còn sống.
 
 **Backlog bị tồn đọng (alert `DocumentPurgeBacklogStale`):** xem log backlog gần nhất
 rồi truy vấn chi tiết (chỉ đọc):

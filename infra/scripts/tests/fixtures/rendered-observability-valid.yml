@@ -19,6 +19,30 @@ spec:
           expr: kube_pod_container_status_ready{namespace="learning-platform-dev",pod=~"worker-.*",container=~"worker|go-worker"} == 0
           for: 10m
 ---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: {name: learning-platform-monitori-learning-platform-loki-ruler, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
+spec:
+  groups:
+    - name: learning-platform.loki-ruler
+      rules:
+        - alert: LokiTargetDown
+          expr: up{namespace="observability",service="learning-platform-loki"} == 0 or absent(up{namespace="observability",service="learning-platform-loki"})
+          for: 5m
+          labels: {severity: critical}
+        - alert: LokiRulerEvaluationFailures
+          expr: sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}[5m])) > 0
+          for: 10m
+          labels: {severity: warning}
+        - alert: LokiRulerNotificationErrors
+          expr: sum by (namespace) (increase(loki_prometheus_notifications_errors_total{namespace="observability",service="learning-platform-loki"}[5m])) > 0
+          for: 10m
+          labels: {severity: warning}
+        - alert: LokiRulerAlertmanagerMissing
+          expr: min by (namespace) (loki_prometheus_notifications_alertmanagers_discovered{namespace="observability",service="learning-platform-loki"}) < 1 or (absent(loki_prometheus_notifications_alertmanagers_discovered{namespace="observability",service="learning-platform-loki"}) and on() up{namespace="observability",service="learning-platform-loki"} == 1)
+          for: 10m
+          labels: {severity: warning}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: learning-platform-monitoring-meta, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
@@ -132,6 +156,8 @@ spec:
         port: http-web
         pathPrefix: "/"
         apiVersion: v2
+  serviceMonitorSelector: {matchLabels: {release: learning-platform-monitoring}}
+  serviceMonitorNamespaceSelector: {}
   retention: 7d
   retentionSize: 2500MB
   resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: "1", memory: 1Gi}}
@@ -312,3 +338,26 @@ apiVersion: v1
 kind: Service
 metadata: {name: learning-platform-monitori-alertmanager, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
 spec: {type: ClusterIP, ports: [{name: http-web, port: 9093}, {name: reloader-web, port: 8080}]}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: {name: learning-platform-loki, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-loki, release: learning-platform-monitoring}}
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: loki, app.kubernetes.io/instance: learning-platform-loki}
+    matchExpressions:
+      - {key: prometheus.io/service-monitor, operator: NotIn, values: ["false"]}
+  endpoints:
+    - port: http-metrics
+      path: /metrics
+      interval: 15s
+      scheme: http
+      metricRelabelings:
+        - action: keep
+          regex: loki_prometheus_rule_evaluation_failures_total|loki_prometheus_notifications_errors_total|loki_prometheus_notifications_alertmanagers_discovered
+          sourceLabels: [__name__]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: learning-platform-loki, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-loki, app.kubernetes.io/name: loki}}
+spec: {type: ClusterIP, ports: [{name: http-metrics, port: 3100}, {name: grpc, port: 9095}]}

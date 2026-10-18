@@ -153,6 +153,35 @@ LOKI_ALERT_RULES = {
   }
 }.freeze
 APPLICATION_PROMETHEUS_GROUP_NAME = 'learning-platform.application'
+LOKI_TARGET_SELECTOR = 'namespace="observability",service="learning-platform-loki"'
+LOKI_RULER_PROMETHEUS_RULE_NAME = 'learning-platform-monitori-learning-platform-loki-ruler'
+LOKI_RULER_PROMETHEUS_GROUP_NAME = 'learning-platform.loki-ruler'
+LOKI_RULER_PROMETHEUS_RULES = {
+  'LokiTargetDown' => {
+    'severity' => 'critical',
+    'for' => '5m',
+    'expr' => "up{#{LOKI_TARGET_SELECTOR}} == 0 or absent(up{#{LOKI_TARGET_SELECTOR}})"
+  },
+  'LokiRulerEvaluationFailures' => {
+    'severity' => 'warning',
+    'for' => '10m',
+    'expr' => "sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{#{LOKI_TARGET_SELECTOR}}[5m])) > 0"
+  },
+  'LokiRulerNotificationErrors' => {
+    'severity' => 'warning',
+    'for' => '10m',
+    'expr' => "sum by (namespace) (increase(loki_prometheus_notifications_errors_total{#{LOKI_TARGET_SELECTOR}}[5m])) > 0"
+  },
+  'LokiRulerAlertmanagerMissing' => {
+    'severity' => 'warning',
+    'for' => '10m',
+    'expr' => "min by (namespace) (loki_prometheus_notifications_alertmanagers_discovered{#{LOKI_TARGET_SELECTOR}}) < 1 or (absent(loki_prometheus_notifications_alertmanagers_discovered{#{LOKI_TARGET_SELECTOR}}) and on() up{#{LOKI_TARGET_SELECTOR}} == 1)"
+  }
+}.freeze
+LOKI_SERVICE_NAME = 'learning-platform-loki'
+LOKI_METRICS_PORT_NAME = 'http-metrics'
+PROMETHEUS_RELEASE_SELECTOR = { 'release' => 'learning-platform-monitoring' }.freeze
+LOKI_METRICS_KEEP_REGEX = 'loki_prometheus_rule_evaluation_failures_total|loki_prometheus_notifications_errors_total|loki_prometheus_notifications_alertmanagers_discovered'
 ALLOY_CANONICAL_LABELS = %w[cluster namespace app container pod stream].freeze
 ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS = %w[
   accessToken
@@ -584,6 +613,69 @@ class Policy
     end
   end
 
+  # Meta-alerts watch the Loki ruler itself; without them a broken ruler silences every Loki alert.
+  def validate_loki_ruler_prometheus_rules
+    rules = @documents.select do |document|
+      kind(document) == 'PrometheusRule' && namespace(document) == EXPECTED_NAMESPACE && name(document) == LOKI_RULER_PROMETHEUS_RULE_NAME
+    end
+    unless rules.length == 1
+      fail_check("render must contain exactly one PrometheusRule/#{LOKI_RULER_PROMETHEUS_RULE_NAME}, got #{rules.length}")
+      return
+    end
+    groups = value(rules.first, 'spec', 'groups') || []
+    unless groups.length == 1 && groups.first['name'] == LOKI_RULER_PROMETHEUS_GROUP_NAME
+      fail_check("Loki ruler PrometheusRule must define exactly the #{LOKI_RULER_PROMETHEUS_GROUP_NAME} group")
+      return
+    end
+    actual_rules = groups.first['rules'] || []
+    actual_by_alert = actual_rules.each_with_object({}) { |rule, result| result[rule['alert']] = rule }
+    unless actual_rules.length == LOKI_RULER_PROMETHEUS_RULES.length && actual_by_alert.keys.sort == LOKI_RULER_PROMETHEUS_RULES.keys.sort
+      fail_check('Loki ruler PrometheusRule must define exactly the four Loki meta-alerts, once each')
+      return
+    end
+    LOKI_RULER_PROMETHEUS_RULES.each do |alert, contract|
+      rule = actual_by_alert.fetch(alert)
+      fail_check("Loki meta-alert #{alert} expression must be exactly: #{contract['expr']}") unless rule['expr'].to_s.split.join(' ') == contract['expr']
+      fail_check("Loki meta-alert #{alert} must have severity #{contract['severity']}") unless value(rule, 'labels', 'severity') == contract['severity']
+      fail_check("Loki meta-alert #{alert} must use for #{contract['for'].inspect}") unless rule['for'] == contract['for']
+    end
+  end
+
+  # Prometheus only scrapes ServiceMonitors matching its serviceMonitorSelector; the Loki
+  # ServiceMonitor must carry that label and keep only the series the meta-alerts need.
+  def validate_loki_service_monitor
+    prometheus = @documents.find { |document| kind(document) == 'Prometheus' } || {}
+    unless value(prometheus, 'spec', 'serviceMonitorSelector') == { 'matchLabels' => PROMETHEUS_RELEASE_SELECTOR } && value(prometheus, 'spec', 'serviceMonitorNamespaceSelector') == {}
+      fail_check("Prometheus must select ServiceMonitors by exactly #{PROMETHEUS_RELEASE_SELECTOR.inspect} in all namespaces")
+    end
+    monitors = @documents.select { |document| kind(document) == 'ServiceMonitor' && name(document) == LOKI_SERVICE_NAME }
+    unless monitors.length == 1
+      fail_check("render must contain exactly one ServiceMonitor/#{LOKI_SERVICE_NAME}, got #{monitors.length}")
+      return
+    end
+    monitor = monitors.first
+    fail_check("ServiceMonitor/#{LOKI_SERVICE_NAME} must use namespace #{EXPECTED_NAMESPACE}") unless namespace(monitor) == EXPECTED_NAMESPACE
+    PROMETHEUS_RELEASE_SELECTOR.each do |key, expected|
+      fail_check("ServiceMonitor/#{LOKI_SERVICE_NAME} must carry label #{key}=#{expected} so Prometheus selects it") unless label(monitor, key) == expected
+    end
+    endpoints = value(monitor, 'spec', 'endpoints') || []
+    unless endpoints.length == 1 && endpoints.first['port'] == LOKI_METRICS_PORT_NAME && endpoints.first['path'] == '/metrics' && endpoints.first['scheme'] == 'http'
+      fail_check("ServiceMonitor/#{LOKI_SERVICE_NAME} must scrape exactly one endpoint: port #{LOKI_METRICS_PORT_NAME}, path /metrics, scheme http")
+    end
+    relabelings = (endpoints.first || {})['metricRelabelings'] || []
+    keep = { 'action' => 'keep', 'regex' => LOKI_METRICS_KEEP_REGEX, 'sourceLabels' => ['__name__'] }
+    fail_check("ServiceMonitor/#{LOKI_SERVICE_NAME} must keep only #{LOKI_METRICS_KEEP_REGEX} through exactly one metricRelabelings keep rule") unless relabelings == [keep]
+    match_labels = value(monitor, 'spec', 'selector', 'matchLabels') || {}
+    expected_expression = { 'key' => 'prometheus.io/service-monitor', 'operator' => 'NotIn', 'values' => ['false'] }
+    fail_check("ServiceMonitor/#{LOKI_SERVICE_NAME} must exclude headless Services with matchExpressions prometheus.io/service-monitor NotIn [\"false\"]") unless value(monitor, 'spec', 'selector', 'matchExpressions') == [expected_expression]
+    services = @documents.select { |document| kind(document) == 'Service' && name(document) == LOKI_SERVICE_NAME && namespace(document) == EXPECTED_NAMESPACE }
+    selected = services.select do |service|
+      match_labels.any? && match_labels.all? { |key, expected| label(service, key) == expected } && label(service, 'prometheus.io/service-monitor') != 'false'
+    end
+    ports = selected.flat_map { |service| (value(service, 'spec', 'ports') || []).map { |port| port['name'] } }
+    fail_check("ServiceMonitor/#{LOKI_SERVICE_NAME} must select exactly one Service/#{LOKI_SERVICE_NAME} exposing port #{LOKI_METRICS_PORT_NAME}") unless selected.length == 1 && ports.include?(LOKI_METRICS_PORT_NAME)
+  end
+
   def validate_namespace(document)
     return if CLUSTER_SCOPED_KINDS.include?(kind(document))
     return if %w[Service ServiceMonitor].include?(kind(document)) && namespace(document) == 'kube-system' && label(document, 'app.kubernetes.io/instance') == 'learning-platform-monitoring'
@@ -841,6 +933,8 @@ class Policy
     validate_loki_rules_mount
     validate_loki_alertmanager_target
     validate_application_prometheus_rules
+    validate_loki_ruler_prometheus_rules
+    validate_loki_service_monitor
     validate_grafana_provisioning
     validate_grafana_dashboard_mounts
   end
