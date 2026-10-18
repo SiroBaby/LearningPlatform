@@ -498,6 +498,107 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
       1,
     );
 
+    const countBackend = (path) => backendRequests.filter((request) => request.path === path).length;
+    const countRefreshWith = (authorization) => backendRequests.filter((request) => request.path === "/internal/v1/auth/refresh" && request.authorization === authorization).length;
+
+    const guestFaq = await fetch(`${webOrigin}/faq`);
+    assert.equal(guestFaq.status, 200);
+    const guestFaqHtml = await guestFaq.text();
+    assert.match(guestFaqHtml, /Dùng thử miễn phí/u);
+    assert.doesNotMatch(guestFaqHtml, /Về trang học/u);
+
+    const refreshRequestsBeforePublic = countBackend("/internal/v1/auth/refresh");
+    const expiredAccessFaq = await fetch(`${webOrigin}/faq`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-valid" },
+    });
+    assert.equal(expiredAccessFaq.status, 200);
+    const expiredAccessFaqHtml = await expiredAccessFaq.text();
+    assert.match(expiredAccessFaqHtml, /Về trang học/u);
+    assert.doesNotMatch(expiredAccessFaqHtml, /Dùng thử miễn phí/u);
+    const refreshOnlyFaq = await fetch(`${webOrigin}/faq`, { headers: { cookie: "lp_refresh=refresh-valid" } });
+    assert.match(await refreshOnlyFaq.text(), /Về trang học/u);
+    const refreshOnlyNotFound = await fetch(`${webOrigin}/khong-co-trang-nay`, { headers: { cookie: "lp_refresh=refresh-valid" } });
+    assert.equal(refreshOnlyNotFound.status, 404);
+    assert.match(await refreshOnlyNotFound.text(), /Về trang học/u);
+    assert.equal(countBackend("/internal/v1/auth/refresh"), refreshRequestsBeforePublic, "public pages must not refresh tokens");
+
+    const backendErrorFaq = await fetch(`${webOrigin}/faq`, { headers: { cookie: "lp_access=access-backend-error; lp_refresh=refresh-valid" } });
+    assert.equal(backendErrorFaq.status, 200);
+    assert.match(await backendErrorFaq.text(), /Về trang học/u);
+    const backendTimeoutStartedAt = Date.now();
+    const backendTimeoutMaintenance = await fetch(`${webOrigin}/maintenance`, { headers: { cookie: "lp_access=access-backend-timeout" } });
+    assert.equal(backendTimeoutMaintenance.status, 200);
+    assert.ok(Date.now() - backendTimeoutStartedAt < 8_000, "public page must not wait for the full auth backend timeout");
+
+    const meRequestsBeforeGuestLogin = countBackend("/internal/v1/auth/me");
+    const guestLogin = await fetch(`${webOrigin}/login`, { redirect: "manual" });
+    assert.equal(guestLogin.status, 200);
+    assert.equal(countBackend("/internal/v1/auth/me"), meRequestsBeforeGuestLogin);
+    assert.equal(countBackend("/internal/v1/auth/refresh"), refreshRequestsBeforePublic);
+
+    const loginRefreshRequestsBefore = countRefreshWith("Bearer refresh-login-expired");
+    const expiredAccessLogin = await fetch(`${webOrigin}/login`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-login-expired" },
+      redirect: "manual",
+    });
+    assert.equal(expiredAccessLogin.status, 307);
+    assert.equal(expiredAccessLogin.headers.get("location"), "/login");
+    const expiredLoginCookies = setCookieHeader(expiredAccessLogin);
+    assertCookieContract(expiredLoginCookies, "lp_access", "access-renewed", { secure: true });
+    assertCookieContract(expiredLoginCookies, "lp_refresh", "refresh-login-rotated", { secure: true });
+    assert.equal(countRefreshWith("Bearer refresh-login-expired"), loginRefreshRequestsBefore + 1, "expired /login must call the backend refresh once");
+
+    const renewedLogin = await fetch(`${webOrigin}/login`, {
+      headers: { cookie: "lp_access=access-renewed; lp_refresh=refresh-rotated" },
+      redirect: "manual",
+    });
+    assert.equal(renewedLogin.status, 307);
+    assert.equal(renewedLogin.headers.get("location"), "/home");
+
+    const revokedRefreshLogin = await fetch(`${webOrigin}/login`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-failed" },
+      redirect: "manual",
+    });
+    assert.equal(revokedRefreshLogin.status, 200, "failed refresh must show the login form, not redirect-loop");
+    const refreshRequestsBeforeBackendErrorEntry = countBackend("/internal/v1/auth/refresh");
+    const backendErrorSignup = await fetch(`${webOrigin}/signup`, {
+      headers: { cookie: "lp_access=access-backend-error; lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(backendErrorSignup.status, 200);
+    const backendErrorLogin = await fetch(`${webOrigin}/login`, {
+      headers: { cookie: "lp_access=access-backend-error; lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(backendErrorLogin.status, 200);
+    assert.equal(countBackend("/internal/v1/auth/refresh"), refreshRequestsBeforeBackendErrorEntry, "backend 503 must not trigger refresh on entry pages");
+
+    const entryTimeoutStartedAt = Date.now();
+    const timeoutLogin = await fetch(`${webOrigin}/login`, {
+      headers: { cookie: "lp_access=access-backend-timeout; lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(timeoutLogin.status, 200);
+    assert.ok(Date.now() - entryTimeoutStartedAt < 5_000, "/login must degrade quickly when the auth backend hangs");
+    assert.equal(countBackend("/internal/v1/auth/refresh"), refreshRequestsBeforeBackendErrorEntry, "backend timeout must not trigger refresh on entry pages");
+
+    const entryCookie = "lp_access=access-expired; lp_refresh=refresh-entry-concurrent";
+    const entryConcurrent = await Promise.all([
+      fetch(`${webOrigin}/login`, { headers: { cookie: entryCookie }, redirect: "manual" }),
+      fetch(`${webOrigin}/signup`, { headers: { cookie: entryCookie }, redirect: "manual" }),
+    ]);
+    assert.deepEqual(entryConcurrent.map((response) => response.status), [307, 307]);
+    assert.deepEqual(entryConcurrent.map((response) => response.headers.get("location")), ["/login", "/signup"]);
+    for (const response of entryConcurrent) {
+      const cookies = setCookieHeader(response);
+      assertCookieContract(cookies, "lp_access", "access-entry-renewed", { secure: true });
+      assertCookieContract(cookies, "lp_refresh", "refresh-entry-rotated", { secure: true });
+    }
+    const lateEntry = await fetch(`${webOrigin}/login`, { headers: { cookie: entryCookie }, redirect: "manual" });
+    assert.equal(lateEntry.status, 307);
+    assertCookieContract(setCookieHeader(lateEntry), "lp_refresh", "refresh-entry-rotated", { secure: true });
+    assert.equal(countRefreshWith("Bearer refresh-entry-concurrent"), 1, "concurrent and late entry requests must share one refresh");
+
     const refresh = await fetch(`${webOrigin}/auth/refresh`, {
       headers: {
         cookie: "lp_refresh=refresh-callback",
@@ -599,7 +700,7 @@ function createBackendServer(pki, requests) {
     if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization === "Bearer refresh-failed") {
       return sendJson(response, 401, { code: "SESSION_INVALID" });
     }
-    if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization !== "Bearer refresh-callback" && request.headers.authorization !== "Bearer refresh-valid" && request.headers.authorization !== "Bearer refresh-malformed" && request.headers.authorization !== "Bearer refresh-concurrent" && request.headers.authorization !== "Bearer refresh-api-concurrent" && request.headers.authorization !== "Bearer refresh-concurrent-grace") {
+    if (request.url === "/internal/v1/auth/refresh" && request.headers.authorization !== "Bearer refresh-callback" && request.headers.authorization !== "Bearer refresh-valid" && request.headers.authorization !== "Bearer refresh-malformed" && request.headers.authorization !== "Bearer refresh-concurrent" && request.headers.authorization !== "Bearer refresh-api-concurrent" && request.headers.authorization !== "Bearer refresh-concurrent-grace" && request.headers.authorization !== "Bearer refresh-login-expired" && request.headers.authorization !== "Bearer refresh-entry-concurrent") {
       return sendJson(response, 401, { code: "UNAUTHORIZED" });
     }
     if (request.url === "/internal/v1/auth/logout" && request.headers.authorization !== "Bearer access-refresh") {
@@ -657,6 +758,25 @@ function createBackendServer(pki, requests) {
           refreshExpiresAt: "2026-02-01T00:15:00.000Z",
           refreshToken: "refresh-rotated",
         });
+      }
+      if (request.headers.authorization === "Bearer refresh-login-expired") {
+        return sendJson(response, 200, {
+          accessExpiresAt: "2026-01-01T00:45:00.000Z",
+          accessToken: "access-renewed",
+          refreshExpiresAt: "2026-02-01T00:15:00.000Z",
+          refreshToken: "refresh-login-rotated",
+        });
+      }
+      if (request.headers.authorization === "Bearer refresh-entry-concurrent") {
+        const attempts = (refreshReplayCounts.get(request.headers.authorization) ?? 0) + 1;
+        refreshReplayCounts.set(request.headers.authorization, attempts);
+        if (attempts > 1) return sendJson(response, 401, { code: "REUSE_DETECTED" });
+        return setTimeout(() => sendJson(response, 200, {
+          accessExpiresAt: "2026-01-01T00:45:00.000Z",
+          accessToken: "access-entry-renewed",
+          refreshExpiresAt: "2026-02-01T00:15:00.000Z",
+          refreshToken: "refresh-entry-rotated",
+        }), 100);
       }
       if (request.headers.authorization === "Bearer refresh-api-concurrent") {
         return setTimeout(() => sendJson(response, 200, {
