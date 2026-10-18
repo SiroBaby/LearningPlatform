@@ -5,14 +5,11 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Bell, CircleAlert, MoreHorizontal, Sparkles, X } from "lucide-react";
 import { LogoutButton } from "@/components/auth/logout-button";
-import { learnerBottomNav, learnerPrimaryNav, learnerSecondaryNav } from "@/lib/nav";
+import { isLearnerRouteActive, isMobileMoreActive } from "@/lib/learner-nav-active";
+import { learnerBottomNav, learnerMobileMoreNav, learnerPrimaryNav, learnerSecondaryNav } from "@/lib/nav";
 import { routes } from "@/lib/routes";
 import { cn } from "@/lib/cn";
 import { Badge } from "@/components/ui";
-
-function isLearnerRouteActive(pathname: string, href: string) {
-  return pathname === href || (href !== routes.home && pathname.startsWith(`${href}/`));
-}
 
 function NavLink({
   href,
@@ -76,7 +73,11 @@ export function LearnerShell({
   const showDemoLabel = !isPhase0Route;
   const pendingPathname = pendingNavigation?.from === pathname ? pendingNavigation.to : null;
   const activePathname = pendingPathname ?? pathname;
-  const isPersonalRoute = learnerSecondaryNav.some(({ href }) => isLearnerRouteActive(activePathname, href));
+  const isMoreMenuRoute = isMobileMoreActive(
+    activePathname,
+    learnerMobileMoreNav.map(({ href }) => href),
+  );
+  const isNotificationsActive = isLearnerRouteActive(activePathname, routes.notifications);
   const isNavigationPending = pendingPathname !== null;
 
   function handleNavigate(href: string) {
@@ -245,8 +246,15 @@ export function LearnerShell({
                 {actions}
                 <Link
                   href={routes.notifications}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-ink-200 bg-white text-ink-600 hover:bg-ink-50"
+                  onNavigate={() => handleNavigate(routes.notifications)}
+                  className={cn(
+                    "inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white",
+                    isNotificationsActive
+                      ? "border-brand-600 text-brand-700"
+                      : "border-ink-200 text-ink-600 hover:bg-ink-50",
+                  )}
                   aria-label="Thông báo"
+                  aria-current={isNotificationsActive ? "page" : undefined}
                 >
                   <Bell className="h-4 w-4" />
                 </Link>
@@ -279,20 +287,20 @@ export function LearnerShell({
         >
           <div className="flex items-center justify-between gap-3 px-3 pb-2 pt-1">
             <div>
-              <p id="mobile-learner-menu-title" className="text-sm font-semibold text-ink-900">Cá nhân</p>
-              <p className="text-xs text-ink-500">Quản lý tài khoản và lựa chọn học tập</p>
+              <p id="mobile-learner-menu-title" className="text-sm font-semibold text-ink-900">Mục khác</p>
+              <p className="text-xs text-ink-500">Tiến độ, khóa học và tài khoản</p>
             </div>
             <button
               type="button"
               className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-ink-600 transition-colors hover:bg-ink-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
-              aria-label="Đóng menu cá nhân"
+              aria-label="Đóng menu"
               onClick={closeMobileMenu}
             >
               <X className="h-4 w-4" />
             </button>
           </div>
-          <nav aria-label="Điều hướng cá nhân" className="grid gap-1">
-            {learnerSecondaryNav.map(({ href, label, icon: Icon }) => (
+          <nav aria-label="Điều hướng mục khác" className="grid gap-1">
+            {learnerMobileMoreNav.map(({ href, label, icon: Icon }) => (
               <Link
                 key={href}
                 href={href}
@@ -343,7 +351,7 @@ export function LearnerShell({
             onClick={() => setIsMobileMenuOpen((open) => !open)}
             className={cn(
               "flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-2 py-2 text-[11px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600",
-              isMobileMenuOpen || isPersonalRoute ? "text-brand-700" : "text-ink-500",
+              isMobileMenuOpen || isMoreMenuRoute ? "text-brand-700" : "text-ink-500",
             )}
           >
             {isMobileMenuOpen ? <X className="h-4 w-4" /> : <MoreHorizontal className="h-4 w-4" />}

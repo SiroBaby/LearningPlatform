@@ -46,6 +46,13 @@ export const learnerSecondaryNav: NavItem[] = [
   { href: routes.settings, label: "Cài đặt", icon: Settings },
 ];
 
+/** Menu "Thêm" trên điện thoại: các mục không còn chỗ trên thanh dưới. */
+export const learnerMobileMoreNav: NavItem[] = [
+  { href: routes.analytics, label: "Tiến độ", icon: BarChart3 },
+  { href: routes.courses, label: "Khóa học", icon: FileStack },
+  ...learnerSecondaryNav,
+];
+
 export const teacherNav: NavItem[] = [
   { href: routes.teacherHome, label: "Teacher Home", icon: GraduationCap },
   { href: routes.teacherClasses, label: "Classes", icon: Users },
