@@ -56,7 +56,7 @@ export const citations: Record<string, Citation> = {
     chunkId: "chunk_os_012",
     locator: { kind: "page", page: 12 },
     snippet:
-      "Context switch requires saving and restoring process state, which introduces CPU overhead because no useful work is done during the switch.",
+      "Chuyển đổi ngữ cảnh buộc CPU lưu và khôi phục trạng thái tiến trình, gây tốn thời gian xử lý vì trong lúc chuyển không có việc hữu ích nào được thực hiện.",
     documentId: "doc_os_ch3",
     documentTitle: "Nhập môn Hệ điều hành — Chương 3: Quản lý tiến trình.pdf",
   },

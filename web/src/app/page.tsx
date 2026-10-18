@@ -16,23 +16,23 @@ import { routes } from "@/lib/routes";
 
 const features = [
   {
-    title: "Document → Quiz",
-    description: "Tải slide, PDF, ghi chú. Hệ thống dựng câu hỏi active recall có giải thích và trích dẫn nguồn.",
+    title: "Từ tài liệu thành quiz",
+    description: "Tải lên slide, PDF hoặc ghi chú. Hệ thống tạo câu hỏi giúp bạn nhớ lâu, kèm lời giải và nguồn trích dẫn.",
     icon: FileText,
   },
   {
-    title: "Video checkpoints",
-    description: "Video tự dừng ở các checkpoint để hỏi bạn về phần vừa xem thay vì để học thụ động.",
+    title: "Video có điểm dừng",
+    description: "Video tự dừng ở những đoạn quan trọng để hỏi bạn về phần vừa xem, thay vì chỉ xem thụ động.",
     icon: PlayCircle,
   },
   {
-    title: "Tutor grounded by source",
-    description: "Tutor chỉ trả lời khi tìm thấy bằng chứng trong tài liệu và luôn cho bạn nhảy về nguồn gốc.",
+    title: "Trợ giảng bám sát tài liệu",
+    description: "Trợ giảng chỉ trả lời khi tìm thấy căn cứ trong tài liệu của bạn, và cho bạn mở lại đúng đoạn gốc.",
     icon: Quote,
   },
   {
-    title: "Review queue",
-    description: "Tự gom câu sai, thẻ đến hạn và điểm yếu để bạn biết hôm nay nên học gì trước.",
+    title: "Danh sách ôn tập",
+    description: "Tự gom câu sai, thẻ ghi nhớ đến hạn và phần còn yếu để bạn biết hôm nay nên học gì trước.",
     icon: Sparkles,
   },
 ];
@@ -43,27 +43,27 @@ export default function Home() {
       <section className="border-b border-ink-200 bg-gradient-to-b from-brand-50 via-white to-white">
         <div className="mx-auto grid max-w-7xl gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8 lg:py-24">
           <div className="space-y-8">
-            <Badge tone="brand">Source-grounded learning for Vietnamese & SEA learners</Badge>
+            <Badge tone="brand">Học từ chính tài liệu của bạn, có nguồn rõ ràng</Badge>
             <div className="space-y-5">
               <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-ink-900 sm:text-5xl lg:text-6xl">
-                Turn your study materials into quizzes, checkpoints, and feedback you can trust.
+                Biến tài liệu học của bạn thành quiz và phản hồi có nguồn rõ ràng.
               </h1>
               <p className="max-w-2xl text-lg leading-8 text-ink-600">
-                Upload a PDF or lecture video. LearningPlatform creates active recall tasks with source citations, so you can learn, answer, get feedback, and revisit weak areas faster.
+                Tải lên PDF hoặc video bài giảng. Hệ thống tạo câu hỏi ôn tập kèm nguồn trích dẫn để bạn học, trả lời, nhận phản hồi và quay lại phần còn yếu nhanh hơn.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
               <LinkButton href={routes.signup} size="lg">
-                Start free <ArrowRight className="h-4 w-4" />
+                Dùng thử miễn phí <ArrowRight className="h-4 w-4" />
               </LinkButton>
               <LinkButton href={routes.examples} variant="outline" size="lg">
-                View example
+                Xem ví dụ
               </LinkButton>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <Metric title="Ready in minutes" value="PDF → Quiz" />
-              <Metric title="Trust first" value="Visible citations" />
-              <Metric title="Best for" value="Exam prep" />
+              <Metric title="Sẵn sàng sau vài phút" value="PDF thành quiz" />
+              <Metric title="Minh bạch" value="Nguồn trích dẫn hiển thị rõ" />
+              <Metric title="Phù hợp với" value="Ôn thi" />
             </div>
           </div>
 
@@ -75,18 +75,18 @@ export default function Home() {
                     Nhập môn Hệ điều hành — Chương 3: Quản lý tiến trình.pdf
                   </p>
                   <p className="mt-1 text-sm text-ink-500">
-                    Upload → Generate quiz → Review weak areas
+                    Tải lên, tạo câu hỏi, ôn lại phần yếu
                   </p>
                 </div>
-                <Badge tone="success">Ready</Badge>
+                <Badge tone="success">Sẵn sàng</Badge>
               </CardHeader>
               <CardBody className="space-y-5">
                 <div className="rounded-2xl border border-brand-100 bg-brand-50 p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <p className="text-sm font-semibold text-brand-700">Quiz preview</p>
+                      <p className="text-sm font-semibold text-brand-700">Xem trước quiz</p>
                       <h3 className="mt-2 text-lg font-semibold text-ink-900">
-                        Vì sao context switching tạo overhead cho hệ thống?
+                        Vì sao chuyển đổi ngữ cảnh làm tốn thêm tài nguyên của hệ thống?
                       </h3>
                     </div>
                     <Badge tone="mastery">Quiz</Badge>
@@ -115,16 +115,16 @@ export default function Home() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Card className="border-brand-100 bg-brand-50/60">
                     <CardBody className="space-y-2">
-                      <p className="text-sm font-semibold text-brand-700">Processing pipeline</p>
+                      <p className="text-sm font-semibold text-brand-700">Tiến độ xử lý</p>
                       <ProgressBar value={84} />
-                      <p className="text-sm text-ink-600">Extract → Chunk → Generate → Validate</p>
+                      <p className="text-sm text-ink-600">Đọc nội dung, tạo câu hỏi, kiểm tra lại</p>
                     </CardBody>
                   </Card>
                   <Card className="border-review-100 bg-review-50/70">
                     <CardBody className="space-y-2">
-                      <p className="text-sm font-semibold text-review-600">Weak topic surfaced</p>
+                      <p className="text-sm font-semibold text-review-600">Phát hiện chủ đề còn yếu</p>
                       <p className="text-sm text-ink-700">Đồng bộ tiến trình</p>
-                      <p className="text-sm text-ink-600">Đề xuất: review source → retry mistakes → ask tutor</p>
+                      <p className="text-sm text-ink-600">Gợi ý: xem lại nguồn, làm lại câu sai, hỏi trợ giảng</p>
                     </CardBody>
                   </Card>
                 </div>
@@ -136,9 +136,9 @@ export default function Home() {
 
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
         <SectionHeading
-          eyebrow="How it works"
-          title="One loop, made obvious"
-          description="Upload learning material → AI creates active recall tasks → learner answers → system gives feedback → learner improves weak areas."
+          eyebrow="Cách hoạt động"
+          title="Một vòng học rõ ràng"
+          description="Tải tài liệu, nhận câu hỏi, trả lời, xem phản hồi, ôn lại phần yếu."
         />
         <div className="mt-8 grid gap-4 md:grid-cols-4">
           {features.map(({ title, description, icon: Icon }) => (
@@ -161,18 +161,18 @@ export default function Home() {
         <div className="mx-auto grid max-w-7xl gap-6 px-4 py-16 sm:px-6 lg:grid-cols-3 lg:px-8">
           <TrustCard
             icon={ShieldCheck}
-            title="Grounded citations, not blind answers"
-            description="Every question, explanation, and tutor response can point back to page, timestamp, or source snippet."
+            title="Có nguồn trích dẫn, không trả lời mò"
+            description="Mỗi câu hỏi, lời giải và câu trả lời của trợ giảng đều chỉ về trang, thời điểm hoặc đoạn gốc."
           />
           <TrustCard
             icon={CheckCircle2}
-            title="Calm study interface"
-            description="The UI behaves like a focused learning cockpit instead of a noisy AI toy or generic admin panel."
+            title="Giao diện học tập gọn, dễ tập trung"
+            description="Màn hình chỉ giữ những gì bạn cần để học, không rối mắt, không gây xao nhãng."
           />
           <TrustCard
             icon={GraduationCap}
-            title="Built for Vietnamese study workflows"
-            description="Long course names, exam prep flows, mixed Vietnamese-English materials, and mobile review are first-class."
+            title="Thiết kế cho cách học của người Việt"
+            description="Hỗ trợ tên môn dài, ôn thi và tài liệu lẫn Việt-Anh, dùng tốt trên điện thoại."
           />
         </div>
       </section>
