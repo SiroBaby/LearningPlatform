@@ -51,10 +51,11 @@ export interface DeadLetterDocumentPurge {
 }
 
 /**
- * Work queue depth for monitoring. `oldestPendingAgeSeconds` is how long the
- * longest-waiting PENDING/FAILED manifest has been due (`now() -
- * next_attempt_at`), so a FAILED manifest still inside its retry backoff does
- * not count; 0 when nothing is due.
+ * Work queue depth for monitoring. `oldestPendingAgeSeconds` is the age
+ * (`now() - created_at`) of the oldest unfinished manifest: PENDING, FAILED
+ * (including one inside its retry backoff) or RUNNING with an expired lease.
+ * A RUNNING manifest with a live lease is being worked on and is not counted;
+ * 0 when nothing is unfinished.
  */
 export interface DocumentPurgeBacklog {
   readonly pendingCount: number;
@@ -149,20 +150,27 @@ export class DocumentPurgeRepository extends BaseRepository<DocumentPurgeManifes
   }
 
   /**
-   * Read-only summary of the PENDING/FAILED manifests. It only touches rows
-   * covered by the partial index `idx_document_purge_manifest_claimable`, so
-   * its cost follows the open backlog, never the table history.
+   * Read-only summary of unfinished manifests. The statement runs inside a
+   * transaction with a local `statement_timeout`, so a stuck query cannot
+   * hold a connection forever.
    */
-  async summarizeBacklog(): Promise<DocumentPurgeBacklog> {
-    const [row] = queryRows<BacklogRow>(await this.dataSource.query(
-      `SELECT count(*) FILTER (WHERE "status" = $1) AS "pending_count",
-              count(*) FILTER (WHERE "status" = $2) AS "failed_count",
-              floor(extract(epoch FROM now() - min("next_attempt_at")
-                FILTER (WHERE "next_attempt_at" <= now()))) AS "oldest_pending_age_seconds"
-         FROM "course"."document_purge_manifests"
-        WHERE "status" IN ($1, $2)`,
-      [DocumentPurgeManifestStatus.PENDING, DocumentPurgeManifestStatus.FAILED],
-    ));
+  async summarizeBacklog(timeoutMs: number): Promise<DocumentPurgeBacklog> {
+    const [row] = await this.dataSource.transaction(async (manager) => {
+      await manager.query(`SELECT set_config('statement_timeout', $1, true)`, [String(timeoutMs)]);
+      return queryRows<BacklogRow>(await manager.query(
+        `SELECT count(*) FILTER (WHERE "status" = $1) AS "pending_count",
+                count(*) FILTER (WHERE "status" = $2) AS "failed_count",
+                floor(extract(epoch FROM now() - min("created_at"))) AS "oldest_pending_age_seconds"
+           FROM "course"."document_purge_manifests"
+          WHERE "status" IN ($1, $2)
+             OR ("status" = $3 AND "lease_until" <= now())`,
+        [
+          DocumentPurgeManifestStatus.PENDING,
+          DocumentPurgeManifestStatus.FAILED,
+          DocumentPurgeManifestStatus.RUNNING,
+        ],
+      ));
+    });
     return {
       pendingCount: Number(row.pending_count),
       failedCount: Number(row.failed_count),

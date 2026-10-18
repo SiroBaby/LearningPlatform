@@ -41,6 +41,7 @@ describe('DocumentPurgeRunner preflight', () => {
 
 const BACKLOG_INTERVAL_MS = 300_000;
 const POLL_INTERVAL_MS = 5_000;
+const BACKLOG_READ_TIMEOUT_MS = 10_000;
 
 describe('DocumentPurgeRunner backlog report', () => {
   const mockBacklog = { failedCount: 1, oldestPendingAgeSeconds: 4_200, pendingCount: 3 };
@@ -113,6 +114,23 @@ describe('DocumentPurgeRunner backlog report', () => {
 
     expect(mockError.mock.calls).toEqual([[{ event: 'document.purge.backlog.failed', runtime: 'document-purge' }]]);
     expect(mockReadBacklog).toHaveBeenCalledTimes(2);
+  });
+
+  it('times out a hung backlog read, logs the failure and still shuts down', async () => {
+    jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
+    const mockError = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
+    const mockReadBacklog = jest.fn((_timeoutMs: number) => new Promise<typeof mockBacklog>(() => undefined));
+    const runner = runnerWith({
+      purgeDueManifests: jest.fn(async (): Promise<number> => 0),
+      readBacklog: mockReadBacklog,
+    });
+
+    await runner.onApplicationBootstrap();
+    await jest.advanceTimersByTimeAsync(BACKLOG_READ_TIMEOUT_MS);
+    await runner.onApplicationShutdown();
+
+    expect(mockError.mock.calls).toEqual([[{ event: 'document.purge.backlog.failed', runtime: 'document-purge' }]]);
+    expect(mockReadBacklog).toHaveBeenCalledWith(BACKLOG_READ_TIMEOUT_MS);
   });
 
   it('stops reporting after shutdown', async () => {

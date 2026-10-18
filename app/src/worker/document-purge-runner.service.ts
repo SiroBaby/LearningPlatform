@@ -11,6 +11,10 @@ import { createApplicationLogger } from '../common/logging/application-logger.fa
 import { ApplicationConfigService } from '../config/application-config.service';
 import { DocumentPurgeStorageError } from '../modules/content/contracts/document-purge-storage.port';
 import { DocumentPurgeService } from '../modules/content/document-purge.service';
+import type { DocumentPurgeBacklog } from '../modules/content/repositories/document-purge.repository';
+
+/** Upper bound for one backlog read, enforced in PostgreSQL and again here. */
+const BACKLOG_READ_TIMEOUT_MS = 10_000;
 
 /** Logged when preflight fails with an error the storage adapter did not classify. */
 const UNCLASSIFIED_PREFLIGHT_ERROR = 'PURGE_PREFLIGHT_UNCLASSIFIED';
@@ -75,7 +79,7 @@ export class DocumentPurgeRunner implements OnModuleInit, OnApplicationBootstrap
 
     this.activeBacklogReport = (async (): Promise<void> => {
       try {
-        const backlog = await this.purge.readBacklog();
+        const backlog = await this.readBacklogWithTimeout();
         this.logger.log({ ...backlog, event: 'document.purge.backlog', runtime: 'document-purge' });
       } catch {
         this.logger.error({ event: 'document.purge.backlog.failed', runtime: 'document-purge' });
@@ -89,6 +93,19 @@ export class DocumentPurgeRunner implements OnModuleInit, OnApplicationBootstrap
         () => void this.reportBacklog(),
         this.config.documentPurge.backlogIntervalMs,
       );
+    }
+  }
+
+  /** Rejects after the timeout so a hung read cannot stall the timer chain or shutdown. */
+  private async readBacklogWithTimeout(): Promise<DocumentPurgeBacklog> {
+    let timeout: NodeJS.Timeout | undefined;
+    const expiry = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error('backlog read timed out')), BACKLOG_READ_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([this.purge.readBacklog(BACKLOG_READ_TIMEOUT_MS), expiry]);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

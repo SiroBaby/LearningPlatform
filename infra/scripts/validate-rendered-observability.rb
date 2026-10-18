@@ -149,7 +149,7 @@ LOKI_ALERT_RULES = {
   },
   'DocumentPurgeBacklogMissing' => {
     'severity' => 'warning',
-    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} != "document.purge.backlog\"" != "document.purge.shutdown.completed" [30m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [30m]))'
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"document.purge.backlog" [1h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [1h]))'
   }
 }.freeze
 APPLICATION_PROMETHEUS_GROUP_NAME = 'learning-platform.application'

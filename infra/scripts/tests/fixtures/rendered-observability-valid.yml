@@ -257,7 +257,7 @@ data:
             expr: max by (namespace) (last_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" | json oldestPendingAgeSeconds="message.oldestPendingAgeSeconds" | __error__="" | unwrap oldestPendingAgeSeconds [15m])) > 3600
             labels: {severity: warning}
           - alert: DocumentPurgeBacklogMissing
-            expr: sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} != "document.purge.backlog\"" != "document.purge.shutdown.completed" [30m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [30m]))
+            expr: sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"document.purge.backlog" [1h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [1h]))
             labels: {severity: warning}
 ---
 apiVersion: apps/v1

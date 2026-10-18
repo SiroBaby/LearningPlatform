@@ -52,8 +52,8 @@ export class DocumentPurgeService {
   }
 
   /** Read-only queue depth for the periodic `document.purge.backlog` log. */
-  async readBacklog(): Promise<DocumentPurgeBacklog> {
-    return this.repository.summarizeBacklog();
+  async readBacklog(timeoutMs: number): Promise<DocumentPurgeBacklog> {
+    return this.repository.summarizeBacklog(timeoutMs);
   }
 
   /** Processes up to the configured batch of due manifests; returns how many. */

@@ -185,10 +185,10 @@ extraObjects:
                     The oldest due PENDING/FAILED purge manifest has waited longer than 3600 seconds. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 8.
               - alert: DocumentPurgeBacklogMissing
                 expr: >-
-                  sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} != "document.purge.backlog\"" != "document.purge.shutdown.completed" [30m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [30m]))
+                  sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"document.purge.backlog" [1h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [1h]))
                 labels:
                   severity: warning
                 annotations:
                   summary: Document purge worker stopped reporting its backlog
                   description: >-
-                    The purge worker logs activity but no document.purge.backlog log arrived for 15 minutes. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 8.
+                    The purge worker reported its backlog within the last hour but no document.purge.backlog log arrived for 15 minutes. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 8.
