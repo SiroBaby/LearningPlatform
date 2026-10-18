@@ -3,7 +3,8 @@ import { AlertTriangle, ArrowRight, RefreshCw, ShieldAlert, WifiOff } from "luci
 import { PublicShellContent } from "@/components/layout/public-shell-content";
 import { Card, CardBody, LinkButton } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { routes } from "@/lib/routes";
+import { getHomeHref } from "./system-state-view";
+import type { SessionVisibility } from "./system-state-view";
 import { ReloadButton } from "./reload-button";
 
 export interface SystemAction {
@@ -37,7 +38,7 @@ export function SystemStatePage({
   primaryAction?: React.ReactNode;
   secondaryAction?: React.ReactNode;
   /** Required: `null` means the session is unknown, so account actions stay hidden instead of defaulting to guest. */
-  isAuthenticated: boolean | null;
+  isAuthenticated: SessionVisibility;
 }) {
   const Icon = {
     warning: AlertTriangle,
@@ -83,16 +84,11 @@ export function SystemStatePage({
   );
 }
 
-/** Signed-in learners go to their home; guests and unknown sessions go to the public landing page. */
-export function getHomeHref(isAuthenticated: boolean | null): string {
-  return isAuthenticated === true ? routes.home : routes.landing;
-}
-
 export function HomeActions({
   isAuthenticated,
   canRetry = true,
 }: {
-  isAuthenticated: boolean | null;
+  isAuthenticated: SessionVisibility;
   canRetry?: boolean;
 }) {
   return (

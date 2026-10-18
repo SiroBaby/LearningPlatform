@@ -7,10 +7,10 @@ import { routes } from "@/lib/routes";
 
 export default function ErrorPage({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     console.error(error);
@@ -26,7 +26,7 @@ export default function ErrorPage({
         icon="error"
         tone="error"
         primaryAction={
-          <Button type="button" onClick={() => reset()}>
+          <Button type="button" onClick={() => retry()}>
             Thử lại
           </Button>
         }

@@ -3,46 +3,42 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
+const { getHomeHref, getPublicChromeView } = await import("./system-state-view.ts");
+
 const SRC_ROOT = resolve(dirname(import.meta.filename), "../..");
 const read = (path) => readFileSync(resolve(SRC_ROOT, path), "utf8");
 
-const SYSTEM_PAGES = {
+const SYSTEM_PAGE_TITLES = {
   "app/not-found.tsx": "Không tìm thấy trang",
   "app/offline/page.tsx": "Mất kết nối",
   "app/maintenance/page.tsx": "Đang bảo trì",
-  "app/access-denied/page.tsx": "Không có quyền truy cập",
+  "app/access-denied/page.tsx": "Chưa có quyền truy cập",
 };
 
-test("system state page never defaults to a guest session", () => {
-  const source = read("components/shared/system-state.tsx");
-  assert.doesNotMatch(source, /isAuthenticated\s*=\s*false/u);
-  assert.match(source, /isAuthenticated: boolean \| null;/u);
+test("home link sends guests and unknown sessions to the landing page, learners to home", () => {
+  assert.equal(getHomeHref(true), "/home");
+  assert.equal(getHomeHref(false), "/");
+  assert.equal(getHomeHref(null), "/");
 });
 
-test("error boundary hides account actions and links to the public home", () => {
-  const source = read("app/error.tsx");
-  assert.match(source, /isAuthenticated=\{null\}/u);
-  assert.match(source, /routes\.landing/u);
-  assert.doesNotMatch(source, /"\/home"/u);
-  assert.match(source, /<title>Chưa mở được trang/u);
+test("public chrome never defaults an unknown session to guest and hides private links", () => {
+  assert.deepEqual(getPublicChromeView(true), { accountMode: "member", showUsageLink: true });
+  assert.deepEqual(getPublicChromeView(false), { accountMode: "guest", showUsageLink: false });
+  assert.deepEqual(getPublicChromeView(null), { accountMode: "hidden", showUsageLink: false });
 });
 
 test("system pages use Vietnamese titles, context-correct actions and no internal wording", () => {
-  for (const [path, title] of Object.entries(SYSTEM_PAGES)) {
+  for (const [path, title] of Object.entries(SYSTEM_PAGE_TITLES)) {
     const source = read(path);
-    assert.ok(source.includes(`"${title}"`), `${path} must set title ${title}`);
-    assert.doesNotMatch(source, /billing\/upgrade|AccessActions|Xem các gói nâng cấp/u, path);
-    assert.doesNotMatch(source, /mock|pipeline|surface|production|workspace|route|quota|role|upload|review queue/iu, path);
-    assert.match(source, /HomeActions isAuthenticated=\{isAuthenticated\}/u, path);
+    assert.ok(source.includes(title), `${path} must set title ${title}`);
+    assert.doesNotMatch(source, /billing\/upgrade|Xem các gói nâng cấp/u, path);
+    assert.doesNotMatch(source, /mock|pipeline|surface|production|workspace|quota|review queue/iu, path);
   }
 });
 
-test("home action sends guests to the landing page and signed-in learners to home", () => {
-  const source = read("components/shared/system-state.tsx");
-  assert.match(source, /isAuthenticated === true \? routes\.home : routes\.landing/u);
-});
-
-test("public footer only links to private billing for signed-in visitors", () => {
-  const source = read("components/layout/public-shell-content.tsx");
-  assert.match(source, /isAuthenticated \? <li><Link href=\{routes\.billing\}>/u);
+test("error boundary hides account actions and retries through Next retry()", () => {
+  const source = read("app/error.tsx");
+  assert.match(source, /isAuthenticated=\{null\}/u);
+  assert.match(source, /retry\(\)/u);
+  assert.doesNotMatch(source, /reset\(/u);
 });

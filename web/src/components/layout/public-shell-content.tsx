@@ -9,6 +9,7 @@ import { Button, LinkButton } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { publicNav } from "@/lib/nav";
 import { routes } from "@/lib/routes";
+import { getPublicChromeView } from "@/components/shared/system-state-view";
 
 interface PublicShellContentProps {
   readonly children: React.ReactNode;
@@ -19,6 +20,7 @@ interface PublicShellContentProps {
 /** Contains the interactive responsive navigation after the server resolves session state. */
 export function PublicShellContent({ children, isAuthenticated }: PublicShellContentProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
+  const { accountMode, showUsageLink } = getPublicChromeView(isAuthenticated);
 
   useEffect(() => {
     if (!open) return;
@@ -52,7 +54,7 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
           </nav>
 
           <div className="hidden items-center gap-3 md:flex">
-            {isAuthenticated === null ? null : isAuthenticated ? (
+            {accountMode === "hidden" ? null : accountMode === "member" ? (
               <>
                 <Link href={routes.home} className="text-sm font-medium text-ink-600 hover:text-ink-900">
                   Về trang học
@@ -92,7 +94,7 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
                 {item.label}
               </Link>
             ))}
-            {isAuthenticated === null ? null : isAuthenticated ? (
+            {accountMode === "hidden" ? null : accountMode === "member" ? (
               <>
                 <Link
                   href={routes.home}
@@ -143,10 +145,10 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
             <p className="text-sm font-semibold text-ink-900">Hỗ trợ và chính sách</p>
             <p className="mt-2 text-sm leading-6 text-ink-600">Tài liệu tải lên mặc định ở chế độ riêng tư.</p>
             <ul className="mt-3 space-y-2 text-sm text-ink-600">
-              <li><Link href={routes.faq}>FAQ</Link></li>
+              <li><Link href={routes.faq}>Câu hỏi thường gặp</Link></li>
               <li><Link href={routes.privacy}>Quyền riêng tư</Link></li>
               <li><Link href={routes.terms}>Điều khoản</Link></li>
-              {isAuthenticated ? <li><Link href={routes.billing}>Mức sử dụng</Link></li> : null}
+              {showUsageLink ? <li><Link href={routes.billing}>Mức sử dụng</Link></li> : null}
             </ul>
           </div>
         </div>
