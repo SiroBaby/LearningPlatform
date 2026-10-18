@@ -47,6 +47,19 @@
       k3s_version, learning_platform_namespace, and the loopback-only Traefik
       forwarded-header trust boundary must be explicitly configured.
 
+- name: Require the image GC high threshold to keep the minimum free disk on /
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((ansible_facts.mounts | selectattr('mount', 'equalto', '/')
+          | map(attribute='size_total') | first | int)
+          * (100 - k3s_image_gc_high_threshold_percent) / 100) >=
+        (k3s_image_gc_minimum_free_disk_gib * 1024 * 1024 * 1024)
+    fail_msg: >-
+      Kubelet image GC starting at {{ k3s_image_gc_high_threshold_percent }}% usage
+      would leave less than {{ k3s_image_gc_minimum_free_disk_gib }}Gi free on /.
+      Lower k3s_image_gc_high_threshold_percent for this disk.
+
 - name: Gather package facts before K3s bootstrap
   ansible.builtin.package_facts:
     manager: auto
@@ -132,19 +145,6 @@
     group: root
     mode: '0600'
   notify: Restart K3s after configuration change
-
-- name: Require the image GC high threshold to keep the minimum free disk on /
-  ansible.builtin.assert:
-    that:
-      - >-
-        ((ansible_facts.mounts | selectattr('mount', 'equalto', '/')
-          | map(attribute='size_total') | first | int)
-          * (100 - k3s_image_gc_high_threshold_percent) / 100) >=
-        (k3s_image_gc_minimum_free_disk_gib * 1024 * 1024 * 1024)
-    fail_msg: >-
-      Kubelet image GC starting at {{ k3s_image_gc_high_threshold_percent }}% usage
-      would leave less than {{ k3s_image_gc_minimum_free_disk_gib }}Gi free on /.
-      Lower k3s_image_gc_high_threshold_percent for this disk.
 
 - name: Render declarative K3s server configuration
   ansible.builtin.template:
