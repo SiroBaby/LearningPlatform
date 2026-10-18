@@ -115,6 +115,14 @@ cases = {
   'Loki rules volume missing' => ['configMap: {name: learning-platform-loki-alert-rules}', 'configMap: {name: other-rules}'],
   'Loki rules mount wrong tenant' => ['mountPath: /etc/loki/rules/fake', 'mountPath: /etc/loki/rules/tenant'],
   'Loki rules mount writable' => ["              readOnly: true\n", "              readOnly: false\n"],
+  'Loki ruler scratch path traversal' => ['rule_path: /var/loki/ruler-scratch', 'rule_path: /var/loki/../../tmp/x'],
+  'Loki ruler WAL moved' => ['dir: /var/loki/ruler-wal', 'dir: /tmp/ruler-wal'],
+  'Loki dead-letter alert delayed' => ["            labels: {severity: warning}\n", "            for: 1h\n            labels: {severity: warning}\n"],
+  'Loki dead-letter alert suppressed' => ['"document.purge.dead_lettered" [10m])) > 0', '"document.purge.dead_lettered" [10m])) > 0 unless vector(1) > 0'],
+  'Loki dead-letter alert extra filter' => ['|= "document.purge.dead_lettered"', '|= "document.purge.dead_lettered" != "document"'],
+  'duplicate Loki alert' => ["        rules:\n          - alert: DocumentPurgeDeadLettered", "        rules:\n          - alert: DocumentPurgeDeadLettered\n            expr: vector(0)\n            labels: {severity: warning}\n          - alert: DocumentPurgeDeadLettered"],
+  'missing Loki Alertmanager Service' => ["kind: Service\nmetadata: {name: learning-platform-monitori-alertmanager,", "kind: Service\nmetadata: {name: renamed-alertmanager,"],
+  'Loki Alertmanager Service wrong port' => ['{name: http-web, port: 9093}', '{name: http-web, port: 9094}'],
   'separate Loki ruler workload' => ["---\napiVersion: apps/v1\nkind: DaemonSet", "---\napiVersion: apps/v1\nkind: StatefulSet\nmetadata: {name: learning-platform-loki-ruler, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-loki}}\nspec: {template: {spec: {containers: [{name: ruler, resources: {requests: {cpu: 1m, memory: 1Mi}, limits: {cpu: 1m, memory: 1Mi}}}]}}}\n---\napiVersion: apps/v1\nkind: DaemonSet"]
 }.freeze
 

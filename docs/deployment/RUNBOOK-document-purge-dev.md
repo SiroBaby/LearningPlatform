@@ -54,7 +54,8 @@ Chỉ bật khi **tất cả** đã xong và có bằng chứng ghi vào ticket 
    pod sẽ restart liên tục ở bước migration.
 6. Alert của ticket #222 (Loki ruler, rule `document.purge.dead_lettered`,
    `document.purge.preflight.failed` và rule pod-health cho
-   `document-purge-worker`) đã deploy lên dev và kiểm tra theo mục 8.
+   `document-purge-worker`) đã deploy lên dev, và bằng chứng kiểm tra theo mục 8
+   (rule `health: ok`, ruler thấy Alertmanager, chưa có lỗi gửi) đã ghi vào ticket.
 
 ## 3. Owner tạo IAM user purge
 
@@ -313,7 +314,8 @@ Lệnh phải trả `UPDATE 1`. Ghi manifest id, mã lỗi và lý do vào ticke
 ## 8. Alert cho purge worker
 
 Ticket #222 thêm alert. Alert đi theo route Telegram hiện có của Alertmanager
-(`warning`/`critical` gửi ngay, nhóm theo `alertname`, `namespace`, `severity`).
+(`warning`/`critical` gửi sau `group_wait` 30 giây, nhóm theo `alertname`,
+`namespace`, `severity`).
 
 **Alert dựa trên log (Loki ruler):**
 
@@ -329,7 +331,8 @@ Ticket #222 thêm alert. Alert đi theo route Telegram hiện có của Alertman
   `document.purge.preflight.failed` trong 10 phút gần nhất. Worker không xác nhận
   được versioning của media bucket nên sẽ không Ready; kiểm tra IAM (mục 3) và
   versioning bucket (mục 2).
-- Hai alert tự resolve khoảng 10 phút sau log cuối cùng.
+- Hai alert tự resolve khoảng 10 phút sau log cuối cùng. **Resolve không có nghĩa
+  là đã xử lý xong**: manifest vẫn ở `DEAD_LETTER` cho tới khi owner làm theo mục 7.
 
 **Alert pod-health (PrometheusRule `learning-platform.application`):**
 `LearningPlatformPodNotReady`, `LearningPlatformContainerCrashLoop` và
@@ -343,7 +346,23 @@ sudo k3s kubectl get --raw \
   /api/v1/namespaces/observability/services/learning-platform-loki:3100/proxy/prometheus/api/v1/rules
 ```
 
-Kỳ vọng: nhóm `learning-platform.document-purge` có 2 rule, `health` là `ok`.
+Chờ pod Loki Ready thêm khoảng 2 phút rồi mới kiểm tra: ngay sau restart, ruler có
+thể chạy trước khi ring sẵn sàng và tạm báo `health: err` (`empty ring`).
+
+Kỳ vọng: nhóm `learning-platform.document-purge` có 2 rule, `health` là `ok`,
+`lastError` rỗng.
+
+Ruler còn phải thấy Alertmanager và chưa gửi lỗi. Đọc metric của Loki (chỉ đọc):
+
+```bash
+sudo k3s kubectl get --raw \
+  /api/v1/namespaces/observability/services/learning-platform-loki:3100/proxy/metrics \
+  | grep -E '^loki_prometheus_notifications_(alertmanagers_discovered|errors_total)'
+```
+
+Kỳ vọng: `loki_prometheus_notifications_alertmanagers_discovered{user="fake"} 1` và
+mọi dòng `loki_prometheus_notifications_errors_total` bằng `0`. Nếu sai, alert purge
+sẽ không tới Telegram dù rule vẫn `ok`: dừng việc bật cờ.
 
 **Giới hạn còn lại:** chưa có alert cho manifest `PENDING`/`FAILED` quá 1 giờ.
 App chưa phát metric hay log định kỳ về số manifest tồn đọng; cần một thay đổi ở

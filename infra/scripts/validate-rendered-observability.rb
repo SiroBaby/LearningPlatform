@@ -130,19 +130,18 @@ LOKI_RULES_CONFIG_MAP = 'learning-platform-loki-alert-rules'
 LOKI_RULES_VOLUME = 'alert-rules'
 LOKI_RULES_FILE = 'document-purge.yaml'
 LOKI_RULES_GROUP_NAME = 'learning-platform.document-purge'
-LOKI_PURGE_STREAM_SNIPPETS = [
-  'sum by (namespace)',
-  'count_over_time({namespace="learning-platform-dev", container="document-purge-worker"}',
-  '[10m])) > 0'
-].freeze
+LOKI_ALERTMANAGER_SERVICE = 'learning-platform-monitori-alertmanager'
+LOKI_ALERTMANAGER_PORT = 9093
+LOKI_RULER_RULE_PATH = '/var/loki/ruler-scratch'
+LOKI_RULER_WAL_DIR = '/var/loki/ruler-wal'
 LOKI_ALERT_RULES = {
   'DocumentPurgeDeadLettered' => {
     'severity' => 'warning',
-    'snippets' => LOKI_PURGE_STREAM_SNIPPETS + ['|= "document.purge.dead_lettered"']
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.dead_lettered" [10m])) > 0'
   },
   'DocumentPurgePreflightFailed' => {
     'severity' => 'critical',
-    'snippets' => LOKI_PURGE_STREAM_SNIPPETS + ['|= "document.purge.preflight.failed"']
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.preflight.failed" [10m])) > 0'
   }
 }.freeze
 APPLICATION_PROMETHEUS_GROUP_NAME = 'learning-platform.application'
@@ -471,7 +470,19 @@ class Policy
       fail_check("Loki ruler must use local rule storage at #{LOKI_RULES_DIRECTORY}")
     end
     fail_check("Loki ruler alertmanager_url must be exactly #{LOKI_ALERTMANAGER_URL}") unless ruler['alertmanager_url'] == LOKI_ALERTMANAGER_URL
-    fail_check('Loki ruler rule_path must be on the /var/loki volume') unless ruler['rule_path'].to_s.start_with?('/var/loki/')
+    fail_check("Loki ruler rule_path must be exactly #{LOKI_RULER_RULE_PATH}") unless ruler['rule_path'] == LOKI_RULER_RULE_PATH
+    fail_check("Loki ruler WAL must be exactly #{LOKI_RULER_WAL_DIR}") unless value(ruler, 'wal', 'dir') == LOKI_RULER_WAL_DIR
+  end
+
+  # A chart upgrade can rename the Alertmanager Service; the pinned ruler URL must still resolve.
+  def validate_loki_alertmanager_target
+    services = @documents.select do |document|
+      kind(document) == 'Service' && name(document) == LOKI_ALERTMANAGER_SERVICE && namespace(document) == EXPECTED_NAMESPACE
+    end
+    ports = services.flat_map { |service| (value(service, 'spec', 'ports') || []).map { |port| port['port'] } }
+    return if services.length == 1 && ports.include?(LOKI_ALERTMANAGER_PORT)
+
+    fail_check("Loki ruler target Service/#{LOKI_ALERTMANAGER_SERVICE} must exist once with port #{LOKI_ALERTMANAGER_PORT}")
   end
 
   def validate_loki_alert_rules
@@ -493,15 +504,15 @@ class Policy
     end
     rules = groups.first['rules'] || []
     actual_by_alert = rules.each_with_object({}) { |rule, result| result[rule['alert']] = rule }
-    unless actual_by_alert.keys.sort == LOKI_ALERT_RULES.keys.sort
-      fail_check('Loki rules must define exactly the document purge alerts')
+    unless rules.length == LOKI_ALERT_RULES.length && actual_by_alert.keys.sort == LOKI_ALERT_RULES.keys.sort
+      fail_check('Loki rules must define exactly the document purge alerts, once each')
       return
     end
     LOKI_ALERT_RULES.each do |alert, contract|
       rule = actual_by_alert.fetch(alert)
-      missing = contract['snippets'].reject { |snippet| rule['expr'].to_s.include?(snippet) }
-      fail_check("Loki alert #{alert} is missing expression contract: #{missing.join(', ')}") unless missing.empty?
+      fail_check("Loki alert #{alert} expression must be exactly: #{contract['expr']}") unless rule['expr'].to_s.split.join(' ') == contract['expr']
       fail_check("Loki alert #{alert} must have severity #{contract['severity']}") unless value(rule, 'labels', 'severity') == contract['severity']
+      fail_check("Loki alert #{alert} must fire without a for delay; its window already spans 10m") unless rule['for'].nil?
     end
   rescue Psych::Exception => error
     fail_check("Loki rules ConfigMap/#{LOKI_RULES_CONFIG_MAP} must be valid YAML: #{error.message}")
@@ -820,6 +831,7 @@ class Policy
     validate_loki_auth
     validate_loki_alert_rules
     validate_loki_rules_mount
+    validate_loki_alertmanager_target
     validate_application_prometheus_rules
     validate_grafana_provisioning
     validate_grafana_dashboard_mounts
