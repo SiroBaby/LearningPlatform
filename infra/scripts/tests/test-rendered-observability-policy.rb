@@ -135,7 +135,32 @@ cases = {
   'duplicate Loki alert' => ["        rules:\n          - alert: DocumentPurgeDeadLettered", "        rules:\n          - alert: DocumentPurgeDeadLettered\n            expr: vector(0)\n            labels: {severity: warning}\n          - alert: DocumentPurgeDeadLettered"],
   'missing Loki Alertmanager Service' => ["kind: Service\nmetadata: {name: learning-platform-monitori-alertmanager,", "kind: Service\nmetadata: {name: renamed-alertmanager,"],
   'Loki Alertmanager Service wrong port' => ['{name: http-web, port: 9093}', '{name: http-web, port: 9094}'],
-  'separate Loki ruler workload' => ["---\napiVersion: apps/v1\nkind: DaemonSet", "---\napiVersion: apps/v1\nkind: StatefulSet\nmetadata: {name: learning-platform-loki-ruler, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-loki}}\nspec: {template: {spec: {containers: [{name: ruler, resources: {requests: {cpu: 1m, memory: 1Mi}, limits: {cpu: 1m, memory: 1Mi}}}]}}}\n---\napiVersion: apps/v1\nkind: DaemonSet"]
+  'separate Loki ruler workload' => ["---\napiVersion: apps/v1\nkind: DaemonSet", "---\napiVersion: apps/v1\nkind: StatefulSet\nmetadata: {name: learning-platform-loki-ruler, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-loki}}\nspec: {template: {spec: {containers: [{name: ruler, resources: {requests: {cpu: 1m, memory: 1Mi}, limits: {cpu: 1m, memory: 1Mi}}}]}}}\n---\napiVersion: apps/v1\nkind: DaemonSet"],
+  'Loki ServiceMonitor missing Prometheus release label' => ['labels: {app.kubernetes.io/instance: learning-platform-loki, release: learning-platform-monitoring}', 'labels: {app.kubernetes.io/instance: learning-platform-loki}'],
+  'Loki ServiceMonitor wrong Prometheus release label' => ['loki, release: learning-platform-monitoring}', 'loki, release: other}'],
+  'Prometheus ServiceMonitor selector drift' => ['serviceMonitorSelector: {matchLabels: {release: learning-platform-monitoring}}', 'serviceMonitorSelector: {matchLabels: {release: other}}'],
+  'Prometheus ServiceMonitor namespace selector restricted' => ['serviceMonitorNamespaceSelector: {}', 'serviceMonitorNamespaceSelector: {matchLabels: {team: other}}'],
+  'Loki ServiceMonitor wrong port' => ["    - port: http-metrics\n      path: /metrics", "    - port: grpc\n      path: /metrics"],
+  'Loki ServiceMonitor wrong path' => ['      path: /metrics', '      path: /other'],
+  'Loki ServiceMonitor missing keep relabel' => ["      metricRelabelings:\n        - action: keep\n          regex: loki_prometheus_rule_evaluation_failures_total|loki_prometheus_notifications_errors_total|loki_prometheus_notifications_alertmanagers_discovered\n          sourceLabels: [__name__]\n", ''],
+  'Loki ServiceMonitor keep regex widened' => ['regex: loki_prometheus_rule_evaluation_failures_total|loki_prometheus_notifications_errors_total|loki_prometheus_notifications_alertmanagers_discovered', 'regex: .*'],
+  'Loki ServiceMonitor keep regex wrong metric' => ['loki_prometheus_notifications_errors_total|loki_prometheus_notifications_alertmanagers_discovered', 'loki_prometheus_notifications_dropped_total|loki_prometheus_notifications_alertmanagers_discovered'],
+  'Loki ServiceMonitor keep turned into drop' => ['- action: keep', '- action: drop'],
+  'Loki Service without metrics port' => ['{name: http-metrics, port: 3100}', '{name: metrics, port: 3100}'],
+  'Loki ServiceMonitor selector drift' => ['matchLabels: {app.kubernetes.io/name: loki, app.kubernetes.io/instance: learning-platform-loki}', 'matchLabels: {app.kubernetes.io/name: other, app.kubernetes.io/instance: learning-platform-loki}'],
+  'missing Loki ruler PrometheusRule' => ['name: learning-platform-monitori-learning-platform-loki-ruler', 'name: other-rule'],
+  'missing Loki meta-alert' => ['alert: LokiRulerEvaluationFailures', 'alert: OtherAlert'],
+  'Loki meta-alert wrong metric' => ['increase(loki_prometheus_notifications_errors_total{', 'increase(loki_prometheus_notifications_dropped_total{'],
+  'Loki meta-alert wrong target scope' => ['loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}', 'loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="other"}'],
+  'Loki meta-alert wrong window' => ['loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}[10m]', 'loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}[1h]'],
+  'Loki meta-alert wrong threshold' => ['}) < 1 or (absent(', '}) < 2 or (absent('],
+  'Loki meta-alert without up guard on absent' => [' and on() up{namespace="observability",service="learning-platform-loki"} == 1)', ')'],
+  'Loki target down without absent branch' => [' or absent(up{namespace="observability",service="learning-platform-loki"})', ''],
+  'Loki target down downgraded severity' => ["          for: 5m\n          labels: {severity: critical}", "          for: 5m\n          labels: {severity: warning}"],
+  'Loki target down wrong for' => ['          for: 5m', '          for: 1m'],
+  'Loki alertmanager missing wrong for' => ["          for: 10m\n          labels: {severity: warning}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: learning-platform-monitoring-meta", "          for: 1m\n          labels: {severity: warning}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: learning-platform-monitoring-meta"],
+  'Loki notification errors wrong severity' => ["[10m])) > 0\n          labels: {severity: warning}\n        - alert: LokiRulerAlertmanagerMissing", "[10m])) > 0\n          labels: {severity: critical}\n        - alert: LokiRulerAlertmanagerMissing"],
+  'Loki evaluation failures delayed' => ["          labels: {severity: warning}\n        - alert: LokiRulerNotificationErrors", "          for: 1h\n          labels: {severity: warning}\n        - alert: LokiRulerNotificationErrors"]
 }.freeze
 
 failures = []

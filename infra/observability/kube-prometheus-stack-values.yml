@@ -60,6 +60,44 @@ additionalPrometheusRulesMap:
               severity: critical
             annotations:
               summary: Learning Platform worker is unhealthy
+  learning-platform-loki-ruler:
+    groups:
+      - name: learning-platform.loki-ruler
+        rules:
+          - alert: LokiTargetDown
+            expr: >-
+              up{namespace="observability",service="learning-platform-loki"} == 0
+              or
+              absent(up{namespace="observability",service="learning-platform-loki"})
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Prometheus cannot scrape Loki, so Loki ruler alerts may be silent
+          - alert: LokiRulerEvaluationFailures
+            expr: >-
+              sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}[10m])) > 0
+            labels:
+              severity: warning
+            annotations:
+              summary: Loki ruler failed to evaluate alert rules
+          - alert: LokiRulerNotificationErrors
+            expr: >-
+              sum by (namespace) (increase(loki_prometheus_notifications_errors_total{namespace="observability",service="learning-platform-loki"}[10m])) > 0
+            labels:
+              severity: warning
+            annotations:
+              summary: Loki ruler failed to send alerts to Alertmanager
+          - alert: LokiRulerAlertmanagerMissing
+            expr: >-
+              min by (namespace) (loki_prometheus_notifications_alertmanagers_discovered{namespace="observability",service="learning-platform-loki"}) < 1
+              or
+              (absent(loki_prometheus_notifications_alertmanagers_discovered{namespace="observability",service="learning-platform-loki"}) and on() up{namespace="observability",service="learning-platform-loki"} == 1)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: Loki ruler has no Alertmanager to send alerts to
 
 kubeApiServer:
   enabled: false

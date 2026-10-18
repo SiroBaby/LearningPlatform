@@ -86,6 +86,15 @@ def mutate_loki_config_map(loki)
   mutate_document(loki, 'Loki ConfigMap', predicate) { |document| yield(document) }
 end
 
+def mutate_loki_service_monitor(loki)
+  predicate = lambda do |document|
+    document.is_a?(Hash) &&
+      document['kind'] == 'ServiceMonitor' &&
+      document.dig('metadata', 'name') == 'learning-platform-loki'
+  end
+  mutate_document(loki, 'Loki ServiceMonitor', predicate) { |document| yield(document) }
+end
+
 def mutate_grafana_document(monitoring, kind)
   predicate = lambda do |document|
     document.is_a?(Hash) && document['kind'] == kind &&
@@ -267,7 +276,21 @@ mutations = {
   end,
   'Loki auth missing' => mutate_loki_config_map(File.read(inputs[1])) do |loki|
     loki.sub("    auth_enabled: false\n", '')
-  end
+  end,
+  'Loki ServiceMonitor release label drift' => mutate_loki_service_monitor(File.read(inputs[1])) do |monitor|
+    monitor.sub('release: learning-platform-monitoring', 'release: other')
+  end,
+  'Loki ServiceMonitor keep regex widened' => mutate_loki_service_monitor(File.read(inputs[1])) do |monitor|
+    monitor.sub(/regex: loki_prometheus\S+/, 'regex: .*')
+  end,
+  'Prometheus ServiceMonitor selector drift' => mutate_structured_document(monitoring, 'Prometheus ServiceMonitor selector', lambda { |document| document.is_a?(Hash) && document['kind'] == 'Prometheus' }) do |prometheus|
+    mutated = Marshal.load(Marshal.dump(prometheus))
+    mutated['spec']['serviceMonitorSelector'] = { 'matchLabels' => { 'release' => 'other' } }
+    mutated
+  end,
+  'Meta-alert expression drift' => mutate_document(monitoring, 'Loki ruler PrometheusRule', lambda { |document|
+    document.is_a?(Hash) && document['kind'] == 'PrometheusRule' && document.dig('metadata', 'name') == 'learning-platform-monitori-learning-platform-loki-ruler'
+  }) { |rule| rule.sub('> 0', '> 5') }
 }.freeze
 
 failures = []

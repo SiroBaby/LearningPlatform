@@ -53,6 +53,19 @@ loki:
     alertmanager_url: http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093
     enable_api: true
 
+# Prometheus selects ServiceMonitors only by release=learning-platform-monitoring
+# (kube-prometheus-stack default), so that label is required. The keep list limits
+# series to what the Loki meta-alerts need; `up` is generated outside relabeling.
+monitoring:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: learning-platform-monitoring
+    metricRelabelings:
+      - sourceLabels: [__name__]
+        action: keep
+        regex: loki_prometheus_rule_evaluation_failures_total|loki_prometheus_notifications_errors_total|loki_prometheus_notifications_alertmanagers_discovered
+
 singleBinary:
   replicas: 1
   sidecar: false
