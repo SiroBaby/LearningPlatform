@@ -20,7 +20,7 @@ export function LearnerRouteError({
   reset,
 }: LearnerRouteErrorProps) {
   return (
-    <LearnerShell title={title} subtitle="Bạn vẫn có thể quay lại luồng học tập để tiếp tục.">
+    <LearnerShell title={title} subtitle="Bạn có thể quay lại và học tiếp.">
       <Card role="alert" className="border-error-100 bg-error-50/70">
         <CardBody className="space-y-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-error-100 text-error-700">

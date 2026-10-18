@@ -1,9 +1,9 @@
-import { AccessActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
+import { HomeActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
 import { hasSignedInSession } from "@/lib/auth/session";
 
 export const metadata = buildSystemMetadata(
-  "Not found",
-  "Không tìm thấy trang hoặc tài nguyên bạn đang mở trong LearningPlatform.",
+  "Không tìm thấy trang",
+  "Trang này không tồn tại hoặc đã bị xóa.",
 );
 
 export default async function NotFound() {
@@ -13,11 +13,14 @@ export default async function NotFound() {
     <SystemStatePage
       badge="404"
       title="Không tìm thấy trang bạn đang tìm"
-      description="Liên kết này có thể đã hết hạn, route chưa tồn tại, hoặc tài nguyên đã bị xóa khỏi workspace học của bạn."
-      detail="Nếu bạn đang tìm một tài liệu, bài kiểm tra hoặc kết quả cụ thể, hãy quay lại Thư viện hoặc Trang chủ để mở từ luồng điều hướng chính."
+      description={
+        isAuthenticated
+          ? "Trang này không tồn tại hoặc đã bị xóa. Hãy về trang chủ hoặc Thư viện để tìm lại."
+          : "Trang này không tồn tại hoặc đã bị xóa. Hãy về trang chủ để tìm lại."
+      }
       icon="warning"
       tone="warning"
-      primaryAction={<AccessActions />}
+      primaryAction={<HomeActions isAuthenticated={isAuthenticated} canRetry={false} />}
       isAuthenticated={isAuthenticated}
     />
   );

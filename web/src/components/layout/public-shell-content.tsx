@@ -12,7 +12,8 @@ import { routes } from "@/lib/routes";
 
 interface PublicShellContentProps {
   readonly children: React.ReactNode;
-  readonly isAuthenticated: boolean;
+  /** `null` hides account actions when the session cannot be resolved (for example in error boundaries). */
+  readonly isAuthenticated: boolean | null;
 }
 
 /** Contains the interactive responsive navigation after the server resolves session state. */
@@ -51,7 +52,7 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
           </nav>
 
           <div className="hidden items-center gap-3 md:flex">
-            {isAuthenticated ? (
+            {isAuthenticated === null ? null : isAuthenticated ? (
               <>
                 <Link href={routes.home} className="text-sm font-medium text-ink-600 hover:text-ink-900">
                   Về trang học
@@ -91,7 +92,7 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
                 {item.label}
               </Link>
             ))}
-            {isAuthenticated ? (
+            {isAuthenticated === null ? null : isAuthenticated ? (
               <>
                 <Link
                   href={routes.home}
@@ -139,13 +140,13 @@ export function PublicShellContent({ children, isAuthenticated }: PublicShellCon
             </ul>
           </div>
           <div>
-            <p className="text-sm font-semibold text-ink-900">Niềm tin & trợ giúp</p>
+            <p className="text-sm font-semibold text-ink-900">Hỗ trợ và chính sách</p>
+            <p className="mt-2 text-sm leading-6 text-ink-600">Tài liệu tải lên mặc định ở chế độ riêng tư.</p>
             <ul className="mt-3 space-y-2 text-sm text-ink-600">
               <li><Link href={routes.faq}>FAQ</Link></li>
               <li><Link href={routes.privacy}>Quyền riêng tư</Link></li>
               <li><Link href={routes.terms}>Điều khoản</Link></li>
-              <li><Link href={routes.billing}>Minh bạch mức sử dụng</Link></li>
-              <li>Tài liệu tải lên mặc định ở chế độ riêng tư.</li>
+              {isAuthenticated ? <li><Link href={routes.billing}>Mức sử dụng</Link></li> : null}
             </ul>
           </div>
         </div>
