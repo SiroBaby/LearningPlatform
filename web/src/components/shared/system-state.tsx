@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { AlertTriangle, ArrowRight, RefreshCw, ShieldAlert, WifiOff } from "lucide-react";
 import { PublicShellContent } from "@/components/layout/public-shell-content";
 import { Card, CardBody, LinkButton } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { getHomeHref } from "./system-state-view";
+import type { SessionVisibility } from "./system-state-view";
 import { ReloadButton } from "./reload-button";
 
 export interface SystemAction {
@@ -23,22 +24,21 @@ export function SystemStatePage({
   badge,
   title,
   description,
-  detail,
   icon,
   tone = "brand",
   primaryAction,
   secondaryAction,
-  isAuthenticated = false,
+  isAuthenticated,
 }: {
   badge: string;
   title: string;
   description: string;
-  detail?: string;
   icon: "warning" | "offline" | "access" | "error";
   tone?: "brand" | "warning" | "error" | "neutral";
   primaryAction?: React.ReactNode;
   secondaryAction?: React.ReactNode;
-  isAuthenticated?: boolean;
+  /** Required: `null` means the session is unknown, so account actions stay hidden instead of defaulting to guest. */
+  isAuthenticated: SessionVisibility;
 }) {
   const Icon = {
     warning: AlertTriangle,
@@ -56,76 +56,48 @@ export function SystemStatePage({
 
   return (
     <PublicShellContent isAuthenticated={isAuthenticated}>
-      <div className="mx-auto flex min-h-[calc(100vh-180px)] max-w-4xl items-center px-4 py-12 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-[calc(100vh-180px)] max-w-2xl items-center px-4 py-12 sm:px-6 lg:px-8">
         <Card className="w-full overflow-hidden">
-          <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
-            <CardBody className="space-y-6 p-6 sm:p-10">
-              <div className="inline-flex items-center rounded-full border border-current/10 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-ink-500">
-                {badge}
+          <CardBody className="space-y-6 p-6 sm:p-10">
+            <div className="inline-flex items-center rounded-full border border-current/10 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-ink-500">
+              {badge}
+            </div>
+            <div className="space-y-4">
+              <div className={cn("flex h-14 w-14 items-center justify-center rounded-2xl border", toneClasses)}>
+                <Icon className="h-7 w-7" />
               </div>
-              <div className="space-y-4">
-                <div className={cn("flex h-14 w-14 items-center justify-center rounded-2xl border", toneClasses)}>
-                  <Icon className="h-7 w-7" />
-                </div>
-                <div>
-                  <h1 className="text-3xl font-semibold tracking-tight text-ink-900 sm:text-4xl">
-                    {title}
-                  </h1>
-                  <p className="mt-3 text-base leading-7 text-ink-600">{description}</p>
-                  {detail ? <p className="mt-3 text-sm leading-6 text-ink-500">{detail}</p> : null}
-                </div>
-              </div>
-              <div className="flex flex-col gap-3 sm:flex-row">
-                {primaryAction}
-                {secondaryAction}
-              </div>
-            </CardBody>
-
-            <div className="border-t border-ink-100 bg-ink-50/80 p-6 sm:p-10 lg:border-l lg:border-t-0">
-              <div className="rounded-3xl border border-ink-100 bg-white p-5 card-shadow">
-                <p className="text-sm font-semibold text-ink-900">Bạn có thể làm gì tiếp theo?</p>
-                <ul className="mt-4 space-y-3 text-sm leading-6 text-ink-600">
-                  <li className="flex gap-3">
-                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" aria-hidden />
-                    Quay lại Trang chủ để tiếp tục ôn tập hoặc mở tài liệu đang sẵn sàng.
-                  </li>
-                  <li className="flex gap-3">
-                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" aria-hidden />
-                    Nếu lỗi liên quan đến xử lý tài liệu, hãy kiểm tra trạng thái tải lên và số lượt dùng.
-                  </li>
-                  <li className="flex gap-3">
-                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-500" aria-hidden />
-                    Nếu không đủ quyền hoặc tài liệu bị giới hạn theo gói, hãy xem lại thanh toán và mức sử dụng để biết nguyên nhân.
-                  </li>
-                </ul>
+              <div>
+                <h1 className="text-3xl font-semibold tracking-tight text-ink-900 sm:text-4xl">
+                  {title}
+                </h1>
+                <p className="mt-3 text-base leading-7 text-ink-600">{description}</p>
               </div>
             </div>
-          </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              {primaryAction}
+              {secondaryAction}
+            </div>
+          </CardBody>
         </Card>
       </div>
     </PublicShellContent>
   );
 }
 
-export function HomeActions() {
+export function HomeActions({
+  isAuthenticated,
+  canRetry = true,
+}: {
+  isAuthenticated: SessionVisibility;
+  canRetry?: boolean;
+}) {
   return (
     <>
-      <LinkButton href="/home">
-        Quay về trang chủ
+      <LinkButton href={getHomeHref(isAuthenticated)}>
+        Về trang chủ
         <ArrowRight className="h-4 w-4" />
       </LinkButton>
-      <ReloadButton />
-    </>
-  );
-}
-
-export function AccessActions() {
-  return (
-    <>
-      <LinkButton href="/billing/upgrade">Xem các gói nâng cấp</LinkButton>
-      <Link href="/home" className="inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium text-ink-600 hover:bg-ink-100 hover:text-ink-900">
-        Về trang chủ
-      </Link>
+      {canRetry ? <ReloadButton /> : null}
     </>
   );
 }

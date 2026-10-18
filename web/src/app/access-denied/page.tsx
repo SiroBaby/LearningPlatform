@@ -1,9 +1,9 @@
-import { AccessActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
+import { HomeActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
 import { hasSignedInSession } from "@/lib/auth/session";
 
 export const metadata = buildSystemMetadata(
-  "Access denied",
-  "Bạn không có quyền mở tài nguyên này hoặc tính năng hiện chưa khả dụng với plan hiện tại.",
+  "Chưa có quyền truy cập",
+  "Tài khoản của bạn chưa được cấp quyền vào trang này.",
 );
 
 export default async function AccessDeniedPage(): Promise<React.JSX.Element> {
@@ -11,13 +11,12 @@ export default async function AccessDeniedPage(): Promise<React.JSX.Element> {
 
   return (
     <SystemStatePage
-      badge="Access denied"
-      title="Bạn chưa có quyền vào màn hình này"
-      description="Tài nguyên này có thể thuộc workspace khác, yêu cầu role khác, hoặc đang bị giới hạn bởi plan / quota hiện tại."
-      detail="Trong production, trạng thái này thường xuất hiện khi mở route teacher/admin không đúng role hoặc khi dùng feature cần upgrade plan."
+      badge="Chưa có quyền"
+      title="Bạn chưa có quyền vào trang này"
+      description="Tài khoản của bạn chưa được cấp quyền vào trang này. Nếu bạn nghĩ đây là nhầm lẫn, hãy liên hệ quản trị viên."
       icon="access"
       tone="warning"
-      primaryAction={<AccessActions />}
+      primaryAction={<HomeActions isAuthenticated={isAuthenticated} canRetry={false} />}
       isAuthenticated={isAuthenticated}
     />
   );

@@ -2,8 +2,8 @@ import { HomeActions, SystemStatePage, buildSystemMetadata } from "@/components/
 import { hasSignedInSession } from "@/lib/auth/session";
 
 export const metadata = buildSystemMetadata(
-  "Offline",
-  "Thiết bị của bạn đang mất kết nối. Một số màn hình mock vẫn xem được, nhưng các thao tác mạng sẽ bị trì hoãn.",
+  "Mất kết nối",
+  "Thiết bị của bạn đang mất kết nối mạng.",
 );
 
 export default async function OfflinePage(): Promise<React.JSX.Element> {
@@ -11,13 +11,12 @@ export default async function OfflinePage(): Promise<React.JSX.Element> {
 
   return (
     <SystemStatePage
-      badge="Offline"
-      title="Thiết bị của bạn đang offline"
-      description="Bạn vẫn có thể xem lại một số nội dung đã tải sẵn, nhưng upload, thông báo và các tác vụ cần mạng sẽ chờ cho đến khi kết nối quay lại."
-      detail="Trên mobile, đây là trạng thái quan trọng vì người học thường mở review queue nhanh khi đang di chuyển hoặc kết nối không ổn định."
+      badge="Mất kết nối"
+      title="Bạn đang mất kết nối"
+      description="Hãy kiểm tra mạng. Khi có mạng lại, bạn có thể tiếp tục học và tải tài liệu."
       icon="offline"
       tone="neutral"
-      primaryAction={<HomeActions />}
+      primaryAction={<HomeActions isAuthenticated={isAuthenticated} />}
       isAuthenticated={isAuthenticated}
     />
   );

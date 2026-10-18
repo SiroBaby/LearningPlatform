@@ -3,31 +3,36 @@
 import { useEffect } from "react";
 import { Button, LinkButton } from "@/components/ui";
 import { SystemStatePage } from "@/components/shared/system-state";
+import { routes } from "@/lib/routes";
 
 export default function ErrorPage({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     console.error(error);
   }, [error]);
 
   return (
-    <SystemStatePage
-      badge="Lỗi tạm thời"
-      title="Màn hình chưa thể mở"
-      description="Đã có lỗi tạm thời khi mở nội dung này. Bạn có thể thử lại hoặc quay về trang chủ để tiếp tục học."
-      icon="error"
-      tone="error"
-      primaryAction={
-        <Button type="button" onClick={() => reset()}>
-          Thử render lại
-        </Button>
-      }
-      secondaryAction={<LinkButton href="/home" variant="outline">Về trang chủ</LinkButton>}
-    />
+    <>
+      <title>Chưa mở được trang · LearningPlatform</title>
+      <SystemStatePage
+        badge="Lỗi tạm thời"
+        title="Chưa mở được trang này"
+        description="Hãy thử lại hoặc về trang chủ."
+        icon="error"
+        tone="error"
+        primaryAction={
+          <Button type="button" onClick={() => retry()}>
+            Thử lại
+          </Button>
+        }
+        secondaryAction={<LinkButton href={routes.landing} variant="outline">Về trang chủ</LinkButton>}
+        isAuthenticated={null}
+      />
+    </>
   );
 }
