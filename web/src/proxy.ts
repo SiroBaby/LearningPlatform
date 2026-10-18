@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { requestAuthBackend } from "@/lib/auth/backend-client";
+import { isAuthEntryPath } from "@/lib/auth/auth-page-redirect";
 import { getWebPublicUrl } from "@/lib/auth/public-origin";
 
 interface RefreshedSession {
@@ -146,8 +147,21 @@ async function refreshAccessSession(request: NextRequest): Promise<NextResponse 
   return redirect;
 }
 
+/**
+ * Login/signup are public: guests (no cookies) pass through without a backend call, and a failed or
+ * unavailable refresh never redirects, so the entry page cannot loop through `/login`.
+ */
+async function handleAuthEntryRequest(request: NextRequest): Promise<NextResponse> {
+  const hasSessionCookie = Boolean(request.cookies.get("lp_access")?.value || request.cookies.get("lp_refresh")?.value);
+  if (!hasSessionCookie) return NextResponse.next();
+  const accessSessionStatus = await getAccessSessionStatus(request);
+  if (accessSessionStatus === "valid" || accessSessionStatus === "unavailable") return NextResponse.next();
+  return (await refreshAccessSession(request)) ?? NextResponse.next();
+}
+
 /** Reject unauthenticated requests before rendering a private App Router route. */
 export async function proxy(request: NextRequest): Promise<NextResponse> {
+  if (isAuthEntryPath(request.nextUrl.pathname)) return handleAuthEntryRequest(request);
   const apiRequest = isApiRequest(request);
   const accessSessionStatus = await getAccessSessionStatus(request);
   if (accessSessionStatus === "valid") return NextResponse.next();
@@ -174,12 +188,14 @@ export const config = {
     "/flashcards/:path*",
     "/home/:path*",
     "/library/:path*",
+    "/login",
     "/notifications/:path*",
     "/onboarding/:path*",
     "/processing/:path*",
     "/quiz/:path*",
     "/review/:path*",
     "/settings/:path*",
+    "/signup",
     "/study-plan/:path*",
     "/teacher/:path*",
     "/tutor/:path*",

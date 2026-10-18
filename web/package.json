@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:runtime": "node --test src/lib/auth/backend-client.runtime.test.mjs src/lib/date-time.test.mjs src/lib/phase0/mappers.test.mjs src/lib/phase0/document-failure.test.mjs src/lib/phase0/document-failure-contract.test.mjs src/lib/phase0/document-deletion.test.mjs src/lib/phase0/document-deletion-wiring.test.mjs src/lib/phase0/client.test.mjs src/lib/phase0/route-handler.test.mjs"
+    "test:runtime": "node --test src/lib/auth/backend-client.runtime.test.mjs src/lib/auth/session-state.test.mjs src/lib/auth/session.test.mjs src/lib/date-time.test.mjs src/lib/phase0/mappers.test.mjs src/lib/phase0/document-failure.test.mjs src/lib/phase0/document-failure-contract.test.mjs src/lib/phase0/document-deletion.test.mjs src/lib/phase0/document-deletion-wiring.test.mjs src/lib/phase0/client.test.mjs src/lib/phase0/route-handler.test.mjs"
   },
   "dependencies": {
     "lucide-react": "1.23.0",

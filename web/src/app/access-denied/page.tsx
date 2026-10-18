@@ -1,5 +1,5 @@
 import { AccessActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
-import { hasAuthenticatedSession } from "@/lib/auth/session";
+import { hasSignedInSession } from "@/lib/auth/session";
 
 export const metadata = buildSystemMetadata(
   "Access denied",
@@ -7,7 +7,7 @@ export const metadata = buildSystemMetadata(
 );
 
 export default async function AccessDeniedPage(): Promise<React.JSX.Element> {
-  const isAuthenticated = await hasAuthenticatedSession();
+  const isAuthenticated = await hasSignedInSession();
 
   return (
     <SystemStatePage

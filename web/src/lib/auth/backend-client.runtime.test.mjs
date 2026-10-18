@@ -498,6 +498,70 @@ test("BFF uses mTLS, forwards sessions, and sets host-only cookies", { timeout: 
       1,
     );
 
+    const countBackend = (path) => backendRequests.filter((request) => request.path === path).length;
+
+    const guestFaq = await fetch(`${webOrigin}/faq`);
+    assert.equal(guestFaq.status, 200);
+    const guestFaqHtml = await guestFaq.text();
+    assert.match(guestFaqHtml, /Dùng thử miễn phí/u);
+    assert.doesNotMatch(guestFaqHtml, /Về trang học/u);
+
+    const refreshRequestsBeforePublic = countBackend("/internal/v1/auth/refresh");
+    const expiredAccessFaq = await fetch(`${webOrigin}/faq`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-valid" },
+    });
+    assert.equal(expiredAccessFaq.status, 200);
+    const expiredAccessFaqHtml = await expiredAccessFaq.text();
+    assert.match(expiredAccessFaqHtml, /Về trang học/u);
+    assert.doesNotMatch(expiredAccessFaqHtml, /Dùng thử miễn phí/u);
+    const refreshOnlyFaq = await fetch(`${webOrigin}/faq`, { headers: { cookie: "lp_refresh=refresh-valid" } });
+    assert.match(await refreshOnlyFaq.text(), /Về trang học/u);
+    const refreshOnlyNotFound = await fetch(`${webOrigin}/khong-co-trang-nay`, { headers: { cookie: "lp_refresh=refresh-valid" } });
+    assert.equal(refreshOnlyNotFound.status, 404);
+    assert.match(await refreshOnlyNotFound.text(), /Về trang học/u);
+    assert.equal(countBackend("/internal/v1/auth/refresh"), refreshRequestsBeforePublic, "public pages must not refresh tokens");
+
+    const backendErrorFaq = await fetch(`${webOrigin}/faq`, { headers: { cookie: "lp_access=access-backend-error; lp_refresh=refresh-valid" } });
+    assert.equal(backendErrorFaq.status, 200);
+    const backendTimeoutStartedAt = Date.now();
+    const backendTimeoutMaintenance = await fetch(`${webOrigin}/maintenance`, { headers: { cookie: "lp_access=access-backend-timeout" } });
+    assert.equal(backendTimeoutMaintenance.status, 200);
+    assert.ok(Date.now() - backendTimeoutStartedAt < 8_000, "public page must not wait for the full auth backend timeout");
+
+    const meRequestsBeforeGuestLogin = countBackend("/internal/v1/auth/me");
+    const guestLogin = await fetch(`${webOrigin}/login`, { redirect: "manual" });
+    assert.equal(guestLogin.status, 200);
+    assert.equal(countBackend("/internal/v1/auth/me"), meRequestsBeforeGuestLogin);
+    assert.equal(countBackend("/internal/v1/auth/refresh"), refreshRequestsBeforePublic);
+
+    const expiredAccessLogin = await fetch(`${webOrigin}/login`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(expiredAccessLogin.status, 307);
+    assert.equal(expiredAccessLogin.headers.get("location"), "/login");
+    const expiredLoginCookies = setCookieHeader(expiredAccessLogin);
+    assertCookieContract(expiredLoginCookies, "lp_access", "access-renewed", { secure: true });
+    assertCookieContract(expiredLoginCookies, "lp_refresh", "refresh-rotated", { secure: true });
+
+    const renewedLogin = await fetch(`${webOrigin}/login`, {
+      headers: { cookie: "lp_access=access-renewed; lp_refresh=refresh-rotated" },
+      redirect: "manual",
+    });
+    assert.equal(renewedLogin.status, 307);
+    assert.equal(renewedLogin.headers.get("location"), "/home");
+
+    const revokedRefreshLogin = await fetch(`${webOrigin}/login`, {
+      headers: { cookie: "lp_access=access-expired; lp_refresh=refresh-failed" },
+      redirect: "manual",
+    });
+    assert.equal(revokedRefreshLogin.status, 200, "failed refresh must show the login form, not redirect-loop");
+    const backendErrorSignup = await fetch(`${webOrigin}/signup`, {
+      headers: { cookie: "lp_access=access-backend-error; lp_refresh=refresh-valid" },
+      redirect: "manual",
+    });
+    assert.equal(backendErrorSignup.status, 200);
+
     const refresh = await fetch(`${webOrigin}/auth/refresh`, {
       headers: {
         cookie: "lp_refresh=refresh-callback",

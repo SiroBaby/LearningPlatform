@@ -11,6 +11,7 @@ interface AuthBackendRequest {
   readonly path: string;
   readonly body?: unknown;
   readonly authorization?: string;
+  readonly timeoutMs?: number;
 }
 
 type AuthenticatedBackendRequest = Omit<AuthBackendRequest, "authorization">;
@@ -59,6 +60,7 @@ function getRequestOptions(url: URL, request: AuthBackendRequest): RequestOption
 }
 
 function requestWithClient(url: URL, request: AuthBackendRequest): Promise<Response> {
+  const timeoutMs = request.timeoutMs ?? AUTH_BACKEND_REQUEST_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
     let settled = false;
     function settle(callback: () => void): void {
@@ -92,8 +94,8 @@ function requestWithClient(url: URL, request: AuthBackendRequest): Promise<Respo
       const error = new Error("Auth backend request timed out");
       settle(() => reject(error));
       requestHandle.destroy(error);
-    }, AUTH_BACKEND_REQUEST_TIMEOUT_MS);
-    requestHandle.setTimeout(AUTH_BACKEND_REQUEST_TIMEOUT_MS, () => {
+    }, timeoutMs);
+    requestHandle.setTimeout(timeoutMs, () => {
       const error = new Error("Auth backend request timed out");
       settle(() => reject(error));
       requestHandle.destroy(error);
