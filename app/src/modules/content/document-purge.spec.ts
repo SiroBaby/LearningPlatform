@@ -91,6 +91,7 @@ describe('DocumentPurgeService (PostgreSQL + MinIO)', () => {
 
   function settingsFor(overrides: Partial<DocumentPurgeSettings> = {}, storage: Partial<DocumentPurgeSettings['storage']> = {}): DocumentPurgeSettings {
     return {
+      backlogIntervalMs: 300_000,
       backoffBaseMs: 1_000,
       backoffMaxMs: 1_500,
       batchSize: 10,

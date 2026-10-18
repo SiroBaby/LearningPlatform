@@ -294,6 +294,7 @@ export class ApplicationConfigService {
       }
     }
     const settings: DocumentPurgeSettings = {
+      backlogIntervalMs: this.positiveInteger(CONFIG_PATH.documentPurge.backlogIntervalMs),
       backoffBaseMs: this.positiveInteger(CONFIG_PATH.documentPurge.backoffBaseMs),
       backoffMaxMs: this.positiveInteger(CONFIG_PATH.documentPurge.backoffMaxMs),
       batchSize: this.positiveInteger(CONFIG_PATH.documentPurge.batchSize),

@@ -7,6 +7,7 @@ import {
   DocumentPurgeManifest,
 } from '../entities/document-purge-manifest.entity';
 import { DocumentPurgeErrorCode } from '../enums/document-purge-error-code.enum';
+import { DocumentPurgeManifestStatus } from '../enums/document-purge-manifest-status.enum';
 
 /** A manifest leased to one purge worker; every write must present `leaseId`. */
 export interface ClaimedDocumentPurgeManifest {
@@ -47,6 +48,24 @@ export interface DeadLetterDocumentPurge {
   readonly id: string;
   readonly leaseId: string;
   readonly errorCode: DocumentPurgeErrorCode;
+}
+
+/**
+ * Work queue depth for monitoring. `oldestPendingAgeSeconds` is how long the
+ * longest-waiting PENDING/FAILED manifest has been due (`now() -
+ * next_attempt_at`), so a FAILED manifest still inside its retry backoff does
+ * not count; 0 when nothing is due.
+ */
+export interface DocumentPurgeBacklog {
+  readonly pendingCount: number;
+  readonly failedCount: number;
+  readonly oldestPendingAgeSeconds: number;
+}
+
+interface BacklogRow {
+  readonly pending_count: string | number;
+  readonly failed_count: string | number;
+  readonly oldest_pending_age_seconds: string | number | null;
 }
 
 interface ClaimedManifestRow {
@@ -127,6 +146,28 @@ export class DocumentPurgeRepository extends BaseRepository<DocumentPurgeManifes
       leaseId: row.lease_id,
       locators: row.locators,
     }));
+  }
+
+  /**
+   * Read-only summary of the PENDING/FAILED manifests. It only touches rows
+   * covered by the partial index `idx_document_purge_manifest_claimable`, so
+   * its cost follows the open backlog, never the table history.
+   */
+  async summarizeBacklog(): Promise<DocumentPurgeBacklog> {
+    const [row] = queryRows<BacklogRow>(await this.dataSource.query(
+      `SELECT count(*) FILTER (WHERE "status" = $1) AS "pending_count",
+              count(*) FILTER (WHERE "status" = $2) AS "failed_count",
+              floor(extract(epoch FROM now() - min("next_attempt_at")
+                FILTER (WHERE "next_attempt_at" <= now()))) AS "oldest_pending_age_seconds"
+         FROM "course"."document_purge_manifests"
+        WHERE "status" IN ($1, $2)`,
+      [DocumentPurgeManifestStatus.PENDING, DocumentPurgeManifestStatus.FAILED],
+    ));
+    return {
+      pendingCount: Number(row.pending_count),
+      failedCount: Number(row.failed_count),
+      oldestPendingAgeSeconds: Number(row.oldest_pending_age_seconds ?? 0),
+    };
   }
 
   /**

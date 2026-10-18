@@ -23,7 +23,9 @@ const UNCLASSIFIED_PREFLIGHT_ERROR = 'PURGE_PREFLIGHT_UNCLASSIFIED';
 export class DocumentPurgeRunner implements OnModuleInit, OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = createApplicationLogger({ context: DocumentPurgeRunner.name });
   private activeRun: Promise<void> | undefined;
+  private activeBacklogReport: Promise<void> | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private backlogTimer: NodeJS.Timeout | undefined;
   private stopping = false;
 
   constructor(
@@ -50,14 +52,44 @@ export class DocumentPurgeRunner implements OnModuleInit, OnApplicationBootstrap
 
   async onApplicationBootstrap(): Promise<void> {
     this.logger.log({ event: 'document.purge.started', runtime: 'document-purge' });
+    // Not awaited: backlog reporting must never delay or block the purge loop.
+    void this.reportBacklog();
     await this.run();
   }
 
   async onApplicationShutdown(): Promise<void> {
     this.stopping = true;
     if (this.timer) clearTimeout(this.timer);
+    if (this.backlogTimer) clearTimeout(this.backlogTimer);
     await this.activeRun;
+    await this.activeBacklogReport;
     this.logger.log({ event: 'document.purge.shutdown.completed', runtime: 'document-purge' });
+  }
+
+  /**
+   * Emits `document.purge.backlog` on its own timer, independent of purge
+   * cycles. A failed read logs a distinct event and the loop keeps going.
+   */
+  private async reportBacklog(): Promise<void> {
+    if (this.stopping) return;
+
+    this.activeBacklogReport = (async (): Promise<void> => {
+      try {
+        const backlog = await this.purge.readBacklog();
+        this.logger.log({ ...backlog, event: 'document.purge.backlog', runtime: 'document-purge' });
+      } catch {
+        this.logger.error({ event: 'document.purge.backlog.failed', runtime: 'document-purge' });
+      }
+    })();
+    await this.activeBacklogReport;
+    this.activeBacklogReport = undefined;
+
+    if (!this.stopping) {
+      this.backlogTimer = setTimeout(
+        () => void this.reportBacklog(),
+        this.config.documentPurge.backlogIntervalMs,
+      );
+    }
   }
 
   private async run(): Promise<void> {

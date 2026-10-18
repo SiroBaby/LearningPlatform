@@ -14,6 +14,7 @@ function purgeConfig(overrides: PurgeConfigOverrides = {}): ApplicationConfigSer
     app: { env: overrides.environment ?? 'development' },
     documentPurge: {
       accessKey: 'purge-access',
+      backlogIntervalMs: 300_000,
       backoffBaseMs: 30_000,
       backoffMaxMs: 3_600_000,
       batchSize: 10,
@@ -45,6 +46,7 @@ describe('ApplicationConfigService.documentPurge', () => {
     const settings = purgeConfig({ environment: 'production' }).documentPurge;
 
     expect(settings).toEqual({
+      backlogIntervalMs: 300_000,
       backoffBaseMs: 30_000,
       backoffMaxMs: 3_600_000,
       batchSize: 10,
@@ -71,6 +73,7 @@ describe('ApplicationConfigService.documentPurge', () => {
     ['blank purge secret key', { documentPurge: { secretKey: ' ' } }, 'OBJECT_STORAGE_PURGE_ACCESS_KEY and OBJECT_STORAGE_PURGE_SECRET_KEY are required'],
     ['missing media bucket', { storage: { mediaBucket: undefined } }, 'OBJECT_STORAGE_MEDIA_BUCKET is required for the document purge worker'],
     ['same media and documents bucket', { storage: { mediaBucket: 'documents' } }, 'OBJECT_STORAGE_MEDIA_BUCKET must differ'],
+    ['zero backlog interval', { documentPurge: { backlogIntervalMs: 0 } }, 'documentPurge.backlogIntervalMs must be a positive integer'],
     ['zero batch size', { documentPurge: { batchSize: 0 } }, 'documentPurge.batchSize must be a positive integer'],
     ['NaN max attempts', { documentPurge: { maxAttempts: Number.NaN } }, 'documentPurge.maxAttempts must be a positive integer'],
     ['backoff base above max', { documentPurge: { backoffBaseMs: 10_000, backoffMaxMs: 5_000 } }, 'DOCUMENT_PURGE_BACKOFF_BASE_MS must not exceed'],
