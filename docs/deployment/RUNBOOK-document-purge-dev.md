@@ -347,8 +347,10 @@ Ticket #222 và #228 thêm alert. Alert đi theo route Telegram hiện có của
   backlog mà chuỗi báo đã dừng, hoặc truy vấn backlog lỗi liên tục. Rule không bắn
   khi không có log backlog nào trong 1 giờ (cờ `document_purge_enabled: false`, chưa
   có pod) và không bắn nếu có log `document.purge.shutdown.completed` trong 1 giờ gần
-  nhất (tắt cờ hoặc rolling restart có chủ đích). Alert tự resolve khoảng 60 phút
-  sau log backlog cuối cùng. **Resolve không có nghĩa là đã xử lý xong.** Kiểm tra
+  nhất (tắt cờ hoặc rolling restart có chủ đích). Sau mỗi lần deploy hoặc tắt cờ,
+  log `shutdown.completed` chặn rule này trong 1 giờ: nếu pod mới ngừng báo backlog
+  trong giờ đó, alert chỉ bắn khoảng 60 phút sau log `shutdown.completed`. Alert tự
+  resolve khoảng 60 phút sau log backlog cuối cùng. **Resolve không có nghĩa là đã xử lý xong.** Kiểm tra
   `kubectl logs` của pod purge: nếu thấy `document.purge.backlog.failed` thì truy
   vấn backlog đang lỗi (kiểm tra kết nối PostgreSQL). Nếu sau deploy pod mới hỏng
   ngay, không có log backlog nào để bắt; trường hợp đó đã có alert pod-health và

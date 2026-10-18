@@ -13,8 +13,10 @@ import { DocumentPurgeStorageError } from '../modules/content/contracts/document
 import { DocumentPurgeService } from '../modules/content/document-purge.service';
 import type { DocumentPurgeBacklog } from '../modules/content/repositories/document-purge.repository';
 
-/** Upper bound for one backlog read, enforced in PostgreSQL and again here. */
-const BACKLOG_READ_TIMEOUT_MS = 10_000;
+/** PostgreSQL cancels the backlog statement after this long (primary bound). */
+const BACKLOG_STATEMENT_TIMEOUT_MS = 10_000;
+/** Runner-side fallback, slightly longer so the database error wins when it works. */
+const BACKLOG_READ_TIMEOUT_MS = BACKLOG_STATEMENT_TIMEOUT_MS + 2_000;
 
 /** Logged when preflight fails with an error the storage adapter did not classify. */
 const UNCLASSIFIED_PREFLIGHT_ERROR = 'PURGE_PREFLIGHT_UNCLASSIFIED';
@@ -103,7 +105,7 @@ export class DocumentPurgeRunner implements OnModuleInit, OnApplicationBootstrap
       timeout = setTimeout(() => reject(new Error('backlog read timed out')), BACKLOG_READ_TIMEOUT_MS);
     });
     try {
-      return await Promise.race([this.purge.readBacklog(BACKLOG_READ_TIMEOUT_MS), expiry]);
+      return await Promise.race([this.purge.readBacklog(BACKLOG_STATEMENT_TIMEOUT_MS), expiry]);
     } finally {
       clearTimeout(timeout);
     }

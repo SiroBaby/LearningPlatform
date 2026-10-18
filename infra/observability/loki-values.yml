@@ -182,7 +182,7 @@ extraObjects:
                 annotations:
                   summary: Document purge manifest waiting for over an hour
                   description: >-
-                    The oldest due PENDING/FAILED purge manifest has waited longer than 3600 seconds. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 8.
+                    The oldest unfinished purge manifest (PENDING, FAILED or RUNNING with an expired lease) was created more than 3600 seconds ago. A FAILED manifest still retrying can trigger this before it is dead-lettered. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 8.
               - alert: DocumentPurgeBacklogMissing
                 expr: >-
                   sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"document.purge.backlog" [1h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [1h]))

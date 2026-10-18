@@ -41,7 +41,8 @@ describe('DocumentPurgeRunner preflight', () => {
 
 const BACKLOG_INTERVAL_MS = 300_000;
 const POLL_INTERVAL_MS = 5_000;
-const BACKLOG_READ_TIMEOUT_MS = 10_000;
+const BACKLOG_STATEMENT_TIMEOUT_MS = 10_000;
+const BACKLOG_READ_TIMEOUT_MS = 12_000;
 
 describe('DocumentPurgeRunner backlog report', () => {
   const mockBacklog = { failedCount: 1, oldestPendingAgeSeconds: 4_200, pendingCount: 3 };
@@ -130,7 +131,7 @@ describe('DocumentPurgeRunner backlog report', () => {
     await runner.onApplicationShutdown();
 
     expect(mockError.mock.calls).toEqual([[{ event: 'document.purge.backlog.failed', runtime: 'document-purge' }]]);
-    expect(mockReadBacklog).toHaveBeenCalledWith(BACKLOG_READ_TIMEOUT_MS);
+    expect(mockReadBacklog).toHaveBeenCalledWith(BACKLOG_STATEMENT_TIMEOUT_MS);
   });
 
   it('stops reporting after shutdown', async () => {
