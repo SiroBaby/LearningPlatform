@@ -57,7 +57,7 @@ export function AuthShell({
               <CardBody className="space-y-3">
                 <CardTitle>Bài kiểm tra có căn cứ nguồn</CardTitle>
                 <p className="text-sm text-ink-600">
-                  Mỗi lời giải đều nhảy về trang hoặc timestamp gốc để bạn tự kiểm chứng.
+                  Mỗi lời giải đều mở lại đúng trang hoặc mốc thời gian gốc để bạn tự kiểm chứng.
                 </p>
               </CardBody>
             </Card>
