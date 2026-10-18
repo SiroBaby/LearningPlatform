@@ -1,5 +1,3 @@
-import { LinkButton } from "@/components/ui";
-import { routes } from "@/lib/routes";
 import { HomeActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
 import { hasSignedInSession } from "@/lib/auth/session";
 
@@ -15,11 +13,10 @@ export default async function AccessDeniedPage(): Promise<React.JSX.Element> {
     <SystemStatePage
       badge="Chưa có quyền"
       title="Bạn chưa có quyền vào trang này"
-      description="Tài khoản của bạn chưa được cấp quyền vào trang này. Nếu bạn nghĩ đây là nhầm lẫn, hãy xem Câu hỏi thường gặp."
+      description="Tài khoản của bạn chưa được cấp quyền vào trang này. Nếu bạn nghĩ đây là nhầm lẫn, hãy liên hệ quản trị viên."
       icon="access"
       tone="warning"
       primaryAction={<HomeActions isAuthenticated={isAuthenticated} canRetry={false} />}
-      secondaryAction={<LinkButton href={routes.faq} variant="outline">Câu hỏi thường gặp</LinkButton>}
       isAuthenticated={isAuthenticated}
     />
   );

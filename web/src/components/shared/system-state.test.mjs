@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
+const { routes } = await import("../../lib/routes.ts");
 const { getHomeHref, getPublicChromeView } = await import("./system-state-view.ts");
 
 const SRC_ROOT = resolve(dirname(import.meta.filename), "../..");
@@ -16,9 +17,9 @@ const SYSTEM_PAGE_TITLES = {
 };
 
 test("home link sends guests and unknown sessions to the landing page, learners to home", () => {
-  assert.equal(getHomeHref(true), "/home");
-  assert.equal(getHomeHref(false), "/");
-  assert.equal(getHomeHref(null), "/");
+  assert.equal(getHomeHref(true), routes.home);
+  assert.equal(getHomeHref(false), routes.landing);
+  assert.equal(getHomeHref(null), routes.landing);
 });
 
 test("public chrome never defaults an unknown session to guest and hides private links", () => {
@@ -34,6 +35,12 @@ test("system pages use Vietnamese titles, context-correct actions and no interna
     assert.doesNotMatch(source, /billing\/upgrade|Xem các gói nâng cấp/u, path);
     assert.doesNotMatch(source, /mock|pipeline|surface|production|workspace|quota|review queue/iu, path);
   }
+});
+
+test("access denied page points to administrators, not a FAQ link", () => {
+  const source = read("app/access-denied/page.tsx");
+  assert.match(source, /liên hệ quản trị viên/u);
+  assert.doesNotMatch(source, /routes\.faq|Câu hỏi thường gặp/u);
 });
 
 test("error boundary hides account actions and retries through Next retry()", () => {

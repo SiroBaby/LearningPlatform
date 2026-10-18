@@ -1,7 +1,7 @@
-import { LinkButton } from "@/components/ui";
-import { routes } from "@/lib/routes";
 import { HomeActions, SystemStatePage, buildSystemMetadata } from "@/components/shared/system-state";
+import { LinkButton } from "@/components/ui";
 import { hasSignedInSession } from "@/lib/auth/session";
+import { routes } from "@/lib/routes";
 
 export const metadata = buildSystemMetadata(
   "Không tìm thấy trang",
