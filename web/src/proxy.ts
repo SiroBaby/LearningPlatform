@@ -16,9 +16,10 @@ interface RefreshedSession {
 type AccessSessionStatus = "missing" | "valid" | "invalid" | "unavailable";
 
 const REFRESH_SUCCESS_GRACE_MS = 5_000;
+const AUTH_ENTRY_SESSION_CHECK_TIMEOUT_MS = 1_500;
 const refreshFlights = new Map<string, Promise<RefreshedSession | null>>();
 
-async function getAccessSessionStatus(request: NextRequest): Promise<AccessSessionStatus> {
+async function getAccessSessionStatus(request: NextRequest, timeoutMs?: number): Promise<AccessSessionStatus> {
   const accessToken = request.cookies.get("lp_access")?.value;
   if (!accessToken) return "missing";
 
@@ -27,6 +28,7 @@ async function getAccessSessionStatus(request: NextRequest): Promise<AccessSessi
       authorization: `Bearer ${accessToken}`,
       method: "GET",
       path: "/internal/v1/auth/me",
+      timeoutMs,
     });
     if (response.ok) return "valid";
     return response.status === 401 ? "invalid" : "unavailable";
@@ -150,11 +152,12 @@ async function refreshAccessSession(request: NextRequest): Promise<NextResponse 
 /**
  * Login/signup are public: guests (no cookies) pass through without a backend call, and a failed or
  * unavailable refresh never redirects, so the entry page cannot loop through `/login`.
+ * The `/auth/me` check uses the same short timeout as the page-level display check.
  */
 async function handleAuthEntryRequest(request: NextRequest): Promise<NextResponse> {
   const hasSessionCookie = Boolean(request.cookies.get("lp_access")?.value || request.cookies.get("lp_refresh")?.value);
   if (!hasSessionCookie) return NextResponse.next();
-  const accessSessionStatus = await getAccessSessionStatus(request);
+  const accessSessionStatus = await getAccessSessionStatus(request, AUTH_ENTRY_SESSION_CHECK_TIMEOUT_MS);
   if (accessSessionStatus === "valid" || accessSessionStatus === "unavailable") return NextResponse.next();
   return (await refreshAccessSession(request)) ?? NextResponse.next();
 }

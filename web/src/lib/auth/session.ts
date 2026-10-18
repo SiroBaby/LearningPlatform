@@ -6,7 +6,7 @@ import { requestAuthBackend } from "./backend-client";
 import { isSignedInSessionState } from "./session-state";
 import type { SessionState } from "./session-state";
 
-const SESSION_CHECK_TIMEOUT_MS = 3_000;
+const SESSION_CHECK_TIMEOUT_MS = 1_500;
 
 /**
  * Resolves the session for server-rendered pages without refreshing tokens.
