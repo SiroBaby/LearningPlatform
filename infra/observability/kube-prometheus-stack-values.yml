@@ -76,14 +76,16 @@ additionalPrometheusRulesMap:
               summary: Prometheus cannot scrape Loki, so Loki ruler alerts may be silent
           - alert: LokiRulerEvaluationFailures
             expr: >-
-              sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}[10m])) > 0
+              sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}[5m])) > 0
+            for: 10m
             labels:
               severity: warning
             annotations:
               summary: Loki ruler failed to evaluate alert rules
           - alert: LokiRulerNotificationErrors
             expr: >-
-              sum by (namespace) (increase(loki_prometheus_notifications_errors_total{namespace="observability",service="learning-platform-loki"}[10m])) > 0
+              sum by (namespace) (increase(loki_prometheus_notifications_errors_total{namespace="observability",service="learning-platform-loki"}[5m])) > 0
+            for: 10m
             labels:
               severity: warning
             annotations:

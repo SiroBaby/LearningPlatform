@@ -164,13 +164,13 @@ LOKI_RULER_PROMETHEUS_RULES = {
   },
   'LokiRulerEvaluationFailures' => {
     'severity' => 'warning',
-    'for' => nil,
-    'expr' => "sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{#{LOKI_TARGET_SELECTOR}}[10m])) > 0"
+    'for' => '10m',
+    'expr' => "sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{#{LOKI_TARGET_SELECTOR}}[5m])) > 0"
   },
   'LokiRulerNotificationErrors' => {
     'severity' => 'warning',
-    'for' => nil,
-    'expr' => "sum by (namespace) (increase(loki_prometheus_notifications_errors_total{#{LOKI_TARGET_SELECTOR}}[10m])) > 0"
+    'for' => '10m',
+    'expr' => "sum by (namespace) (increase(loki_prometheus_notifications_errors_total{#{LOKI_TARGET_SELECTOR}}[5m])) > 0"
   },
   'LokiRulerAlertmanagerMissing' => {
     'severity' => 'warning',
@@ -666,6 +666,8 @@ class Policy
     keep = { 'action' => 'keep', 'regex' => LOKI_METRICS_KEEP_REGEX, 'sourceLabels' => ['__name__'] }
     fail_check("ServiceMonitor/#{LOKI_SERVICE_NAME} must keep only #{LOKI_METRICS_KEEP_REGEX} through exactly one metricRelabelings keep rule") unless relabelings == [keep]
     match_labels = value(monitor, 'spec', 'selector', 'matchLabels') || {}
+    expected_expression = { 'key' => 'prometheus.io/service-monitor', 'operator' => 'NotIn', 'values' => ['false'] }
+    fail_check("ServiceMonitor/#{LOKI_SERVICE_NAME} must exclude headless Services with matchExpressions prometheus.io/service-monitor NotIn [\"false\"]") unless value(monitor, 'spec', 'selector', 'matchExpressions') == [expected_expression]
     services = @documents.select { |document| kind(document) == 'Service' && name(document) == LOKI_SERVICE_NAME && namespace(document) == EXPECTED_NAMESPACE }
     selected = services.select do |service|
       match_labels.any? && match_labels.all? { |key, expected| label(service, key) == expected } && label(service, 'prometheus.io/service-monitor') != 'false'

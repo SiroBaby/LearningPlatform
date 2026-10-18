@@ -31,10 +31,12 @@ spec:
           for: 5m
           labels: {severity: critical}
         - alert: LokiRulerEvaluationFailures
-          expr: sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}[10m])) > 0
+          expr: sum by (namespace) (increase(loki_prometheus_rule_evaluation_failures_total{namespace="observability",service="learning-platform-loki"}[5m])) > 0
+          for: 10m
           labels: {severity: warning}
         - alert: LokiRulerNotificationErrors
-          expr: sum by (namespace) (increase(loki_prometheus_notifications_errors_total{namespace="observability",service="learning-platform-loki"}[10m])) > 0
+          expr: sum by (namespace) (increase(loki_prometheus_notifications_errors_total{namespace="observability",service="learning-platform-loki"}[5m])) > 0
+          for: 10m
           labels: {severity: warning}
         - alert: LokiRulerAlertmanagerMissing
           expr: min by (namespace) (loki_prometheus_notifications_alertmanagers_discovered{namespace="observability",service="learning-platform-loki"}) < 1 or (absent(loki_prometheus_notifications_alertmanagers_discovered{namespace="observability",service="learning-platform-loki"}) and on() up{namespace="observability",service="learning-platform-loki"} == 1)

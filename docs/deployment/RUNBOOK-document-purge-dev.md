@@ -391,10 +391,29 @@ Kỳ vọng: nhóm `learning-platform.document-purge` có 4 rule, `health` là `
 Ruler còn phải thấy Alertmanager và chưa gửi lỗi. Prometheus thu metric của Loki
 (ServiceMonitor `learning-platform-loki`, chỉ giữ 3 metric ruler cần dùng) và có 4
 meta-alert tự động trong PrometheusRule `learning-platform-loki-ruler`:
-`LokiTargetDown` (critical), `LokiRulerEvaluationFailures`,
-`LokiRulerNotificationErrors` và `LokiRulerAlertmanagerMissing` (warning). Sau
-rollout, xác nhận target Loki `up` và 4 alert này ở trạng thái `inactive`
-(Prometheus UI mục Targets/Alerts, chỉ đọc).
+`LokiTargetDown` (critical, `for` 5m), `LokiRulerEvaluationFailures` và
+`LokiRulerNotificationErrors` (warning, chỉ báo khi lỗi kéo dài ít nhất 10 phút nên
+restart Loki hoặc Alertmanager không gây báo giả), `LokiRulerAlertmanagerMissing`
+(warning, `for` 10m). Sau rollout, xác nhận target Loki `up` và 4 alert này không
+firing (chỉ đọc):
+
+```bash
+sudo k3s kubectl get --raw \
+  "/api/v1/namespaces/observability/services/learning-platform-monitori-prometheus:9090/proxy/api/v1/query?query=up%7Bnamespace%3D%22observability%22%2Cservice%3D%22learning-platform-loki%22%7D"
+sudo k3s kubectl get --raw \
+  "/api/v1/namespaces/observability/services/learning-platform-monitori-prometheus:9090/proxy/api/v1/query?query=ALERTS%7Balertname%3D~%22Loki.*%22%7D"
+```
+
+Kỳ vọng: truy vấn `up` trả một series có giá trị `1`; truy vấn `ALERTS` trả danh sách
+rỗng (`"result":[]`).
+
+Khi Loki mất target quá 10 phút, bạn có thể nhận 2 tin: `TargetDown` mặc định của
+kube-prometheus-stack và `LokiTargetDown`. Không thêm inhibit (quy tắc Alertmanager
+cấm inhibit warning/critical). `LokiTargetDown` vẫn có giá trị riêng vì nhánh
+`absent()` báo cả khi target không còn tồn tại (ví dụ ServiceMonitor không được chọn).
+Nhánh `absent()` của `LokiRulerAlertmanagerMissing` sẽ báo nếu cố ý gỡ hết rule Loki
+(ruler không còn Alertmanager notifier); đây là hành vi đúng, hãy tắt alert này có chủ
+đích nếu thật sự gỡ rule.
 
 Khi cần kiểm tra tay hoặc điều tra một meta-alert đang firing, đọc metric của Loki
 (chỉ đọc):
