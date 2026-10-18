@@ -1,0 +1,44 @@
+---
+# The main apply awaits nothing between documents, so list order decides whether
+# the media-probe-worker pods are admitted on their first attempt (#224). Every
+# policy that names the pod, and its own ServiceAccount and NetworkPolicies, must
+# precede its Deployment.
+- name: Verify the media probe apply order on the rendered manifests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+    applications_probe_order_cases:
+      - {label: worker only, targets: [worker]}
+      - {label: all targets, targets: [web, api, worker]}
+  tasks:
+    - name: Assert the probe apply order for each target combination
+      ansible.builtin.include_tasks: media-probe-apply-order-case.yml
+      loop: "{{ applications_probe_order_cases }}"
+      loop_control:
+        loop_var: applications_probe_order_case
+        label: "{{ applications_probe_order_case.label }}"
+
+    - name: Render the manifests without the media probe flag
+      ansible.builtin.set_fact:
+        applications_probe_disabled_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['worker'], 'media_probe_worker_enabled': false})
+             | from_yaml_all | list }}
+      no_log: true
+
+    - name: Require a disabled flag to render no media probe workload or forwarder
+      ansible.builtin.assert:
+        that:
+          - >-
+            applications_probe_disabled_manifests
+            | selectattr('metadata.name', 'search', '^media-probe-') | list | length == 0
+        fail_msg: With media_probe_worker_enabled false no media-probe object may render.
