@@ -43,4 +43,7 @@ expect_rejected 'egress policy after the Deployment' \
 expect_rejected 'media probe block before the proxy ingress client rule' \
   "block = text[/^#{Regexp.escape(\"${probe_gate}\")}.*?^\\{% endif %\\}\\n/m]; text.sub(block, '').sub(\"{% if media_egress_proxy_enabled\", \"#{block}{% if media_egress_proxy_enabled\")"
 
+expect_rejected 'probe and forwarder objects in a separate gate before the proxy, old gate kept' \
+  "block = text[/^#{Regexp.escape(\"${probe_gate}\")}.*?^\\{% endif %\\}\\n/m]; moved = block.sub(\"${probe_gate}\", \"{% if 'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool and true %}\\n\"); text.sub(block, \"${probe_gate}{% endif %}\\n\").sub(\"{% if media_egress_proxy_enabled\", \"#{moved}{% if media_egress_proxy_enabled\")"
+
 printf '%s\n' 'PASS media probe apply order contract'

@@ -20,7 +20,8 @@
   ansible.builtin.set_fact:
     applications_probe_proxy_ingress_index: "{{ applications_probe_ids.index('NetworkPolicy/media-egress-proxy-ingress') }}"
     applications_probe_forwarder_ingress_index: "{{ applications_probe_ids.index('NetworkPolicy/media-probe-db-egress-ingress') }}"
-    applications_probe_forwarder_indexes: >-
+    # Kind/name of every forwarder object.
+    applications_probe_forwarder_ids: >-
       {{ applications_probe_ids | map('regex_search', '^[A-Za-z]+/media-probe-db-egress.*$')
          | select('string') | list }}
     applications_probe_service_account_index: "{{ applications_probe_ids.index('ServiceAccount/media-probe-worker') }}"
@@ -52,8 +53,10 @@
       - applications_probe_service_account_index | int < applications_probe_ingress_index | int
       - applications_probe_ingress_index | int < applications_probe_egress_index | int
       - applications_probe_egress_index | int < applications_probe_deployment_index | int
-      # The whole forwarder group is applied before the probe objects.
-      - applications_probe_forwarder_indexes | length == 6
+      # The forwarder renders exactly six objects (ConfigMap, Deployment,
+      # ServiceAccount, Service, ingress and egress NetworkPolicy), all listed
+      # before the probe's own objects.
+      - applications_probe_forwarder_ids | length == 6
       - applications_probe_ids | select('search', '^[A-Za-z]+/media-probe-worker$') | list | length == 2
       - >-
         applications_probe_ids[:applications_probe_deployment_index | int]

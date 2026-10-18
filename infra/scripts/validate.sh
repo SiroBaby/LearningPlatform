@@ -784,6 +784,11 @@ check_document_purge_contract() {
   fi
 }
 
+# Prints the line of "  name: <name>" inside the "kind: <kind>" document.
+find_template_object_line() {
+  awk -v kind="$2" -v name="$3" '/^kind: / { current = $2 } $0 == "  name: " name && current == kind { print NR; exit }' "$1"
+}
+
 # The main apply awaits nothing between documents, so media-probe-worker must be
 # listed after every policy that names its pods and after its own ServiceAccount
 # and NetworkPolicies; otherwise its first pod can start unrestricted or be denied
@@ -794,28 +799,28 @@ check_media_probe_apply_order() {
   local gate_line proxy_ingress_line forwarder_deployment_line forwarder_ingress_line forwarder_egress_line
   local probe_service_account_line probe_ingress_line probe_egress_line probe_deployment_line
 
-  find_object_line() {
-    awk -v kind="$1" -v name="$2" '/^kind: / { current = $2 } $0 == "  name: " name && current == kind { print NR; exit }' "${app_template}"
-  }
   gate_line="$(grep -Fxn "${gate}" "${app_template}" | head -n 1 | cut -d: -f1)"
-  proxy_ingress_line="$(find_object_line NetworkPolicy media-egress-proxy-ingress)"
-  forwarder_deployment_line="$(find_object_line Deployment media-probe-db-egress)"
-  forwarder_ingress_line="$(find_object_line NetworkPolicy media-probe-db-egress-ingress)"
-  forwarder_egress_line="$(find_object_line NetworkPolicy media-probe-db-egress-egress)"
-  probe_service_account_line="$(find_object_line ServiceAccount media-probe-worker)"
-  probe_ingress_line="$(find_object_line NetworkPolicy media-probe-worker-ingress)"
-  probe_egress_line="$(find_object_line NetworkPolicy media-probe-worker-egress)"
-  probe_deployment_line="$(find_object_line Deployment media-probe-worker)"
-  unset -f find_object_line
+  proxy_ingress_line="$(find_template_object_line "${app_template}" NetworkPolicy media-egress-proxy-ingress)"
+  forwarder_deployment_line="$(find_template_object_line "${app_template}" Deployment media-probe-db-egress)"
+  forwarder_ingress_line="$(find_template_object_line "${app_template}" NetworkPolicy media-probe-db-egress-ingress)"
+  forwarder_egress_line="$(find_template_object_line "${app_template}" NetworkPolicy media-probe-db-egress-egress)"
+  probe_service_account_line="$(find_template_object_line "${app_template}" ServiceAccount media-probe-worker)"
+  probe_ingress_line="$(find_template_object_line "${app_template}" NetworkPolicy media-probe-worker-ingress)"
+  probe_egress_line="$(find_template_object_line "${app_template}" NetworkPolicy media-probe-worker-egress)"
+  probe_deployment_line="$(find_template_object_line "${app_template}" Deployment media-probe-worker)"
 
   if [[ -z "${gate_line}" || -z "${proxy_ingress_line}" || -z "${forwarder_deployment_line}" || -z "${forwarder_ingress_line}" \
     || -z "${forwarder_egress_line}" || -z "${probe_service_account_line}" || -z "${probe_ingress_line}" \
     || -z "${probe_egress_line}" || -z "${probe_deployment_line}" ]]; then
     fail 'The media probe workload, its forwarder, and their NetworkPolicies must all be present in the application template.'
   fi
-  # The whole media-probe block (forwarder included) follows the shared proxy
-  # ingress policy that carries the probe client rule.
-  if (( gate_line <= proxy_ingress_line )); then
+  # The shared proxy ingress policy carries the probe client rule, so it precedes
+  # the whole media-probe block (forwarder included), compared object by object
+  # rather than through the block gate alone.
+  if (( gate_line <= proxy_ingress_line || forwarder_deployment_line <= proxy_ingress_line \
+    || forwarder_ingress_line <= proxy_ingress_line || forwarder_egress_line <= proxy_ingress_line \
+    || probe_service_account_line <= proxy_ingress_line || probe_ingress_line <= proxy_ingress_line \
+    || probe_egress_line <= proxy_ingress_line || probe_deployment_line <= proxy_ingress_line )); then
     fail 'The media probe block must render after media-egress-proxy-ingress, which carries its client rule.'
   fi
   # The forwarder ingress policy carries the probe client rule, so the forwarder
