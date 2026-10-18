@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     template: "%s · LearningPlatform",
   },
   description:
-    "Biến PDF, văn bản, video bài giảng thành quiz, checkpoint và kế hoạch ôn tập cá nhân hóa với trích dẫn nguồn.",
+    "Biến PDF, văn bản, video bài giảng thành quiz, video có điểm dừng và kế hoạch ôn tập riêng cho bạn, kèm nguồn trích dẫn.",
 };
 
 export default function RootLayout({
