@@ -1,0 +1,44 @@
+---
+- name: Verify the rendered K3s kubelet arguments without a node
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../defaults/main.yml
+    - ../../../vars/dev.yml
+  vars:
+    # Kubelet command-line flags verified in the embedded kubelet of this exact
+    # K3s release (strings in /var/lib/rancher/k3s/data/current/bin/k3s and
+    # cmd/kubelet/app/options/options.go at v1.31.8). imageMaximumGCAge is a
+    # KubeletConfiguration field only, never a flag.
+    kubelet_args_verified_k3s_version: v1.31.8+k3s1
+    kubelet_args_verified_flags:
+      - image-gc-high-threshold
+      - image-gc-low-threshold
+  tasks:
+    - name: Render the K3s server configuration
+      ansible.builtin.set_fact:
+        k3s_rendered_config: >-
+          {{ lookup('template', '../templates/config.yaml.j2') | from_yaml }}
+
+    - name: Collect rendered kubelet flag names
+      ansible.builtin.set_fact:
+        k3s_rendered_kubelet_flags: >-
+          {{ k3s_rendered_config['kubelet-arg'] | map('regex_replace', '=.*$', '') | list }}
+
+    - name: Require only verified kubelet flags for the pinned K3s release
+      ansible.builtin.assert:
+        that:
+          - k3s_version == kubelet_args_verified_k3s_version
+          - k3s_rendered_kubelet_flags | length == k3s_rendered_kubelet_flags | unique | length
+          - k3s_rendered_kubelet_flags | difference(kubelet_args_verified_flags) | length == 0
+          - >-
+            k3s_rendered_config['kubelet-arg'] == [
+              'image-gc-high-threshold=' ~ k3s_image_gc_high_threshold_percent,
+              'image-gc-low-threshold=' ~ k3s_image_gc_low_threshold_percent]
+          - k3s_image_gc_high_threshold_percent == 65
+          - k3s_image_gc_low_threshold_percent == 55
+        fail_msg: >-
+          K3s kubelet-arg must use only flags verified for {{ kubelet_args_verified_k3s_version }}
+          ({{ kubelet_args_verified_flags | join(', ') }}); got {{ k3s_rendered_kubelet_flags }}
+          for {{ k3s_version }}. Re-verify the flags against the new K3s binary before
+          changing the version or adding an argument.

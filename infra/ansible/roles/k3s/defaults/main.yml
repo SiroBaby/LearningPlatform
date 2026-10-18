@@ -1,0 +1,9 @@
+---
+# Kubelet image GC (#226). Unused images are removed once `/` usage passes the
+# high threshold, down to the low threshold. The high threshold must leave at
+# least k3s_image_gc_minimum_free_disk_gib free on `/`, above the 11Gi
+# observability capacity gate plus room for one image pull. Kept in role
+# defaults so a change selects only the observability/K3s deploy path.
+k3s_image_gc_high_threshold_percent: 65
+k3s_image_gc_low_threshold_percent: 55
+k3s_image_gc_minimum_free_disk_gib: 12

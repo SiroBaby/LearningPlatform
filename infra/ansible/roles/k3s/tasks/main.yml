@@ -22,7 +22,6 @@
       - k3s_image_gc_low_threshold_percent >= 50
       - k3s_image_gc_low_threshold_percent < k3s_image_gc_high_threshold_percent
       - k3s_image_gc_high_threshold_percent <= 70
-      - k3s_image_maximum_gc_age is match('^[1-9][0-9]*h$')
       - k3s_image_gc_minimum_free_disk_gib is integer
       - k3s_image_gc_minimum_free_disk_gib >= 12
       - k3s_ingress_ports is sequence
@@ -134,6 +133,19 @@
     mode: '0600'
   notify: Restart K3s after configuration change
 
+- name: Require the image GC high threshold to keep the minimum free disk on /
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((ansible_facts.mounts | selectattr('mount', 'equalto', '/')
+          | map(attribute='size_total') | first | int)
+          * (100 - k3s_image_gc_high_threshold_percent) / 100) >=
+        (k3s_image_gc_minimum_free_disk_gib * 1024 * 1024 * 1024)
+    fail_msg: >-
+      Kubelet image GC starting at {{ k3s_image_gc_high_threshold_percent }}% usage
+      would leave less than {{ k3s_image_gc_minimum_free_disk_gib }}Gi free on /.
+      Lower k3s_image_gc_high_threshold_percent for this disk.
+
 - name: Render declarative K3s server configuration
   ansible.builtin.template:
     src: config.yaml.j2
@@ -193,19 +205,6 @@
     state: started
   when: not (ansible_check_mode and k3s_install_required | bool)
 
-- name: Require the image GC high threshold to keep the minimum free disk on /
-  ansible.builtin.assert:
-    that:
-      - >-
-        ((ansible_facts.mounts | selectattr('mount', 'equalto', '/')
-          | map(attribute='size_total') | first | int)
-          * (100 - k3s_image_gc_high_threshold_percent) / 100) >=
-        (k3s_image_gc_minimum_free_disk_gib * 1024 * 1024 * 1024)
-    fail_msg: >-
-      Kubelet image GC starting at {{ k3s_image_gc_high_threshold_percent }}% usage
-      would leave less than {{ k3s_image_gc_minimum_free_disk_gib }}Gi free on /.
-      Lower k3s_image_gc_high_threshold_percent for this disk.
-
 # A config change restarts K3s here, before later roles call the API, instead of
 # at the end of the single site play after workloads were already applied.
 - name: Restart K3s now when its configuration changed
@@ -213,7 +212,7 @@
 
 - name: Wait for the K3s API after a configuration restart
   ansible.builtin.command:
-    cmd: k3s kubectl get --raw /readyz
+    cmd: /usr/local/bin/k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get --raw /readyz
   register: k3s_api_readyz
   changed_when: false
   retries: 30

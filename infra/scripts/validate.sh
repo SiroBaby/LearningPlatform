@@ -283,9 +283,8 @@ check_k3s_edge_contract() {
     || ! grep -q 'nodeport-addresses=127.0.0.0/8' "${k3s_template}" \
     || ! grep -Fqx '  - image-gc-high-threshold={{ k3s_image_gc_high_threshold_percent }}' "${k3s_template}" \
     || ! grep -Fqx '  - image-gc-low-threshold={{ k3s_image_gc_low_threshold_percent }}' "${k3s_template}" \
-    || ! grep -Fqx '  - image-maximum-gc-age={{ k3s_image_maximum_gc_age }}' "${k3s_template}" \
     || ! grep -Fq 'ansible.builtin.meta: flush_handlers' "${k3s_tasks}" \
-    || ! grep -Fq 'k3s kubectl get --raw /readyz' "${k3s_tasks}" \
+    || ! grep -Fq 'kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml get --raw /readyz' "${k3s_tasks}" \
     || ! grep -q '^k3s_traefik_http_node_port: 32080$' "${k3s_vars}" \
     || ! grep -q '^k3s_port_preflight_enabled: true$' "${k3s_vars}"; then
     fail 'K3s must manage declarative config, loopback NodePort, image GC, change-only restart flushed before API use, and edge preflight.'
@@ -818,6 +817,8 @@ check_ansible_when_installed() {
       "${ANSIBLE_DIR}/roles/observability/tests/values-staging.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/cert_manager/tests/internal-pki-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/k3s/tests/kubelet-args-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/api-rollout-strategy.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
