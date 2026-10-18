@@ -17,7 +17,7 @@ export default async function SignupPage() {
   return (
     <AuthShell
       title="Tạo tài khoản và bắt đầu học ngay"
-      description="Bắt đầu với tài liệu mẫu hoặc tài liệu của bạn. Bạn đăng ký bằng tài khoản Google và chỉ mất vài bước thiết lập."
+      description="Bắt đầu với tài liệu mẫu hoặc tài liệu của bạn. Bạn đăng ký bằng tài khoản Google và chỉ cần vài bước thiết lập."
     >
       <GoogleAuthEntry />
     </AuthShell>

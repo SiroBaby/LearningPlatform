@@ -12,7 +12,7 @@ export default function OnboardingPage() {
     <AuthShell
       layout="wide"
       title="Thiết lập cách bạn muốn học"
-      description="Chọn vài điều để bài học phù hợp hơn với bạn, hoặc bỏ qua và chỉnh lại trong Cài đặt sau."
+      description="Chọn vài điều để bài học phù hợp hơn với bạn."
     >
       <OnboardingFlow />
     </AuthShell>

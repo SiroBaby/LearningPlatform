@@ -18,7 +18,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   return (
     <AuthShell
       title="Đăng nhập để học tiếp"
-      description="Tiếp tục danh sách ôn tập, quiz đang làm dở và trợ giảng theo đúng tài liệu của bạn. Lời giải luôn kèm nguồn để bạn đối chiếu."
+      description="Quay lại danh sách ôn tập, quiz đang làm dở và hỏi trợ giảng về tài liệu của bạn. Lời giải luôn kèm nguồn để bạn đối chiếu."
     >
       <GoogleAuthEntry hasError={Boolean(params.error)} />
     </AuthShell>

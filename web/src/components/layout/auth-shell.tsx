@@ -48,16 +48,16 @@ export function AuthShell({
               Từ tài liệu thô đến trải nghiệm học chủ động.
             </h2>
             <p className="mt-4 max-w-xl text-base leading-7 text-ink-600">
-              Tải lên PDF hoặc video bài giảng. Hệ thống tạo bài kiểm tra, điểm dừng, thẻ ghi nhớ và lời giải có trích dẫn nguồn để bạn kiểm tra mức độ hiểu bài.
+              Tải lên PDF hoặc video bài giảng. Hệ thống tạo quiz, điểm dừng, thẻ ghi nhớ và lời giải có trích dẫn nguồn để bạn kiểm tra mức độ hiểu bài.
             </p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardBody className="space-y-3">
-                <CardTitle>Bài kiểm tra có căn cứ nguồn</CardTitle>
+                <CardTitle>Quiz có căn cứ nguồn</CardTitle>
                 <p className="text-sm text-ink-600">
-                  Mỗi lời giải đều mở lại đúng trang hoặc mốc thời gian gốc để bạn tự kiểm chứng.
+                  Mỗi lời giải đều kèm trang hoặc mốc thời gian gốc để bạn tự kiểm chứng.
                 </p>
               </CardBody>
             </Card>
