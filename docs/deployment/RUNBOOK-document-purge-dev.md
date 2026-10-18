@@ -313,7 +313,7 @@ Lệnh phải trả `UPDATE 1`. Ghi manifest id, mã lỗi và lý do vào ticke
 
 ## 8. Alert cho purge worker
 
-Ticket #222 thêm alert. Alert đi theo route Telegram hiện có của Alertmanager
+Ticket #222 và #228 thêm alert. Alert đi theo route Telegram hiện có của Alertmanager
 (`warning`/`critical` gửi sau `group_wait` 30 giây, nhóm theo `alertname`,
 `namespace`, `severity`).
 
@@ -331,8 +331,42 @@ Ticket #222 thêm alert. Alert đi theo route Telegram hiện có của Alertman
   `document.purge.preflight.failed` trong 10 phút gần nhất. Worker không xác nhận
   được versioning của media bucket nên sẽ không Ready; kiểm tra IAM (mục 3) và
   versioning bucket (mục 2).
-- Hai alert tự resolve khoảng 10 phút sau log cuối cùng. **Resolve không có nghĩa
-  là đã xử lý xong**: manifest vẫn ở `DEAD_LETTER` cho tới khi owner làm theo mục 7.
+- Hai alert trên tự resolve khoảng 10 phút sau log cuối cùng. **Resolve không có
+  nghĩa là đã xử lý xong**: manifest vẫn ở `DEAD_LETTER` cho tới khi owner làm theo
+  mục 7.
+- `DocumentPurgeBacklogStale` (`warning`, ticket #228): log `document.purge.backlog`
+  mới nhất trong 15 phút gần nhất có `oldestPendingAgeSeconds > 3600`, tức đã có
+  manifest `PENDING`/`FAILED` đến hạn xử lý hơn 1 giờ mà worker chưa xử lý xong.
+  Tự resolve khi log backlog mới nhất xuống dưới ngưỡng. Xử lý theo mục "Backlog bị
+  tồn đọng" bên dưới.
+- `DocumentPurgeBacklogMissing` (`warning`, ticket #228): worker vẫn ghi log hoạt
+  động (`document.purge.started`, `...cycle.failed`, `...backlog.failed`,
+  `...dead_lettered`...) trong 30 phút gần nhất nhưng không có log
+  `document.purge.backlog` nào trong 15 phút gần nhất. Rule không bắn khi không có
+  log nào của container `document-purge-worker` (cờ `document_purge_enabled: false`,
+  chưa có pod) và không bắn nếu có log `document.purge.shutdown.completed` trong 30
+  phút gần nhất (tắt cờ có chủ đích). Kiểm tra `kubectl logs` của pod purge: nếu
+  thấy `document.purge.backlog.failed` thì truy vấn backlog đang lỗi (kiểm tra kết
+  nối PostgreSQL); nếu pod đang restart liên tục, xem mục 3 và alert pod-health.
+
+**Log backlog (`document.purge.backlog`):** purge worker ghi một dòng JSON mỗi
+`DOCUMENT_PURGE_BACKLOG_INTERVAL_MS` (literal `300000` = 5 phút trong manifest;
+cửa sổ 15 phút và 30 phút của hai rule được tính từ chu kỳ này, đổi chu kỳ phải đổi
+rule), lần đầu ngay khi worker khởi động. Các trường nằm trong `message`:
+`pendingCount` (số manifest `PENDING`), `failedCount` (số manifest `FAILED`) và
+`oldestPendingAgeSeconds`. Trường sau là số giây từ `next_attempt_at` của manifest
+`PENDING`/`FAILED` đến hạn xử lý sớm nhất (`now() - min(next_attempt_at)`), nên manifest
+`FAILED` còn trong thời gian chờ retry chưa tính; bằng 0 khi không có manifest nào
+đến hạn. Manifest `RUNNING`, `COMPLETED` và `DEAD_LETTER` không được tính. Truy vấn
+chỉ đọc, đi qua partial index `idx_document_purge_manifest_claimable`. Nếu truy vấn
+lỗi, worker ghi `document.purge.backlog.failed` rồi tiếp tục chạy purge bình thường.
+Không trường nào trong số này là label Loki; rule đọc chúng bằng `| json` và `unwrap`.
+
+**Giới hạn của `DocumentPurgeBacklogMissing`:** rule dùng log hoạt động của worker
+để biết worker đang chạy. Nếu worker khởi động rồi im lặng hoàn toàn quá 30 phút mà
+không phát log backlog (lỗi tiến trình, không phải lỗi truy vấn), rule tự resolve sau
+cửa sổ 30 phút và pod vẫn Ready nên không alert nào bắt được; vì vậy khi rollout có
+cờ bật, owner phải xác nhận log backlog xuất hiện đều đặn bằng mắt.
 
 **Alert pod-health (PrometheusRule `learning-platform.application`):**
 `LearningPlatformPodNotReady`, `LearningPlatformContainerCrashLoop` và
@@ -349,7 +383,7 @@ sudo k3s kubectl get --raw \
 Chờ pod Loki Ready thêm khoảng 2 phút rồi mới kiểm tra: ngay sau restart, ruler có
 thể chạy trước khi ring sẵn sàng và tạm báo `health: err` (`empty ring`).
 
-Kỳ vọng: nhóm `learning-platform.document-purge` có 2 rule, `health` là `ok`,
+Kỳ vọng: nhóm `learning-platform.document-purge` có 4 rule, `health` là `ok`,
 `lastError` rỗng.
 
 Ruler còn phải thấy Alertmanager và chưa gửi lỗi. Đọc metric của Loki (chỉ đọc):
@@ -364,17 +398,20 @@ Kỳ vọng: `loki_prometheus_notifications_alertmanagers_discovered{user="fake"
 mọi dòng `loki_prometheus_notifications_errors_total` bằng `0`. Nếu sai, alert purge
 sẽ không tới Telegram dù rule vẫn `ok`: dừng việc bật cờ.
 
-**Giới hạn còn lại:** chưa có alert cho manifest `PENDING`/`FAILED` quá 1 giờ.
-App chưa phát metric hay log định kỳ về số manifest tồn đọng; cần một thay đổi ở
-app (ví dụ log `document.purge.backlog` có `oldestPendingAgeSeconds`) hoặc exporter
-SQL rồi mới viết rule. Trước khi có, owner chạy truy vấn:
+**Backlog bị tồn đọng (alert `DocumentPurgeBacklogStale`):** xem log backlog gần nhất
+rồi truy vấn chi tiết (chỉ đọc):
 
 ```sql
-SELECT status, count(*), min(next_attempt_at)
+SELECT id, document_id, status, attempts, next_attempt_at, last_error_code
 FROM course.document_purge_manifests
 WHERE status IN ('PENDING', 'FAILED') AND next_attempt_at < now() - interval '1 hour'
-GROUP BY status;
+ORDER BY next_attempt_at;
 ```
+
+Nếu worker vẫn Ready mà manifest không giảm, đọc `last_error_code` và log
+`document.purge.cycle.failed`; manifest vượt `DOCUMENT_PURGE_MAX_ATTEMPTS` sẽ sang
+`DEAD_LETTER` và xử lý theo mục 7. Sau khi rollout có cờ bật, xác nhận log
+`document.purge.backlog` xuất hiện đều đặn mỗi 5 phút trên dev rồi ghi vào ticket.
 
 ## 9. Tắt nhanh
 

@@ -1192,6 +1192,9 @@ spec:
               value: '10'
             - name: DOCUMENT_PURGE_POLL_INTERVAL_MS
               value: '5000'
+            # Loki alert windows (loki-values.yml) are sized from this interval.
+            - name: DOCUMENT_PURGE_BACKLOG_INTERVAL_MS
+              value: '300000'
             - name: DOCUMENT_PURGE_LEASE_MS
               value: '300000'
             - name: DOCUMENT_PURGE_MAX_ATTEMPTS
