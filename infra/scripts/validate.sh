@@ -784,6 +784,52 @@ check_document_purge_contract() {
   fi
 }
 
+# The main apply awaits nothing between documents, so media-probe-worker must be
+# listed after every policy that names its pods and after its own ServiceAccount
+# and NetworkPolicies; otherwise its first pod can start unrestricted or be denied
+# at its startup preflight and restart (#224).
+check_media_probe_apply_order() {
+  local app_template="${1:-${INFRA_DIR}/k8s/apps.yaml.j2}"
+  local gate="{% if 'worker' in deployment_targets and media_probe_worker_enabled | default(false) | bool %}"
+  local gate_line proxy_ingress_line forwarder_deployment_line forwarder_ingress_line forwarder_egress_line
+  local probe_service_account_line probe_ingress_line probe_egress_line probe_deployment_line
+
+  find_object_line() {
+    awk -v kind="$1" -v name="$2" '/^kind: / { current = $2 } $0 == "  name: " name && current == kind { print NR; exit }' "${app_template}"
+  }
+  gate_line="$(grep -Fxn "${gate}" "${app_template}" | head -n 1 | cut -d: -f1)"
+  proxy_ingress_line="$(find_object_line NetworkPolicy media-egress-proxy-ingress)"
+  forwarder_deployment_line="$(find_object_line Deployment media-probe-db-egress)"
+  forwarder_ingress_line="$(find_object_line NetworkPolicy media-probe-db-egress-ingress)"
+  forwarder_egress_line="$(find_object_line NetworkPolicy media-probe-db-egress-egress)"
+  probe_service_account_line="$(find_object_line ServiceAccount media-probe-worker)"
+  probe_ingress_line="$(find_object_line NetworkPolicy media-probe-worker-ingress)"
+  probe_egress_line="$(find_object_line NetworkPolicy media-probe-worker-egress)"
+  probe_deployment_line="$(find_object_line Deployment media-probe-worker)"
+  unset -f find_object_line
+
+  if [[ -z "${gate_line}" || -z "${proxy_ingress_line}" || -z "${forwarder_deployment_line}" || -z "${forwarder_ingress_line}" \
+    || -z "${forwarder_egress_line}" || -z "${probe_service_account_line}" || -z "${probe_ingress_line}" \
+    || -z "${probe_egress_line}" || -z "${probe_deployment_line}" ]]; then
+    fail 'The media probe workload, its forwarder, and their NetworkPolicies must all be present in the application template.'
+  fi
+  # The whole media-probe block (forwarder included) follows the shared proxy
+  # ingress policy that carries the probe client rule.
+  if (( gate_line <= proxy_ingress_line )); then
+    fail 'The media probe block must render after media-egress-proxy-ingress, which carries its client rule.'
+  fi
+  # The forwarder ingress policy carries the probe client rule, so the forwarder
+  # policies and Deployment precede every probe object.
+  if (( forwarder_deployment_line >= probe_service_account_line || forwarder_ingress_line >= probe_service_account_line \
+    || forwarder_egress_line >= probe_service_account_line )); then
+    fail 'The media-probe-db-egress forwarder and its NetworkPolicies must render before the media-probe-worker ServiceAccount.'
+  fi
+  if (( probe_service_account_line >= probe_ingress_line || probe_ingress_line >= probe_egress_line \
+    || probe_egress_line >= probe_deployment_line )); then
+    fail 'The media-probe-worker ServiceAccount and NetworkPolicies must render before its Deployment.'
+  fi
+}
+
 check_yaml_when_supported() {
   if command -v yamllint >/dev/null 2>&1; then
     yamllint -d '{extends: default, rules: {line-length: disable, truthy: disable}}' \
@@ -831,6 +877,8 @@ check_ansible_when_installed() {
       "${ANSIBLE_DIR}/roles/applications/tests/media-probe-flag-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-probe-db-egress-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/media-probe-apply-order-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/secret-key-reference-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
@@ -880,8 +928,10 @@ check_monitoring_jobs
 check_k3s_edge_contract
 check_application_edge_contract
 check_document_purge_contract
+check_media_probe_apply_order
 bash "${INFRA_DIR}/scripts/tests/test-application-media-contract.sh"
 bash "${INFRA_DIR}/scripts/tests/test-document-purge-contract.sh"
+bash "${INFRA_DIR}/scripts/tests/test-media-probe-order-contract.sh"
 bash "${INFRA_DIR}/scripts/tests/test-go-worker-provider-profile-contract.sh"
 check_yaml_when_supported
 check_ansible_when_installed

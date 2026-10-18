@@ -1,0 +1,67 @@
+---
+- name: Render the manifests with the media probe flag enabled
+  ansible.builtin.set_fact:
+    applications_probe_manifests: >-
+      {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+         template_vars={'deployment_targets': applications_probe_order_case.targets,
+                        'media_probe_worker_enabled': true,
+                        'media_egress_proxy_enabled': true})
+         | from_yaml_all | list }}
+  no_log: true
+
+- name: Index the rendered objects by kind and name
+  ansible.builtin.set_fact:
+    applications_probe_ids: >-
+      {{ applications_probe_manifests | map(attribute='kind')
+         | zip(applications_probe_manifests | map(attribute='metadata.name'))
+         | map('join', '/') | list }}
+
+- name: Locate the probe dependencies and the probe Deployment
+  ansible.builtin.set_fact:
+    applications_probe_proxy_ingress_index: "{{ applications_probe_ids.index('NetworkPolicy/media-egress-proxy-ingress') }}"
+    applications_probe_forwarder_ingress_index: "{{ applications_probe_ids.index('NetworkPolicy/media-probe-db-egress-ingress') }}"
+    applications_probe_forwarder_indexes: >-
+      {{ applications_probe_ids | map('regex_search', '^[A-Za-z]+/media-probe-db-egress.*$')
+         | select('string') | list }}
+    applications_probe_service_account_index: "{{ applications_probe_ids.index('ServiceAccount/media-probe-worker') }}"
+    applications_probe_ingress_index: "{{ applications_probe_ids.index('NetworkPolicy/media-probe-worker-ingress') }}"
+    applications_probe_egress_index: "{{ applications_probe_ids.index('NetworkPolicy/media-probe-worker-egress') }}"
+    applications_probe_deployment_index: "{{ applications_probe_ids.index('Deployment/media-probe-worker') }}"
+    applications_probe_proxy_ingress: >-
+      {{ applications_probe_manifests
+         | selectattr('kind', 'equalto', 'NetworkPolicy')
+         | selectattr('metadata.name', 'equalto', 'media-egress-proxy-ingress') | first }}
+    applications_probe_forwarder_ingress: >-
+      {{ applications_probe_manifests
+         | selectattr('kind', 'equalto', 'NetworkPolicy')
+         | selectattr('metadata.name', 'equalto', 'media-probe-db-egress-ingress') | first }}
+
+# The apply awaits nothing between documents, so the Deployment's pods can only
+# be admitted on their first attempt when everything that names them already exists.
+- name: Require every probe dependency to precede the media probe Deployment ({{ applications_probe_order_case.label }})
+  ansible.builtin.assert:
+    that:
+      # Shared policies that carry a client rule for the probe come first.
+      - >-
+        applications_probe_proxy_ingress | to_json is search('"app.kubernetes.io/component": "media-probe-worker"')
+      - >-
+        applications_probe_forwarder_ingress | to_json is search('"app.kubernetes.io/component": "media-probe-worker"')
+      - applications_probe_proxy_ingress_index | int < applications_probe_service_account_index | int
+      - applications_probe_forwarder_ingress_index | int < applications_probe_service_account_index | int
+      # Then the probe's own ServiceAccount and NetworkPolicies, then its Deployment.
+      - applications_probe_service_account_index | int < applications_probe_ingress_index | int
+      - applications_probe_ingress_index | int < applications_probe_egress_index | int
+      - applications_probe_egress_index | int < applications_probe_deployment_index | int
+      # The whole forwarder group is applied before the probe objects.
+      - applications_probe_forwarder_indexes | length == 6
+      - applications_probe_ids | select('search', '^[A-Za-z]+/media-probe-worker$') | list | length == 2
+      - >-
+        applications_probe_ids[:applications_probe_deployment_index | int]
+        | select('search', '^[A-Za-z]+/media-probe-db-egress') | list | length == 6
+      - >-
+        applications_probe_ids[applications_probe_service_account_index | int:]
+        | select('search', '^[A-Za-z]+/media-probe-db-egress') | list | length == 0
+    fail_msg: >-
+      media-probe-worker must render after media-egress-proxy-ingress, the
+      media-probe-db-egress forwarder and its NetworkPolicies, and after its own
+      ServiceAccount and NetworkPolicies. Rendered order: {{ applications_probe_ids }}.
