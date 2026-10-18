@@ -41,6 +41,17 @@ loki:
   compactor:
     retention_enabled: true
     delete_request_store: filesystem
+  # Ruler runs inside the monolithic pod (-target=all). Rules come from the
+  # ConfigMap below, mounted read-only under the tenant directory "fake"
+  # because auth_enabled is false.
+  rulerConfig:
+    storage:
+      type: local
+      local:
+        directory: /etc/loki/rules
+    rule_path: /var/loki/ruler-scratch
+    alertmanager_url: http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093
+    enable_api: true
 
 singleBinary:
   replicas: 1
@@ -54,6 +65,14 @@ singleBinary:
       memory: 512Mi
   service:
     type: ClusterIP
+  extraVolumes:
+    - name: alert-rules
+      configMap:
+        name: learning-platform-loki-alert-rules
+  extraVolumeMounts:
+    - name: alert-rules
+      mountPath: /etc/loki/rules/fake
+      readOnly: true
   persistence:
     enabled: true
     accessModes:
@@ -120,6 +139,38 @@ patternIngester:
   enabled: false
   replicas: 0
 
+# enabled renders the ruler block into the monolithic config; replicas stays 0
+# so the chart never creates a separate ruler workload.
 ruler:
-  enabled: false
+  enabled: true
   replicas: 0
+
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: learning-platform-loki-alert-rules
+      namespace: observability
+    data:
+      document-purge.yaml: |
+        groups:
+          - name: learning-platform.document-purge
+            rules:
+              - alert: DocumentPurgeDeadLettered
+                expr: >-
+                  sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.dead_lettered" [10m])) > 0
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Document purge manifest moved to dead-letter
+                  description: >-
+                    A purge manifest exhausted its attempts. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 7.
+              - alert: DocumentPurgePreflightFailed
+                expr: >-
+                  sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.preflight.failed" [10m])) > 0
+                labels:
+                  severity: critical
+                annotations:
+                  summary: Document purge worker failed its storage preflight
+                  description: >-
+                    The purge worker cannot confirm media bucket versioning and will not become ready.

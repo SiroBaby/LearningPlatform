@@ -28,7 +28,7 @@ additionalPrometheusRulesMap:
         rules:
           - alert: LearningPlatformPodNotReady
             expr: >-
-              kube_pod_status_ready{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*",condition="true"} == 0
+              kube_pod_status_ready{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*|document-purge-worker-.*",condition="true"} == 0
             for: 10m
             labels:
               severity: warning
@@ -36,9 +36,9 @@ additionalPrometheusRulesMap:
               summary: Learning Platform pod is not ready
           - alert: LearningPlatformContainerCrashLoop
             expr: >-
-              kube_pod_container_status_waiting_reason{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*",reason="CrashLoopBackOff"} == 1
+              kube_pod_container_status_waiting_reason{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*|document-purge-worker-.*",reason="CrashLoopBackOff"} == 1
               or
-              sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*"}[15m])) > 3
+              sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*|document-purge-worker-.*"}[15m])) > 3
             for: 10m
             labels:
               severity: warning
@@ -46,7 +46,7 @@ additionalPrometheusRulesMap:
               summary: Learning Platform worker container is restarting
           - alert: LearningPlatformDeploymentUnavailable
             expr: >-
-              kube_deployment_status_replicas_unavailable{namespace="learning-platform-dev",deployment=~"web|api|worker"} > 0
+              kube_deployment_status_replicas_unavailable{namespace="learning-platform-dev",deployment=~"web|api|worker|document-purge-worker"} > 0
             for: 10m
             labels:
               severity: warning

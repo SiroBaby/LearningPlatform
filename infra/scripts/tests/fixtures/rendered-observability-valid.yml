@@ -7,13 +7,13 @@ spec:
     - name: learning-platform.application
       rules:
         - alert: LearningPlatformPodNotReady
-          expr: kube_pod_status_ready{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*",condition="true"} == 0
+          expr: kube_pod_status_ready{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*|document-purge-worker-.*",condition="true"} == 0
           for: 10m
         - alert: LearningPlatformContainerCrashLoop
-          expr: kube_pod_container_status_waiting_reason{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*",reason="CrashLoopBackOff"} == 1 or sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*"}[15m])) > 3
+          expr: kube_pod_container_status_waiting_reason{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*|document-purge-worker-.*",reason="CrashLoopBackOff"} == 1 or sum by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total{namespace="learning-platform-dev",pod=~"api-.*|web-.*|worker-.*|document-purge-worker-.*"}[15m])) > 3
           for: 10m
         - alert: LearningPlatformDeploymentUnavailable
-          expr: kube_deployment_status_replicas_unavailable{namespace="learning-platform-dev",deployment=~"web|api|worker"} > 0
+          expr: kube_deployment_status_replicas_unavailable{namespace="learning-platform-dev",deployment=~"web|api|worker|document-purge-worker"} > 0
           for: 10m
         - alert: LearningPlatformWorkerUnhealthy
           expr: kube_pod_container_status_ready{namespace="learning-platform-dev",pod=~"worker-.*",container=~"worker|go-worker"} == 0
@@ -94,6 +94,16 @@ data:
     auth_enabled: false
     common:
       replication_factor: 1
+    ruler:
+      alertmanager_url: http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093
+      enable_api: true
+      rule_path: /var/loki/ruler-scratch
+      storage:
+        local:
+          directory: /etc/loki/rules
+        type: local
+      wal:
+        dir: /var/loki/ruler-wal
     schema_config:
       configs:
         - from: "2024-04-01"
@@ -218,9 +228,31 @@ spec:
     - spec: {storageClassName: local-path, resources: {requests: {storage: 2Gi}}}
   template:
     spec:
+      volumes:
+        - name: alert-rules
+          configMap: {name: learning-platform-loki-alert-rules}
       containers:
         - name: loki
           resources: {requests: {cpu: 120m, memory: 256Mi}, limits: {cpu: 500m, memory: 512Mi}}
+          volumeMounts:
+            - name: alert-rules
+              mountPath: /etc/loki/rules/fake
+              readOnly: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: learning-platform-loki-alert-rules, namespace: observability}
+data:
+  document-purge.yaml: |
+    groups:
+      - name: learning-platform.document-purge
+        rules:
+          - alert: DocumentPurgeDeadLettered
+            expr: sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.dead_lettered" [10m])) > 0
+            labels: {severity: warning}
+          - alert: DocumentPurgePreflightFailed
+            expr: sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.preflight.failed" [10m])) > 0
+            labels: {severity: critical}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -269,3 +301,8 @@ spec:
           - path: /
             pathType: Prefix
             backend: {service: {name: learning-platform-monitoring-grafana, port: {number: 80}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: learning-platform-monitori-alertmanager, namespace: observability, labels: {app.kubernetes.io/instance: learning-platform-monitoring}}
+spec: {type: ClusterIP, ports: [{name: http-web, port: 9093}, {name: reloader-web, port: 8080}]}

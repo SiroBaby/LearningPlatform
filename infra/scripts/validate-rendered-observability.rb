@@ -94,14 +94,14 @@ APPLICATION_PROMETHEUS_RULES = {
   'LearningPlatformPodNotReady' => %w[
     kube_pod_status_ready
     namespace="learning-platform-dev"
-    pod=~"api-.*|web-.*|worker-.*"
+    pod=~"api-.*|web-.*|worker-.*|document-purge-worker-.*"
     condition="true"
     == 0
   ],
   'LearningPlatformContainerCrashLoop' => %w[
     kube_pod_container_status_waiting_reason
     namespace="learning-platform-dev"
-    pod=~"api-.*|web-.*|worker-.*"
+    pod=~"api-.*|web-.*|worker-.*|document-purge-worker-.*"
     reason="CrashLoopBackOff"
     == 1
     increase(kube_pod_container_status_restarts_total
@@ -111,7 +111,7 @@ APPLICATION_PROMETHEUS_RULES = {
   'LearningPlatformDeploymentUnavailable' => %w[
     kube_deployment_status_replicas_unavailable
     namespace="learning-platform-dev"
-    deployment=~"web|api|worker"
+    deployment=~"web|api|worker|document-purge-worker"
     > 0
   ],
   'LearningPlatformWorkerUnhealthy' => %w[
@@ -123,6 +123,27 @@ APPLICATION_PROMETHEUS_RULES = {
   ]
 }.freeze
 APPLICATION_PROMETHEUS_RULE_NAME = 'learning-platform-monitori-learning-platform-application'
+LOKI_ALERTMANAGER_URL = 'http://learning-platform-monitori-alertmanager.observability.svc.cluster.local:9093'
+LOKI_RULES_DIRECTORY = '/etc/loki/rules'
+LOKI_RULES_TENANT_PATH = "#{LOKI_RULES_DIRECTORY}/fake"
+LOKI_RULES_CONFIG_MAP = 'learning-platform-loki-alert-rules'
+LOKI_RULES_VOLUME = 'alert-rules'
+LOKI_RULES_FILE = 'document-purge.yaml'
+LOKI_RULES_GROUP_NAME = 'learning-platform.document-purge'
+LOKI_ALERTMANAGER_SERVICE = 'learning-platform-monitori-alertmanager'
+LOKI_ALERTMANAGER_PORT = 9093
+LOKI_RULER_RULE_PATH = '/var/loki/ruler-scratch'
+LOKI_RULER_WAL_DIR = '/var/loki/ruler-wal'
+LOKI_ALERT_RULES = {
+  'DocumentPurgeDeadLettered' => {
+    'severity' => 'warning',
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.dead_lettered" [10m])) > 0'
+  },
+  'DocumentPurgePreflightFailed' => {
+    'severity' => 'critical',
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.preflight.failed" [10m])) > 0'
+  }
+}.freeze
 APPLICATION_PROMETHEUS_GROUP_NAME = 'learning-platform.application'
 ALLOY_CANONICAL_LABELS = %w[cluster namespace app container pod stream].freeze
 ALERTMANAGER_FORBIDDEN_DATASOURCE_FIELDS = %w[
@@ -432,8 +453,86 @@ class Policy
       return
     end
     fail_check('Loki ConfigMap/loki data.config.yaml must set top-level auth_enabled to boolean false') unless config['auth_enabled'] == false
+    validate_loki_ruler_config(config)
   rescue Psych::Exception => error
     fail_check("Loki ConfigMap/loki data.config.yaml must be valid YAML: #{error.message}")
+  end
+
+  # The ruler runs inside the monolithic pod, reads rules from the mounted ConfigMap
+  # and sends alerts to the in-cluster Alertmanager only.
+  def validate_loki_ruler_config(config)
+    ruler = config['ruler']
+    unless ruler.is_a?(Hash)
+      fail_check('Loki config must enable the ruler block')
+      return
+    end
+    unless value(ruler, 'storage', 'type') == 'local' && value(ruler, 'storage', 'local', 'directory') == LOKI_RULES_DIRECTORY
+      fail_check("Loki ruler must use local rule storage at #{LOKI_RULES_DIRECTORY}")
+    end
+    fail_check("Loki ruler alertmanager_url must be exactly #{LOKI_ALERTMANAGER_URL}") unless ruler['alertmanager_url'] == LOKI_ALERTMANAGER_URL
+    fail_check("Loki ruler rule_path must be exactly #{LOKI_RULER_RULE_PATH}") unless ruler['rule_path'] == LOKI_RULER_RULE_PATH
+    fail_check("Loki ruler WAL must be exactly #{LOKI_RULER_WAL_DIR}") unless value(ruler, 'wal', 'dir') == LOKI_RULER_WAL_DIR
+  end
+
+  # A chart upgrade can rename the Alertmanager Service; the pinned ruler URL must still resolve.
+  def validate_loki_alertmanager_target
+    services = @documents.select do |document|
+      kind(document) == 'Service' && name(document) == LOKI_ALERTMANAGER_SERVICE && namespace(document) == EXPECTED_NAMESPACE
+    end
+    ports = services.flat_map { |service| (value(service, 'spec', 'ports') || []).map { |port| port['port'] } }
+    return if services.length == 1 && ports.include?(LOKI_ALERTMANAGER_PORT)
+
+    fail_check("Loki ruler target Service/#{LOKI_ALERTMANAGER_SERVICE} must exist once with port #{LOKI_ALERTMANAGER_PORT}")
+  end
+
+  def validate_loki_alert_rules
+    config_maps = @documents.select { |document| kind(document) == 'ConfigMap' && name(document) == LOKI_RULES_CONFIG_MAP }
+    unless config_maps.length == 1
+      fail_check("render must contain exactly one Loki rules ConfigMap/#{LOKI_RULES_CONFIG_MAP}, got #{config_maps.length}")
+      return
+    end
+    data = value(config_maps.first, 'data') || {}
+    unless data.keys == [LOKI_RULES_FILE]
+      fail_check("Loki rules ConfigMap/#{LOKI_RULES_CONFIG_MAP} must contain only #{LOKI_RULES_FILE}")
+      return
+    end
+    rules_document = YAML.safe_load(data[LOKI_RULES_FILE].to_s, permitted_classes: [], permitted_symbols: [], aliases: false)
+    groups = value(rules_document, 'groups')
+    unless groups.is_a?(Array) && groups.length == 1 && groups.first['name'] == LOKI_RULES_GROUP_NAME
+      fail_check("Loki rules must define exactly the #{LOKI_RULES_GROUP_NAME} group")
+      return
+    end
+    rules = groups.first['rules'] || []
+    actual_by_alert = rules.each_with_object({}) { |rule, result| result[rule['alert']] = rule }
+    unless rules.length == LOKI_ALERT_RULES.length && actual_by_alert.keys.sort == LOKI_ALERT_RULES.keys.sort
+      fail_check('Loki rules must define exactly the document purge alerts, once each')
+      return
+    end
+    LOKI_ALERT_RULES.each do |alert, contract|
+      rule = actual_by_alert.fetch(alert)
+      fail_check("Loki alert #{alert} expression must be exactly: #{contract['expr']}") unless rule['expr'].to_s.split.join(' ') == contract['expr']
+      fail_check("Loki alert #{alert} must have severity #{contract['severity']}") unless value(rule, 'labels', 'severity') == contract['severity']
+      fail_check("Loki alert #{alert} must fire without a for delay; its window already spans 10m") unless rule['for'].nil?
+    end
+  rescue Psych::Exception => error
+    fail_check("Loki rules ConfigMap/#{LOKI_RULES_CONFIG_MAP} must be valid YAML: #{error.message}")
+  end
+
+  def validate_loki_rules_mount
+    loki = @documents.find { |document| kind(document) == 'StatefulSet' && name(document) == 'learning-platform-loki' }
+    return fail_check('render must contain StatefulSet/learning-platform-loki') unless loki
+    volumes = pod_spec_for(loki)['volumes'] || []
+    rules_volumes = volumes.select { |volume| value(volume, 'configMap', 'name') == LOKI_RULES_CONFIG_MAP }
+    unless rules_volumes.length == 1 && rules_volumes.first['name'] == LOKI_RULES_VOLUME
+      fail_check("Loki StatefulSet must mount ConfigMap/#{LOKI_RULES_CONFIG_MAP} as volume #{LOKI_RULES_VOLUME}")
+    end
+    container = containers_for(loki).find { |candidate| candidate['name'] == 'loki' } || {}
+    mounts = (container['volumeMounts'] || []).select { |mount| mount['name'] == LOKI_RULES_VOLUME }
+    unless mounts.length == 1 && mounts.first['mountPath'] == LOKI_RULES_TENANT_PATH && mounts.first['readOnly'] == true
+      fail_check("Loki container must mount #{LOKI_RULES_VOLUME} read-only at #{LOKI_RULES_TENANT_PATH}")
+    end
+    ruler_workloads = @documents.select { |document| LONG_RUNNING_KINDS.include?(kind(document)) && name(document).match?(/ruler/) }
+    fail_check('Loki ruler must run inside the monolithic pod, not as a separate workload') unless ruler_workloads.empty?
   end
 
   def validate_application_prometheus_rules
@@ -730,6 +829,9 @@ class Policy
     fail_check("persistent storage owners/sizes must be prometheus=3Gi, grafana=1Gi, loki=2Gi; got #{@claims.sort.inspect}") unless @claims.sort == [['grafana', '1Gi'], ['loki', '2Gi'], ['prometheus', '3Gi']]
     validate_operator_reloader
     validate_loki_auth
+    validate_loki_alert_rules
+    validate_loki_rules_mount
+    validate_loki_alertmanager_target
     validate_application_prometheus_rules
     validate_grafana_provisioning
     validate_grafana_dashboard_mounts
