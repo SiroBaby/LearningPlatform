@@ -281,9 +281,14 @@ check_k3s_edge_contract() {
     || ! grep -q 'Restart K3s after configuration change' "${k3s_handlers}" \
     || ! grep -q '^write-kubeconfig-mode:' "${k3s_template}" \
     || ! grep -q 'nodeport-addresses=127.0.0.0/8' "${k3s_template}" \
+    || ! grep -Fqx '  - image-gc-high-threshold={{ k3s_image_gc_high_threshold_percent }}' "${k3s_template}" \
+    || ! grep -Fqx '  - image-gc-low-threshold={{ k3s_image_gc_low_threshold_percent }}' "${k3s_template}" \
+    || ! grep -Fqx '  - image-maximum-gc-age={{ k3s_image_maximum_gc_age }}' "${k3s_template}" \
+    || ! grep -Fq 'ansible.builtin.meta: flush_handlers' "${k3s_tasks}" \
+    || ! grep -Fq 'k3s kubectl get --raw /readyz' "${k3s_tasks}" \
     || ! grep -q '^k3s_traefik_http_node_port: 32080$' "${k3s_vars}" \
     || ! grep -q '^k3s_port_preflight_enabled: true$' "${k3s_vars}"; then
-    fail 'K3s must manage declarative config, loopback NodePort, change-only restart, and edge preflight.'
+    fail 'K3s must manage declarative config, loopback NodePort, image GC, change-only restart flushed before API use, and edge preflight.'
   fi
 
   if ! grep -Fq 'server_name {{ grafana_public_host }};' "${nginx_template}" \

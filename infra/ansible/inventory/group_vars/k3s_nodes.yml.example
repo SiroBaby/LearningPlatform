@@ -9,6 +9,14 @@ k3s_installer_sha256: f60c3d8940dfc896f7d83aaf57726c91cf21afc4bca40036472df108d9
 # owns the application edge and packaged ServiceLB advertises its LoadBalancer.
 k3s_write_kubeconfig_mode: '0640'
 k3s_port_preflight_enabled: true
+# Kubelet image GC (#226): unused images are removed once disk usage passes the
+# high threshold, down to the low threshold, and after 7 days unused. The high
+# threshold must leave at least k3s_image_gc_minimum_free_disk_gib free on `/`,
+# above the 11Gi observability capacity gate plus room for one image pull.
+k3s_image_gc_high_threshold_percent: 65
+k3s_image_gc_low_threshold_percent: 55
+k3s_image_maximum_gc_age: 168h
+k3s_image_gc_minimum_free_disk_gib: 12
 k3s_ingress_ports: [32080]
 k3s_traefik_http_node_port: 32080
 traefik_forwarded_headers_trusted_ips: [127.0.0.1/32]

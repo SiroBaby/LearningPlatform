@@ -17,6 +17,14 @@
       - k3s_installer_sha256 is match('^[a-f0-9]{64}$')
       - k3s_write_kubeconfig_mode is match('^[0-7]{4}$')
       - k3s_port_preflight_enabled is boolean
+      - k3s_image_gc_high_threshold_percent is integer
+      - k3s_image_gc_low_threshold_percent is integer
+      - k3s_image_gc_low_threshold_percent >= 50
+      - k3s_image_gc_low_threshold_percent < k3s_image_gc_high_threshold_percent
+      - k3s_image_gc_high_threshold_percent <= 70
+      - k3s_image_maximum_gc_age is match('^[1-9][0-9]*h$')
+      - k3s_image_gc_minimum_free_disk_gib is integer
+      - k3s_image_gc_minimum_free_disk_gib >= 12
       - k3s_ingress_ports is sequence
       - k3s_ingress_ports | length > 0
       - k3s_ingress_ports | map('int') | select('ge', 1) | select('le', 65535) | list | length == k3s_ingress_ports | length
@@ -184,6 +192,34 @@
     enabled: true
     state: started
   when: not (ansible_check_mode and k3s_install_required | bool)
+
+- name: Require the image GC high threshold to keep the minimum free disk on /
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((ansible_facts.mounts | selectattr('mount', 'equalto', '/')
+          | map(attribute='size_total') | first | int)
+          * (100 - k3s_image_gc_high_threshold_percent) / 100) >=
+        (k3s_image_gc_minimum_free_disk_gib * 1024 * 1024 * 1024)
+    fail_msg: >-
+      Kubelet image GC starting at {{ k3s_image_gc_high_threshold_percent }}% usage
+      would leave less than {{ k3s_image_gc_minimum_free_disk_gib }}Gi free on /.
+      Lower k3s_image_gc_high_threshold_percent for this disk.
+
+# A config change restarts K3s here, before later roles call the API, instead of
+# at the end of the single site play after workloads were already applied.
+- name: Restart K3s now when its configuration changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the K3s API after a configuration restart
+  ansible.builtin.command:
+    cmd: k3s kubectl get --raw /readyz
+  register: k3s_api_readyz
+  changed_when: false
+  retries: 30
+  delay: 5
+  until: k3s_api_readyz.rc == 0 and k3s_api_readyz.stdout == 'ok'
+  when: not ansible_check_mode
 
 - name: Create application namespace after K3s is available
   kubernetes.core.k8s:
