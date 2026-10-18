@@ -393,7 +393,9 @@ Ruler còn phải thấy Alertmanager và chưa gửi lỗi. Prometheus thu metr
 meta-alert tự động trong PrometheusRule `learning-platform-loki-ruler`:
 `LokiTargetDown` (critical, `for` 5m), `LokiRulerEvaluationFailures` và
 `LokiRulerNotificationErrors` (warning, chỉ báo khi lỗi kéo dài ít nhất 10 phút nên
-restart Loki hoặc Alertmanager không gây báo giả), `LokiRulerAlertmanagerMissing`
+một lần restart Loki hoặc Alertmanager không gây báo giả; restart lặp lại khoảng 3 lần
+trong 10 phút vẫn báo, và lỗi đơn lẻ cách nhau hơn 5 phút sẽ không bao giờ báo),
+`LokiRulerAlertmanagerMissing`
 (warning, `for` 10m). Sau rollout, xác nhận target Loki `up` và 4 alert này không
 firing (chỉ đọc):
 
