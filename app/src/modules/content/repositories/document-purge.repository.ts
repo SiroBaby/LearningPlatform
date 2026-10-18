@@ -7,6 +7,7 @@ import {
   DocumentPurgeManifest,
 } from '../entities/document-purge-manifest.entity';
 import { DocumentPurgeErrorCode } from '../enums/document-purge-error-code.enum';
+import { DocumentPurgeManifestStatus } from '../enums/document-purge-manifest-status.enum';
 
 /** A manifest leased to one purge worker; every write must present `leaseId`. */
 export interface ClaimedDocumentPurgeManifest {
@@ -47,6 +48,25 @@ export interface DeadLetterDocumentPurge {
   readonly id: string;
   readonly leaseId: string;
   readonly errorCode: DocumentPurgeErrorCode;
+}
+
+/**
+ * Work queue depth for monitoring. `oldestPendingAgeSeconds` is the age
+ * (`now() - created_at`) of the oldest unfinished manifest: PENDING, FAILED
+ * (including one inside its retry backoff) or RUNNING with an expired lease.
+ * A RUNNING manifest with a live lease is being worked on and is not counted;
+ * 0 when nothing is unfinished.
+ */
+export interface DocumentPurgeBacklog {
+  readonly pendingCount: number;
+  readonly failedCount: number;
+  readonly oldestPendingAgeSeconds: number;
+}
+
+interface BacklogRow {
+  readonly pending_count: string | number;
+  readonly failed_count: string | number;
+  readonly oldest_pending_age_seconds: string | number | null;
 }
 
 interface ClaimedManifestRow {
@@ -127,6 +147,35 @@ export class DocumentPurgeRepository extends BaseRepository<DocumentPurgeManifes
       leaseId: row.lease_id,
       locators: row.locators,
     }));
+  }
+
+  /**
+   * Read-only summary of unfinished manifests. The statement runs inside a
+   * transaction with a local `statement_timeout`, so a stuck query cannot
+   * hold a connection forever.
+   */
+  async summarizeBacklog(timeoutMs: number): Promise<DocumentPurgeBacklog> {
+    const [row] = await this.dataSource.transaction(async (manager) => {
+      await manager.query(`SELECT set_config('statement_timeout', $1, true)`, [String(timeoutMs)]);
+      return queryRows<BacklogRow>(await manager.query(
+        `SELECT count(*) FILTER (WHERE "status" = $1) AS "pending_count",
+                count(*) FILTER (WHERE "status" = $2) AS "failed_count",
+                floor(extract(epoch FROM now() - min("created_at"))) AS "oldest_pending_age_seconds"
+           FROM "course"."document_purge_manifests"
+          WHERE "status" IN ($1, $2)
+             OR ("status" = $3 AND "lease_until" <= now())`,
+        [
+          DocumentPurgeManifestStatus.PENDING,
+          DocumentPurgeManifestStatus.FAILED,
+          DocumentPurgeManifestStatus.RUNNING,
+        ],
+      ));
+    });
+    return {
+      pendingCount: Number(row.pending_count),
+      failedCount: Number(row.failed_count),
+      oldestPendingAgeSeconds: Number(row.oldest_pending_age_seconds ?? 0),
+    };
   }
 
   /**

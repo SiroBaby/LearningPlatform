@@ -128,6 +128,7 @@ export interface StorageSettings {
 
 /** Settings for `WORKER_EXECUTION_MODE=document-purge` only. */
 export interface DocumentPurgeSettings {
+  readonly backlogIntervalMs: number;
   readonly backoffBaseMs: number;
   readonly backoffMaxMs: number;
   readonly batchSize: number;
@@ -227,6 +228,7 @@ export const CONFIG_PATH = {
   },
   documentPurge: {
     accessKey: 'documentPurge.accessKey',
+    backlogIntervalMs: 'documentPurge.backlogIntervalMs',
     backoffBaseMs: 'documentPurge.backoffBaseMs',
     backoffMaxMs: 'documentPurge.backoffMaxMs',
     batchSize: 'documentPurge.batchSize',

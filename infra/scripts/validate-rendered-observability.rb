@@ -142,6 +142,14 @@ LOKI_ALERT_RULES = {
   'DocumentPurgePreflightFailed' => {
     'severity' => 'critical',
     'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.preflight.failed" [10m])) > 0'
+  },
+  'DocumentPurgeBacklogStale' => {
+    'severity' => 'warning',
+    'expr' => 'max by (namespace) (last_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" | json oldestPendingAgeSeconds="message.oldestPendingAgeSeconds" | __error__="" | unwrap oldestPendingAgeSeconds [15m])) > 3600'
+  },
+  'DocumentPurgeBacklogMissing' => {
+    'severity' => 'warning',
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"document.purge.backlog" [1h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [1h]))'
   }
 }.freeze
 APPLICATION_PROMETHEUS_GROUP_NAME = 'learning-platform.application'
@@ -512,7 +520,7 @@ class Policy
       rule = actual_by_alert.fetch(alert)
       fail_check("Loki alert #{alert} expression must be exactly: #{contract['expr']}") unless rule['expr'].to_s.split.join(' ') == contract['expr']
       fail_check("Loki alert #{alert} must have severity #{contract['severity']}") unless value(rule, 'labels', 'severity') == contract['severity']
-      fail_check("Loki alert #{alert} must fire without a for delay; its window already spans 10m") unless rule['for'].nil?
+      fail_check("Loki alert #{alert} must fire without a for delay; its window already spans the emit interval") unless rule['for'].nil?
     end
   rescue Psych::Exception => error
     fail_check("Loki rules ConfigMap/#{LOKI_RULES_CONFIG_MAP} must be valid YAML: #{error.message}")

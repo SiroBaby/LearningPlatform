@@ -13,6 +13,7 @@ import { BucketVersioningState } from './enums/bucket-versioning-state.enum';
 import { DocumentPurgeErrorCode } from './enums/document-purge-error-code.enum';
 import {
   ClaimedDocumentPurgeManifest,
+  DocumentPurgeBacklog,
   DocumentPurgeRepository,
 } from './repositories/document-purge.repository';
 
@@ -48,6 +49,11 @@ export class DocumentPurgeService {
         'Media bucket versioning must be Enabled before document purge can start',
       );
     }
+  }
+
+  /** Read-only queue depth for the periodic `document.purge.backlog` log. */
+  async readBacklog(timeoutMs: number): Promise<DocumentPurgeBacklog> {
+    return this.repository.summarizeBacklog(timeoutMs);
   }
 
   /** Processes up to the configured batch of due manifests; returns how many. */

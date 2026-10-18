@@ -22,6 +22,7 @@
 
 - Keep the Loki ruler inside the monolithic pod: `ruler.enabled: true` with `ruler.replicas: 0`, local rule storage at `/etc/loki/rules`, rules from the `learning-platform-loki-alert-rules` ConfigMap mounted read-only at `/etc/loki/rules/fake`, and `alertmanager_url` pinned to the in-cluster Alertmanager. Do not add a rules sidecar or a separate ruler workload without updating the CPU budget.
 - Any new or changed Loki or application Prometheus alert must update the exact contract in `validate-rendered-observability.rb` and add a negative fixture case; prove a new LogQL rule loads (`health: ok`) and fires on a pinned Loki binary before merge.
+- Extract the specific field a LogQL rule needs from Nest JSON logs (`| json field="message.field"`), never bare `| json`: every line carries its own `timestamp`/`pid`, which become labels and turn each line into its own series, so `last_over_time` returns every sample in the window like `max_over_time`. A heartbeat-missing rule must be built on the heartbeat itself over a window longer than the emit interval (and must count the failure event too), exclude an intentional shutdown, and be proven on the pinned Loki binary not to fire when the workload is disabled.
 
 ## Validation
 

@@ -11,6 +11,12 @@ import { createApplicationLogger } from '../common/logging/application-logger.fa
 import { ApplicationConfigService } from '../config/application-config.service';
 import { DocumentPurgeStorageError } from '../modules/content/contracts/document-purge-storage.port';
 import { DocumentPurgeService } from '../modules/content/document-purge.service';
+import type { DocumentPurgeBacklog } from '../modules/content/repositories/document-purge.repository';
+
+/** PostgreSQL cancels the backlog statement after this long (primary bound). */
+const BACKLOG_STATEMENT_TIMEOUT_MS = 10_000;
+/** Runner-side fallback, slightly longer so the database error wins when it works. */
+const BACKLOG_READ_TIMEOUT_MS = BACKLOG_STATEMENT_TIMEOUT_MS + 2_000;
 
 /** Logged when preflight fails with an error the storage adapter did not classify. */
 const UNCLASSIFIED_PREFLIGHT_ERROR = 'PURGE_PREFLIGHT_UNCLASSIFIED';
@@ -23,7 +29,9 @@ const UNCLASSIFIED_PREFLIGHT_ERROR = 'PURGE_PREFLIGHT_UNCLASSIFIED';
 export class DocumentPurgeRunner implements OnModuleInit, OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = createApplicationLogger({ context: DocumentPurgeRunner.name });
   private activeRun: Promise<void> | undefined;
+  private activeBacklogReport: Promise<void> | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private backlogTimer: NodeJS.Timeout | undefined;
   private stopping = false;
 
   constructor(
@@ -50,14 +58,57 @@ export class DocumentPurgeRunner implements OnModuleInit, OnApplicationBootstrap
 
   async onApplicationBootstrap(): Promise<void> {
     this.logger.log({ event: 'document.purge.started', runtime: 'document-purge' });
+    // Not awaited: backlog reporting must never delay or block the purge loop.
+    void this.reportBacklog();
     await this.run();
   }
 
   async onApplicationShutdown(): Promise<void> {
     this.stopping = true;
     if (this.timer) clearTimeout(this.timer);
+    if (this.backlogTimer) clearTimeout(this.backlogTimer);
     await this.activeRun;
+    await this.activeBacklogReport;
     this.logger.log({ event: 'document.purge.shutdown.completed', runtime: 'document-purge' });
+  }
+
+  /**
+   * Emits `document.purge.backlog` on its own timer, independent of purge
+   * cycles. A failed read logs a distinct event and the loop keeps going.
+   */
+  private async reportBacklog(): Promise<void> {
+    if (this.stopping) return;
+
+    this.activeBacklogReport = (async (): Promise<void> => {
+      try {
+        const backlog = await this.readBacklogWithTimeout();
+        this.logger.log({ ...backlog, event: 'document.purge.backlog', runtime: 'document-purge' });
+      } catch {
+        this.logger.error({ event: 'document.purge.backlog.failed', runtime: 'document-purge' });
+      }
+    })();
+    await this.activeBacklogReport;
+    this.activeBacklogReport = undefined;
+
+    if (!this.stopping) {
+      this.backlogTimer = setTimeout(
+        () => void this.reportBacklog(),
+        this.config.documentPurge.backlogIntervalMs,
+      );
+    }
+  }
+
+  /** Rejects after the timeout so a hung read cannot stall the timer chain or shutdown. */
+  private async readBacklogWithTimeout(): Promise<DocumentPurgeBacklog> {
+    let timeout: NodeJS.Timeout | undefined;
+    const expiry = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error('backlog read timed out')), BACKLOG_READ_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([this.purge.readBacklog(BACKLOG_STATEMENT_TIMEOUT_MS), expiry]);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private async run(): Promise<void> {
