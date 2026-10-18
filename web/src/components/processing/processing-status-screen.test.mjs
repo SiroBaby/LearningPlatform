@@ -22,7 +22,7 @@ test("retry state remains keyboard and responsive safe", () => {
 
 test("terminal processing failures provide a clear support path without technical details", () => {
   assert.match(sections, /!failurePresentation\.retryable/u);
-  assert.match(sections, /mailto:ngocphat076@gmail\.com/u);
+  assert.match(sections, /SUPPORT_MAILTO_HREF/u);
   assert.match(sections, /liên hệ hỗ trợ/u);
   assert.match(sections, /không gửi mật khẩu, token hoặc mã xác thực/u);
 });
