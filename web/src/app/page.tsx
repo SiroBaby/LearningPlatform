@@ -22,7 +22,7 @@ const features = [
   },
   {
     title: "Video có điểm dừng",
-    description: "Video tự dừng ở các điểm dừng để hỏi bạn về phần vừa xem, thay vì chỉ xem thụ động.",
+    description: "Video tự dừng ở những đoạn quan trọng để hỏi bạn về phần vừa xem, thay vì chỉ xem thụ động.",
     icon: PlayCircle,
   },
   {
@@ -43,10 +43,10 @@ export default function Home() {
       <section className="border-b border-ink-200 bg-gradient-to-b from-brand-50 via-white to-white">
         <div className="mx-auto grid max-w-7xl gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8 lg:py-24">
           <div className="space-y-8">
-            <Badge tone="brand">Học có căn cứ, dành cho người học Việt Nam</Badge>
+            <Badge tone="brand">Học từ chính tài liệu của bạn, có nguồn rõ ràng</Badge>
             <div className="space-y-5">
               <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-ink-900 sm:text-5xl lg:text-6xl">
-                Biến tài liệu học của bạn thành quiz và phản hồi đáng tin cậy.
+                Biến tài liệu học của bạn thành quiz và phản hồi có nguồn rõ ràng.
               </h1>
               <p className="max-w-2xl text-lg leading-8 text-ink-600">
                 Tải lên PDF hoặc video bài giảng. Hệ thống tạo câu hỏi ôn tập kèm nguồn trích dẫn để bạn học, trả lời, nhận phản hồi và quay lại phần còn yếu nhanh hơn.
@@ -62,7 +62,7 @@ export default function Home() {
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <Metric title="Sẵn sàng sau vài phút" value="PDF thành quiz" />
-              <Metric title="Luôn có nguồn" value="Nguồn trích dẫn hiển thị rõ" />
+              <Metric title="Minh bạch" value="Nguồn trích dẫn hiển thị rõ" />
               <Metric title="Phù hợp với" value="Ôn thi" />
             </div>
           </div>
@@ -117,7 +117,7 @@ export default function Home() {
                     <CardBody className="space-y-2">
                       <p className="text-sm font-semibold text-brand-700">Tiến độ xử lý</p>
                       <ProgressBar value={84} />
-                      <p className="text-sm text-ink-600">Đọc nội dung, chia nhỏ, tạo câu hỏi, kiểm tra lại</p>
+                      <p className="text-sm text-ink-600">Đọc nội dung, tạo câu hỏi, kiểm tra lại</p>
                     </CardBody>
                   </Card>
                   <Card className="border-review-100 bg-review-50/70">
@@ -161,8 +161,8 @@ export default function Home() {
         <div className="mx-auto grid max-w-7xl gap-6 px-4 py-16 sm:px-6 lg:grid-cols-3 lg:px-8">
           <TrustCard
             icon={ShieldCheck}
-            title="Có nguồn dẫn, không trả lời mò"
-            description="Mỗi câu hỏi, lời giải và câu trả lời đều chỉ về trang, thời điểm hoặc đoạn gốc."
+            title="Có nguồn trích dẫn, không trả lời mò"
+            description="Mỗi câu hỏi, lời giải và câu trả lời của trợ giảng đều chỉ về trang, thời điểm hoặc đoạn gốc."
           />
           <TrustCard
             icon={CheckCircle2}
@@ -171,7 +171,7 @@ export default function Home() {
           />
           <TrustCard
             icon={GraduationCap}
-            title="Làm cho cách học của người Việt"
+            title="Thiết kế cho cách học của người Việt"
             description="Hỗ trợ tên môn dài, ôn thi và tài liệu lẫn Việt-Anh, dùng tốt trên điện thoại."
           />
         </div>
