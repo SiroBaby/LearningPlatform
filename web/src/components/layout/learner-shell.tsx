@@ -73,7 +73,10 @@ export function LearnerShell({
   const showDemoLabel = !isPhase0Route;
   const pendingPathname = pendingNavigation?.from === pathname ? pendingNavigation.to : null;
   const activePathname = pendingPathname ?? pathname;
-  const isMoreMenuRoute = isMobileMoreActive(activePathname);
+  const isMoreMenuRoute = isMobileMoreActive(
+    activePathname,
+    learnerMobileMoreNav.map(({ href }) => href),
+  );
   const isNotificationsActive = isLearnerRouteActive(activePathname, routes.notifications);
   const isNavigationPending = pendingPathname !== null;
 
@@ -290,7 +293,7 @@ export function LearnerShell({
             <button
               type="button"
               className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-ink-600 transition-colors hover:bg-ink-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
-              aria-label="Đóng menu mục khác"
+              aria-label="Đóng menu"
               onClick={closeMobileMenu}
             >
               <X className="h-4 w-4" />

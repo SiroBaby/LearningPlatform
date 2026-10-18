@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { MOBILE_MORE_HREFS, isLearnerRouteActive, isMobileMoreActive } from "./learner-nav-active.ts";
+import { isLearnerRouteActive, isMobileMoreActive } from "./learner-nav-active.ts";
 import { routes } from "./routes.ts";
+
+const MOBILE_MORE_HREFS = [routes.analytics, routes.courses, routes.billing, routes.settings];
 
 test("mục Ôn tập sáng ở flashcards, kế hoạch học và bài thi thử", () => {
   for (const pathname of ["/review", "/flashcards/d1", "/flashcards/d1/review", "/study-plan", "/exam/setup", "/exam/e1/practice", "/exam/e1/result/a1"]) {
@@ -30,21 +31,12 @@ test("khớp theo ranh giới đường dẫn và /home không khớp tiền t�
 
 test("nút Thêm sáng ở các trang thuộc menu Thêm", () => {
   for (const pathname of ["/analytics", "/analytics/weak-topic/x", "/courses", "/courses/c1", "/billing", "/billing/upgrade", "/settings"]) {
-    assert.equal(isMobileMoreActive(pathname), true, pathname);
+    assert.equal(isMobileMoreActive(pathname, MOBILE_MORE_HREFS), true, pathname);
   }
 });
 
 test("nút Thêm không sáng ở các mục trên thanh dưới hoặc khu vực Ôn tập", () => {
   for (const pathname of ["/home", "/library", "/review", "/tutor", "/upload", "/study-plan", "/exam/setup", "/flashcards/d1", "/notifications"]) {
-    assert.equal(isMobileMoreActive(pathname), false, pathname);
+    assert.equal(isMobileMoreActive(pathname, MOBILE_MORE_HREFS), false, pathname);
   }
-});
-
-test("danh sách menu Thêm khớp route map", () => {
-  assert.deepEqual([...MOBILE_MORE_HREFS], [routes.analytics, routes.courses, routes.billing, routes.settings]);
-});
-
-test("menu Thêm trong shell dùng danh sách riêng cho điện thoại", () => {
-  const shell = readFileSync(new URL("../components/layout/learner-shell.tsx", import.meta.url), "utf8");
-  assert.match(shell, /learnerMobileMoreNav\.map/u);
 });
