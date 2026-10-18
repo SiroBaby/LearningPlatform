@@ -22,7 +22,7 @@ export function GoogleAuthEntry({ hasError = false }: { hasError?: boolean }): R
         name="login_hint"
         type="email"
         autoComplete="email"
-        placeholder="you@example.com"
+        placeholder="email@example.com"
         className="w-full rounded-xl border border-ink-200 px-4 py-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
       />
       <button
@@ -32,7 +32,7 @@ export function GoogleAuthEntry({ hasError = false }: { hasError?: boolean }): R
         Tiếp tục với Google
       </button>
       <p className="text-xs leading-5 text-ink-500">
-        Email chỉ dùng để gợi ý tài khoản trên Google. Danh tính thật được xác minh bởi Google.
+        Email chỉ dùng để gợi ý tài khoản trên Google. Google sẽ xác nhận đây đúng là bạn.
       </p>
       </form>
     </div>
