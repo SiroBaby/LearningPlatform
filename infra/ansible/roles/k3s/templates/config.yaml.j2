@@ -4,3 +4,6 @@ write-kubeconfig-mode: "{{ k3s_write_kubeconfig_mode }}"
 disable: []
 kube-proxy-arg:
   - nodeport-addresses=127.0.0.0/8
+kubelet-arg:
+  - image-gc-high-threshold={{ k3s_image_gc_high_threshold_percent }}
+  - image-gc-low-threshold={{ k3s_image_gc_low_threshold_percent }}

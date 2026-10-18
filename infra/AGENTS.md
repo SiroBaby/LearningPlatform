@@ -28,6 +28,12 @@
 - Any Alloy ingest change must update or preserve the static config-contract test. The test must check CRI parsing order, every supported level normalization mapping, unknown-level behavior, and the absence of `level`/correlation fields from Loki labels.
 - Run the narrow observability validation for the changed configuration; do not require application or worker tests for documentation-only changes.
 
+## K3s Node
+
+- Keep kubelet image GC in the managed K3s config (`roles/k3s/defaults/main.yml`): the high threshold must leave at least `k3s_image_gc_minimum_free_disk_gib` free on `/` (above the 11Gi observability capacity gate), asserted against the root mount size before the config is written. Do not rely on kubelet defaults (85/80) or manual `crictl rmi --prune` to keep deploys unblocked.
+- Every `kubelet-arg` must be a real command-line flag of the kubelet embedded in the pinned `k3s_version` and listed in `roles/k3s/tests/kubelet-args-contract.yml`; a field that exists only in `KubeletConfiguration` (for example `imageMaximumGCAge`) is an unknown flag and makes K3s exit on restart. Re-verify the allowlist against the K3s binary when `k3s_version` changes.
+- A K3s config change must restart K3s inside the k3s role (`meta: flush_handlers`) and wait for `/readyz` before later roles call the API; the single site play would otherwise restart K3s after workloads were applied.
+
 ## Application Rollout
 
 - When `infra/k8s/apps.yaml.j2` conditionally renders a Deployment for a selected application target, update workflow rollout target derivation and failure diagnostics to wait for that exact Deployment; keep optional image validation conditional on the target and cover both paths with static and execution regressions.
