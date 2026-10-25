@@ -103,6 +103,43 @@ Diễn giải vận hành cần giữ đúng các điểm sau:
    áp. Xử lý tiếp theo phải dựa trên expand/contract compatibility của schema và
    evidence runtime thực tế.
 
+### 4.2. Ép ExternalSecret đồng bộ ngay (force-sync) khi đổi secret
+
+Mọi ExternalSecret (tài nguyên khai báo cách External Secrets Operator, ESO, đọc secret từ AWS SSM rồi ghi vào Kubernetes Secret) có `refreshInterval: 24h` để giữ số request KMS (giải mã SecureString) trong mức miễn phí. Khi đổi giá trị trong SSM mà không muốn chờ tối đa 24 giờ, ép đồng bộ thủ công.
+
+Cơ chế với ESO `v0.15.1` (bản ghim trong `external_secrets_version`): controller so `status.syncedResourceVersion` với resource version của ExternalSecret (gồm generation và annotation); đổi giá trị annotation `force-sync` làm hai giá trị này lệch nhau nên lần reconcile kế tiếp đọc lại SSM ngay. Giá trị annotation phải khác lần trước, vì vậy dùng `date +%s`.
+
+| ExternalSecret | Namespace | Deployment đọc Secret |
+|---|---|---|
+| `learning-platform-api-runtime` | `learning-platform-dev` | `api` |
+| `learning-platform-swagger-runtime` | `learning-platform-dev` | `api` |
+| `learning-platform-worker-runtime` | `learning-platform-dev` | `worker` |
+| `learning-platform-go-worker-runtime` | `learning-platform-dev` | `worker` |
+| `learning-platform-media-probe-runtime` | `learning-platform-dev` | `media-probe-worker` |
+| `learning-platform-document-purge-runtime` | `learning-platform-dev` | `document-purge-worker` |
+| `grafana-admin` | `observability` | Grafana (`existingSecret`) |
+| `alertmanager-telegram-config` | `observability` | Alertmanager (`configSecret`) |
+
+Lệnh ép đồng bộ (đổi `<tên>` và `<namespace>` theo bảng):
+
+```bash
+sudo k3s kubectl annotate externalsecret <tên> -n <namespace> force-sync=$(date +%s) --overwrite
+```
+
+Xác nhận đã đồng bộ:
+
+```bash
+sudo k3s kubectl get externalsecret <tên> -n <namespace> \
+  -o jsonpath='{.status.refreshTime}{"\n"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}'
+sudo k3s kubectl get secret <tên-secret> -n <namespace> -o jsonpath='{.metadata.resourceVersion}{"\n"}'
+```
+
+- `status.refreshTime` phải mới hơn thời điểm chạy lệnh, điều kiện `Ready` phải là `True`.
+- `resourceVersion` của Secret đổi khi giá trị thực sự thay đổi; nếu SSM không đổi thì Secret giữ nguyên resourceVersion, đó là bình thường. Tên Secret trùng tên ExternalSecret (`spec.target.name`).
+- Không in giá trị Secret (`-o yaml` của Secret, `base64 -d`) vào log hay ticket.
+
+Pod chỉ nhận giá trị mới sau khi restart: các Deployment ứng dụng đọc Secret qua biến môi trường `secretKeyRef` (không mount volume, không `envFrom`), nên biến môi trường của pod đang chạy không tự cập nhật. Sau khi `Ready=True`, chạy `sudo k3s kubectl rollout restart deployment/<tên> -n learning-platform-dev` theo cột Deployment trong bảng rồi `rollout status`. Với Grafana và Alertmanager, restart workload tương ứng trong namespace `observability` nếu giá trị mới cần có hiệu lực ngay.
+
 ## 5. Observability ownership mới
 
 ### 5.1. Release pin phải đúng
