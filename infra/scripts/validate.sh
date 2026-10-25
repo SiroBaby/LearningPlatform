@@ -671,29 +671,53 @@ check_application_edge_contract() {
   fi
 }
 
-# The purge worker hard-deletes object versions (#159). Its workload must stay
-# behind one flag, run least-privilege, receive only its own runtime Secret,
-# and egress only to DNS, the S3 proxy, and the PostgreSQL port.
+# Every ExternalSecret must poll SSM at most once a day so SecureString
+# decryptions stay inside the KMS free tier (#259). Documents are split on
+# `---`; each document declaring kind ExternalSecret needs exactly one
+# refreshInterval line and it must be `refreshInterval: 24h`. Inline
+# ExternalSecret definitions outside the audited templates are rejected so none
+# escape the per-document check; only the k8s_info/wait tasks are allowlisted.
 check_external_secret_refresh_interval() {
-  local template document_count interval_count other_count
+  local template document_report bad_documents inline_hits document_count
   local checked_count=0
   while IFS= read -r template; do
-    document_count="$(grep -Ec '^kind: ExternalSecret$' "${template}" || true)"
-    if (( document_count == 0 )); then
+    document_report="$(awk '
+      function flush() {
+        if (is_secret) { printf "%d %d\n", exact_count, any_count }
+        is_secret = 0; exact_count = 0; any_count = 0
+      }
+      /^---/ { flush(); next }
+      /^kind:[[:space:]]*"?ExternalSecret"?[[:space:]]*$/ { is_secret = 1 }
+      /^  refreshInterval: 24h[[:space:]]*$/ { exact_count++ }
+      /refreshInterval:/ { any_count++ }
+      END { flush() }
+    ' "${template}")"
+    if [[ -z "${document_report}" ]]; then
       continue
     fi
-    interval_count="$(grep -Ec '^  refreshInterval: 24h$' "${template}" || true)"
-    other_count="$(grep -Ec 'refreshInterval:' "${template}" || true)"
+    document_count="$(grep -c '' <<<"${document_report}")"
     checked_count=$((checked_count + document_count))
-    if (( interval_count != document_count || other_count != document_count )); then
-      fail "Every ExternalSecret in ${template} must set exactly 'refreshInterval: 24h' (KMS request budget): ${document_count} documents, ${interval_count} with 24h, ${other_count} refreshInterval lines."
+    bad_documents="$(grep -vxc '1 1' <<<"${document_report}" || true)"
+    if [[ "${bad_documents}" != '0' ]]; then
+      fail "Every ExternalSecret document in ${template} must have exactly one refreshInterval line set to 'refreshInterval: 24h' (KMS request budget); ${bad_documents} of ${document_count} documents violate this."
     fi
   done < <(find "${INFRA_DIR}" -type f \( -name '*.yaml.j2' -o -name '*.yml.j2' -o -name '*.yaml' -o -name '*.yml' \) -not -path '*/tests/*' | sort)
+  inline_hits="$(grep -rnE 'kind:[[:space:]]*"?ExternalSecret"?' "${INFRA_DIR}" \
+    --include='*.yaml.j2' --include='*.yml.j2' --include='*.yaml' --include='*.yml' \
+    | grep -v '/tests/' \
+    | grep -vE ':[0-9]+:kind:[[:space:]]*"?ExternalSecret"?[[:space:]]*$' \
+    | grep -vE '/roles/(applications|observability)/tasks/main\.yml:' || true)"
+  if [[ -n "${inline_hits}" ]]; then
+    fail "Inline ExternalSecret definitions escape the refreshInterval check; define them as top-level template documents: ${inline_hits}"
+  fi
   if (( checked_count != 8 )); then
     fail "Expected exactly 8 ExternalSecret definitions under infra, found ${checked_count}; update this check when adding or removing one."
   fi
 }
 
+# The purge worker hard-deletes object versions (#159). Its workload must stay
+# behind one flag, run least-privilege, receive only its own runtime Secret,
+# and egress only to DNS, the S3 proxy, and the PostgreSQL port.
 check_document_purge_contract() {
   local app_template="${1:-${INFRA_DIR}/k8s/apps.yaml.j2}"
   local eso_template="${2:-${ANSIBLE_DIR}/roles/external_secrets/templates/external-secrets.yaml.j2}"
