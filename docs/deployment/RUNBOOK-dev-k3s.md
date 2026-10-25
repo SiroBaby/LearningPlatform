@@ -145,10 +145,10 @@ Alertmanager không cần restart: Prometheus Operator theo dõi `configSecret`,
 Grafana: restart không đổi mật khẩu admin, vì `GF_SECURITY_ADMIN_*` chỉ dùng khi tạo admin lần đầu và `grafana.db` nằm trên PVC. Muốn đổi mật khẩu admin, đặt mật khẩu mới trong pod trước, rồi mới đổi SSM và force-sync để Secret khớp:
 
 ```bash
-sudo k3s kubectl exec -n observability statefulset/learning-platform-monitoring-grafana -c grafana -- grafana cli admin reset-admin-password "<mật khẩu mới>"
+read -rs GF_NEW_PASSWORD && printf '%s' "$GF_NEW_PASSWORD" | sudo k3s kubectl exec -i -n observability statefulset/learning-platform-monitoring-grafana -c grafana -- grafana cli admin reset-admin-password --password-from-stdin && unset GF_NEW_PASSWORD
 ```
 
-Không ghi mật khẩu thật vào log hay ticket.
+Mật khẩu đi qua stdin nên không nằm trong argv (không lộ qua shell history hay `ps`). Lệnh này chỉ reset mật khẩu của user id 1 (admin mặc định); đổi `admin-user` không theo quy trình này. Không ghi mật khẩu thật vào log hay ticket.
 
 ## 5. Observability ownership mới
 

@@ -678,7 +678,7 @@ check_application_edge_contract() {
 # ExternalSecret definitions outside the audited templates are rejected so none
 # escape the per-document check; only the k8s_info/wait tasks are allowlisted.
 check_external_secret_refresh_interval() {
-  local template document_report bad_documents inline_hits document_count
+  local template document_report bad_documents inline_hits cluster_hits document_count task_file task_occurrences
   local checked_count=0
   while IFS= read -r template; do
     document_report="$(awk '
@@ -687,7 +687,7 @@ check_external_secret_refresh_interval() {
         is_secret = 0; exact_count = 0; any_count = 0
       }
       /^---/ { flush(); next }
-      /^kind:[[:space:]]*"?ExternalSecret"?[[:space:]]*$/ { is_secret = 1 }
+      /^kind:[[:space:]]*["\047]?ExternalSecret["\047]?[[:space:]]*$/ { is_secret = 1 }
       /^  refreshInterval: 24h[[:space:]]*$/ { exact_count++ }
       /refreshInterval:/ { any_count++ }
       END { flush() }
@@ -702,14 +702,28 @@ check_external_secret_refresh_interval() {
       fail "Every ExternalSecret document in ${template} must have exactly one refreshInterval line set to 'refreshInterval: 24h' (KMS request budget); ${bad_documents} of ${document_count} documents violate this."
     fi
   done < <(find "${INFRA_DIR}" -type f \( -name '*.yaml.j2' -o -name '*.yml.j2' -o -name '*.yaml' -o -name '*.yml' \) -not -path '*/tests/*' | sort)
-  inline_hits="$(grep -rnE 'kind:[[:space:]]*"?ExternalSecret"?' "${INFRA_DIR}" \
+  cluster_hits="$(grep -rnE "kind:[[:space:]]*[\"']?ClusterExternalSecret" "${INFRA_DIR}" \
+    --include='*.yaml.j2' --include='*.yml.j2' --include='*.yaml' --include='*.yml' \
+    | grep -v '/tests/' || true)"
+  if [[ -n "${cluster_hits}" ]]; then
+    fail "ClusterExternalSecret keeps refreshInterval under externalSecretSpec and is not covered by the 24h check; extend the check before using it: ${cluster_hits}"
+  fi
+  inline_hits="$(grep -rnE "kind:[[:space:]]*[\"']?ExternalSecret" "${INFRA_DIR}" \
     --include='*.yaml.j2' --include='*.yml.j2' --include='*.yaml' --include='*.yml' \
     | grep -v '/tests/' \
-    | grep -vE ':[0-9]+:kind:[[:space:]]*"?ExternalSecret"?[[:space:]]*$' \
+    | grep -vE ":[0-9]+:kind:[[:space:]]*[\"']?ExternalSecret[\"']?[[:space:]]*$" \
     | grep -vE '/roles/(applications|observability)/tasks/main\.yml:' || true)"
   if [[ -n "${inline_hits}" ]]; then
     fail "Inline ExternalSecret definitions escape the refreshInterval check; define them as top-level template documents: ${inline_hits}"
   fi
+  # The two task files only read ExternalSecrets (k8s_info/wait). Pin the
+  # current occurrence count so a new inline definition there turns this red.
+  for task_file in "${ANSIBLE_DIR}/roles/applications/tasks/main.yml:6" "${ANSIBLE_DIR}/roles/observability/tasks/main.yml:2"; do
+    task_occurrences="$(grep -cE "kind:[[:space:]]*[\"']?ExternalSecret" "${task_file%:*}" || true)"
+    if [[ "${task_occurrences}" != "${task_file##*:}" ]]; then
+      fail "${task_file%:*} must contain exactly ${task_file##*:} ExternalSecret kind references (k8s_info/wait only), found ${task_occurrences}; an inline definition escapes the refreshInterval check."
+    fi
+  done
   if (( checked_count != 8 )); then
     fail "Expected exactly 8 ExternalSecret definitions under infra, found ${checked_count}; update this check when adding or removing one."
   fi
