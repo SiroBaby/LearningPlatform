@@ -5,6 +5,7 @@ import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/co
 import { DeleteDocumentButton } from "@/components/library/delete-document-button";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
 import { routes } from "@/lib/routes";
+import { SUPPORT_EMAIL, SUPPORT_MAILTO_HREF } from "@/lib/support-contact";
 import {
   formatBytes,
   formatDateTime,
@@ -161,10 +162,10 @@ export function ProcessingStatusPanel({
               <p className="leading-6 text-error-800">
                 Nếu lỗi vẫn tiếp diễn, hãy liên hệ hỗ trợ tại{" "}
                 <a
-                  href="mailto:ngocphat076@gmail.com"
+                  href={SUPPORT_MAILTO_HREF}
                   className="font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
                 >
-                  ngocphat076@gmail.com
+                  {SUPPORT_EMAIL}
                 </a>
                 . Khi gửi yêu cầu, chỉ cần nêu tên tài liệu và thời điểm gặp lỗi; không gửi mật khẩu, token hoặc mã xác thực.
               </p>

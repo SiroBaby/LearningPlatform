@@ -50,7 +50,7 @@ const statusMap: Record<
   probing: { tone: "brand", label: "Đang kiểm tra tệp", dot: "bg-brand-500" },
   processing: { tone: "brand", label: "Đang xử lý", dot: "bg-brand-500" },
   ready: { tone: "success", label: "Sẵn sàng", dot: "bg-success-500" },
-  failed: { tone: "error", label: "Thất bại", dot: "bg-error-500" },
+  failed: { tone: "error", label: "Chưa thành công", dot: "bg-error-500" },
   deleting: { tone: "neutral", label: "Đang xóa", dot: "bg-ink-400" },
 };
 
