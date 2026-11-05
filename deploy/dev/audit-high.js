@@ -4,15 +4,33 @@
 const { readFileSync } = require('node:fs');
 const { spawnSync } = require('node:child_process');
 
-// GHSA-vfj7-8cjw-p6xm has no patched braces release yet. Only the lint-only path
-// pinned by @next/eslint-plugin-next is accepted, and only while braces is absent
-// from the production tree (`npm ls --omit=dev`); remove once a fix is published.
-const UNPATCHED_BRACES_VERSIONS = new Set(['3.0.3']);
-const UNPATCHED_BRACES_ADVISORY = Object.freeze({
-  url: 'https://github.com/advisories/GHSA-vfj7-8cjw-p6xm',
-  range: '<=3.0.3',
-});
-const UNPATCHED_BRACES_PATH = 'eslint-config-next>@next/eslint-plugin-next>fast-glob>micromatch>braces';
+// Advisories with no patched release yet. Each entry accepts only the exact advisory
+// URL and range, the exact installed versions, and the exact dev-only dependency paths,
+// and only while the package is absent from the production tree (`npm ls --omit=dev`).
+// Any other advisory, version or path fails closed. Remove an entry once a fix is published.
+const ACCEPTED_UNPATCHED_ADVISORIES = Object.freeze([
+  {
+    // GHSA-vfj7-8cjw-p6xm: no patched braces release; lint-only path pinned by @next/eslint-plugin-next.
+    name: 'braces',
+    url: 'https://github.com/advisories/GHSA-vfj7-8cjw-p6xm',
+    range: '<=3.0.3',
+    versions: new Set(['3.0.3']),
+    paths: new Set(['eslint-config-next>@next/eslint-plugin-next>fast-glob>micromatch>braces']),
+  },
+  {
+    // GHSA-gcqx-w48m-w2h4: deepmerge 4.3.1 is the latest release and is affected; reachable
+    // only through the Nest CLI type-check plugin and jest-config (dev tooling).
+    name: 'deepmerge',
+    url: 'https://github.com/advisories/GHSA-gcqx-w48m-w2h4',
+    range: '>=4.2.0 <=4.3.1',
+    versions: new Set(['4.3.1']),
+    paths: new Set([
+      '@nestjs/cli>fork-ts-checker-webpack-plugin>deepmerge',
+      'jest>@jest/core>jest-config>deepmerge',
+    ]),
+  },
+]);
+const ACCEPTED_PACKAGE_NAMES = ACCEPTED_UNPATCHED_ADVISORIES.map((entry) => entry.name);
 
 function commandJson(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8' });
@@ -52,22 +70,22 @@ function isAbsentFromProductionTree(productionTree, dependencyName) {
     && collectDependencyPaths(productionTree, dependencyName).size === 0;
 }
 
-function isAcceptedUnpatchedBraces(vulnerability, installedVersions, installedPaths, productionTree) {
-  if (vulnerability.name !== 'braces' || installedVersions.size === 0) return false;
+function isAcceptedUnpatched(accepted, vulnerability, dependencyTree, productionTree) {
+  if (vulnerability.name !== accepted.name) return false;
+  const installedVersions = collectDependencyVersions(dependencyTree, accepted.name);
+  const installedPaths = collectDependencyPaths(dependencyTree, accepted.name);
+  if (installedVersions.size === 0) return false;
   const advisories = vulnerability.via.filter((entry) => typeof entry === 'object');
   return advisories.length > 0
     && vulnerability.via.length === advisories.length
-    && advisories.every((entry) => entry.url === UNPATCHED_BRACES_ADVISORY.url
-      && entry.range === UNPATCHED_BRACES_ADVISORY.range)
-    && [...installedVersions].every((version) => UNPATCHED_BRACES_VERSIONS.has(version))
-    && [...installedPaths].every((path) => path === UNPATCHED_BRACES_PATH)
-    && isAbsentFromProductionTree(productionTree, 'braces');
+    && advisories.every((entry) => entry.url === accepted.url && entry.range === accepted.range)
+    && [...installedVersions].every((version) => accepted.versions.has(version))
+    && [...installedPaths].every((path) => accepted.paths.has(path))
+    && isAbsentFromProductionTree(productionTree, accepted.name);
 }
 
-function unresolvedVulnerabilities(audit, dependencyTree, productionBracesTree) {
+function unresolvedVulnerabilities(audit, dependencyTree, productionTree) {
   const vulnerabilities = audit.vulnerabilities ?? {};
-  const installedBracesVersions = collectDependencyVersions(dependencyTree, 'braces');
-  const installedBracesPaths = collectDependencyPaths(dependencyTree, 'braces');
   const ignored = new Set();
 
   const isIgnored = (name, visiting = new Set()) => {
@@ -75,7 +93,7 @@ function unresolvedVulnerabilities(audit, dependencyTree, productionBracesTree) 
     if (visiting.has(name)) return false;
     const vulnerability = vulnerabilities[name];
     if (!vulnerability) return false;
-    if (isAcceptedUnpatchedBraces(vulnerability, installedBracesVersions, installedBracesPaths, productionBracesTree)) {
+    if (ACCEPTED_UNPATCHED_ADVISORIES.some((accepted) => isAcceptedUnpatched(accepted, vulnerability, dependencyTree, productionTree))) {
       ignored.add(name);
       return true;
     }
@@ -93,12 +111,12 @@ function unresolvedVulnerabilities(audit, dependencyTree, productionBracesTree) 
   return Object.keys(vulnerabilities).filter((name) => !isIgnored(name));
 }
 
-// Fixture runs must pass the production tree explicitly; without it the braces
-// exception is never applied.
-function loadProductionBracesTree() {
+// Fixture runs must pass the production tree explicitly; without it no accepted
+// exception is applied.
+function loadProductionTree() {
   if (process.argv[4]) return JSON.parse(readFileSync(process.argv[4], 'utf8'));
   if (process.argv[2]) return null;
-  return commandJson('npm', ['ls', 'braces', '--all', '--omit=dev', '--json']);
+  return commandJson('npm', ['ls', ...ACCEPTED_PACKAGE_NAMES, '--all', '--omit=dev', '--json']);
 }
 
 function main() {
@@ -107,9 +125,9 @@ function main() {
     : commandJson('npm', ['audit', '--json', '--audit-level=high']);
   const dependencyTree = process.argv[3]
     ? JSON.parse(readFileSync(process.argv[3], 'utf8'))
-    : commandJson('npm', ['ls', 'braces', '--all', '--json']);
-  const productionBracesTree = loadProductionBracesTree();
-  const unresolved = unresolvedVulnerabilities(audit, dependencyTree, productionBracesTree);
+    : commandJson('npm', ['ls', ...ACCEPTED_PACKAGE_NAMES, '--all', '--json']);
+  const productionTree = loadProductionTree();
+  const unresolved = unresolvedVulnerabilities(audit, dependencyTree, productionTree);
   if (unresolved.length > 0) {
     console.error(`Unresolved npm audit findings: ${unresolved.join(', ')}`);
     process.exit(1);
