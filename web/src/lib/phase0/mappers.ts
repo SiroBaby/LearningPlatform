@@ -187,6 +187,8 @@ function readNullableDocumentProcessingFailureCode(
       return "MEDIA_PROBE_STORAGE_TEMPORARY";
     case "MEDIA_PROBE_TIMEOUT":
       return "MEDIA_PROBE_TIMEOUT";
+    case "MEDIA_REQUIRES_PLATFORM_MODEL":
+      return "MEDIA_REQUIRES_PLATFORM_MODEL";
     case "MEDIA_UNSUPPORTED_AUDIO_CODEC":
       return "MEDIA_UNSUPPORTED_AUDIO_CODEC";
     case "MEDIA_UNSUPPORTED_CONTAINER":

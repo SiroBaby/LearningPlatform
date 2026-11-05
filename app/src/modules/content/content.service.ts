@@ -111,6 +111,7 @@ export class ContentService {
     type: DocumentType,
   ): Promise<{ readonly estimatedCredits: number | null; readonly selectedModelLabel: string }> {
     if (!this.models) throw new Error('Model catalog is unavailable');
+    if (isMediaDocumentType(type) && selection.kind === 'CUSTOM') throw this.mediaRequiresPlatformModel();
     let plan: PlanModelCatalogItem | null = null;
     if (selection.kind === 'PLAN') {
       plan = selection.platformModelId
@@ -410,6 +411,9 @@ export class ContentService {
       });
     }
     const policy = resolveDocumentUploadPolicy(document.type, document.originalName);
+    if (policy.bucket === 'media' && document.modelSelectionKind === 'CUSTOM') {
+      throw this.mediaRequiresPlatformModel();
+    }
     const declaredSizeBytes = Number(document.sizeBytes);
     assertDocumentUploadSize(policy, declaredSizeBytes);
     if (
@@ -470,6 +474,15 @@ export class ContentService {
     }
 
     return confirmed;
+  }
+
+  /** D5 of #160: speech-to-text runs only on the platform model, never on an Owner-supplied endpoint. */
+  private mediaRequiresPlatformModel(): BadRequestException {
+    return new BadRequestException({
+      code: 'MEDIA_REQUIRES_PLATFORM_MODEL',
+      message: 'Audio and video Documents can only be processed with a platform model, not a custom model.',
+      retryable: false,
+    });
   }
 
   private assertMediaUploadsEnabled(bucketKind: 'documents' | 'media'): void {

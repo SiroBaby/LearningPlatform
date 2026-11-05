@@ -6,6 +6,7 @@ import type {
   Phase0ModelOptionGroup,
   Phase0UploadModelSelection,
 } from "@/lib/phase0/contracts";
+import { MEDIA_REQUIRES_PLATFORM_MODEL_MESSAGE } from "@/lib/phase0/document-failure";
 import {
   findModelOption,
   getModelSourceLabel,
@@ -110,6 +111,15 @@ export function useUploadModelEstimate({
     const requestId = estimateRequestId;
 
     async function requestEstimate(): Promise<void> {
+      const isMediaFile = currentFile.normalizedType === "AUDIO" || currentFile.normalizedType === "VIDEO";
+      if (isMediaFile && currentSelection.modelSelectionKind === "CUSTOM") {
+        // Backend rejects this combination (MEDIA_REQUIRES_PLATFORM_MODEL); explain it without a round trip.
+        setEstimate(null);
+        setEstimateError(MEDIA_REQUIRES_PLATFORM_MODEL_MESSAGE);
+        setIsEstimating(false);
+        return;
+      }
+
       try {
         const nextEstimate = await estimatePhase0DocumentUpload({
           type: currentFile.normalizedType,

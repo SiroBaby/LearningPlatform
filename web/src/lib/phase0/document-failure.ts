@@ -6,6 +6,9 @@ export interface Phase0DocumentFailurePresentation {
   readonly retryable: boolean;
 }
 
+export const MEDIA_REQUIRES_PLATFORM_MODEL_MESSAGE =
+  "Tệp MP3/MP4 chỉ xử lý được bằng cách có trong gói của bạn, chưa dùng được với kết nối riêng. Hãy chọn cách xử lý có trong gói rồi tải lại.";
+
 const RETRYABLE_FAILURE_CODES: readonly Phase0DocumentProcessingFailureCode[] = [
   "BUDGET_EXHAUSTED",
   "GENERATION_OUTPUT_INVALID",
@@ -103,6 +106,12 @@ export function getDocumentFailurePresentation(
         title: "Kiểm tra file mất lâu hơn dự kiến",
         description: "Hãy thử lại sau. Nếu vẫn lỗi, bạn có thể cắt ngắn file rồi tải lại.",
         retryable: true,
+      };
+    case "MEDIA_REQUIRES_PLATFORM_MODEL":
+      return {
+        title: "Video và âm thanh chưa hỗ trợ kết nối riêng",
+        description: MEDIA_REQUIRES_PLATFORM_MODEL_MESSAGE,
+        retryable: false,
       };
     case "MEDIA_UNSUPPORTED_AUDIO_CODEC":
       return {

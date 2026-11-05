@@ -46,9 +46,16 @@ describe('media probe failure contract', () => {
       (match) => match[1],
     ).filter((code) => code.startsWith('MEDIA_')).sort();
     const nestMediaCodes = Object.values(DocumentProcessingFailureCode)
-      .filter((code) => code.startsWith('MEDIA_'))
+      // Emitted by the full-pipeline worker (processing/types.go), not by the media probe.
+      .filter((code) => code.startsWith('MEDIA_') && code !== DocumentProcessingFailureCode.MEDIA_REQUIRES_PLATFORM_MODEL)
       .sort();
 
     expect(goMediaCodes).toEqual(nestMediaCodes);
+  });
+
+  it('keeps the full-pipeline MEDIA_REQUIRES_PLATFORM_MODEL code identical in the Go worker', () => {
+    const goTypes = readFileSync(join(__dirname, '../../../../../worker/internal/processing/types.go'), 'utf8');
+
+    expect(goTypes).toContain(`"${DocumentProcessingFailureCode.MEDIA_REQUIRES_PLATFORM_MODEL}"`);
   });
 });

@@ -193,3 +193,12 @@ test("maps attempt history returned as a top-level array", () => {
     },
   ]);
 });
+
+test("maps the MEDIA_REQUIRES_PLATFORM_MODEL failure code", () => {
+  const document = mapDocumentResponse(buildDocumentOverrides({
+    errorCode: "MEDIA_REQUIRES_PLATFORM_MODEL",
+    status: "FAILED",
+  }));
+
+  assert.equal(document.errorCode, "MEDIA_REQUIRES_PLATFORM_MODEL");
+});

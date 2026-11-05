@@ -88,3 +88,11 @@ test("covers protected and extra-track causes for unsupported media container", 
 test("states the 2-hour duration limit when media probe fails", () => {
   assert.match(getDocumentFailurePresentation("MEDIA_PROBE_FAILED").description, /2 giờ/u);
 });
+
+test("explains in Vietnamese that custom connections cannot process media", () => {
+  const presentation = getDocumentFailurePresentation("MEDIA_REQUIRES_PLATFORM_MODEL");
+
+  assert.equal(presentation.retryable, false);
+  assert.match(presentation.description, /kết nối riêng/u);
+  assert.match(presentation.description, /có trong gói/u);
+});

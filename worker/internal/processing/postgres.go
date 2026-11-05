@@ -60,7 +60,7 @@ func (store *PostgresStore) Source(ctx context.Context, job Job) (Source, error)
 	var bucket, key, versionID, etag string
 	var contentLength int64
 	err := store.pool.QueryRow(ctx, `
-		SELECT document.storage_ref, document.type,
+		SELECT document.storage_ref, document.type, document.model_selection_kind,
 		       COALESCE(probe.bucket, ''), COALESCE(probe.object_key, ''),
 		       COALESCE(probe.version_id, ''), COALESCE(probe.etag, ''),
 		       COALESCE(probe.content_length, -1)
@@ -78,7 +78,7 @@ func (store *PostgresStore) Source(ctx context.Context, job Job) (Source, error)
 		   AND probe.probe_generation IS NOT DISTINCT FROM pipeline.probe_generation
 		   AND probe.policy_version IS NOT DISTINCT FROM pipeline.policy_version
 		   AND probe.deletion_fence = pipeline.deletion_fence
-		 WHERE document.id=$1 AND document.owner_id=$2 AND document.status='PROCESSING'`, job.DocumentID, job.OwnerID, job.ID).Scan(&source.StorageRef, &source.Type, &bucket, &key, &versionID, &etag, &contentLength)
+		 WHERE document.id=$1 AND document.owner_id=$2 AND document.status='PROCESSING'`, job.DocumentID, job.OwnerID, job.ID).Scan(&source.StorageRef, &source.Type, &source.SelectionKind, &bucket, &key, &versionID, &etag, &contentLength)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Source{}, Failure{Code: ObjectNotFound}
