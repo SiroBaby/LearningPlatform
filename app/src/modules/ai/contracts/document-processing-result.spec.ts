@@ -35,6 +35,11 @@ describe('isDocumentProcessingFailureRetryable', () => {
   );
 });
 
+const NON_PROBE_MEDIA_CODES: ReadonlySet<string> = new Set([
+  DocumentProcessingFailureCode.MEDIA_PRICING_UNAVAILABLE,
+  DocumentProcessingFailureCode.MEDIA_REQUIRES_PLATFORM_MODEL,
+]);
+
 describe('media probe failure contract', () => {
   it('matches every permanent failure code emitted by the Go worker', () => {
     const goTypes = readFileSync(
@@ -46,8 +51,9 @@ describe('media probe failure contract', () => {
       (match) => match[1],
     ).filter((code) => code.startsWith('MEDIA_')).sort();
     const nestMediaCodes = Object.values(DocumentProcessingFailureCode)
-      // Emitted by the full-pipeline worker (processing/types.go), not by the media probe.
-      .filter((code) => code.startsWith('MEDIA_') && code !== DocumentProcessingFailureCode.MEDIA_REQUIRES_PLATFORM_MODEL)
+      // Not emitted by the media probe: MEDIA_REQUIRES_PLATFORM_MODEL comes from the full-pipeline worker
+      // (processing/types.go) and MEDIA_PRICING_UNAVAILABLE from the Node probe projection.
+      .filter((code) => code.startsWith('MEDIA_') && !NON_PROBE_MEDIA_CODES.has(code))
       .sort();
 
     expect(goMediaCodes).toEqual(nestMediaCodes);

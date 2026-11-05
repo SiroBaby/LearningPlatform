@@ -131,9 +131,20 @@ export class ContentService {
     }
     return {
       // Media duration is unknown until the probe (ADR-0031); never derive credits from video/audio bytes.
-      estimatedCredits: !plan ? 0 : isMediaDocumentType(type) ? null : this.estimatePlatformCredits(sizeBytes, plan),
+      estimatedCredits: this.estimateCreditsBeforeUpload(sizeBytes, type, plan),
       selectedModelLabel: selected.label,
     };
+  }
+
+  /** CUSTOM models cost nothing; media is unknown until the probe; everything else is size-based. */
+  private estimateCreditsBeforeUpload(
+    sizeBytes: number,
+    type: DocumentType,
+    plan: PlanModelCatalogItem | null,
+  ): number | null {
+    if (!plan) return 0;
+    if (isMediaDocumentType(type)) return null;
+    return this.estimatePlatformCredits(sizeBytes, plan);
   }
 
   private estimatePlatformCredits(

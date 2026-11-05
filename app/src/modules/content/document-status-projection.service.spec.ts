@@ -18,12 +18,12 @@ const inputCommand = (durationSec: number): DocumentProbeCompletionCommand => ({
   probeResultId: 'result-1',
 });
 
-const createService = (document: unknown) => {
+const createService = (document: unknown, platformModels: readonly unknown[] = [inputModel]) => {
   const repository = {
     completeProbe: jest.fn<(command: unknown) => Promise<'APPLIED'>>().mockResolvedValue('APPLIED'),
     findByOwnerId: jest.fn<() => Promise<unknown>>().mockResolvedValue(document),
   };
-  const config = { ai: { platformModels: [inputModel] } };
+  const config = { ai: { platformModels } };
   const service = new DocumentStatusProjectionService(repository as never, config as never, new MediaCreditEstimator());
   return { repository, service };
 };
@@ -36,7 +36,7 @@ describe('DocumentStatusProjectionService.completeProbe', () => {
 
     expect(actualOutcome).toBe('APPLIED');
     expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
-      creditEstimate: { estimatedCredits: 50_213, platformModelId: 'plan-model' },
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 50_213, platformModelId: 'plan-model' },
       durationSec: 355,
     }));
   });
@@ -47,7 +47,7 @@ describe('DocumentStatusProjectionService.completeProbe', () => {
     await service.completeProbe(inputCommand(355));
 
     expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
-      creditEstimate: { estimatedCredits: 0, platformModelId: null },
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 0, platformModelId: null },
     }));
   });
 
@@ -57,14 +57,54 @@ describe('DocumentStatusProjectionService.completeProbe', () => {
     await service.completeProbe(inputCommand(355));
 
     expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
-      creditEstimate: { estimatedCredits: 0, platformModelId: null },
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 0, platformModelId: null },
     }));
   });
 
-  it('fails fast when the platform model is no longer configured', async () => {
+  it('returns a terminal MEDIA_PRICING_UNAVAILABLE failure instead of throwing when the platform model is no longer configured', async () => {
     const { repository, service } = createService({ modelSelectionKind: 'PLAN', platformModelId: 'removed-model' });
 
-    await expect(service.completeProbe(inputCommand(60))).rejects.toThrow('no longer configured');
-    expect(repository.completeProbe).not.toHaveBeenCalled();
+    await expect(service.completeProbe(inputCommand(60))).resolves.toBe('APPLIED');
+
+    expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
+      creditEstimate: { kind: 'UNAVAILABLE', errorCode: 'MEDIA_PRICING_UNAVAILABLE' },
+    }));
+  });
+
+  it('returns MEDIA_PRICING_UNAVAILABLE when the platform model has no price', async () => {
+    const { repository, service } = createService(
+      { modelSelectionKind: 'PLAN', platformModelId: 'plan-model' },
+      [{ ...inputModel, model: 'unpriced-model' }],
+    );
+
+    await service.completeProbe(inputCommand(60));
+
+    expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
+      creditEstimate: { kind: 'UNAVAILABLE', errorCode: 'MEDIA_PRICING_UNAVAILABLE' },
+    }));
+  });
+
+  it.each([0, -5, 1.5, 7201])('returns MEDIA_PROBE_FAILED for an invalid duration of %s seconds', async (inputDuration) => {
+    const { repository, service } = createService({ modelSelectionKind: 'PLAN', platformModelId: 'plan-model' });
+
+    await service.completeProbe(inputCommand(inputDuration));
+
+    expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
+      creditEstimate: { kind: 'UNAVAILABLE', errorCode: 'MEDIA_PROBE_FAILED' },
+    }));
+  });
+
+  it('prices STT against the first configured (default) model even when the Document selected another', async () => {
+    const inputSelected = { ...inputModel, id: 'cheap-model', model: 'gpt-4.1-mini' };
+    const { repository, service } = createService(
+      { modelSelectionKind: 'PLAN', platformModelId: 'cheap-model' },
+      [inputModel, inputSelected],
+    );
+
+    await service.completeProbe(inputCommand(355));
+
+    expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 50_213, platformModelId: 'cheap-model' },
+    }));
   });
 });

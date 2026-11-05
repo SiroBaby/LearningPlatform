@@ -7,7 +7,7 @@ export interface Phase0DocumentFailurePresentation {
 }
 
 export const MEDIA_REQUIRES_PLATFORM_MODEL_MESSAGE =
-  "Tệp MP3/MP4 chỉ xử lý được bằng cách có trong gói của bạn, chưa dùng được với kết nối riêng. Hãy chọn cách xử lý có trong gói rồi tải lại.";
+  "Tệp MP3/MP4 chỉ xử lý được bằng mô hình có trong gói của bạn, chưa dùng được với kết nối riêng. Hãy chọn mô hình có trong gói rồi tải lại.";
 
 const RETRYABLE_FAILURE_CODES: readonly Phase0DocumentProcessingFailureCode[] = [
   "BUDGET_EXHAUSTED",
@@ -106,6 +106,12 @@ export function getDocumentFailurePresentation(
         title: "Kiểm tra file mất lâu hơn dự kiến",
         description: "Hãy thử lại sau. Nếu vẫn lỗi, bạn có thể cắt ngắn file rồi tải lại.",
         retryable: true,
+      };
+    case "MEDIA_PRICING_UNAVAILABLE":
+      return {
+        title: "Chưa thể tính lượt dùng cho tệp này",
+        description: "Hệ thống chưa tính được lượt dùng cho video hoặc âm thanh lúc này. Hãy thử tải lại sau hoặc liên hệ hỗ trợ nếu lỗi lặp lại.",
+        retryable: false,
       };
     case "MEDIA_REQUIRES_PLATFORM_MODEL":
       return {

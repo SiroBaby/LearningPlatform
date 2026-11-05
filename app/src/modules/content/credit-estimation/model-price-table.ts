@@ -67,3 +67,14 @@ export function validateModelPriceTable(table: ModelPriceTable): ModelPriceTable
   }
   return table;
 }
+
+/** Boot-time check: every configured platform model and the STT model must have a price. */
+export function assertPlatformModelsPriced(table: ModelPriceTable, models: readonly string[]): void {
+  const missing = models.filter((model) => !table.llm[model]);
+  if (missing.length > 0) {
+    throw new ModelPriceTableError(`Model price table has no price for platform model(s): ${missing.join(', ')}`);
+  }
+  if (!table.stt[DEFAULT_STT_MODEL]) {
+    throw new ModelPriceTableError(`Model price table has no price for STT model ${DEFAULT_STT_MODEL}`);
+  }
+}

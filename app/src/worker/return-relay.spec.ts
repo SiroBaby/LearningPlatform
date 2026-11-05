@@ -44,10 +44,11 @@ import { clearDocumentFlowData } from '../../test/support/test-database-cleanup'
 import { LegacyUnfencedResultError, ReturnRelay } from './return-relay.service';
 
 const PROBE_TEST_RESERVED_CREDITS = 80;
+const PROBE_TEST_MODEL = { creditPerInputToken: 1, creditPerOutputToken: 1, id: 'test', model: 'test', planIds: ['free'] };
 // Credit pricing has its own unit spec; here the probe flow only needs a deterministic reservation amount.
 const createProjectionService = (dataSource: DataSource): DocumentStatusProjectionService => new DocumentStatusProjectionService(
   new ContentRepository(dataSource),
-  { ai: { platformModels: { find: () => ({ creditPerInputToken: 1, creditPerOutputToken: 1, id: 'test', model: 'test', planIds: ['free'] }) } } } as never,
+  { ai: { platformModels: Object.assign([PROBE_TEST_MODEL], { find: () => PROBE_TEST_MODEL }) } } as never,
   { estimate: () => ({ generationCredits: 0, sttCredits: 0, totalCredits: PROBE_TEST_RESERVED_CREDITS }) } as never,
 );
 const quizHandoff = { persist: async () => ({ optionCount: 0, questionCount: 0, questionIds: [], quizId: randomUUID() }) };

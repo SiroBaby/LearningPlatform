@@ -292,7 +292,7 @@ describe('ContentService.confirm', () => {
         probeResultId: resultId,
         probeGeneration,
         locator,
-        creditEstimate: { estimatedCredits: 50, platformModelId: 'platform-default' },
+        creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 50, platformModelId: 'platform-default' },
       } as const;
       return { command, outcome: await repository.completeProbe(command) };
     };
@@ -364,6 +364,107 @@ describe('ContentService.confirm', () => {
     const [probeRequest] = await outbox.find({ where: { aggregateId: doc.id } });
     expect(probeRequest.payload.fullPipelineJobId).toBe(retainedJobId);
     expect(probeRequest.payload.processingAttempt).toBe(1);
+  });
+
+  it.each([
+    {
+      label: 'fails the Document terminally without a receipt or reservation when pricing is unavailable',
+      creditEstimate: { kind: 'UNAVAILABLE', errorCode: DocumentProcessingFailureCode.MEDIA_PRICING_UNAVAILABLE },
+      expectedOutcome: 'APPLIED',
+      expectedStatus: DocumentStatus.FAILED,
+      expectedReceipts: 0,
+    },
+    {
+      label: 'ignores a platform model mismatch before any receipt is persisted',
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 50, platformModelId: 'another-model' },
+      expectedOutcome: 'IGNORED',
+      expectedStatus: DocumentStatus.PROBING,
+      expectedReceipts: 0,
+    },
+  ] as const)('$label', async (scenario) => {
+    const owner = randomUUID();
+    const doc = await documents.save(documents.create({
+      modelSelectionKind: 'PLAN',
+      ownerId: owner,
+      type: DocumentType.AUDIO,
+      originalName: 'lecture.mp3',
+      platformModelId: 'platform-default',
+      storageRef: `${owner}/${randomUUID()}.mp3`,
+      sizeBytes: 1024,
+      status: DocumentStatus.UPLOADED,
+    }));
+    await db.client.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 100)',
+      [owner],
+    );
+    const repository = new ContentRepository(dataSource);
+    const confirmed = await service.confirm(owner, doc.id);
+    const locator = {
+      bucket: 'learning-platform-dev-media-custom',
+      key: doc.storageRef,
+      versionId: 'version-pricing',
+      etag: 'etag-pricing',
+      contentLength: 1024,
+    } as const;
+    const probeJob = await mediaProbeJobs.save(mediaProbeJobs.create({
+      documentId: doc.id,
+      ownerId: owner,
+      correlationId: randomUUID(),
+      probeGeneration: confirmed.probeGeneration!,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId: doc.fullPipelineJobId,
+      sourceBucket: locator.bucket,
+      sourceKey: locator.key,
+      sourceVersionId: locator.versionId,
+      sourceEtag: locator.etag,
+      sourceContentLength: locator.contentLength,
+      status: MediaProbeJobStatus.COMPLETED,
+      idempotencyKey: randomUUID(),
+    }));
+    const resultId = randomUUID();
+    await mediaProbeResults.save(mediaProbeResults.create({
+      id: resultId,
+      mediaProbeJobId: probeJob.id,
+      documentId: doc.id,
+      ownerId: owner,
+      probeGeneration: confirmed.probeGeneration!,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      durationSec: 120,
+      bucket: locator.bucket,
+      objectKey: locator.key,
+      versionId: locator.versionId,
+      etag: locator.etag,
+      contentLength: locator.contentLength,
+      fullPipelineJobId: doc.fullPipelineJobId,
+    }));
+
+    const actualOutcome = await repository.completeProbe({
+      deletionFence: 0,
+      documentId: doc.id,
+      durationSec: 120,
+      eventCreatedAt: new Date(),
+      fullPipelineJobId: doc.fullPipelineJobId,
+      ownerId: owner,
+      policyVersion: 'media-v1',
+      probeResultId: resultId,
+      probeGeneration: confirmed.probeGeneration!,
+      locator,
+      creditEstimate: scenario.creditEstimate,
+    });
+
+    expect(actualOutcome).toBe(scenario.expectedOutcome);
+    expect((await documents.findOneByOrFail({ id: doc.id })).status).toBe(scenario.expectedStatus);
+    expect((await db.client.query(
+      'SELECT COUNT(*)::int AS count FROM "course"."document_probe_receipts" WHERE "document_id" = $1',
+      [doc.id],
+    )).rows).toEqual([{ count: scenario.expectedReceipts }]);
+    expect((await db.client.query(
+      'SELECT "available_credits", "reserved_credits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1',
+      [owner],
+    )).rows).toEqual([{ available_credits: '100', reserved_credits: '0' }]);
+    expect(await outbox.count({ where: { aggregateId: doc.id, eventType: 'DocumentReadyForProcessing' } })).toBe(0);
   });
 
   it('re-probe giữ locator bất biến khi object bị thay thế và không nhân đôi credit/outbox', async () => {
@@ -465,7 +566,7 @@ describe('ContentService.confirm', () => {
       probeResultId: firstResultId,
       probeGeneration: firstGeneration,
       locator: firstLocator,
-      creditEstimate: { estimatedCredits: 80, platformModelId: 'platform-default' },
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 80, platformModelId: 'platform-default' },
     })).resolves.toBe('APPLIED');
 
     await documents.update(
@@ -538,7 +639,7 @@ describe('ContentService.confirm', () => {
       probeResultId: secondResultId,
       probeGeneration: secondGeneration,
       locator: secondLocator,
-      creditEstimate: { estimatedCredits: 80, platformModelId: 'platform-default' },
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 80, platformModelId: 'platform-default' },
     } as const;
     await expect(repository.completeProbe(secondCompletion)).resolves.toBe('APPLIED');
     await expect(repository.completeProbe(secondCompletion)).resolves.toBe('ALREADY_APPLIED');

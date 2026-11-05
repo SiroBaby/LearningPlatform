@@ -36,11 +36,20 @@ export interface DocumentProbeCompletionCommand {
 }
 
 /** Credit estimate computed from the probed duration; the repository only persists and reserves it. */
-export interface DocumentProbeCreditEstimate {
-  readonly estimatedCredits: number;
-  /** Platform model the estimate was priced for; the repository ignores the probe if the Document changed model. */
-  readonly platformModelId: string | null;
-}
+export type DocumentProbeCreditEstimate =
+  | {
+    readonly kind: 'ESTIMATED';
+    readonly estimatedCredits: number;
+    /** Platform model the estimate was priced for; the repository ignores the probe if the Document changed model. */
+    readonly platformModelId: string | null;
+  }
+  | {
+    /** No estimate can be made: the repository fails the Document terminally and reserves nothing. */
+    readonly kind: 'UNAVAILABLE';
+    readonly errorCode:
+      | DocumentProcessingFailureCode.MEDIA_PRICING_UNAVAILABLE
+      | DocumentProcessingFailureCode.MEDIA_PROBE_FAILED;
+  };
 
 export interface DocumentProbeCompletionPersistenceCommand extends DocumentProbeCompletionCommand {
   readonly creditEstimate: DocumentProbeCreditEstimate;

@@ -624,17 +624,6 @@ export class ContentRepository extends BaseRepository<Document> {
         return 'IGNORED';
       }
 
-      if (
-        command.durationSec <= 0 ||
-        command.durationSec > MAX_MEDIA_DURATION_SEC ||
-        !Number.isInteger(command.durationSec)
-      ) {
-        throw new Error('Invalid media probe duration');
-      }
-      if (!Number.isSafeInteger(command.locator.contentLength) || command.locator.contentLength < 0) {
-        throw new Error('Invalid media probe content length');
-      }
-
       const [probeRequest] = await manager.query<readonly [ProbeRequestIdentity]>(
         `SELECT "payload"->>'fullPipelineJobId' AS "fullPipelineJobId"
                 , "payload"->>'documentId' AS "documentId"
@@ -663,14 +652,44 @@ export class ContentRepository extends BaseRepository<Document> {
           : 'IGNORED';
       }
 
+      const { creditEstimate } = command;
+      if (creditEstimate.kind === 'UNAVAILABLE') {
+        // No price/duration to reserve against: fail terminally (no receipt, no reservation) so the relay can move on.
+        await manager.update(
+          Document,
+          { id: command.documentId, ownerId: command.ownerId, status: DocumentStatus.PROBING },
+          {
+            budgetStatus: 'NOT_RESERVED',
+            errorCode: creditEstimate.errorCode,
+            errorMessage: 'Processing credits could not be estimated',
+            status: DocumentStatus.FAILED,
+          },
+        );
+        return 'APPLIED';
+      }
+      if (
+        command.durationSec <= 0 ||
+        command.durationSec > MAX_MEDIA_DURATION_SEC ||
+        !Number.isInteger(command.durationSec)
+      ) {
+        throw new Error('Invalid media probe duration');
+      }
+      if (!Number.isSafeInteger(command.locator.contentLength) || command.locator.contentLength < 0) {
+        throw new Error('Invalid media probe content length');
+      }
+
+      // Checked before the receipt is persisted so a mismatch leaves no partial state behind.
+      if (document.modelSelectionKind === 'PLAN' && document.platformModelId !== creditEstimate.platformModelId) {
+        return 'IGNORED';
+      }
+
       if (!(await this.persistProbeReceipt(manager, document, canonicalCommand))) {
         return 'IGNORED';
       }
 
       const isPlatformModel = document.modelSelectionKind === 'PLAN';
       // Credits come from the probed duration (computed by the projection service), never from file size.
-      if (isPlatformModel && document.platformModelId !== command.creditEstimate.platformModelId) return 'IGNORED';
-      const estimatedCredits = isPlatformModel ? command.creditEstimate.estimatedCredits : 0;
+      const estimatedCredits = isPlatformModel ? creditEstimate.estimatedCredits : 0;
       if (!Number.isSafeInteger(estimatedCredits) || estimatedCredits < 0) {
         throw new Error('Invalid media credit estimate');
       }

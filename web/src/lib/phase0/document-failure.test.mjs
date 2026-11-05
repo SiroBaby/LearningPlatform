@@ -94,5 +94,5 @@ test("explains in Vietnamese that custom connections cannot process media", () =
 
   assert.equal(presentation.retryable, false);
   assert.match(presentation.description, /kết nối riêng/u);
-  assert.match(presentation.description, /có trong gói/u);
+  assert.match(presentation.description, /mô hình có trong gói/u);
 });
