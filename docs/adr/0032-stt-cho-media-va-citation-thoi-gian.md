@@ -8,6 +8,16 @@ D1-D10). ADR này **sửa đổi [ADR-0031](0031-media-probe-and-isolated-worker
 phần STT của MVP-2; tài liệu không tự xác nhận rằng code, image hoặc hạ tầng đã
 được triển khai.
 
+**Phân biệt quyết định và đề xuất.** Chỉ **D1-D10** là quyết định của Owner. Mọi
+chi tiết thiết kế khác trong ADR này (độ dài chunk và overlap, bố cục key
+`derived-audio/`, bitrate, cờ ffmpeg, tên biến `STT_*` ngoài `STT_BASE_URL`,
+`STT_API_KEY`, `STT_MODEL`, công thức `stt_provider_identity`, preflight lúc
+khởi động, tên bảng/cột và UNIQUE, định dạng khóa settle, tên mã lỗi, thuật toán
+stitch, quy tắc chọn chunk, mọi con số ngưỡng) là **đề xuất của người lập thiết
+kế**, được đánh dấu **[Đề xuất]**. PR thực thi được phép điều chỉnh hoặc hiệu
+chỉnh chúng bằng đo đạc thật mà không cần sửa ADR, miễn là vẫn giữ D1-D10 và
+các ràng buộc bảo mật.
+
 Điều kiện chưa xác minh (chặn PR adapter STT): chưa có bằng chứng rằng endpoint
 STT trên dev hỗ trợ `POST /audio/transcriptions` với `whisper-1` và
 `response_format=verbose_json`. `openai-base-url` hiện trên dev là router riêng
@@ -25,7 +35,8 @@ chunk, generate, validate, persist, Citation, Attempt và Grading.
 Các ràng buộc làm bài toán không tầm thường:
 
 - STT (Speech-to-Text, chuyển giọng nói thành văn bản) của provider giới hạn
-  khoảng 25 MiB mỗi request, trong khi media có thể lớn gấp hàng chục lần. Cần
+  khoảng 25 MiB mỗi request (theo tài liệu API speech-to-text của OpenAI; chưa
+  kiểm lại với endpoint dev, xem mục xác minh), trong khi media có thể lớn gấp hàng chục lần. Cần
   trích audio, hạ chất lượng và cắt đoạn (chunk).
 - ffmpeg là parser/decoder xử lý bytes không tin cậy. ADR-0031 cấm đặt nó cùng
   Pod (đơn vị chạy container) với AI credential của full-pipeline worker.
@@ -35,7 +46,7 @@ Các ràng buộc làm bài toán không tầm thường:
 - STT tính tiền theo phút audio, không theo token. Ước tính credit hiện tại
   (`estimatePlatformCredits` trong `content.service.ts`) dùng dung lượng file
   chia `COARSE_INPUT_TOKEN_BYTES`, nên MP4 355 giây (24.451.261 byte) bị ước
-  tính 6.113.328 lượt dùng và Document `fb1ea750-38fb-4490-80e3-8e4f2eb01b43`
+  tính 6.113.328 credit và Document `fb1ea750-38fb-4490-80e3-8e4f2eb01b43`
   thất bại `BUDGET_EXHAUSTED` trên dev, trong khi PDF được ước tính 61.906.
 - Định nghĩa credit đang lệch giữa code (1 credit = 1 token) và
   `docs/10-monetization.md` (1 credit ≈ $0,001, STT ≈ 18 credit/phút).
@@ -44,7 +55,12 @@ Các ràng buộc làm bài toán không tầm thường:
 Thuật ngữ dùng theo [CONTEXT.md](../../CONTEXT.md): **Locator** (vị trí nguồn),
 **Citation** (tham chiếu nguồn `{chunkId, locator, snippet}`), **Owner**,
 **Document**. Phần Node đã chấp nhận Locator `kind=time` (`startSec`, `endSec`);
-Go worker và web chưa sinh/hiển thị nó.
+Go worker chưa sinh nó: `Locator` của Go có `MarshalJSON` riêng theo từng
+`kind`, chưa có nhánh `time` và chưa có trường `startSec`/`endSec`, nên PR1 phải
+thêm cả trường lẫn nhánh marshal (bảo đảm `startSec: 0` không bị bỏ do
+`omitempty`). Web đã có UI hiển thị `time`
+(`web/src/components/ui/citation.tsx`, `web/src/app/quiz/[id]/result/[attemptId]/page.tsx`)
+nhưng mới dùng fixture/mock; PR6 nối dữ liệu thật và chỉnh cách hiển thị.
 
 ## Quyết định
 
@@ -58,15 +74,22 @@ Go worker và web chưa sinh/hiển thị nó.
   (`STT_CAPABILITY_VERSION`), không suy ra từ tên model, không tự fallback
   (theo tinh thần [ADR-0004](0004-llm-provider-port-from-phase-0.md): request
   đầu có thể đã tốn tiền).
-- Cấu hình **tách khỏi LLM**: `STT_BASE_URL`, `STT_API_KEY`, `STT_MODEL` (cùng
-  `STT_PROVIDER`, `STT_CAPABILITY_VERSION`, `STT_REQUEST_TIMEOUT_MS`,
-  `STT_CONCURRENCY`, `STT_MAX_CHUNK_BYTES`). Hằng số contract không bí mật
-  (provider, capability) khai báo literal trong manifest, không đưa vào SSM.
-- Định danh provider cho idempotency:
+- Cấu hình **tách khỏi LLM** (Owner chốt): `STT_BASE_URL`, `STT_API_KEY`,
+  `STT_MODEL`.
+- **[Đề xuất]** Biến phụ `STT_PROVIDER`, `STT_CAPABILITY_VERSION`,
+  `STT_REQUEST_TIMEOUT_MS`, `STT_CONCURRENCY`, `STT_MAX_CHUNK_BYTES`. Hằng số
+  contract không bí mật (provider, capability) khai báo literal trong manifest,
+  không đưa vào SSM.
+- **[Đề xuất]** Định danh provider cho idempotency:
   `stt_provider_identity = sha256(provider_type + canonical_base_url + model +
-  capability_version)`; API key không tham gia (theo ADR-0021).
-- Preflight khi khởi động: gửi một clip tiếng Việt tổng hợp ngắn và kiểm tra
-  response có `segments[]` hợp lệ; thất bại thì worker không Ready.
+  capability_version)`. API key không tham gia (theo ADR-0021). Công thức cố ý
+  bỏ `transport` và `structured_output_mode` (có trong định danh của LLM) vì STT
+  chỉ có một transport multipart và một định dạng đầu ra `verbose_json`, không có
+  chế độ structured output để phân biệt; nếu sau này thêm biến thể, phải thêm
+  vào công thức để không dùng nhầm checkpoint cũ.
+- **[Đề xuất]** Preflight (kiểm tra sẵn sàng) khi khởi động: gửi một clip tiếng
+  Việt tổng hợp ngắn và kiểm tra response có `segments[]` hợp lệ; thất bại thì
+  worker không Ready.
 
 Lựa chọn đã loại: (a) dùng chung `OPENAI_BASE_URL`: không biết router có route
 audio, và proxy kiểu LiteLLM/OpenRouter có thể không hỗ trợ; (b)
@@ -86,7 +109,8 @@ hạ tầng, ngoài phạm vi (`docs/11-roadmaps.md`).
   credit STT = phút × giá STT mỗi phút ÷ giá 1 token model mặc định
   ```
 
-- Ước tính cho media (hàm thuần ở Node, tính sau probe từ duration):
+- **[Đề xuất]** Ước tính cho media (hàm thuần ở Node, tính sau probe từ
+  duration; công thức và tên tham số do PR2 điều chỉnh):
 
   ```text
   sttCredits        = ceil(durationSec × sttCreditsPerMinute / 60)
@@ -98,13 +122,15 @@ hạ tầng, ngoài phạm vi (`docs/11-roadmaps.md`).
   Các hằng số hiệu chỉnh (`speechCharsPerMinute`, `inputTokensPerChunk`,
   `outputTokensPerQuestion`) ban đầu chỉ là giả định và phải được hiệu chỉnh
   bằng fixture thật trước khi bật media trên dev.
-- Hệ quả đã biết: ví Free 10.000 credit không đủ cho 1 phút video theo tỉ lệ
-  giá này; tài khoản test trên dev được nạp thêm credit. Đây là cách tạm.
+- Hệ quả đã biết (Owner ghi nhận trong #268): ví Free 10.000 credit không đủ cho
+  1 phút video theo tỉ lệ giá này; tài khoản test trên dev được nạp thêm
+  credit. Đây là cách tạm.
   **Thiết kế lại credit theo chi phí thật: #268** (đơn vị credit, markup, quota
   gói, di trú ví). ADR này không quyết định các điểm đó.
 
 Lựa chọn đã loại: cố định "18 credit/phút" theo `docs/10`: mâu thuẫn với đơn
-vị token hiện hành và làm STT rẻ hơn quiz khoảng 60 lần, trái `docs/09` (STT là
+vị token hiện hành và làm STT quá rẻ so với quiz (ước tính thô của người lập
+thiết kế, chưa đo: cỡ vài chục lần với video vài phút), trái `docs/09` (STT là
 chi phí lớn nhất).
 
 ### D3. ffmpeg chạy trong `media-probe-worker`
@@ -115,7 +141,8 @@ chi phí lớn nhất).
   version/checksum như `ffprobe`.
 - **Full-pipeline worker không bao giờ chạy ffmpeg.** Nó chỉ đọc chunk audio đã
   chuẩn bị theo đúng `VersionId`.
-- Lệnh ffmpeg: absolute path, không shell, stdin đóng, environment tối thiểu,
+- **[Đề xuất]** Lệnh ffmpeg (cờ cụ thể do PR4 chốt và kiểm trên binary đã pin):
+  absolute path, không shell, stdin đóng, environment tối thiểu,
   `-protocol_whitelist file` và `-format_whitelist` trùng allowlist demuxer của
   probe, chỉ `-map 0:a:0 -vn -sn -dn -ac 1 -ar 16000`, mã hóa MP3 bitrate thấp,
   `-threads 1`; mỗi chunk một lần chạy với timeout, cap dung lượng output và
@@ -129,7 +156,9 @@ Lựa chọn đã loại: (a) ffmpeg trong full-pipeline worker: decoder xử l�
 không tin cậy cùng Pod với AI key và DB credential, trái ADR-0031 §1; (b)
 Deployment `media-audio-prep-worker` + job type mới: sạch nhất về quyền nhưng
 thêm workload/ServiceAccount/NetworkPolicy, đụng queue contract ADR-0023, vượt
-ngân sách CPU dev (2000m) và trái `docs/11` "không mở rộng hạ tầng"; (c) gọi
+ngân sách CPU request của node dev (khoảng 2000m theo
+`cpu-request-budget-contract.yml` trong IaC, người lập thiết kế đọc từ repo, chưa
+đo lại) và trái `docs/11` "không mở rộng hạ tầng"; (c) gọi
 STT bằng file gốc: vượt 25 MiB và gửi video vô ích.
 
 Đánh đổi: probe không còn "chỉ đọc" mà có quyền `PutObject` hẹp (D4) và chạy
@@ -139,15 +168,17 @@ fail-closed (không tốn tiền cho media hỏng).
 
 ### D4. Audio dẫn xuất: prefix `derived-audio/`, lifecycle khoảng 2 ngày
 
-- Chunk lưu trong cùng media bucket, key
+- Chunk lưu trong cùng media bucket, prefix `derived-audio/` (Owner chốt).
+  **[Đề xuất]** Bố cục key
   `derived-audio/<ownerId>/<documentId>/<probeGeneration>/<chunkIndex>.mp3`.
-  Manifest chunk (`VersionId`, `ETag`, `ContentLength`, `sha256`, khoảng thời
+  **[Đề xuất]** Manifest chunk (`VersionId`, `ETag`, `ContentLength`, `sha256`, khoảng thời
   gian thân và file) ghi vào bảng mới trong **cùng transaction** `Complete` của
   probe. Full-pipeline đọc đúng `VersionId`.
-- Chunk: thân 600 giây, overlap 5 giây mỗi phía; chunk cuối ngắn hơn `2 ×
+- **[Đề xuất]** Chunk: thân 600 giây, overlap (vùng chồng lấn giữa hai chunk kề
+  nhau để không mất lời ở ranh giới) 5 giây mỗi phía; chunk cuối ngắn hơn `2 ×
   overlap` được gộp vào chunk trước. 32 kbps mono khoảng 2,4 MB cho 10 phút,
-  nhỏ hơn nhiều giới hạn 25 MiB.
-- Lifecycle rule hết hạn cả current lẫn noncurrent version của prefix sau khoảng
+  nhỏ hơn nhiều giới hạn 25 MiB. Các số này cần hiệu chỉnh bằng fixture thật.
+- Lifecycle (quy tắc tự hết hạn của S3) hết hạn cả current lẫn noncurrent version của prefix sau khoảng
   2 ngày (đủ cho technical retry; retry do Owner luôn re-probe nên tái tạo
   chunk).
 - Mọi locator `derived-audio/` phải vào **purge manifest** khi xóa Document
@@ -162,21 +193,31 @@ ghi vào document bucket (trộn bucket, mất contract versioning).
 
 ### D5. Custom AI bị chặn cho media
 
-Document media phải dùng Platform Model. Custom AI (BYOM,
+Document media phải dùng Platform Model. Custom AI (BYOM, tức "mang model của
+chính mình",
 [ADR-0021](0021-phase-5-custom-ai-byom-openai-compatible.md)) bị chặn trong #160
 vì chưa có contract STT cho endpoint của Owner, và media gửi audio ra ngoài
 nền tảng. Mở lại là một quyết định riêng.
 
+Nơi chặn: Node là cổng chính, từ chối Custom AI cho media ở estimate, cấp upload
+URL và confirm. **[Đề xuất]** Go worker cũng từ chối job media có Custom AI như
+phòng thủ nhiều lớp, vì hiện Go vẫn chấp nhận `CUSTOM`
+(`worker/internal/processing/document_processing.go`, quanh dòng 125), nên không
+được chỉ dựa vào Node.
+
 ### D6. Job dài: checkpoint từng chunk, không thêm cơ chế lease mới
 
-- Checkpoint STT theo từng chunk trong bảng mới `ai.media_stt_chunk_results`,
-  UNIQUE `(probe_result_id, chunk_index, stt_provider_identity)`.
+- Checkpoint (điểm lưu kết quả trung gian) STT theo từng chunk trong một bảng
+  mới (Owner chốt). **[Đề xuất]** Tên `ai.media_stt_chunk_results`, UNIQUE
+  `(probe_result_id, chunk_index, stt_provider_identity)`.
 - Retry kỹ thuật và claim lại sau khi lease hết hạn chỉ gọi STT cho chunk còn
   thiếu: không trả tiền hai lần và transcript được đóng băng nên ID chunk/câu
-  hỏi ổn định (ID chunk xác định theo `docID:ownerID:index:hash`).
-- Trần số câu hỏi cho media: 30 (chọn chunk phân bố đều theo thời gian); bước
-  generate chạy có concurrency giới hạn để vừa job timeout. Trần này chỉ áp cho
-  media; PDF giữ hành vi hiện tại.
+  hỏi ổn định (ID chunk hiện được sinh xác định từ tài liệu, owner, thứ tự và
+  hash nội dung trong `processing.ChunkText`).
+- Trần số câu hỏi cho media là 30 và bước generate có concurrency (Owner chốt).
+  **[Đề xuất]** Chọn chunk phân bố đều theo thời gian khi vượt trần, và mức
+  concurrency cụ thể, do PR5 chốt để vừa job timeout. Trần này chỉ áp cho media;
+  PDF giữ hành vi hiện tại.
 - **Không** thêm heartbeat/renew lease hay job type mới.
 
 Lựa chọn đã loại: heartbeat renew lease (đổi queue contract ADR-0023); tách job
@@ -186,10 +227,11 @@ type STT riêng (thêm trạng thái, claim boundary và workload).
 
 Hai lỗi đã biết ở đường Go: (1) sau probe, credit đã giữ chưa được
 settle/release khi job kết thúc; (2) khóa settle dùng `processingAttempt` thay
-vì attempt của Go. Sửa trong PR riêng (PR3), settle idempotent theo
-`settle:{job}:{attempt}`, dùng số giây STT thực tế; dispatch đã xảy ra nhưng
-không biết kết quả thì phần chưa xác định giữ ở `HELD` (ADR-0022). Thất bại
-trước mọi dispatch STT thì release toàn bộ. **Không bật media trên dev tới khi
+vì attempt của Go. Sửa trong PR riêng (PR3): settle dùng attempt của Go và settle/release credit đã giữ sau
+probe. **[Đề xuất]** Khóa idempotency dạng `settle:{job}:{attempt}`, tính theo số
+giây STT thực tế; dispatch đã xảy ra nhưng không biết kết quả thì phần chưa xác
+định giữ ở `HELD` (theo ADR-0022); thất bại trước mọi dispatch STT thì release
+toàn bộ. PR3 có thể chỉnh định dạng khóa miễn giữ được tính idempotent. **Không bật media trên dev tới khi
 PR3 merge và kiểm chứng.**
 
 ### D8. Ước tính trước upload: `AFTER_MEDIA_CHECK`
@@ -204,7 +246,8 @@ thức theo bytes (nguyên nhân gốc lỗi `BUDGET_EXHAUSTED`).
 
 ### D9. Migration: ba migration expand-only
 
-Chỉ thêm, không đổi/xóa cột cũ, không sửa migration đã áp dụng:
+Owner chốt: tối đa 3 migration chỉ thêm (expand-only), không đổi/xóa cột cũ,
+không sửa migration đã áp dụng. **[Đề xuất]** Nội dung và tên cụ thể:
 
 1. `ai.media_audio_chunks` (manifest chunk; GRANT INSERT cho role probe, SELECT
    cho role full-pipeline).
@@ -218,10 +261,10 @@ mới; **`ai.chunks` để #214**.
 
 ### D10. Duration tính tiền là duration giải mã thật
 
-Credit tính theo duration của audio đã giải mã (`ceil(decoded)`), không theo
-metadata container. Từ chối khi lệch quá `max(5 giây, 2%)` với lỗi nghiệp vụ
-không retry (`MEDIA_DURATION_MISMATCH`); `decoded > 7.200 giây` là
-`MEDIA_DURATION_EXCEEDED`. Nhờ đó metadata giả không hạ giá hay phình giá.
+Credit tính theo duration của audio đã giải mã, không theo metadata container.
+Từ chối khi lệch metadata quá `max(5 giây, 2%)` với lỗi nghiệp vụ không retry
+(Owner chốt). **[Đề xuất]** Tên mã lỗi `MEDIA_DURATION_MISMATCH`; làm tròn
+`ceil(decoded)`; `decoded > 7.200 giây` là `MEDIA_DURATION_EXCEEDED`. Nhờ đó metadata giả không hạ giá hay phình giá.
 
 ## Sửa đổi ADR-0031
 
@@ -243,21 +286,23 @@ full-pipeline không cần thiết". ADR này sửa như sau:
 
 ```mermaid
 flowchart TD
-    A[Document PROBING] --> B[media-probe-worker: ffprobe]
-    B --> C[ffmpeg: trích audio mono 16 kHz, cắt chunk]
-    C --> D[Upload derived-audio/ và đo duration giải mã]
-    D --> E{Duration hợp lệ?}
-    E -->|Không| F[FAILED: MEDIA_DURATION_*]
-    E -->|Có| G[Tx Complete: manifest chunk + reserve credit theo duration + FULL_PIPELINE outbox]
-    G --> H[full-pipeline-worker: re-check state, fence, policy, VersionId]
-    H --> I[STT từng chunk, checkpoint ai.media_stt_chunk_results]
-    I --> J[Stitch: cộng offset, lọc overlap, làm sạch]
-    J --> K[ExtractedSegment kind=time]
-    K --> L[Chunk transcript -> generate -> validate -> persist]
-    L --> M[Return seam + settle theo số giây STT thực tế]
+    A["Document PROBING"] --> B["media-probe-worker: ffprobe"]
+    B --> C["ffmpeg: trích audio mono 16 kHz, cắt chunk"]
+    C --> D["Upload derived-audio/ và đo duration giải mã"]
+    D --> E{"Duration hợp lệ?"}
+    E -->|Không| F["FAILED: mã lỗi MEDIA_DURATION"]
+    E -->|Có| G["Tx Complete: manifest chunk, reserve credit theo duration, FULL_PIPELINE outbox"]
+    G --> H["full-pipeline-worker: re-check state, fence, policy, VersionId"]
+    H --> I["STT từng chunk, checkpoint từng chunk"]
+    I --> J["Stitch: cộng offset, lọc overlap, làm sạch"]
+    J --> K["ExtractedSegment kind=time"]
+    K --> L["Chunk transcript, generate, validate, persist"]
+    L --> M["Return seam và settle theo số giây STT thực tế"]
 ```
 
-Stitch (hàm thuần trong Go): mỗi segment cộng `fileStartSec` thành thời gian
+Return seam là đường trả kết quả từ Go worker về Node đã có (ADR-0023). Stitch
+(ghép transcript các chunk thành một dòng thời gian liên tục) dưới đây là
+**[Đề xuất]**: hàm thuần trong Go; mỗi segment cộng `fileStartSec` thành thời gian
 tuyệt đối; segment được giữ khi trung điểm nằm trong thân chunk của nó (chunk kề
 nhận phần còn lại, không so khớp chuỗi mờ); lọc segment rỗng và segment nghi
 hallucinate theo `no_speech_prob`/`avg_logprob` (ngưỡng hiệu chỉnh bằng fixture);
@@ -289,6 +334,10 @@ gói nguyên segment, `chunk.Locator = {time, startSec: đầu, endSec: cuối}`
 
 ## Lỗi, retry, idempotency, xóa và fence
 
+Các nguyên tắc dưới đây (retry kỹ thuật, không trả tiền hai lần, deletion fence
+thắng, không commit kết quả cũ) bám D6, D7, D9 và ADR-0031. Tên mã lỗi, tên khóa
+và chi tiết giao dịch là **[Đề xuất]**, PR thực thi được điều chỉnh.
+
 - Lỗi STT: 429/5xx/timeout là `PROVIDER_UNAVAILABLE` (technical, retry theo
   backoff hiện có); 4xx cố định (`400/413/415`) là `PROVIDER_INCOMPATIBLE`;
   envelope sai là `TRANSCRIPTION_OUTPUT_INVALID`. Mã nghiệp vụ mới phải đồng bộ
@@ -306,6 +355,24 @@ gói nguyên segment, `chunk.Locator = {time, startSec: đầu, endSec: cuối}`
   gộp locator `derived-audio/` vào purge manifest và xóa checkpoint/chunk
   manifest của bảng mới; deletion fence thắng cả probe/ffmpeg, STT và settle.
   Lifecycle 2 ngày chỉ là lớp bảo hiểm, không thay purge manifest.
+
+## Giải thích thuật ngữ
+
+- **Lease** (quyền xử lý job có thời hạn); **fence** (cờ chặn: worker mất quyền
+  hoặc Document đã bị xóa thì không được ghi kết quả); **deletion fence** là
+  fence do việc xóa Document tạo ra.
+- **Idempotency** (chạy lặp vẫn cho cùng một kết quả, không tạo bản trùng);
+  **checkpoint** (điểm lưu kết quả trung gian để chạy lại không làm lại từ đầu).
+- **Manifest** (danh sách bất biến các object cần quản lý); **purge** (xóa hẳn
+  object khỏi storage theo manifest); **lifecycle** (quy tắc tự hết hạn của S3).
+- **Outbox** (bản ghi việc cần giao, ghi cùng transaction để không mất);
+  **egress** (đường đi ra mạng ngoài); **allowlist** (danh sách được phép).
+- **Preflight** (kiểm tra sẵn sàng trước khi chạy thật); **VersionId** (mã phiên
+  bản của object trên S3 có bật versioning); **emptyDir** (thư mục tạm của Pod,
+  mất khi Pod bị xóa); **ServiceAccount** (danh tính workload trên Kubernetes).
+- **Overlap** (vùng chồng lấn giữa hai chunk); **stitch** (ghép kết quả các
+  chunk); **diarize** (nhận diện từng người nói); **BYOM** (người dùng tự mang
+  model của mình).
 
 ## Chia PR
 
