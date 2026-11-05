@@ -29,6 +29,37 @@ assert_production_pin() {
   grep -Eq '^ARG FFPROBE_SHA256=[0-9a-f]{64}$' "${dockerfile}" || fail 'worker/Dockerfile must pin a literal FFPROBE_SHA256'
   grep -Eq '^ARG FFPROBE_BUILD_VERSION=[^$]+$' "${dockerfile}" || fail 'worker/Dockerfile must pin a literal FFPROBE_BUILD_VERSION'
   grep -q 'sha256sum --check --status' "${INSTALLER}" || fail 'installer must verify the archive checksum'
+  local release
+  release="$(sed -n 's/^ARG FFPROBE_RELEASE=\(.*\)$/\1/p' "${dockerfile}")"
+  is_month_end_release "${release}" || fail "FFPROBE_RELEASE '${release}' must be a month-end BtbN build (daily autobuilds are deleted after ~2 weeks)"
+}
+
+# True when the argument is autobuild-YYYY-MM-DD-HH-MM and DD is the last day of that month.
+is_month_end_release() {
+  local release="$1" year month day hour minute last_day
+  [[ "${release}" =~ ^autobuild-([0-9]{4})-([0-9]{2})-([0-9]{2})-([0-9]{2})-([0-9]{2})$ ]] || return 1
+  year=$((10#${BASH_REMATCH[1]})) month=$((10#${BASH_REMATCH[2]})) day=$((10#${BASH_REMATCH[3]}))
+  hour=$((10#${BASH_REMATCH[4]})) minute=$((10#${BASH_REMATCH[5]}))
+  ((month >= 1 && month <= 12 && hour <= 23 && minute <= 59)) || return 1
+  case "${month}" in
+    4 | 6 | 9 | 11) last_day=30 ;;
+    2)
+      if ((year % 400 == 0 || (year % 4 == 0 && year % 100 != 0))); then last_day=29; else last_day=28; fi
+      ;;
+    *) last_day=31 ;;
+  esac
+  ((day == last_day))
+}
+
+assert_month_end_release_contract() {
+  local valid invalid
+  for valid in autobuild-2026-10-31-12-59 autobuild-2026-09-30-13-08 autobuild-2028-02-29-00-00 autobuild-2026-02-28-23-59 autobuild-2000-02-29-01-01; do
+    is_month_end_release "${valid}" || fail "month-end check rejected valid release ${valid}"
+  done
+  for invalid in autobuild-2026-10-09-14-16 autobuild-2026-02-29-12-00 autobuild-2028-02-28-12-00 autobuild-1900-02-29-12-00 \
+    autobuild-2026-04-31-12-00 autobuild-2026-13-31-12-00 autobuild-2026-10-31-24-00 autobuild-fixture latest ''; do
+    if is_month_end_release "${invalid}"; then fail "month-end check accepted invalid release '${invalid}'"; fi
+  done
 }
 
 write_fake_tool() {
@@ -135,6 +166,7 @@ main() {
   # shellcheck disable=SC2064 # Expand now: temp_dir is local to main.
   trap "rm -rf -- '${temp_dir}'" EXIT
   assert_workflows_do_not_use_apt_ffmpeg
+  assert_month_end_release_contract
   assert_production_pin
   assert_installer_contract "${temp_dir}"
   assert_workflow_contract

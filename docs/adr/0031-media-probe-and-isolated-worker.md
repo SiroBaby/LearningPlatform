@@ -238,15 +238,16 @@ configuration; SBOM (danh mục thành phần phần mềm) và supply-chain sca
 kiểm tra bổ sung. Readiness fail-closed nếu binary thiếu hoặc sai. Startup
 check không thay thế kiểm tra nguồn cung image.
 
-Artifact được pin tới BtbN release/tag bất biến
-`autobuild-2026-10-09-14-16`, asset
-`ffmpeg-n8.1.3-16-ge0a878dd70-linux64-gpl-8.1.tar.xz`, SHA-256
-`968255015cc65dd999a7eddf8016be89a8a1bbef063ea7d3e9c3a229b0f6faaf`.
-Release version của artifact là `8.1.3-16-ge0a878dd70`, còn `ffprobe -version`
+Artifact được pin tới BtbN release/tag của build cuối tháng (BtbN xóa build
+hằng ngày sau khoảng 2 tuần, chỉ giữ lâu dài build ngày cuối tháng)
+`autobuild-2026-10-31-12-59`, asset
+`ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-8.1.tar.xz`, SHA-256
+`41e9c565594c390622cf968d82fa4135d9e9a11d06c1515644288cbc844e3380`.
+Release version của artifact là `8.1.3-27-g8dca1586f4`, còn `ffprobe -version`
 của chính binary đó báo thêm hậu tố ngày build:
-`8.1.3-16-ge0a878dd70-20261009`. Runtime so khớp chính xác chuỗi thứ hai, nên
+`8.1.3-27-g8dca1586f4-20261031`. Runtime so khớp chính xác chuỗi thứ hai, nên
 version contract trong `MEDIA_PROBE_FFPROBE_VERSION` (Dockerfile và manifest)
-là `8.1.3-16-ge0a878dd70-20261009`. Không dùng URL `latest`.
+là `8.1.3-27-g8dca1586f4-20261031`. Không dùng URL `latest`.
 
 Process probe phải thỏa các điều kiện sau:
 
