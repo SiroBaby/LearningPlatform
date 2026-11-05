@@ -202,7 +202,7 @@ nền tảng. Mở lại là một quyết định riêng.
 Nơi chặn: Node là cổng chính, từ chối Custom AI cho media ở estimate, cấp upload
 URL và confirm. **[Đề xuất]** Go worker cũng từ chối job media có Custom AI như
 phòng thủ nhiều lớp, vì hiện Go vẫn chấp nhận `CUSTOM`
-(`worker/internal/processing/document_processing.go`, quanh dòng 125), nên không
+(`worker/internal/contract/document_processing.go`, quanh dòng 125), nên không
 được chỉ dựa vào Node.
 
 ### D6. Job dài: checkpoint từng chunk, không thêm cơ chế lease mới
