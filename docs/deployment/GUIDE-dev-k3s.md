@@ -201,7 +201,7 @@ Không tạo tay AWS Secret này. Với **Actions → Deploy development VPS →
 | `observability-aws-credentials` | `observability` | `access-key-id`, `secret-access-key` | workflow tự bootstrap ESO/secret fetch cho observability |
 | `grafana-admin` | `observability` | `admin-user`, `admin-password` | credential admin Grafana qua `existingSecret` |
 
-`grafana-admin` phải map về exact SSM path `/learning-platform/dev/grafana-admin-user` và `/learning-platform/dev/grafana-admin-password` ở bước secret delivery được phê duyệt. Không hard-code credential trong values file.
+`grafana-admin` phải map về exact SSM path `/learning-platform/dev/grafana-admin-user` và `/learning-platform/dev/grafana-admin-password` ở bước secret delivery được phê duyệt. Không hard-code credential trong values file. Khi đổi giá trị trong SSM, ESO chỉ đọc lại sau tối đa 24h; muốn áp dụng ngay phải force-sync theo RUNBOOK mục 4.2 (rerun workflow không đủ).
 
 ### 6.3. Rotation, revoke và VPS replacement
 

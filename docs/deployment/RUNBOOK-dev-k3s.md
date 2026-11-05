@@ -103,6 +103,53 @@ Diễn giải vận hành cần giữ đúng các điểm sau:
    áp. Xử lý tiếp theo phải dựa trên expand/contract compatibility của schema và
    evidence runtime thực tế.
 
+### 4.2. Ép ExternalSecret đồng bộ ngay (force-sync) khi đổi secret
+
+Mọi ExternalSecret (tài nguyên khai báo cách External Secrets Operator, ESO, đọc secret từ AWS SSM rồi ghi vào Kubernetes Secret) có `refreshInterval: 24h` để giữ số request KMS (giải mã SecureString) trong mức miễn phí. Khi đổi giá trị trong SSM mà không muốn chờ tối đa 24 giờ, ép đồng bộ thủ công.
+
+Cơ chế với ESO `v0.15.1` (bản ghim trong `external_secrets_version`): `shouldRefresh` so `status.syncedResourceVersion` với `GetResourceVersion(ObjectMeta)` (`pkg/controllers/util/util.go`), là generation cộng hash của annotation và label. Đổi giá trị annotation `force-sync` làm hai giá trị này lệch nhau nên lần reconcile kế tiếp đọc lại SSM ngay. Giá trị annotation phải khác lần trước, vì vậy dùng `date +%s`. Đây là ngoại lệ owner đã chấp nhận cho quy tắc không thao tác tay: chỉ thêm annotation vào ExternalSecret, không tạo hay sửa Secret. Rerun workflow deploy không thay thế được bước này vì manifest không đổi.
+
+| ExternalSecret | Namespace | Deployment đọc Secret |
+|---|---|---|
+| `learning-platform-api-runtime` | `learning-platform-dev` | `api` |
+| `learning-platform-swagger-runtime` | `learning-platform-dev` | `api` |
+| `learning-platform-worker-runtime` | `learning-platform-dev` | `worker` |
+| `learning-platform-go-worker-runtime` | `learning-platform-dev` | `worker` |
+| `learning-platform-media-probe-runtime` | `learning-platform-dev` | `media-probe-worker` |
+| `learning-platform-document-purge-runtime` | `learning-platform-dev` | `document-purge-worker` |
+| `grafana-admin` | `observability` | StatefulSet `learning-platform-monitoring-grafana` (`existingSecret`) |
+| `alertmanager-telegram-config` | `observability` | Alertmanager (`configSecret`), không cần restart |
+
+Lệnh ép đồng bộ (đổi `<tên>` và `<namespace>` theo bảng):
+
+```bash
+sudo k3s kubectl annotate externalsecret <tên> -n <namespace> force-sync=$(date +%s) --overwrite
+```
+
+Xác nhận đã đồng bộ:
+
+```bash
+sudo k3s kubectl get externalsecret <tên> -n <namespace> \
+  -o jsonpath='{.status.refreshTime}{"\n"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}'
+sudo k3s kubectl get secret <tên-secret> -n <namespace> -o jsonpath='{.metadata.resourceVersion}{"\n"}'
+```
+
+- `status.refreshTime` phải mới hơn thời điểm chạy lệnh, điều kiện `Ready` phải là `True`.
+- `resourceVersion` của Secret đổi khi giá trị thực sự thay đổi; nếu SSM không đổi thì Secret giữ nguyên resourceVersion, đó là bình thường. Tên Secret trùng tên ExternalSecret (`spec.target.name`).
+- Không in giá trị Secret (`-o yaml` của Secret, `base64 -d`) vào log hay ticket.
+
+Pod chỉ nhận giá trị mới sau khi restart: các Deployment ứng dụng đọc Secret qua biến môi trường `secretKeyRef` (không mount volume, không `envFrom`), nên biến môi trường của pod đang chạy không tự cập nhật. Sau khi `Ready=True`, chạy `sudo k3s kubectl rollout restart deployment/<tên> -n learning-platform-dev` theo cột Deployment trong bảng rồi `rollout status`.
+
+Alertmanager không cần restart: Prometheus Operator theo dõi `configSecret`, sinh lại secret `-generated` và config-reloader tự nạp lại sau khoảng 1 đến 2 phút.
+
+Grafana: restart không đổi mật khẩu admin, vì `GF_SECURITY_ADMIN_*` chỉ dùng khi tạo admin lần đầu và `grafana.db` nằm trên PVC. Muốn đổi mật khẩu admin, đặt mật khẩu mới trong pod trước, rồi mới đổi SSM và force-sync để Secret khớp:
+
+```bash
+read -rs GF_NEW_PASSWORD && printf '%s' "$GF_NEW_PASSWORD" | sudo k3s kubectl exec -i -n observability statefulset/learning-platform-monitoring-grafana -c grafana -- grafana cli admin reset-admin-password --password-from-stdin && unset GF_NEW_PASSWORD
+```
+
+Mật khẩu đi qua stdin nên không nằm trong argv (không lộ qua shell history hay `ps`). Lệnh này chỉ reset mật khẩu của user id 1 (admin mặc định); đổi `admin-user` không theo quy trình này. Không ghi mật khẩu thật vào log hay ticket.
+
 ## 5. Observability ownership mới
 
 ### 5.1. Release pin phải đúng
