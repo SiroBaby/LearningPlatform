@@ -8,9 +8,10 @@ import { BaseRepository } from '../../../database/base.repository';
 import { normalizeStorageVersionId } from '../../../storage/storage-version-id';
 import { CreateUploadUrlCommand } from '../contracts/create-upload-url.command';
 import {
-  DocumentStatusProjectionCommand,
+  DocumentStatusProjectionPersistenceCommand,
   DocumentStatusProjectionOutcome,
 } from '../contracts/document-status-projection.port';
+import { settleReservation } from './credit-settlement';
 import { Document } from '../entities/document.entity';
 import {
   DocumentPurgeManifest,
@@ -999,12 +1000,68 @@ export class ContentRepository extends BaseRepository<Document> {
     });
   }
 
+  /**
+   * Projects the terminal Go result onto the Document and settles its credit reservation in ONE transaction, so a
+   * crash can never leave a projected Document with an unsettled reservation (or the reverse). The Document row is
+   * locked first so duplicate/replayed events serialize; lock order is Document -> wallet, as in completeProbe.
+   */
   async projectProcessingResult(
-    command: DocumentStatusProjectionCommand,
+    command: DocumentStatusProjectionPersistenceCommand,
+  ): Promise<DocumentStatusProjectionOutcome> {
+    return this.dataSource.transaction(async (manager) => {
+      const document = await manager.findOne(Document, {
+        where: { id: command.documentId, ownerId: command.ownerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      const outcome = await this.applyProcessingProjection(manager, command);
+      if (outcome === 'APPLIED' && document && command.settlement) {
+        await this.settleProjectedReservation(manager, document, command, command.settlement);
+      }
+      return outcome;
+    });
+  }
+
+  /**
+   * The reserve key is `reserve:{fullPipelineJobId}:{processingAttempt}`, so the settle key must use the Document's
+   * processingAttempt too. The Go queue attempt in the payload only fences the lease and grows on technical retries.
+   */
+  private async settleProjectedReservation(
+    manager: EntityManager,
+    document: Document,
+    command: DocumentStatusProjectionPersistenceCommand,
+    settlement: NonNullable<DocumentStatusProjectionPersistenceCommand['settlement']>,
+  ): Promise<void> {
+    const processingAttempt = Number(document.processingAttempt);
+    if (
+      command.jobId === null ||
+      document.fullPipelineJobId !== command.jobId ||
+      !Number.isSafeInteger(processingAttempt) ||
+      processingAttempt < 1
+    ) {
+      return;
+    }
+    const outcome = await settleReservation(manager, {
+      hasUncertainDispatch: settlement.hasUncertainDispatch,
+      jobId: command.jobId,
+      knownActualCredits: settlement.knownActualCredits,
+      ownerId: command.ownerId,
+      processingAttempt,
+    });
+    if (outcome.kind === 'NO_RESERVATION') return;
+    await manager.update(
+      Document,
+      { id: command.documentId, ownerId: command.ownerId },
+      { budgetStatus: outcome.isHeld ? 'HELD' : 'SETTLED', settledCredits: outcome.settledCredits },
+    );
+  }
+
+  private async applyProcessingProjection(
+    manager: EntityManager,
+    command: DocumentStatusProjectionPersistenceCommand,
   ): Promise<DocumentStatusProjectionOutcome> {
     // The result carries the AI attempt/lease fence and durable run correlation;
     // the latest same-schema request is the content-owned current-run marker.
-    const result = await this.createQueryBuilder()
+    const result = await manager.createQueryBuilder()
       .update(Document)
       .set({
         errorCode: command.errorCode,
@@ -1078,7 +1135,7 @@ export class ContentRepository extends BaseRepository<Document> {
 
     if (result.affected === 1) return 'APPLIED';
 
-    const [current] = await this.query<readonly ProjectionStateRow[]>(
+    const [current] = await manager.query<readonly ProjectionStateRow[]>(
       `SELECT "document"."status" AS "status",
               "request"."created_at" AS "latestRequestCreatedAt"
        FROM "course"."documents" AS "document"

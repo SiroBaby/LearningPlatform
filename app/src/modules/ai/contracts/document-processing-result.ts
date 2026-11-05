@@ -46,6 +46,45 @@ export function isDocumentProcessingFailureRetryable(
     errorCode === DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE;
 }
 
+/**
+ * Failure codes that Go can only raise before any billable provider call (storage, extraction, chunking or policy
+ * guards). A FAILED result with one of these codes spent nothing, so its reservation is released in full even when
+ * the payload carries no usage block.
+ */
+const PRE_DISPATCH_FAILURE_CODES: ReadonlySet<DocumentProcessingFailureCode> = new Set([
+  DocumentProcessingFailureCode.CHUNK_RESOURCE_LIMIT_EXCEEDED,
+  DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND,
+  DocumentProcessingFailureCode.EXTRACTION_OBJECT_TOO_LARGE,
+  DocumentProcessingFailureCode.MEDIA_REQUIRES_PLATFORM_MODEL,
+  DocumentProcessingFailureCode.PDF_INVALID,
+  DocumentProcessingFailureCode.PDF_TEXT_NOT_FOUND,
+]);
+
+export function isFailureBeforeProviderDispatch(errorCode: DocumentProcessingFailureCode | null): boolean {
+  return errorCode !== null && PRE_DISPATCH_FAILURE_CODES.has(errorCode);
+}
+
+/** Token usage of one LLM model reported by the Go worker. */
+export interface DocumentProcessingLlmUsage {
+  readonly inputTokens: number;
+  readonly model: string;
+  readonly outputTokens: number;
+}
+
+/**
+ * Optional actual-usage block of the return payload (version stays 1; older payloads omit it).
+ * Go sends it on every terminal result of the attempt that finished the job.
+ */
+export interface DocumentProcessingUsage {
+  readonly llm: readonly DocumentProcessingLlmUsage[];
+  /** Provider calls sent without receiving any answer or token count: the spend is unknown (ADR-0022 HELD). */
+  readonly uncertainDispatches: number;
+  /** Speech-to-text seconds with a complete transcript. Absent until the STT pipeline (PR5) reports it. */
+  readonly sttBilledSeconds: number | null;
+  /** Speech-to-text seconds sent without a known outcome. Absent until PR5. */
+  readonly sttUncertainSeconds: number | null;
+}
+
 export interface DocumentProcessingResult {
   readonly attempt: number | null;
   readonly budgetStatus: string | null;
@@ -59,6 +98,7 @@ export interface DocumentProcessingResult {
   readonly questions: readonly DocumentProcessingQuestion[] | null;
   readonly settledCredits: number | null;
   readonly status: DocumentProcessingResultStatus;
+  readonly usage: DocumentProcessingUsage | null;
   readonly version: typeof DOCUMENT_PROCESSING_RESULT_VERSION;
 }
 

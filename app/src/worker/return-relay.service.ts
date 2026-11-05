@@ -6,6 +6,7 @@ import {
   DocumentProcessingFailureCode,
   DocumentProcessingResult,
   DocumentProcessingResultStatus,
+  DocumentProcessingUsage,
 } from '../modules/ai/contracts/document-processing-result';
 import { MEDIA_PROBE_JOB_TYPE } from '../modules/ai/contracts/ai-ingestion.port';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
@@ -156,6 +157,7 @@ export class ReturnRelay {
           errorCode: payload.errorCode,
           errorMessage: payload.errorMessage,
           eventCreatedAt: row.createdAt,
+          jobId: row.aggregateId,
           leaseId: payload.leaseId,
           ownerId: payload.ownerId,
           settledCredits: payload.settledCredits,
@@ -163,6 +165,7 @@ export class ReturnRelay {
             payload.status === DocumentProcessingResultStatus.READY
               ? DocumentStatus.READY
               : DocumentStatus.FAILED,
+          usage: payload.usage,
         });
         if (projectionOutcome === 'UNVERIFIED_LEGACY') {
           this.logger.error({
@@ -221,10 +224,12 @@ export class ReturnRelay {
               errorCode: DocumentProcessingFailureCode.INSUFFICIENT_VALID_QUESTIONS,
               errorMessage: 'Not enough valid questions were generated',
               eventCreatedAt: row.createdAt,
+              jobId: row.aggregateId,
               leaseId: payload.leaseId,
               ownerId: payload.ownerId,
               settledCredits: payload.settledCredits,
               status: DocumentStatus.FAILED,
+              usage: payload.usage,
             });
             if (projectionOutcome === 'UNVERIFIED_LEGACY') {
               this.logger.error({
@@ -321,8 +326,39 @@ export class ReturnRelay {
       questions,
       settledCredits,
       status: payload.status,
+      usage: this.parseUsage(payload.usage),
       version: payload.version,
     };
+  }
+
+  /**
+   * Lenient on purpose: usage is optional and advisory for older payloads. Absent or malformed usage becomes null
+   * (the settlement then falls back to the conservative no-usage rule) instead of blocking the relay on one event.
+   */
+  private parseUsage(value: unknown): DocumentProcessingUsage | null {
+    if (typeof value !== 'object' || value === null) return null;
+    const usage = value as Record<string, unknown>;
+    if (!Array.isArray(usage.llm)) return null;
+    const llm: DocumentProcessingUsage['llm'][number][] = [];
+    for (const entry of usage.llm as unknown[]) {
+      if (typeof entry !== 'object' || entry === null) return null;
+      const { inputTokens, model, outputTokens } = entry as Record<string, unknown>;
+      if (typeof model !== 'string' || model.trim() === '' || !isNonNegativeSafeInteger(inputTokens) || !isNonNegativeSafeInteger(outputTokens)) {
+        return null;
+      }
+      llm.push({ inputTokens, model, outputTokens });
+    }
+    const uncertainDispatches = usage.uncertainDispatches ?? 0;
+    const sttBilledSeconds = usage.sttBilledSeconds ?? null;
+    const sttUncertainSeconds = usage.sttUncertainSeconds ?? null;
+    if (
+      !isNonNegativeSafeInteger(uncertainDispatches) ||
+      (sttBilledSeconds !== null && !isNonNegativeSafeInteger(sttBilledSeconds)) ||
+      (sttUncertainSeconds !== null && !isNonNegativeSafeInteger(sttUncertainSeconds))
+    ) {
+      return null;
+    }
+    return { llm, sttBilledSeconds, sttUncertainSeconds, uncertainDispatches };
   }
 
   private parseProbeCompletion(payload: Record<string, unknown>): ProbeCompletionPayload {
@@ -532,6 +568,10 @@ interface ProbeLocatorPayload {
   readonly key: string;
   readonly policyVersion: string;
   readonly versionId: string;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function elapsedMilliseconds(startedAt: number): number {

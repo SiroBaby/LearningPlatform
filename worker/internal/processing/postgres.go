@@ -204,7 +204,7 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 	if tag.RowsAffected() != 1 {
 		return false, ErrJobFenceLost
 	}
-	payload, err := json.Marshal(map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "READY", "questions": questions, "promptVersion": "phase0-v1", "minimumQuestionCount": 1, "errorCode": nil, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	payload, err := marshalResult(ctx, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "READY", "questions": questions, "promptVersion": "phase0-v1", "minimumQuestionCount": 1, "errorCode": nil, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
 	if err != nil {
 		return false, err
 	}
@@ -232,7 +232,7 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 	if tag.RowsAffected() != 1 {
 		return false, ErrJobFenceLost
 	}
-	payload, err := json.Marshal(map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": result, "errorCode": nilIfEmpty(code), "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	payload, err := marshalResult(ctx, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": result, "errorCode": nilIfEmpty(code), "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
 	if err != nil {
 		return false, err
 	}
@@ -244,6 +244,14 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 		return true, NewPersistenceError(FailureOperationTransactionCommit, err)
 	}
 	return true, nil
+}
+
+// marshalResult encodes the return-seam payload and attaches the actual-usage block when the attempt tracked one.
+func marshalResult(ctx context.Context, payload map[string]any) ([]byte, error) {
+	if usage := usagePayload(ctx); usage != nil {
+		payload["usage"] = usage
+	}
+	return json.Marshal(payload)
 }
 func nilIfEmpty(value string) any {
 	if value == "" {
@@ -308,7 +316,7 @@ func (store *PostgresStore) finalizeWithDLQ(ctx context.Context, job Job, code F
 	if _, err = tx.Exec(ctx, `INSERT INTO ai.processing_job_dlq(job_id,document_id,owner_id,correlation_id,idempotency_key,last_attempt,reason_code) SELECT id,document_id,owner_id,correlation_id,idempotency_key,attempts,$2 FROM ai.processing_jobs WHERE id=$1`, job.ID, code); err != nil {
 		return false, NewPersistenceError(FailureOperationDLQInsert, err)
 	}
-	payload, err := json.Marshal(map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	payload, err := marshalResult(ctx, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
 	if err != nil {
 		return false, err
 	}

@@ -1,5 +1,8 @@
 import { DocumentStatus } from '../enums/document-status.enum';
-import type { DocumentProcessingFailureCode } from '../../ai/contracts/document-processing-result';
+import type {
+  DocumentProcessingFailureCode,
+  DocumentProcessingUsage,
+} from '../../ai/contracts/document-processing-result';
 
 export const DOCUMENT_STATUS_PROJECTION = Symbol('DOCUMENT_STATUS_PROJECTION');
 
@@ -87,8 +90,25 @@ export interface DocumentStatusProjectionCommand {
   readonly errorCode: DocumentProcessingFailureCode | null;
   readonly errorMessage: string | null;
   readonly eventCreatedAt: Date;
+  /** ai.outbox aggregate id = the Go FULL_PIPELINE job id; must equal the Document's fullPipelineJobId to settle. */
+  readonly jobId: string | null;
   readonly leaseId: string | null;
   readonly ownerId: string;
   readonly settledCredits: number | null;
   readonly status: DocumentStatus.READY | DocumentStatus.FAILED;
+  /** Actual usage reported by Go; null for payloads written before usage reporting. */
+  readonly usage: DocumentProcessingUsage | null;
+}
+
+/**
+ * How the reservation of the finished attempt must be settled. Computed from the reported usage by the projection
+ * service; the repository applies it atomically with the Document projection (keys use the Document's processingAttempt).
+ */
+export interface DocumentSettlementPlan {
+  readonly hasUncertainDispatch: boolean;
+  readonly knownActualCredits: number;
+}
+
+export interface DocumentStatusProjectionPersistenceCommand extends DocumentStatusProjectionCommand {
+  readonly settlement: DocumentSettlementPlan | null;
 }

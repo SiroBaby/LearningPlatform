@@ -122,4 +122,70 @@ describe('validateModelPriceTable', () => {
   it('is enforced when constructing the estimator', () => {
     expect(() => new MediaCreditEstimator({ ...DEFAULT_MODEL_PRICE_TABLE, stt: {} })).toThrow(ModelPriceTableError);
   });
+
+  describe('calculateActual', () => {
+    const inputUsage = {
+      llm: [{ inputTokens: 1_000, model: 'gpt-5.4-mini', outputTokens: 500 }],
+      sttBilledSeconds: null,
+      sttUncertainSeconds: null,
+      uncertainDispatches: 0,
+    };
+
+    it('prices LLM tokens with the selected model credit multipliers and derives the micro-USD cost', () => {
+      const estimator = new MediaCreditEstimator();
+
+      const actualResult = estimator.calculateActual({ defaultModel: inputModel, model: inputModel, usage: inputUsage });
+
+      // credits: 1000 * 1 + 500 * 2; cost: ceil(1000 * 750000 / 1e6) + ceil(500 * 4500000 / 1e6) = 750 + 2250.
+      expect(actualResult).toEqual({
+        costMicroUsd: 3_000,
+        generationCredits: 2_000,
+        priceTableVersion: DEFAULT_MODEL_PRICE_TABLE.version,
+        sttCredits: 0,
+        totalCredits: 2_000,
+      });
+    });
+
+    it('converts billed STT seconds with the same price-anchored formula as the estimate', () => {
+      const estimator = new MediaCreditEstimator();
+      const inputSeconds = 355;
+      const expectedSttCredits = estimator.estimate({ defaultModel: inputModel, durationSeconds: inputSeconds, model: inputModel }).sttCredits;
+
+      const actualResult = estimator.calculateActual({
+        defaultModel: inputModel,
+        model: inputModel,
+        usage: { ...inputUsage, llm: [], sttBilledSeconds: inputSeconds },
+      });
+
+      expect(actualResult.sttCredits).toBe(expectedSttCredits);
+      expect(actualResult.totalCredits).toBe(expectedSttCredits);
+      // 355 s * 6000 micro-USD/min / 60 = 35_500 micro-USD.
+      expect(actualResult.costMicroUsd).toBe(35_500);
+    });
+
+    it('returns zero for an attempt that spent nothing', () => {
+      const estimator = new MediaCreditEstimator();
+
+      const actualResult = estimator.calculateActual({
+        defaultModel: inputModel,
+        model: inputModel,
+        usage: { ...inputUsage, llm: [] },
+      });
+
+      expect(actualResult).toMatchObject({ costMicroUsd: 0, totalCredits: 0 });
+    });
+
+    it('keeps credits but reports no cost when a reported model has no price', () => {
+      const estimator = new MediaCreditEstimator();
+
+      const actualResult = estimator.calculateActual({
+        defaultModel: inputModel,
+        model: inputModel,
+        usage: { ...inputUsage, llm: [{ inputTokens: 10, model: 'unpriced-model', outputTokens: 10 }] },
+      });
+
+      expect(actualResult.totalCredits).toBe(30);
+      expect(actualResult.costMicroUsd).toBeNull();
+    });
+  });
 });

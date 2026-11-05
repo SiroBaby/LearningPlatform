@@ -1,6 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import type { DocumentProbeCompletionCommand } from './contracts/document-status-projection.port';
+import type { DocumentProbeCompletionCommand, DocumentStatusProjectionCommand } from './contracts/document-status-projection.port';
+import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
+import { DocumentStatus } from './enums/document-status.enum';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
 import { DocumentStatusProjectionService } from './document-status-projection.service';
 
@@ -105,6 +107,97 @@ describe('DocumentStatusProjectionService.completeProbe', () => {
 
     expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
       creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 17_474, platformModelId: 'cheap-model' },
+    }));
+  });
+});
+
+describe('DocumentStatusProjectionService.project settlement plan', () => {
+  const platformDocument = { modelSelectionKind: 'PLAN', platformModelId: 'plan-model' };
+  const inputProjection = (overrides: Partial<DocumentStatusProjectionCommand>): DocumentStatusProjectionCommand => ({
+    attempt: 3,
+    budgetStatus: null,
+    documentId: 'document-1',
+    errorCode: null,
+    errorMessage: null,
+    estimatedCredits: null,
+    estimateStatus: null,
+    eventCreatedAt: new Date(),
+    jobId: 'job-1',
+    leaseId: 'lease-1',
+    ownerId: 'owner-1',
+    settledCredits: null,
+    status: DocumentStatus.READY,
+    usage: null,
+    ...overrides,
+  });
+  const createProjectionService = (document: unknown, platformModels: readonly unknown[] = [inputModel]) => {
+    const repository = {
+      findByOwnerId: jest.fn<() => Promise<unknown>>().mockResolvedValue(document),
+      projectProcessingResult: jest.fn<(command: unknown) => Promise<'APPLIED'>>().mockResolvedValue('APPLIED'),
+    };
+    const service = new DocumentStatusProjectionService(repository as never, { ai: { platformModels } } as never, new MediaCreditEstimator());
+    return { repository, service };
+  };
+  const llmUsage = (overrides: object = {}) => ({
+    llm: [{ inputTokens: 300, model: 'gpt-5.4-mini', outputTokens: 50 }],
+    sttBilledSeconds: null,
+    sttUncertainSeconds: null,
+    uncertainDispatches: 0,
+    ...overrides,
+  });
+
+  it('settles the credits of the reported usage', async () => {
+    const { repository, service } = createProjectionService(platformDocument);
+
+    await service.project(inputProjection({ usage: llmUsage() }));
+
+    expect(repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({
+      settlement: { hasUncertainDispatch: false, knownActualCredits: 400 },
+    }));
+  });
+
+  it('adds the STT seconds with the estimate formula and holds when STT seconds are uncertain', async () => {
+    const { repository, service } = createProjectionService(platformDocument);
+
+    await service.project(inputProjection({ usage: llmUsage({ llm: [], sttBilledSeconds: 355, sttUncertainSeconds: 60 }) }));
+
+    expect(repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({
+      settlement: { hasUncertainDispatch: true, knownActualCredits: 47_334 },
+    }));
+  });
+
+  it('plans nothing for a CUSTOM model document or an unknown document', async () => {
+    const custom = createProjectionService({ modelSelectionKind: 'CUSTOM', platformModelId: null });
+    const missing = createProjectionService(null);
+
+    await custom.service.project(inputProjection({ usage: llmUsage() }));
+    await missing.service.project(inputProjection({ usage: llmUsage() }));
+
+    expect(custom.repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({ settlement: null }));
+    expect(missing.repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({ settlement: null }));
+  });
+
+  it.each([
+    ['READY', DocumentStatus.READY, null, true],
+    ['FAILED before any provider call', DocumentStatus.FAILED, DocumentProcessingFailureCode.PDF_INVALID, false],
+    ['FAILED with an unknown spend', DocumentStatus.FAILED, DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE, true],
+  ])('without usage, %s => hasUncertainDispatch %s', async (_name, inputStatus, inputErrorCode, expectedUncertain) => {
+    const { repository, service } = createProjectionService(platformDocument);
+
+    await service.project(inputProjection({ errorCode: inputErrorCode, status: inputStatus as DocumentStatus.READY | DocumentStatus.FAILED }));
+
+    expect(repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({
+      settlement: { hasUncertainDispatch: expectedUncertain, knownActualCredits: 0 },
+    }));
+  });
+
+  it('holds instead of throwing when the Document model is no longer configured', async () => {
+    const { repository, service } = createProjectionService({ modelSelectionKind: 'PLAN', platformModelId: 'removed-model' });
+
+    await service.project(inputProjection({ usage: llmUsage() }));
+
+    expect(repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({
+      settlement: { hasUncertainDispatch: true, knownActualCredits: 0 },
     }));
   });
 });

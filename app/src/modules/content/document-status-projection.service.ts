@@ -7,12 +7,17 @@ import {
   DocumentProbeCompletionOutcome,
   DocumentProbeFailureCommand,
   DocumentProbeFailureOutcome,
+  DocumentSettlementPlan,
   DocumentStatusProjection,
   DocumentStatusProjectionCommand,
   DocumentStatusProjectionOutcome,
 } from './contracts/document-status-projection.port';
 import { createApplicationLogger } from '../../common/logging/application-logger.factory';
-import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
+import { DocumentStatus } from './enums/document-status.enum';
+import {
+  DocumentProcessingFailureCode,
+  isFailureBeforeProviderDispatch,
+} from '../ai/contracts/document-processing-result';
 import { MAX_MEDIA_DURATION_SEC } from './contracts/media-probe-policy';
 import { ModelPriceTableError } from './credit-estimation/model-price-table';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
@@ -38,7 +43,63 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
   }
 
   async project(command: DocumentStatusProjectionCommand): Promise<DocumentStatusProjectionOutcome> {
-    return this.contentRepository.projectProcessingResult(command);
+    const settlement = await this.planSettlement(command);
+    return this.contentRepository.projectProcessingResult({ ...command, settlement });
+  }
+
+  /**
+   * Decides how to settle the reservation of a finished attempt (ADR-0022). Never throws for pricing problems:
+   * a poisoned return event would block the relay, so an unpriced result is held instead of guessed.
+   *  - usage reported: settle the actual credits; HELD when some provider dispatch has an unknown outcome;
+   *  - usage absent (payload from an older worker): FAILED before any provider call releases everything,
+   *    anything else may have spent credits unobserved and stays HELD.
+   */
+  private async planSettlement(command: DocumentStatusProjectionCommand): Promise<DocumentSettlementPlan | null> {
+    const document = await this.contentRepository.findByOwnerId(command.ownerId, command.documentId);
+    if (!document || document.modelSelectionKind !== 'PLAN') return null;
+    const { usage } = command;
+    if (!usage) {
+      const isKnownUnspent = command.status === DocumentStatus.FAILED && isFailureBeforeProviderDispatch(command.errorCode);
+      return { hasUncertainDispatch: !isKnownUnspent, knownActualCredits: 0 };
+    }
+    const hasUncertainDispatch = usage.uncertainDispatches > 0 || (usage.sttUncertainSeconds ?? 0) > 0;
+    const platformModels = this.config.ai.platformModels;
+    const model = platformModels.find((candidate) => candidate.id === document.platformModelId);
+    const defaultModel = platformModels[0];
+    if (!model || !defaultModel) {
+      this.logSettlementUnpriced(command, 'platform_model_not_configured');
+      return { hasUncertainDispatch: true, knownActualCredits: 0 };
+    }
+    try {
+      const actual = this.mediaCreditEstimator.calculateActual({ defaultModel, model, usage });
+      this.logger.log({
+        actualCostMicroUsd: actual.costMicroUsd,
+        documentId: command.documentId,
+        event: 'content.settlement.actual_usage',
+        generationCredits: actual.generationCredits,
+        hasUncertainDispatch,
+        jobId: command.jobId,
+        priceTableVersion: actual.priceTableVersion,
+        runtime: 'worker',
+        sttCredits: actual.sttCredits,
+        totalCredits: actual.totalCredits,
+      });
+      return { hasUncertainDispatch, knownActualCredits: actual.totalCredits };
+    } catch (error) {
+      if (!(error instanceof ModelPriceTableError)) throw error;
+      this.logSettlementUnpriced(command, 'price_missing');
+      return { hasUncertainDispatch: true, knownActualCredits: 0 };
+    }
+  }
+
+  private logSettlementUnpriced(command: DocumentStatusProjectionCommand, reason: string): void {
+    this.logger.error({
+      documentId: command.documentId,
+      event: 'content.settlement.unpriced',
+      jobId: command.jobId,
+      reason,
+      runtime: 'worker',
+    });
   }
 
   private async estimateCredits(command: DocumentProbeCompletionCommand): Promise<DocumentProbeCreditEstimate> {

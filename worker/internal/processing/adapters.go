@@ -289,19 +289,58 @@ func (provider *OpenAI) request(ctx context.Context, instructions, input string,
 	}
 	request.Header.Set("Authorization", "Bearer "+provider.apiKey)
 	request.Header.Set("Content-Type", "application/json")
+	// A call that never gets an answer stays "dispatched" in the tracker: its spend is unknown (ADR-0022 HELD).
+	tracker := UsageTrackerFrom(ctx)
+	tracker.Dispatched()
 	response, err := provider.client.Do(request)
 	if err != nil {
 		return "", Failure{Code: ProviderUnavailable, Technical: true}
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		tracker.Rejected()
 		return "", Failure{Code: ProviderUnavailable, Technical: true}
 	}
-	output, err := provider.decodeResponse(response.Body)
+	raw, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if readErr != nil {
+		if requestContext.Err() != nil {
+			return "", Failure{Code: ProviderUnavailable, Technical: true}
+		}
+		return "", Failure{Code: OutputInvalid, Reason: InvalidEnvelope}
+	}
+	if inputTokens, outputTokens, ok := extractTokenUsage(raw, provider.profile.Transport); ok {
+		tracker.Reported(provider.model, inputTokens, outputTokens)
+	}
+	output, err := provider.decodeResponse(bytes.NewReader(raw))
 	if err != nil && requestContext.Err() != nil {
 		return "", Failure{Code: ProviderUnavailable, Technical: true}
 	}
 	return output, err
+}
+
+// extractTokenUsage reads the provider-reported token counts: `usage.prompt_tokens/completion_tokens` for chat
+// completions and `usage.input_tokens/output_tokens` for the responses transport. Absent or negative counts mean
+// the provider did not expose usage, so the call stays uncertain.
+func extractTokenUsage(raw []byte, transport Transport) (int64, int64, bool) {
+	var decoded struct {
+		Usage *struct {
+			PromptTokens     *int64 `json:"prompt_tokens"`
+			CompletionTokens *int64 `json:"completion_tokens"`
+			InputTokens      *int64 `json:"input_tokens"`
+			OutputTokens     *int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil || decoded.Usage == nil {
+		return 0, 0, false
+	}
+	input, output := decoded.Usage.PromptTokens, decoded.Usage.CompletionTokens
+	if transport == Responses {
+		input, output = decoded.Usage.InputTokens, decoded.Usage.OutputTokens
+	}
+	if input == nil || output == nil || *input < 0 || *output < 0 {
+		return 0, 0, false
+	}
+	return *input, *output, true
 }
 
 func (provider *OpenAI) requestPayload(instructions, input string, maxOutputTokens int, schemaName string, schema map[string]any) (map[string]any, string) {
