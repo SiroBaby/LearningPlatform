@@ -26,6 +26,7 @@ import {
 import { CreateUploadUrlCommand } from './contracts/create-upload-url.command';
 import { calculatePurgeNotBefore } from './contracts/document-purge-policy';
 import { DocumentQuizResult } from './contracts/document-quiz.result';
+import { COARSE_INPUT_TOKEN_BYTES, COARSE_OUTPUT_TOKEN_CAP } from './credit-estimation/credit-estimation.constants';
 import { DocumentEstimateResult } from './contracts/document-estimate.result';
 import {
   assertDocumentUploadSize,
@@ -50,8 +51,7 @@ import {
   type PlanModelCatalogItem,
 } from '../ai/contracts/model-selection.contracts';
 
-const COARSE_INPUT_TOKEN_BYTES = 4;
-const COARSE_OUTPUT_TOKEN_CAP = 256;
+const isMediaDocumentType = (type: DocumentType): boolean => type === DocumentType.AUDIO || type === DocumentType.VIDEO;
 type ProcessingStartMode = 'CONFIRM' | 'RETRY';
 
 @Injectable()
@@ -79,7 +79,7 @@ export class ContentService {
     const policy = resolveDocumentUploadPolicy(command.type, command.originalName);
     this.assertMediaUploadsEnabled(policy.bucket);
     assertDocumentUploadSize(policy, command.sizeBytes);
-    const estimate = await this.estimateModelSelection(ownerId, command.sizeBytes, command.selection);
+    const estimate = await this.estimateModelSelection(ownerId, command.sizeBytes, command.selection, command.type);
     const objectKey = policy.bucket === 'media'
       ? `media/${ownerId}/${randomUUID()}${policy.extension}`
       : `${ownerId}/${randomUUID()}${policy.extension}`;
@@ -108,7 +108,8 @@ export class ContentService {
     ownerId: string,
     sizeBytes: number,
     selection: DocumentModelSelection,
-  ): Promise<{ readonly estimatedCredits: number; readonly selectedModelLabel: string }> {
+    type: DocumentType,
+  ): Promise<{ readonly estimatedCredits: number | null; readonly selectedModelLabel: string }> {
     if (!this.models) throw new Error('Model catalog is unavailable');
     let plan: PlanModelCatalogItem | null = null;
     if (selection.kind === 'PLAN') {
@@ -128,9 +129,8 @@ export class ContentService {
       throw new BadRequestException('Selected custom model is unavailable');
     }
     return {
-      estimatedCredits: plan
-        ? this.estimatePlatformCredits(sizeBytes, plan)
-        : 0,
+      // Media duration is unknown until the probe (ADR-0031); never derive credits from video/audio bytes.
+      estimatedCredits: !plan ? 0 : isMediaDocumentType(type) ? null : this.estimatePlatformCredits(sizeBytes, plan),
       selectedModelLabel: selected.label,
     };
   }
@@ -288,10 +288,10 @@ export class ContentService {
     const policy = getDocumentUploadPolicy(input.type);
     this.assertMediaUploadsEnabled(policy.bucket);
     assertDocumentUploadSize(policy, input.sizeBytes);
-    const estimate = await this.estimateModelSelection(ownerId, input.sizeBytes, input.selection);
+    const estimate = await this.estimateModelSelection(ownerId, input.sizeBytes, input.selection, input.type);
     return Object.assign(new DocumentEstimateResult(), {
       estimatedCredits: estimate.estimatedCredits,
-      precision: 'COARSE',
+      precision: estimate.estimatedCredits === null ? 'AFTER_MEDIA_CHECK' : 'COARSE',
       selectedModelKind: input.selection.kind,
       selectedModelLabel: estimate.selectedModelLabel,
     });

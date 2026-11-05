@@ -14,6 +14,9 @@ export const phase0EstimatePrecisionLevels = ["COARSE", "AUTHORITATIVE"] as cons
 
 export type Phase0EstimatePrecision = (typeof phase0EstimatePrecisionLevels)[number];
 
+/** Pre-upload estimate precision; audio/video report AFTER_MEDIA_CHECK with no credit number. */
+export type Phase0EstimateResponsePrecision = Phase0EstimatePrecision | "AFTER_MEDIA_CHECK";
+
 export const phase0BudgetStatuses = [
   "NOT_RESERVED",
   "CUSTOM_ZERO_COST",
@@ -110,8 +113,8 @@ export type Phase0EstimateRequest = {
 } & Phase0UploadModelSelection;
 
 export interface Phase0EstimateResponse {
-  readonly estimatedCredits: number;
-  readonly precision: Phase0EstimatePrecision;
+  readonly estimatedCredits: number | null;
+  readonly precision: Phase0EstimateResponsePrecision;
   readonly selectedModelKind: Phase0ModelSelectionKind;
   readonly selectedModelLabel: string;
 }

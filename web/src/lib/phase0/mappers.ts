@@ -11,6 +11,7 @@ import type {
   Phase0DocumentStatus,
   Phase0DocumentType,
   Phase0EstimatePrecision,
+  Phase0EstimateResponsePrecision,
   Phase0EstimateResponse,
   Phase0ModelOption,
   Phase0ModelSelectionKind,
@@ -117,6 +118,10 @@ function readEstimatePrecision(value: unknown, field: string): Phase0EstimatePre
     default:
       throw new TypeError(`Expected ${field} to be COARSE or AUTHORITATIVE.`);
   }
+}
+
+function readEstimateResponsePrecision(value: unknown, field: string): Phase0EstimateResponsePrecision {
+  return value === "AFTER_MEDIA_CHECK" ? "AFTER_MEDIA_CHECK" : readEstimatePrecision(value, field);
 }
 
 function readNullableEstimatePrecision(value: unknown, field: string): Phase0EstimatePrecision | null {
@@ -349,8 +354,8 @@ export function mapModelOptionsResponse(value: unknown): readonly Phase0ModelOpt
 export function mapEstimateResponse(value: unknown): Phase0EstimateResponse {
   const source = readObject(value);
   return {
-    estimatedCredits: readNumber(source.estimatedCredits, "estimatedCredits"),
-    precision: readEstimatePrecision(source.precision, "precision"),
+    estimatedCredits: readNullableNumber(source.estimatedCredits, "estimatedCredits"),
+    precision: readEstimateResponsePrecision(source.precision, "precision"),
     selectedModelKind: readModelSelectionKind(source.selectedModelKind, "selectedModelKind"),
     selectedModelLabel: readString(source.selectedModelLabel, "selectedModelLabel"),
   };

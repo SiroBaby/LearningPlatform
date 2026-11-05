@@ -161,6 +161,24 @@ describe('ContentMappingProfile', () => {
     });
   });
 
+  it('keeps a null AFTER_MEDIA_CHECK estimate explicit through AutoMapper', () => {
+    const inputResult = Object.assign(new DocumentEstimateResult(), {
+      estimatedCredits: null,
+      precision: 'AFTER_MEDIA_CHECK',
+      selectedModelKind: 'PLAN',
+      selectedModelLabel: 'Fast platform model',
+    });
+
+    const actualDto = mapper.map(inputResult, DocumentEstimateResult, DocumentEstimateResponseDto);
+
+    expect(actualDto).toEqual({
+      estimatedCredits: null,
+      precision: 'AFTER_MEDIA_CHECK',
+      selectedModelKind: 'PLAN',
+      selectedModelLabel: 'Fast platform model',
+    });
+  });
+
   it('map Document id sang documentId cho confirm response', () => {
     const document = Object.assign(new Document(), {
       id: 'c1ce6db5-3afd-4d8a-a134-902847cc4f87',

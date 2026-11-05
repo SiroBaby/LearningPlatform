@@ -35,6 +35,17 @@ export interface DocumentProbeCompletionCommand {
   readonly locator: DocumentProbeLocator;
 }
 
+/** Credit estimate computed from the probed duration; the repository only persists and reserves it. */
+export interface DocumentProbeCreditEstimate {
+  readonly estimatedCredits: number;
+  /** Platform model the estimate was priced for; the repository ignores the probe if the Document changed model. */
+  readonly platformModelId: string | null;
+}
+
+export interface DocumentProbeCompletionPersistenceCommand extends DocumentProbeCompletionCommand {
+  readonly creditEstimate: DocumentProbeCreditEstimate;
+}
+
 /** Immutable storage identity carried by the AI return handoff. */
 export interface DocumentProbeLocator {
   readonly bucket: string;

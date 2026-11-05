@@ -292,6 +292,7 @@ describe('ContentService.confirm', () => {
         probeResultId: resultId,
         probeGeneration,
         locator,
+        creditEstimate: { estimatedCredits: 50, platformModelId: 'platform-default' },
       } as const;
       return { command, outcome: await repository.completeProbe(command) };
     };
@@ -464,6 +465,7 @@ describe('ContentService.confirm', () => {
       probeResultId: firstResultId,
       probeGeneration: firstGeneration,
       locator: firstLocator,
+      creditEstimate: { estimatedCredits: 80, platformModelId: 'platform-default' },
     })).resolves.toBe('APPLIED');
 
     await documents.update(
@@ -536,6 +538,7 @@ describe('ContentService.confirm', () => {
       probeResultId: secondResultId,
       probeGeneration: secondGeneration,
       locator: secondLocator,
+      creditEstimate: { estimatedCredits: 80, platformModelId: 'platform-default' },
     } as const;
     await expect(repository.completeProbe(secondCompletion)).resolves.toBe('APPLIED');
     await expect(repository.completeProbe(secondCompletion)).resolves.toBe('ALREADY_APPLIED');

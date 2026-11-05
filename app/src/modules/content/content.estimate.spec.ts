@@ -76,6 +76,32 @@ describe('ContentService.estimateBeforeUpload', () => {
       selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'plan-model' },
     })).rejects.toMatchObject({ status: 400 });
   });
+
+  it.each([DocumentType.VIDEO, DocumentType.AUDIO])('returns AFTER_MEDIA_CHECK without a number for %s before upload', async (inputType) => {
+    const catalog = new RecordingCatalog();
+    const service = new ContentService(null as never, null as never, null as never, null as never, catalog, { storage: { mediaEnabled: true } } as never);
+
+    const actualEstimate = await service.estimateBeforeUpload('owner-1', {
+      sizeBytes: 24_451_261,
+      type: inputType,
+      selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'plan-model' },
+    });
+
+    expect(actualEstimate).toEqual({ estimatedCredits: null, precision: 'AFTER_MEDIA_CHECK', selectedModelKind: 'PLAN', selectedModelLabel: 'Configured plan label' });
+  });
+
+  it('keeps the size-based COARSE estimate for TEXT', async () => {
+    const catalog = new RecordingCatalog();
+    const service = new ContentService(null as never, null as never, null as never, null as never, catalog);
+
+    const actualEstimate = await service.estimateBeforeUpload('owner-1', {
+      sizeBytes: 2048,
+      type: DocumentType.TEXT,
+      selection: { customModelConfigId: null, kind: 'PLAN', platformModelId: 'plan-model' },
+    });
+
+    expect(actualEstimate).toEqual({ estimatedCredits: 1024, precision: 'COARSE', selectedModelKind: 'PLAN', selectedModelLabel: 'Configured plan label' });
+  });
 });
 
 class RecordingCatalog implements ModelCatalog {

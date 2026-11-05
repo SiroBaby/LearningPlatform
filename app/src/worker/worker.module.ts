@@ -16,6 +16,7 @@ import { QUIZ_PERSISTENCE } from '../modules/assessment/contracts/quiz-persisten
 import { QuizGenerationHandoffService } from '../modules/assessment/quiz-generation-handoff.service';
 import { QuizRepository } from '../modules/assessment/repositories/quiz.repository';
 import { DOCUMENT_STATUS_PROJECTION } from '../modules/content/contracts/document-status-projection.port';
+import { MediaCreditEstimator } from '../modules/content/credit-estimation/media-credit-estimator';
 import { DocumentStatusProjectionService } from '../modules/content/document-status-projection.service';
 import { ForwardRelay } from '../modules/content/forward-relay.service';
 import { ContentRepository } from '../modules/content/repositories/content.repository';
@@ -44,6 +45,7 @@ import { AuthOutboxRepository } from '../modules/auth/repositories/auth-outbox.r
     CourseOutboxRepository,
     DocumentStatusProjectionService,
     ForwardRelay,
+    MediaCreditEstimator,
     ProcessingJobRepository,
     QuizGenerationHandoffService,
     QuizRepository,

@@ -25,6 +25,7 @@ import { BudgetExhaustedError } from '../../ai/budget-exhausted.error';
 import { DocumentProcessingFailureCode } from '../../ai/contracts/document-processing-result';
 import type {
   DocumentProbeCompletionCommand,
+  DocumentProbeCompletionPersistenceCommand,
   DocumentProbeCompletionOutcome,
   DocumentProbeFailureCommand,
   DocumentProbeFailureOutcome,
@@ -39,7 +40,7 @@ export class ContentRepository extends BaseRepository<Document> {
 
   async createUploaded(
     ownerId: string,
-    command: CreateUploadUrlCommand & { readonly estimatedCredits: number; readonly selectedModelLabel: string },
+    command: CreateUploadUrlCommand & { readonly estimatedCredits: number | null; readonly selectedModelLabel: string },
     storageRef: string,
   ): Promise<Document> {
     const document = this.create({
@@ -52,7 +53,8 @@ export class ContentRepository extends BaseRepository<Document> {
       modelSelectionKind: command.selection.kind,
       platformModelId: command.selection.platformModelId,
       selectedModelLabel: command.selectedModelLabel,
-      estimateStatus: 'COARSE',
+      // Media has no estimate until the probe reports a duration (ADR-0031).
+      estimateStatus: command.estimatedCredits === null ? null : 'COARSE',
       estimatedCredits: command.estimatedCredits,
       budgetStatus: command.selection.kind === 'CUSTOM' ? 'CUSTOM_ZERO_COST' : 'NOT_RESERVED',
       status: DocumentStatus.UPLOADED,
@@ -593,13 +595,13 @@ export class ContentRepository extends BaseRepository<Document> {
   }
 
   async completeProbe(
-    command: DocumentProbeCompletionCommand,
+    command: DocumentProbeCompletionPersistenceCommand,
   ): Promise<DocumentProbeCompletionOutcome> {
     return this.dataSource.transaction(async (manager) => {
       const versionId = normalizeStorageVersionId(command.locator.versionId);
       const etag = command.locator.etag.trim();
       if (!versionId || !etag) return 'IGNORED';
-      const canonicalCommand: DocumentProbeCompletionCommand = {
+      const canonicalCommand: DocumentProbeCompletionPersistenceCommand = {
         ...command,
         locator: {
           ...command.locator,
@@ -665,12 +667,20 @@ export class ContentRepository extends BaseRepository<Document> {
         return 'IGNORED';
       }
 
-      const estimatedCredits = Number(document.estimatedCredits ?? 0);
       const isPlatformModel = document.modelSelectionKind === 'PLAN';
+      // Credits come from the probed duration (computed by the projection service), never from file size.
+      if (isPlatformModel && document.platformModelId !== command.creditEstimate.platformModelId) return 'IGNORED';
+      const estimatedCredits = isPlatformModel ? command.creditEstimate.estimatedCredits : 0;
+      if (!Number.isSafeInteger(estimatedCredits) || estimatedCredits < 0) {
+        throw new Error('Invalid media credit estimate');
+      }
       const processingAttempt = Number(document.processingAttempt);
       if (!Number.isSafeInteger(processingAttempt) || processingAttempt < 1) {
         throw new Error('Invalid processing attempt');
       }
+      const creditEstimateColumns = isPlatformModel
+        ? { estimatedCredits, estimateStatus: 'COARSE' }
+        : {};
       let budgetExhausted = false;
       if (isPlatformModel && estimatedCredits > 0) {
         const reserveKey = `reserve:${command.fullPipelineJobId}:${processingAttempt}`;
@@ -708,6 +718,7 @@ export class ContentRepository extends BaseRepository<Document> {
           { id: command.documentId, ownerId: command.ownerId, status: DocumentStatus.PROBING },
           {
             durationSec: command.durationSec,
+            ...creditEstimateColumns,
             mediaSourceBucket: command.locator.bucket,
             mediaSourceVersionId: command.locator.versionId,
             mediaSourceEtag: command.locator.etag,
@@ -726,6 +737,7 @@ export class ContentRepository extends BaseRepository<Document> {
         { id: command.documentId, ownerId: command.ownerId, status: DocumentStatus.PROBING },
         {
           durationSec: command.durationSec,
+          ...creditEstimateColumns,
           mediaSourceBucket: command.locator.bucket,
           mediaSourceVersionId: command.locator.versionId,
           mediaSourceEtag: command.locator.etag,
@@ -760,7 +772,7 @@ export class ContentRepository extends BaseRepository<Document> {
 
   private matchesProbeRequest(
     document: Document,
-    command: DocumentProbeCompletionCommand,
+    command: DocumentProbeCompletionPersistenceCommand,
     request: ProbeRequestIdentity | undefined,
   ): boolean {
     return request?.documentId === command.documentId &&
@@ -784,7 +796,7 @@ export class ContentRepository extends BaseRepository<Document> {
   private async persistProbeReceipt(
     manager: EntityManager,
     document: Document,
-    command: DocumentProbeCompletionCommand,
+    command: DocumentProbeCompletionPersistenceCommand,
   ): Promise<boolean> {
     await manager.query(
       `INSERT INTO "course"."document_probe_receipts"
@@ -815,7 +827,7 @@ export class ContentRepository extends BaseRepository<Document> {
 
   private async probeReceiptMatches(
     manager: EntityManager,
-    command: DocumentProbeCompletionCommand,
+    command: DocumentProbeCompletionPersistenceCommand,
   ): Promise<boolean> {
     const [receipt] = await manager.query<readonly [ProbeReceiptIdentity]>(
       `SELECT "probe_result_id" AS "probeResultId",
