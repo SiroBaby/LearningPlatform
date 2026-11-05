@@ -25,6 +25,7 @@ const MEDIA_DOCUMENT_KEY = new RegExp(`^media/${UUID_PATTERN}/${UUID_PATTERN}(\\
 /** A bucket that was never versioned reports this pseudo version; it is never deleted here. */
 const NULL_VERSION_ID = 'null';
 const UNEXPECTED_ERROR_CODE = 'ORPHAN_SCAN_UNEXPECTED';
+const LOCK_LOST_ERROR_CODE = 'ORPHAN_SCAN_LOCK_LOST';
 /** IAM action the purge identity needs for listing; surfaced when it is denied. */
 const REQUIRED_LIST_PERMISSION = 's3:ListBucketVersions';
 
@@ -58,7 +59,17 @@ export interface MediaOrphanScanReport {
 
 interface ScanCursor {
   readonly key: string;
-  readonly versionId: string;
+  readonly versionId: string | undefined;
+}
+
+type ScanLock = NonNullable<Awaited<ReturnType<MediaOrphanReferenceRepository['tryAcquireScanLock']>>>;
+
+/** The advisory lock disappeared mid-run (connection lost); nothing more may be deleted. */
+class ScanLockLostError extends Error {
+  constructor() {
+    super('Media orphan scan lock was lost');
+    this.name = ScanLockLostError.name;
+  }
 }
 
 interface MutableCounters {
@@ -100,7 +111,7 @@ export class MediaOrphanScannerService {
     const counters = createCounters();
     const startedAt = Date.now();
     let outcome: MediaOrphanScanOutcome = 'COMPLETED';
-    let lock: Awaited<ReturnType<MediaOrphanReferenceRepository['tryAcquireScanLock']>> | undefined;
+    let lock: ScanLock | undefined;
 
     try {
       lock = (await this.repository.tryAcquireScanLock()) ?? undefined;
@@ -110,7 +121,7 @@ export class MediaOrphanScannerService {
         return toReport(outcome, mode, counters);
       }
       this.logger.log({ event: 'media.orphan.scan.started', mode, runtime: 'document-purge' });
-      await this.scanPages(settings, counters, signal);
+      await this.scanPages(settings, counters, lock, signal);
       this.logger.log({
         ...toReport(outcome, mode, counters),
         durationMs: Date.now() - startedAt,
@@ -129,35 +140,49 @@ export class MediaOrphanScannerService {
   private async scanPages(
     settings: MediaOrphanScannerSettings,
     counters: MutableCounters,
+    lock: ScanLock,
     signal: AbortSignal | undefined,
   ): Promise<void> {
     const bucket = this.config.documentPurge.mediaBucket;
     const cutoffMs = DateTimeUtil.nowUtc().getTime() - settings.minAgeMs;
 
-    while (counters.scannedVersionCount < settings.maxObjectsPerRun) {
+    // Delete markers count toward the budget too, so marker-only pages cannot loop unbounded.
+    let listedEntryCount = 0;
+    while (listedEntryCount < settings.maxObjectsPerRun) {
       const page = await this.storage.listObjectVersions({
         bucket,
         keyMarker: this.cursor?.key,
-        maxKeys: Math.min(settings.pageSize, settings.maxObjectsPerRun - counters.scannedVersionCount),
+        maxKeys: Math.min(settings.pageSize, settings.maxObjectsPerRun - listedEntryCount),
         prefix: MEDIA_ORPHAN_SCAN_PREFIX,
         versionIdMarker: this.cursor?.versionId,
       });
       counters.deleteMarkerCount += page.deleteMarkerCount;
+      listedEntryCount += page.versions.length + page.deleteMarkerCount;
       const protections = await this.repository.findProtections(
         collectCandidateKeys(page.versions, cutoffMs),
         bucket,
       );
       const isPageProcessed = await this.processPage({
-        bucket, counters, cutoffMs, protections, settings, signal, versions: page.versions,
+        bucket, counters, cutoffMs, lock, protections, settings, signal, versions: page.versions,
       });
       if (!isPageProcessed) {
         counters.truncated = true;
         return;
       }
-      if (!page.isTruncated || page.versions.length === 0) {
+      if (!page.isTruncated) {
         this.cursor = undefined;
         counters.completedPass = true;
         return;
+      }
+      // Follow S3's own next marker: it can skip past delete markers when the page had no versions.
+      if (page.nextKeyMarker === undefined) {
+        // Truncated without a way to continue: stop rather than loop or claim a finished pass.
+        if (page.versions.length === 0) {
+          counters.truncated = true;
+          return;
+        }
+      } else {
+        this.cursor = { key: page.nextKeyMarker, versionId: page.nextVersionIdMarker };
       }
     }
     counters.truncated = true;
@@ -168,6 +193,7 @@ export class MediaOrphanScannerService {
     readonly bucket: string;
     readonly counters: MutableCounters;
     readonly cutoffMs: number;
+    readonly lock: ScanLock;
     readonly protections: MediaObjectProtections;
     readonly settings: MediaOrphanScannerSettings;
     readonly signal: AbortSignal | undefined;
@@ -180,7 +206,7 @@ export class MediaOrphanScannerService {
       if (verdict === 'ORPHAN' && counters.orphanCount >= settings.maxDeletesPerRun) return false;
       counters.scannedVersionCount += 1;
       if (verdict === 'ORPHAN') {
-        await this.handleOrphan(input.bucket, version, settings, counters);
+        await this.handleOrphan(input.bucket, version, settings, counters, input.lock);
       } else {
         countSkipped(counters, verdict);
       }
@@ -195,6 +221,7 @@ export class MediaOrphanScannerService {
     version: MediaObjectVersion,
     settings: MediaOrphanScannerSettings,
     counters: MutableCounters,
+    lock: ScanLock,
   ): Promise<void> {
     const versionId = version.versionId ?? NULL_VERSION_ID;
     counters.orphanCount += 1;
@@ -216,6 +243,8 @@ export class MediaOrphanScannerService {
       return;
     }
     if (counters.deletedCount > 0) await pause(settings.deleteDelayMs);
+    // The single-runner guarantee only holds while the lock connection is alive.
+    if (!(await isLockHeld(lock))) throw new ScanLockLostError();
     await this.storage.deleteObjectVersion({ bucket, key: version.key, versionId });
     counters.deletedCount += 1;
     this.logger.log({ ...details, action: 'deleted', event: 'media.orphan.deleted' });
@@ -225,7 +254,9 @@ export class MediaOrphanScannerService {
     const isStorageError = error instanceof DocumentPurgeStorageError;
     this.logger.error({
       deletedCount: counters.deletedCount,
-      errorCode: isStorageError ? error.code : UNEXPECTED_ERROR_CODE,
+      errorCode: isStorageError
+        ? error.code
+        : error instanceof ScanLockLostError ? LOCK_LOST_ERROR_CODE : UNEXPECTED_ERROR_CODE,
       event: 'media.orphan.scan.failed',
       mode,
       // Fail-closed hint: a denied listing means the IAM statement is missing.
@@ -237,15 +268,22 @@ export class MediaOrphanScannerService {
     });
   }
 
-  private async releaseLock(
-    lock: Awaited<ReturnType<MediaOrphanReferenceRepository['tryAcquireScanLock']>> | undefined,
-  ): Promise<void> {
+  private async releaseLock(lock: ScanLock | undefined): Promise<void> {
     if (!lock) return;
     try {
       await lock.release();
     } catch {
       this.logger.error({ event: 'media.orphan.scan.lock_release_failed', runtime: 'document-purge' });
     }
+  }
+}
+
+/** A failing check (dead connection) means the lock is gone with it. */
+async function isLockHeld(lock: ScanLock): Promise<boolean> {
+  try {
+    return await lock.isHeld();
+  } catch {
+    return false;
   }
 }
 

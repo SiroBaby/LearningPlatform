@@ -32,6 +32,8 @@ export class ObjectStorageMediaOrphanStore implements MediaOrphanStorage {
       return {
         deleteMarkerCount: response.DeleteMarkers?.length ?? 0,
         isTruncated: response.IsTruncated === true,
+        nextKeyMarker: response.NextKeyMarker,
+        nextVersionIdMarker: response.NextVersionIdMarker,
         versions: (response.Versions ?? []).map((version) => ({
           key: version.Key ?? '',
           lastModified: version.LastModified,

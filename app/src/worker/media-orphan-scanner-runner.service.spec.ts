@@ -39,6 +39,26 @@ describe('MediaOrphanScannerRunner', () => {
     expect(scanOnce).not.toHaveBeenCalled();
   });
 
+  it('backs off after consecutive failed scans and resets after a success', async () => {
+    const runner = runnerFor(true);
+    scanOnce.mockResolvedValue({ outcome: 'FAILED' } as Awaited<ReturnType<MediaOrphanScannerService['scanOnce']>>);
+
+    runner.onApplicationBootstrap();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(scanOnce).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(INTERVAL_MS);
+    expect(scanOnce).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(INTERVAL_MS);
+    expect(scanOnce).toHaveBeenCalledTimes(2);
+    scanOnce.mockResolvedValue({ outcome: 'COMPLETED' } as Awaited<ReturnType<MediaOrphanScannerService['scanOnce']>>);
+    await jest.advanceTimersByTimeAsync(INTERVAL_MS * 4);
+    expect(scanOnce).toHaveBeenCalledTimes(3);
+    await jest.advanceTimersByTimeAsync(INTERVAL_MS);
+    expect(scanOnce).toHaveBeenCalledTimes(4);
+
+    await runner.onApplicationShutdown();
+  });
+
   it('scans at once, then once per interval, and stops on shutdown', async () => {
     const runner = runnerFor(true);
 

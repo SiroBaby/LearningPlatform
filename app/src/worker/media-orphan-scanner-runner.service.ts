@@ -4,6 +4,9 @@ import { createApplicationLogger } from '../common/logging/application-logger.fa
 import { ApplicationConfigService } from '../config/application-config.service';
 import { MediaOrphanScannerService } from '../modules/content/media-orphan-scanner.service';
 
+/** Consecutive failed runs double the delay up to this multiple of the interval. */
+const MAX_FAILURE_BACKOFF_MULTIPLIER = 8;
+
 /**
  * Timer loop of the media orphan scanner inside the document-purge runtime.
  * It is independent of the purge poll loop: a failing or slow scan never
@@ -15,6 +18,7 @@ export class MediaOrphanScannerRunner implements OnApplicationBootstrap, OnAppli
   private readonly shutdownSignal = new AbortController();
   private activeScan: Promise<void> | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private consecutiveFailureCount = 0;
 
   constructor(
     private readonly config: ApplicationConfigService,
@@ -48,11 +52,20 @@ export class MediaOrphanScannerRunner implements OnApplicationBootstrap, OnAppli
 
   private async runScan(): Promise<void> {
     if (this.shutdownSignal.signal.aborted) return;
-    this.activeScan = this.scanner.scanOnce(this.shutdownSignal.signal).then(() => undefined);
+    this.activeScan = this.scanner.scanOnce(this.shutdownSignal.signal).then((report) => {
+      this.consecutiveFailureCount = report.outcome === 'FAILED' ? this.consecutiveFailureCount + 1 : 0;
+    });
     await this.activeScan;
     this.activeScan = undefined;
     if (!this.shutdownSignal.signal.aborted) {
-      this.scheduleScan(this.config.mediaOrphanScanner.intervalMs);
+      this.scheduleScan(this.nextDelayMs());
     }
+  }
+
+  /** Doubles per consecutive failure (capped), so a denied or broken scan is not retried hourly forever. */
+  private nextDelayMs(): number {
+    const { intervalMs } = this.config.mediaOrphanScanner;
+    const multiplier = Math.min(2 ** this.consecutiveFailureCount, MAX_FAILURE_BACKOFF_MULTIPLIER);
+    return intervalMs * multiplier;
   }
 }

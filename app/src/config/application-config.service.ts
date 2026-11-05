@@ -31,6 +31,18 @@ const MIN_ORPHAN_SCANNER_AGE_MS = 21_600_000;
 /** S3 returns at most 1000 keys per ListObjectVersions page. */
 const MAX_ORPHAN_SCANNER_PAGE_SIZE = 1_000;
 
+/** Returned while the scanner is off; the runner reads only `enabled`. */
+const INERT_ORPHAN_SCANNER_SETTINGS: MediaOrphanScannerSettings = {
+  deleteDelayMs: 0,
+  deleteEnabled: false,
+  enabled: false,
+  intervalMs: 0,
+  maxDeletesPerRun: 0,
+  maxObjectsPerRun: 0,
+  minAgeMs: 0,
+  pageSize: 0,
+};
+
 @Injectable()
 export class ApplicationConfigService {
   constructor(private readonly config: ConfigService) {}
@@ -332,7 +344,7 @@ export class ApplicationConfigService {
 
   /**
    * Orphan scanner settings. Validated only when the purge runtime asks for
-   * them. The minimum age has a floor so a typo cannot make the scanner race
+   * them, and the tuning only when the scanner is enabled. The minimum age has a floor so a typo cannot make the scanner race
    * a presigned upload that is still being written.
    */
   get mediaOrphanScanner(): MediaOrphanScannerSettings {
@@ -344,6 +356,8 @@ export class ApplicationConfigService {
     if (deleteEnabled && !enabled) {
       throw new Error('MEDIA_ORPHAN_SCANNER_DELETE_ENABLED requires MEDIA_ORPHAN_SCANNER_ENABLED');
     }
+    // A disabled scanner must never be able to crash the purge worker over its tuning.
+    if (!enabled) return INERT_ORPHAN_SCANNER_SETTINGS;
     const settings: MediaOrphanScannerSettings = {
       deleteDelayMs: this.nonNegativeInteger(CONFIG_PATH.mediaOrphanScanner.deleteDelayMs),
       deleteEnabled,

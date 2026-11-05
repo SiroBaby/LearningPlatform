@@ -251,6 +251,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
 
     expect(first).not.toBeNull();
     expect(second).toBeNull();
+    await expect(first?.isHeld()).resolves.toBe(true);
     await first?.release();
     const third = await references.tryAcquireScanLock();
     expect(third).not.toBeNull();

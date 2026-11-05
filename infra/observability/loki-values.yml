@@ -216,10 +216,19 @@ extraObjects:
                     The orphan scanner stopped without deleting further. errorCode PURGE_ACCESS_DENIED means the purge identity lacks s3:ListBucketVersions. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 10.
               - alert: MediaOrphanVersionsDetected
                 expr: >-
-                  sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "media.orphan.scan.completed" | json orphanCount="message.orphanCount" | __error__="" | unwrap orphanCount [30m])) > 0
+                  sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "media.orphan.scan.completed" | json orphanCount="message.orphanCount", mode="message.mode" | __error__="" | mode="dry-run" | unwrap orphanCount [30m])) > 0
                 labels:
                   severity: warning
                 annotations:
-                  summary: Media orphan versions found
+                  summary: Media orphan versions found in dry-run
                   description: >-
-                    A scan found media object versions that no Document or purge manifest references. In dry-run nothing was deleted; review the media.orphan.candidate logs. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 10.
+                    A dry-run scan found media object versions that no Document or purge manifest references; nothing was deleted. Review the media.orphan.candidate logs. Fires only in dry-run mode, because once deletion is enabled the scanner cleans them itself and failures raise MediaOrphanScanFailed. Follow docs/deployment/RUNBOOK-document-purge-dev.md section 10.
+              - alert: MediaOrphanScanStale
+                expr: >-
+                  sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"media.orphan.scan." [6h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "media.orphan.scan.completed" [3h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [6h]))
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Media orphan scanner stopped completing scans
+                  description: >-
+                    The orphan scanner logged scan events within the last 6 hours but no media.orphan.scan.completed for 3 hours (default interval 1 hour, failures back off up to 8 hours). Follow docs/deployment/RUNBOOK-document-purge-dev.md section 10.

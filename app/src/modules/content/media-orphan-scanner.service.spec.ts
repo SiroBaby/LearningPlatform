@@ -58,7 +58,18 @@ class FakeOrphanStorage implements MediaOrphanStorage {
   async listObjectVersions(input: ListMediaObjectVersions): Promise<MediaObjectVersionPage> {
     this.listRequests.push(input);
     if (this.listError) throw this.listError;
-    // Resume after the marker the way S3 does: by position in the flat list.
+    if (input.keyMarker === undefined) {
+      return this.pages[0] ?? { deleteMarkerCount: 0, isTruncated: false, versions: [] };
+    }
+    // A marker a page handed out leads to the next page, even when that page has no versions.
+    if (input.keyMarker !== undefined) {
+      const handedOut = this.pages.findIndex((candidate) => candidate.nextKeyMarker === input.keyMarker
+        && candidate.nextVersionIdMarker === input.versionIdMarker);
+      if (handedOut >= 0) {
+        return this.pages[handedOut + 1] ?? { deleteMarkerCount: 0, isTruncated: false, versions: [] };
+      }
+    }
+    // Otherwise resume after the marker the way S3 does: by position in the flat list.
     const flat = this.pages.flatMap((page) => page.versions);
     const start = input.keyMarker === undefined
       ? 0
@@ -82,12 +93,20 @@ class FakeOrphanStorage implements MediaOrphanStorage {
 class FakeReferences {
   protections: MediaObjectProtections = { protectedKeys: new Set(), protectedVersions: new Set() };
   lockHeld = false;
+  lockLostAfterChecks: number | undefined;
+  private heldChecks = 0;
   releaseCount = 0;
   readonly lookups: string[][] = [];
 
-  async tryAcquireScanLock(): Promise<{ release(): Promise<void> } | null> {
+  async tryAcquireScanLock(): Promise<{ isHeld(): Promise<boolean>; release(): Promise<void> } | null> {
     if (this.lockHeld) return null;
-    return { release: async (): Promise<void> => { this.releaseCount += 1; } };
+    return {
+      isHeld: async (): Promise<boolean> => {
+        this.heldChecks += 1;
+        return this.lockLostAfterChecks === undefined || this.heldChecks <= this.lockLostAfterChecks;
+      },
+      release: async (): Promise<void> => { this.releaseCount += 1; },
+    };
   }
 
   async findProtections(keys: readonly string[]): Promise<MediaObjectProtections> {
@@ -96,8 +115,19 @@ class FakeReferences {
   }
 }
 
-function page(versions: MediaObjectVersion[], isTruncated = false, deleteMarkerCount = 0): MediaObjectVersionPage {
-  return { deleteMarkerCount, isTruncated, versions };
+function page(
+  versions: MediaObjectVersion[],
+  isTruncated = false,
+  deleteMarkerCount = 0,
+  next?: { readonly key: string; readonly versionId: string },
+): MediaObjectVersionPage {
+  return {
+    deleteMarkerCount,
+    isTruncated,
+    nextKeyMarker: next?.key,
+    nextVersionIdMarker: next?.versionId,
+    versions,
+  };
 }
 
 describe('MediaOrphanScannerService', () => {
@@ -258,6 +288,71 @@ describe('MediaOrphanScannerService', () => {
       [first, 'a2'],
     ]);
     expect(report).toMatchObject({ completedPass: true, deletedCount: 3, scannedVersionCount: 3, truncated: false });
+  });
+
+  it('follows the next marker through a truncated page that holds only delete markers', async () => {
+    const afterMarkers = mediaKey();
+    const markerKey = mediaKey();
+    const storage = new FakeOrphanStorage([
+      page([], true, 3, { key: markerKey, versionId: 'marker-v' }),
+      page([version(afterMarkers, 'v1')], false),
+    ]);
+
+    const report = await serviceFor(storage, new FakeReferences(), settingsFor({ deleteEnabled: true })).scanOnce();
+
+    expect(storage.listRequests.map((request) => [request.keyMarker, request.versionIdMarker])).toEqual([
+      [undefined, undefined],
+      [markerKey, 'marker-v'],
+    ]);
+    expect(report).toMatchObject({ completedPass: true, deleteMarkerCount: 3, deletedCount: 1 });
+  });
+
+  it('does not report a finished pass for a truncated page it cannot continue from', async () => {
+    const storage = new FakeOrphanStorage([page([], true, 2)]);
+
+    const report = await serviceFor(storage, new FakeReferences()).scanOnce();
+
+    expect(report).toMatchObject({ completedPass: false, outcome: 'COMPLETED', truncated: true });
+    expect(storage.listRequests).toHaveLength(1);
+  });
+
+  it('keeps marker-only pages inside the per-run budget', async () => {
+    const pages = Array.from({ length: 10 }, (_unused, index) => (
+      page([], true, 10, { key: `media/${index}`, versionId: 'm' })
+    ));
+    const storage = new FakeOrphanStorage(pages);
+
+    const report = await serviceFor(storage, new FakeReferences(), settingsFor({ maxObjectsPerRun: 30, pageSize: 10 })).scanOnce();
+
+    expect(storage.listRequests).toHaveLength(3);
+    expect(report).toMatchObject({ completedPass: false, deleteMarkerCount: 30, truncated: true });
+  });
+
+  it('resumes after the markers on the next run when the budget ended inside them', async () => {
+    const key = mediaKey();
+    const storage = new FakeOrphanStorage([
+      page([], true, 2, { key: 'media/m', versionId: 'm1' }),
+      page([version(key, 'v1')], false),
+    ]);
+    const service = serviceFor(storage, new FakeReferences(), settingsFor({ deleteEnabled: true, maxObjectsPerRun: 2, pageSize: 2 }));
+
+    const first = await service.scanOnce();
+    const second = await service.scanOnce();
+
+    expect(first).toMatchObject({ completedPass: false, deletedCount: 0 });
+    expect(second).toMatchObject({ completedPass: true, deletedCount: 1 });
+    expect(storage.listRequests[1]).toMatchObject({ keyMarker: 'media/m', versionIdMarker: 'm1' });
+  });
+
+  it('aborts before deleting when the single-runner lock was lost', async () => {
+    const storage = new FakeOrphanStorage([page([version(mediaKey(), 'v1'), version(mediaKey(), 'v2')])]);
+    const references = new FakeReferences();
+    references.lockLostAfterChecks = 1;
+
+    const report = await serviceFor(storage, references, settingsFor({ deleteEnabled: true })).scanOnce();
+
+    expect(report).toMatchObject({ deletedCount: 1, outcome: 'FAILED' });
+    expect(errors).toContainEqual(expect.objectContaining({ errorCode: 'ORPHAN_SCAN_LOCK_LOST' }));
   });
 
   it('stops at the delete cap, then resumes after the last processed version', async () => {

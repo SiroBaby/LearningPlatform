@@ -9,6 +9,11 @@ const ORPHAN_SCANNER_LOCK_NAME = 'media-orphan-scanner';
 
 /** Held until `release`; the lock lives on one dedicated connection. */
 export interface MediaOrphanScanLock {
+  /**
+   * Asks the lock's own connection whether it still holds the advisory lock.
+   * A dead connection throws, which callers treat as "lock lost".
+   */
+  isHeld(): Promise<boolean>;
   release(): Promise<void>;
 }
 
@@ -62,6 +67,15 @@ export class MediaOrphanReferenceRepository extends BaseRepository<DocumentPurge
       throw error;
     }
     return {
+      isHeld: async (): Promise<boolean> => {
+        const rows = (await runner.query(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_locks
+              WHERE "locktype" = 'advisory' AND "pid" = pg_backend_pid() AND "granted"
+           ) AS "held"`,
+        )) as Array<{ readonly held: boolean }>;
+        return rows[0]?.held === true;
+      },
       release: async (): Promise<void> => {
         try {
           await runner.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [ORPHAN_SCANNER_LOCK_NAME]);

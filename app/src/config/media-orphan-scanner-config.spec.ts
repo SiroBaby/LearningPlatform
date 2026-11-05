@@ -9,7 +9,7 @@ function scannerConfig(overrides: Record<string, unknown> = {}): ApplicationConf
     mediaOrphanScanner: {
       deleteDelayMs: 250,
       deleteEnabled: false,
-      enabled: false,
+      enabled: true,
       intervalMs: 3_600_000,
       maxDeletesPerRun: 100,
       maxObjectsPerRun: 5_000,
@@ -22,7 +22,7 @@ function scannerConfig(overrides: Record<string, unknown> = {}): ApplicationConf
 
 describe('ApplicationConfigService.mediaOrphanScanner', () => {
   it('returns typed settings', () => {
-    expect(scannerConfig({ enabled: true }).mediaOrphanScanner).toEqual({
+    expect(scannerConfig({}).mediaOrphanScanner).toEqual({
       deleteDelayMs: 250,
       deleteEnabled: false,
       enabled: true,
@@ -34,12 +34,20 @@ describe('ApplicationConfigService.mediaOrphanScanner', () => {
     });
   });
 
+  it('ignores malformed tuning while the scanner is disabled so it cannot crash the purge worker', () => {
+    const settings = scannerConfig({
+      enabled: false, minAgeMs: Number.NaN, pageSize: -5, intervalMs: 'abc',
+    }).mediaOrphanScanner;
+
+    expect(settings).toMatchObject({ deleteEnabled: false, enabled: false });
+  });
+
   it('allows an immediate delete delay of zero', () => {
     expect(scannerConfig({ deleteDelayMs: 0 }).mediaOrphanScanner.deleteDelayMs).toBe(0);
   });
 
   it.each([
-    ['delete without the scanner', { deleteEnabled: true }, 'MEDIA_ORPHAN_SCANNER_DELETE_ENABLED requires MEDIA_ORPHAN_SCANNER_ENABLED'],
+    ['delete without the scanner', { deleteEnabled: true, enabled: false }, 'MEDIA_ORPHAN_SCANNER_DELETE_ENABLED requires MEDIA_ORPHAN_SCANNER_ENABLED'],
     ['non-boolean flag', { enabled: 'true' }, 'must be booleans'],
     ['minimum age below the floor', { minAgeMs: 3_600_000 }, 'MEDIA_ORPHAN_SCANNER_MIN_AGE_MS must be at least 21600000'],
     ['page size above the S3 limit', { pageSize: 1_001 }, 'MEDIA_ORPHAN_SCANNER_PAGE_SIZE must not exceed 1000'],

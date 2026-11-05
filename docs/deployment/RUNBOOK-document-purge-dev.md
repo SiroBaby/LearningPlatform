@@ -497,6 +497,11 @@ Nếu worker vẫn Ready mà manifest không giảm, đọc `last_error_code` v�
 - **Phạm vi quét (Q6)**: chỉ media bucket, chỉ prefix `media/`, và chỉ key đúng
   dạng `media/<uuid>/<uuid>[.ext]` (cách API đặt key). Mọi key khác (kể cả tên
   lạ trong `media/`) bị bỏ qua và chỉ được đếm. Documents bucket không bao giờ bị quét.
+- **Quy mô**: mỗi trang `ListObjectVersions` kéo theo một truy vấn
+  `course.documents WHERE storage_ref = ANY(...)`. Cột `storage_ref` **chưa có
+  index**, nên ở dev truy vấn là sequential scan; khi bảng lớn lên cần index
+  `course.documents(storage_ref)` bằng migration expand-only riêng (chưa làm ở PR này,
+  cần owner duyệt).
 - **Không cần migration**: scanner chỉ đọc `course.documents` và
   `course.document_purge_manifests`; không có bảng hay cột mới. Con trỏ phân trang
   nằm trong bộ nhớ (restart thì quét lại từ đầu); lock một-runner dùng PostgreSQL
@@ -519,7 +524,15 @@ giữ lại.
 Hệ quả: version upload sau khi Document `DELETING` đã có manifest `COMPLETED` (hoặc
 `DEAD_LETTER` `PURGE_LOCATORS_UNRESOLVED` không có locator) là orphan và sẽ được
 dọn sau 24 giờ. Delete marker chỉ được **đếm** (`deleteMarkerCount`), scanner không
-xóa marker. Trước mỗi lần xóa thật, scanner kiểm tra lại tham chiếu của đúng key đó.
+xóa marker. Trước mỗi lần xóa thật, scanner kiểm tra lại tham chiếu của đúng key đó và kiểm tra
+kết nối giữ advisory lock còn sống (mất lock thì dừng, `ORPHAN_SCAN_LOCK_LOST`).
+
+**DLQ và scanner tương tác với nhau (on-call cần biết)**: manifest `DEAD_LETTER` với
+locators rỗng (`PURGE_LOCATORS_UNRESOLVED`) **không** bảo vệ key nào. Document
+`DELETING` đó coi như purge đã xong, nên nếu bucket còn version của key, scanner sẽ
+xóa sau `MIN_AGE` (đúng thiết kế Q1: phần còn lại của purge giao cho scanner). Ngược
+lại manifest `DEAD_LETTER` khác (ví dụ `PURGE_ACCESS_DENIED`) vẫn bảo vệ đúng
+version nó nêu; đưa manifest đó lại hàng đợi theo mục 7 thay vì chờ scanner.
 
 ### 10.3 Cờ, giá trị mặc định và giới hạn
 
@@ -624,5 +637,12 @@ Hai Loki alert (cùng ruler ở mục 8, container `document-purge-worker`):
   sau, version lỗi được giữ nguyên); `ORPHAN_SCAN_UNEXPECTED` = lỗi khác (ví dụ
   database), xem log pod.
 - `MediaOrphanVersionsDetected` (`warning`): lần quét hoàn tất gần nhất (cửa sổ 30
-  phút) có `orphanCount > 0`. Ở dry-run đây là tín hiệu cần duyệt báo cáo; khi đã bật
-  xóa, alert này cho biết scanner vừa dọn. Tự resolve khoảng 30 phút sau.
+  phút) ở **dry-run** có `orphanCount > 0`; tín hiệu cần duyệt báo cáo (mục 10.5).
+  Cố ý chỉ báo ở dry-run: khi đã bật xóa, scanner tự dọn và sự cố đã có
+  `MediaOrphanScanFailed`/`MediaOrphanScanStale`, nên alert này không lặp lại mỗi
+  chu kỳ. Tự resolve khoảng 30 phút sau.
+- `MediaOrphanScanStale` (`warning`): trong 6 giờ qua có log `media.orphan.scan.*`
+  nhưng 3 giờ không có `media.orphan.scan.completed` (chu kỳ mặc định 1 giờ). Khi scan
+  liên tiếp lỗi, runner nhân đôi thời gian chờ tới tối đa 8 lần chu kỳ, và reset khi
+  một lần quét thành công. Alert bị chặn trong 6 giờ sau log
+  `document.purge.shutdown.completed` (restart hoặc tắt cờ), giống `DocumentPurgeBacklogMissing`.

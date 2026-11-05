@@ -21,6 +21,12 @@ export interface MediaObjectVersionPage {
   readonly versions: readonly MediaObjectVersion[];
   readonly deleteMarkerCount: number;
   readonly isTruncated: boolean;
+  /**
+   * Where the next page starts when `isTruncated`. It can point past delete
+   * markers, so it must be used even when `versions` is empty.
+   */
+  readonly nextKeyMarker?: string;
+  readonly nextVersionIdMarker?: string;
 }
 
 /**
