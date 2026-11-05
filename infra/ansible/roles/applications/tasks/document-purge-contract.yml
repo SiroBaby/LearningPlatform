@@ -7,6 +7,20 @@
       - document_purge_enabled | default(false) is boolean
     fail_msg: document_purge_enabled must be the YAML boolean true or false.
 
+# The scanner deletes object versions too: both flags are explicit booleans, and
+# deletion is never on without the scanner itself.
+- name: Require the media orphan scanner flags to be explicit booleans with delete implying enabled
+  ansible.builtin.assert:
+    that:
+      - media_orphan_scanner_enabled | default(false) is boolean
+      - media_orphan_scanner_delete_enabled | default(false) is boolean
+      - >-
+        not (media_orphan_scanner_delete_enabled | default(false))
+        or (media_orphan_scanner_enabled | default(false))
+    fail_msg: >-
+      media_orphan_scanner_enabled and media_orphan_scanner_delete_enabled must be
+      YAML booleans, and delete requires media_orphan_scanner_enabled.
+
 - name: Validate the enabled document purge worker contract
   ansible.builtin.assert:
     that:

@@ -838,6 +838,23 @@ check_document_purge_contract() {
     fail 'Non-secret document purge tuning must stay a manifest literal, never an ExternalSecret or SSM key.'
   fi
 
+  # The media orphan scanner (#159 PR-4) shares the purge identity. Tuning is a
+  # manifest literal, never SSM; both flags are explicit Ansible booleans that
+  # ship false (report-only). Deletion is an owner decision after a dry-run report.
+  if grep -Eiq "MEDIA_ORPHAN_SCANNER|media_orphan_scanner" "${eso_template}"; then
+    fail 'Media orphan scanner settings must stay manifest literals and Ansible flags, never an ExternalSecret or SSM key.'
+  fi
+  if [ "$(grep -Fc 'MEDIA_ORPHAN_SCANNER_' <<<"${purge_block}")" -ne 8 ] \
+    || ! grep -A 1 -Fx '            - name: MEDIA_ORPHAN_SCANNER_ENABLED' <<<"${purge_block}" | grep -Fxq "              value: '{{ media_orphan_scanner_enabled | default(false) | bool | lower }}'" \
+    || ! grep -A 1 -Fx '            - name: MEDIA_ORPHAN_SCANNER_DELETE_ENABLED' <<<"${purge_block}" | grep -Fxq "              value: '{{ media_orphan_scanner_delete_enabled | default(false) | bool | lower }}'" \
+    || ! grep -A 1 -Fx '            - name: MEDIA_ORPHAN_SCANNER_MIN_AGE_MS' <<<"${purge_block}" | grep -Fxq "              value: '86400000'" \
+    || [ "$(grep -Ec '^media_orphan_scanner_enabled: (true|false)$' "${dev_vars}")" -ne 1 ] \
+    || [ "$(grep -Ec '^media_orphan_scanner_delete_enabled: (true|false)$' "${dev_vars}")" -ne 1 ] \
+    || ! grep -Fxq 'media_orphan_scanner_enabled: false' "${app_vars}" \
+    || ! grep -Fxq 'media_orphan_scanner_delete_enabled: false' "${app_vars}"; then
+    fail 'The media orphan scanner must render only from the explicit media_orphan_scanner_(delete_)enabled booleans (default false in the example vars), keep the 24 hour minimum age, and appear once inside the purge worker.'
+  fi
+
   if [ "$(grep -Ec '^document_purge_enabled: (true|false)$' "${dev_vars}")" -ne 1 ] \
     || ! grep -Fxq 'document_purge_enabled: false' "${app_vars}" \
     || ! grep -Fxq '  object_storage_media_purge_access_key: /learning-platform/dev/object-storage-media-purge-access-key' "${dev_vars}" \

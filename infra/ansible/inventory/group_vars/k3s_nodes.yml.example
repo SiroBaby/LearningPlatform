@@ -115,6 +115,10 @@ media_probe_database_upstream_port: REPLACE_WITH_DATABASE_PORT
 # The document purge worker needs a dedicated purge IAM identity; see
 # docs/deployment/RUNBOOK-document-purge-dev.md before enabling it.
 document_purge_enabled: false
+# Orphan scanner inside the purge worker: report-only first, delete only after
+# the dry-run report was reviewed (RUNBOOK-document-purge-dev.md section 10).
+media_orphan_scanner_enabled: false
+media_orphan_scanner_delete_enabled: false
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}

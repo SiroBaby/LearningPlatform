@@ -45,6 +45,14 @@
       DOCUMENT_PURGE_BACKOFF_BASE_MS: '30000'
       DOCUMENT_PURGE_BACKOFF_MAX_MS: '3600000'
       DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS: '10000'
+      MEDIA_ORPHAN_SCANNER_ENABLED: 'false'
+      MEDIA_ORPHAN_SCANNER_DELETE_ENABLED: 'false'
+      MEDIA_ORPHAN_SCANNER_INTERVAL_MS: '3600000'
+      MEDIA_ORPHAN_SCANNER_MIN_AGE_MS: '86400000'
+      MEDIA_ORPHAN_SCANNER_PAGE_SIZE: '500'
+      MEDIA_ORPHAN_SCANNER_MAX_OBJECTS_PER_RUN: '5000'
+      MEDIA_ORPHAN_SCANNER_MAX_DELETES_PER_RUN: '100'
+      MEDIA_ORPHAN_SCANNER_DELETE_DELAY_MS: '250'
       OBJECT_STORAGE_EGRESS_PROXY_URL: http://media-egress-proxy:3128
   tasks:
     - name: Require the production dev vars to keep the purge worker disabled
@@ -237,6 +245,47 @@
           keys of learning-platform-document-purge-runtime: no OpenAI, media-probe,
           API, or document-bucket credential.
 
+    - name: Render the orphan scanner flags for the dry-run and delete rollouts
+      vars:
+        applications_scanner_dry_run_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'media_orphan_scanner_enabled': true,
+                            'media_orphan_scanner_delete_enabled': false})
+             | from_yaml_all | list }}
+        applications_scanner_delete_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'media_orphan_scanner_enabled': true,
+                            'media_orphan_scanner_delete_enabled': true})
+             | from_yaml_all | list }}
+      ansible.builtin.set_fact:
+        applications_scanner_flags_default: >-
+          {{ (applications_purge_deployment.spec.template.spec.containers | first).env
+             | selectattr('name', 'search', '^MEDIA_ORPHAN_SCANNER_(ENABLED|DELETE_ENABLED)$')
+             | map(attribute='value') | list }}
+        applications_scanner_flags_dry_run: >-
+          {{ ((applications_scanner_dry_run_manifests | selectattr('kind', 'equalto', 'Deployment')
+               | selectattr('metadata.name', 'equalto', 'document-purge-worker') | first)
+              .spec.template.spec.containers | first).env
+             | selectattr('name', 'search', '^MEDIA_ORPHAN_SCANNER_(ENABLED|DELETE_ENABLED)$')
+             | map(attribute='value') | list }}
+        applications_scanner_flags_delete: >-
+          {{ ((applications_scanner_delete_manifests | selectattr('kind', 'equalto', 'Deployment')
+               | selectattr('metadata.name', 'equalto', 'document-purge-worker') | first)
+              .spec.template.spec.containers | first).env
+             | selectattr('name', 'search', '^MEDIA_ORPHAN_SCANNER_(ENABLED|DELETE_ENABLED)$')
+             | map(attribute='value') | list }}
+      no_log: true
+
+    - name: Require the scanner to ship off and to delete only when both flags are set explicitly
+      ansible.builtin.assert:
+        that:
+          - applications_scanner_flags_default == ['false', 'false']
+          - applications_scanner_flags_dry_run == ['true', 'false']
+          - applications_scanner_flags_delete == ['true', 'true']
+        fail_msg: >-
+          The orphan scanner must render disabled and report-only by default,
+          and delete only when media_orphan_scanner_delete_enabled is true.
+
     - name: Require the purge egress policy to allow only DNS, the S3 proxy, and PostgreSQL
       ansible.builtin.assert:
         that:
@@ -303,6 +352,8 @@
         purge_case_label: "{{ purge_case.label }}"
         purge_case_expected_accepted: "{{ purge_case.accepted }}"
         document_purge_enabled: "{{ purge_case.flag }}"
+        media_orphan_scanner_enabled: "{{ purge_case.scanner | default(false) }}"
+        media_orphan_scanner_delete_enabled: "{{ purge_case.scanner_delete | default(false) }}"
         media_egress_proxy_enabled: "{{ purge_case.proxy | default(true) }}"
         media_probe_database_upstream_port: "{{ purge_case.port | default(27158) }}"
         ssm_parameter_keys: "{{ applications_purge_base_ssm_parameter_keys | combine(purge_case.ssm | default({})) }}"
@@ -310,6 +361,11 @@
         - {label: production enabled, flag: true, accepted: true}
         - {label: quoted false flag, flag: 'false', accepted: false}
         - {label: quoted true flag, flag: 'true', accepted: false}
+        - {label: orphan scanner dry-run, flag: true, scanner: true, accepted: true}
+        - {label: orphan scanner delete, flag: true, scanner: true, scanner_delete: true, accepted: true}
+        - {label: orphan scanner delete without scanner, flag: true, scanner_delete: true, accepted: false}
+        - {label: quoted orphan scanner flag, flag: true, scanner: 'true', accepted: false}
+        - {label: quoted orphan scanner delete flag, flag: true, scanner: true, scanner_delete: 'false', accepted: false}
         - {label: proxy workload disabled, flag: true, proxy: false, accepted: false}
         - {label: string database port, flag: true, port: '27158', accepted: false}
         - label: placeholder access key path
