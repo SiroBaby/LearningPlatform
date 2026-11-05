@@ -47,15 +47,12 @@ func ChunkText(documentID, ownerID string, segments []struct {
 				if len(chunks) >= maxChunks || total > maxTotalChars {
 					return nil, Failure{Code: ChunkLimit}
 				}
-				sum := sha256.Sum256([]byte(value))
-				hash := fmt.Sprintf("%x", sum)
-				id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(documentID+":"+ownerID+":"+fmt.Sprint(len(chunks))+":"+hash)).String()
 				locator := segment.Locator
 				if locator.Kind == "text-range" {
 					locator.Start += leading + start
 					locator.End = locator.Start + len(value)
 				}
-				chunks = append(chunks, Chunk{ID: id, Index: len(chunks), Text: value, ContentHash: hash, Locator: locator})
+				chunks = append(chunks, newChunk(documentID, ownerID, len(chunks), value, locator))
 			}
 			if end == len(text) {
 				break
@@ -68,6 +65,15 @@ func ChunkText(documentID, ownerID string, segments []struct {
 		}
 	}
 	return chunks, nil
+}
+
+// newChunk derives the deterministic chunk ID and content hash shared by every
+// chunker, so equal text at the same index keeps the same ID on replay.
+func newChunk(documentID, ownerID string, index int, text string, locator Locator) Chunk {
+	sum := sha256.Sum256([]byte(text))
+	hash := fmt.Sprintf("%x", sum)
+	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(documentID+":"+ownerID+":"+fmt.Sprint(index)+":"+hash)).String()
+	return Chunk{ID: id, Index: index, Text: text, ContentHash: hash, Locator: locator}
 }
 
 func moveToRuneBoundary(text string, index int) int {

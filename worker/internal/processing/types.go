@@ -31,11 +31,20 @@ type ObjectLocator struct {
 	ETag          string
 	ContentLength int64
 }
+
+// LocatorKindTime is the citation locator kind for audio/video sources.
+const LocatorKindTime = "time"
+
 type Locator struct {
 	Kind  string `json:"kind"`
 	Page  int    `json:"page,omitempty"`
 	Start int    `json:"start,omitempty"`
 	End   int    `json:"end,omitempty"`
+	// StartSec and EndSec are absolute media offsets in seconds, used only by
+	// kind "time". Zero is valid, so MarshalJSON emits them explicitly for that
+	// kind instead of relying on omitempty.
+	StartSec float64 `json:"startSec,omitempty"`
+	EndSec   float64 `json:"endSec,omitempty"`
 }
 
 func (locator Locator) MarshalJSON() ([]byte, error) {
@@ -57,6 +66,16 @@ func (locator Locator) MarshalJSON() ([]byte, error) {
 			Kind:  locator.Kind,
 			Start: locator.Start,
 			End:   locator.End,
+		})
+	case LocatorKindTime:
+		return json.Marshal(struct {
+			Kind     string  `json:"kind"`
+			StartSec float64 `json:"startSec"`
+			EndSec   float64 `json:"endSec"`
+		}{
+			Kind:     locator.Kind,
+			StartSec: locator.StartSec,
+			EndSec:   locator.EndSec,
 		})
 	default:
 		type locatorJSON Locator
