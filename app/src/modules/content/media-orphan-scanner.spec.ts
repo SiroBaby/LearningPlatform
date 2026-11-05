@@ -25,7 +25,6 @@ import { DocumentType } from './enums/document-type.enum';
 import { MediaOrphanScannerService } from './media-orphan-scanner.service';
 import { MediaOrphanReferenceRepository } from './repositories/media-orphan-reference.repository';
 
-const MEDIA_BUCKET = 'orphan-media';
 /** Objects are young for a moment; waiting this long makes a 500 ms minimum age elapse. */
 const AGE_WAIT_MS = 1_200;
 const SHORT_MIN_AGE_MS = 500;
@@ -38,10 +37,11 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
   let documents: Repository<Document>;
   let manifests: Repository<DocumentPurgeManifest>;
   let references: MediaOrphanReferenceRepository;
+  /** A fresh bucket per test: objects left by one test must not become orphans of the next. */
+  let mediaBucket: string;
 
   beforeAll(async () => {
     [db, objectStorage] = await Promise.all([startTestDb(), startTestObjectStorage()]);
-    await objectStorage.createBucket(MEDIA_BUCKET, 'Enabled');
     dataSource = await createTestDataSource(db.container);
   });
 
@@ -54,6 +54,8 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
     documents = dataSource.getRepository(Document);
     manifests = dataSource.getRepository(DocumentPurgeManifest);
     references = new MediaOrphanReferenceRepository(dataSource);
+    mediaBucket = `orphan-media-${randomUUID().slice(0, 8)}`;
+    await objectStorage.createBucket(mediaBucket, 'Enabled');
     await clearDocumentFlowData(db.client);
   });
 
@@ -83,7 +85,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
       ...overrides,
     };
     const config = {
-      documentPurge: { mediaBucket: MEDIA_BUCKET },
+      documentPurge: { mediaBucket },
       mediaOrphanScanner: settings,
     } as unknown as ApplicationConfigService;
     return new MediaOrphanScannerService(
@@ -94,7 +96,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
   }
 
   async function upload(key: string, body: string): Promise<string> {
-    const versionId = await objectStorage.putObject(MEDIA_BUCKET, key, body);
+    const versionId = await objectStorage.putObject(mediaBucket, key, body);
     if (!versionId) throw new Error('expected a versioned upload');
     return versionId;
   }
@@ -130,7 +132,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
   }
 
   function locator(key: string, versionId: string): DocumentPurgeLocator {
-    return { bucket: MEDIA_BUCKET, contentLength: 5, etag: 'etag', key, versionId };
+    return { bucket: mediaBucket, contentLength: 5, etag: 'etag', key, versionId };
   }
 
   async function waitUntilOld(): Promise<void> {
@@ -149,7 +151,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
     const report = await scannerFor().scanOnce();
 
     expect(report).toMatchObject({ completedPass: true, deletedCount: 1, outcome: 'COMPLETED' });
-    await expect(objectStorage.listVersions(MEDIA_BUCKET, key)).resolves.toEqual({
+    await expect(objectStorage.listVersions(mediaBucket, key)).resolves.toEqual({
       deleteMarkerCount: 0,
       versionIds: [],
     });
@@ -163,7 +165,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
     const report = await scannerFor({ deleteEnabled: false }).scanOnce();
 
     expect(report).toMatchObject({ deletedCount: 0, mode: 'dry-run', orphanCount: 1 });
-    await expect(objectStorage.listVersions(MEDIA_BUCKET, key)).resolves.toEqual({
+    await expect(objectStorage.listVersions(mediaBucket, key)).resolves.toEqual({
       deleteMarkerCount: 0,
       versionIds: [versionId],
     });
@@ -179,7 +181,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
     const report = await scannerFor().scanOnce();
 
     expect(report).toMatchObject({ deletedCount: 0, orphanCount: 0, skippedReferencedCount: 2 });
-    const remaining = await objectStorage.listVersions(MEDIA_BUCKET, key);
+    const remaining = await objectStorage.listVersions(mediaBucket, key);
     expect([...remaining.versionIds].sort()).toEqual([firstVersion, secondVersion].sort());
   });
 
@@ -193,7 +195,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
     const report = await scannerFor().scanOnce();
 
     expect(report).toMatchObject({ deletedCount: 0, skippedReferencedCount: 1 });
-    await expect(objectStorage.listVersions(MEDIA_BUCKET, key)).resolves.toMatchObject({ versionIds: [versionId] });
+    await expect(objectStorage.listVersions(mediaBucket, key)).resolves.toMatchObject({ versionIds: [versionId] });
   });
 
   it('keeps the exact version a dead-lettered manifest still names, but not newer ones', async () => {
@@ -206,7 +208,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
 
     await scannerFor().scanOnce();
 
-    const remaining = await objectStorage.listVersions(MEDIA_BUCKET, key);
+    const remaining = await objectStorage.listVersions(mediaBucket, key);
     expect(remaining.versionIds).toEqual([namedVersion]);
     expect(remaining.versionIds).not.toContain(lateVersion);
   });
@@ -225,8 +227,8 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
 
     expect(report).toMatchObject({ deletedCount: 0, orphanCount: 0 });
     expect(secondReport.skippedOutOfScopeCount).toBeGreaterThanOrEqual(1);
-    await expect(objectStorage.listVersions(MEDIA_BUCKET, strayKey)).resolves.toMatchObject({ versionIds: [expect.any(String)] });
-    await expect(objectStorage.listVersions(MEDIA_BUCKET, otherKey)).resolves.toMatchObject({ versionIds: [expect.any(String)] });
+    await expect(objectStorage.listVersions(mediaBucket, strayKey)).resolves.toMatchObject({ versionIds: [expect.any(String)] });
+    await expect(objectStorage.listVersions(mediaBucket, otherKey)).resolves.toMatchObject({ versionIds: [expect.any(String)] });
   });
 
   it('pages through the bucket and respects the delete cap across runs', async () => {
@@ -241,7 +243,7 @@ describe('MediaOrphanScannerService (PostgreSQL + MinIO)', () => {
     expect(firstRun).toMatchObject({ completedPass: false, deletedCount: 3, truncated: true });
     expect(secondRun).toMatchObject({ completedPass: true, deletedCount: 2 });
     for (const key of keys) {
-      await expect(objectStorage.listVersions(MEDIA_BUCKET, key)).resolves.toMatchObject({ versionIds: [] });
+      await expect(objectStorage.listVersions(mediaBucket, key)).resolves.toMatchObject({ versionIds: [] });
     }
   });
 
