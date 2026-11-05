@@ -15,7 +15,16 @@ const (
 	// transcriptDurationToleranceSec absorbs provider timestamp drift past the
 	// decoded duration before a segment is treated as invalid.
 	transcriptDurationToleranceSec = 1.0
-	transcriptPrecision            = 1000.0
+	// transcriptOrderToleranceSec is how far a segment may start before the
+	// previous one (across chunks) before the provider data is rejected.
+	transcriptOrderToleranceSec = 1.0
+	transcriptPrecision         = 1000.0
+	// MaxTranscribableDurationSec mirrors the media policy maximum (mediaprobe
+	// maxMediaDurationSec); longer plans are rejected, not chunked.
+	MaxTranscribableDurationSec = 7200.0
+	// MinAudioChunkBodySec and maxAudioChunks bound the plan size.
+	MinAudioChunkBodySec = 1.0
+	maxAudioChunks       = 1000
 )
 
 // ErrInvalidTranscript marks provider output that cannot be mapped to the
@@ -46,10 +55,13 @@ type AudioChunkResult struct {
 // shorter than 2*overlapSec is merged into the previous chunk so no chunk is
 // too short to transcribe reliably.
 func PlanAudioChunks(durationSec, bodySec, overlapSec float64) ([]AudioChunkSpan, error) {
-	if !isFinitePositive(durationSec) || !isFinitePositive(bodySec) || !isFinite(overlapSec) || overlapSec < 0 || overlapSec*2 >= bodySec {
+	if !isFinitePositive(durationSec) || durationSec > MaxTranscribableDurationSec || !isFinite(bodySec) || bodySec < MinAudioChunkBodySec || !isFinite(overlapSec) || overlapSec < 0 || overlapSec*2 >= bodySec {
 		return nil, ErrInvalidAudioPlan
 	}
 	count := int(math.Ceil(durationSec / bodySec))
+	if count > maxAudioChunks {
+		return nil, ErrInvalidAudioPlan
+	}
 	if count > 1 && durationSec-float64(count-1)*bodySec < 2*overlapSec {
 		count--
 	}
@@ -80,8 +92,15 @@ func StitchTranscript(durationSec float64, spans []AudioChunkSpan, results []Aud
 	if !isFinitePositive(durationSec) || len(spans) == 0 {
 		return nil, ErrInvalidAudioPlan
 	}
+	known := make(map[int]bool, len(spans))
+	for _, span := range spans {
+		known[span.Index] = true
+	}
 	byIndex := make(map[int][]TranscriptSegment, len(results))
 	for _, result := range results {
+		if !known[result.Index] {
+			return nil, fmt.Errorf("%w: result for unknown chunk %d", ErrInvalidTranscript, result.Index)
+		}
 		if _, duplicate := byIndex[result.Index]; duplicate {
 			return nil, fmt.Errorf("%w: duplicate result for chunk %d", ErrInvalidTranscript, result.Index)
 		}
@@ -104,7 +123,7 @@ func StitchTranscript(durationSec float64, spans []AudioChunkSpan, results []Aud
 			}
 		}
 	}
-	return finalizeTimeline(stitched, durationSec), nil
+	return finalizeTimeline(stitched, durationSec)
 }
 
 func toAbsoluteSegments(span AudioChunkSpan, segments []TranscriptSegment, durationSec float64) ([]TranscriptSegment, error) {
@@ -115,7 +134,7 @@ func toAbsoluteSegments(span AudioChunkSpan, segments []TranscriptSegment, durat
 		}
 		start := span.FileStartSec + segment.StartSec
 		end := span.FileStartSec + segment.EndSec
-		if start > durationSec+transcriptDurationToleranceSec {
+		if end > durationSec+transcriptDurationToleranceSec {
 			return nil, fmt.Errorf("%w: segment beyond duration in chunk %d", ErrInvalidTranscript, span.Index)
 		}
 		absolute = append(absolute, TranscriptSegment{StartSec: start, EndSec: end, Text: normalizeExtractedText(segment.Text)})
@@ -135,16 +154,22 @@ func ownsMidpoint(span AudioChunkSpan, segment TranscriptSegment, isLast bool) b
 	return midpoint < span.BodyEndSec || isLast
 }
 
-func finalizeTimeline(segments []TranscriptSegment, durationSec float64) []TranscriptSegment {
+// finalizeTimeline clamps only rounding-level drift: a start earlier than the
+// previous one by up to transcriptOrderToleranceSec is lifted to it, a larger
+// regression is rejected as bad provider data.
+func finalizeTimeline(segments []TranscriptSegment, durationSec float64) ([]TranscriptSegment, error) {
 	finalized := make([]TranscriptSegment, 0, len(segments))
 	previousStart := 0.0
 	for _, segment := range segments {
+		if segment.StartSec < previousStart-transcriptOrderToleranceSec {
+			return nil, fmt.Errorf("%w: segments out of order across chunks", ErrInvalidTranscript)
+		}
 		start := roundMillis(math.Min(math.Max(segment.StartSec, previousStart), durationSec))
 		end := roundMillis(math.Min(math.Max(segment.EndSec, start), durationSec))
 		previousStart = start
 		finalized = append(finalized, TranscriptSegment{StartSec: start, EndSec: end, Text: segment.Text})
 	}
-	return finalized
+	return finalized, nil
 }
 
 func roundMillis(value float64) float64 {

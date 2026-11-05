@@ -104,35 +104,68 @@ func splitOversizedSegments(segments []ExtractedSegment) []ExtractedSegment {
 	return pieces
 }
 
+// splitByWords cuts one oversized segment into pieces of at most maxChars
+// bytes (the same byte unit ChunkText uses). Times are interpolated by rune
+// offset in the normalised text, so multibyte text is not skewed. A single
+// token longer than maxChars is hard-split at a rune boundary.
 func splitByWords(text string, locator Locator) []ExtractedSegment {
-	pieces := make([]ExtractedSegment, 0)
+	type token struct {
+		text string
+		solo bool
+	}
+	tokens := make([]token, 0)
+	for _, word := range strings.Fields(text) {
+		if len(word) <= maxChars {
+			tokens = append(tokens, token{text: word})
+			continue
+		}
+		for len(word) > 0 {
+			end := moveToRuneBoundary(word, maxChars)
+			if end == 0 {
+				end = len(word)
+			}
+			tokens = append(tokens, token{text: word[:end], solo: true})
+			word = word[end:]
+		}
+	}
 	span := locator.EndSec - locator.StartSec
 	totalRunes := utf8.RuneCountInString(text)
-	consumed := 0
-	var current []string
-	currentLen := 0
-	flush := func() {
-		if len(current) == 0 {
-			return
-		}
-		value := strings.Join(current, " ")
-		runes := utf8.RuneCountInString(value)
-		piece := locator
-		piece.StartSec = locator.StartSec + span*float64(consumed)/float64(totalRunes)
-		piece.EndSec = locator.StartSec + span*float64(consumed+runes)/float64(totalRunes)
-		pieces = append(pieces, ExtractedSegment{Text: value, Locator: piece})
-		consumed += runes + 1
-		current, currentLen = nil, 0
+	interpolate := func(offset int) float64 {
+		return roundMillis(locator.StartSec + span*float64(offset)/float64(totalRunes))
 	}
-	for _, word := range strings.Fields(text) {
-		if currentLen > 0 && currentLen+1+len(word) > maxChars {
+	pieces := make([]ExtractedSegment, 0)
+	var current []string
+	currentBytes, currentStart, offset := 0, 0, 0
+	emit := func(value string, startOffset int) {
+		piece := locator
+		piece.StartSec = interpolate(startOffset)
+		piece.EndSec = interpolate(startOffset + utf8.RuneCountInString(value))
+		pieces = append(pieces, ExtractedSegment{Text: value, Locator: piece})
+	}
+	flush := func() {
+		if len(current) > 0 {
+			emit(strings.Join(current, " "), currentStart)
+		}
+		current, currentBytes = nil, 0
+	}
+	for _, item := range tokens {
+		if item.solo {
+			flush()
+			emit(item.text, offset)
+			offset += utf8.RuneCountInString(item.text)
+			continue
+		}
+		if currentBytes > 0 && currentBytes+1+len(item.text) > maxChars {
 			flush()
 		}
-		if currentLen > 0 {
-			currentLen++
+		if currentBytes == 0 {
+			currentStart = offset
+		} else {
+			currentBytes++
 		}
-		current = append(current, word)
-		currentLen += len(word)
+		current = append(current, item.text)
+		currentBytes += len(item.text)
+		offset += utf8.RuneCountInString(item.text) + 1
 	}
 	flush()
 	if last := len(pieces) - 1; last >= 0 {

@@ -41,6 +41,8 @@ type FakeTranscriber struct {
 	Err error
 }
 
+// Transcribe returns a copy of the canned segments for request.ChunkIndex, the
+// forced Err, ErrFakeTranscriptMissing, or the context error when cancelled.
 func (fake FakeTranscriber) Transcribe(ctx context.Context, request TranscribeRequest) ([]TranscriptSegment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

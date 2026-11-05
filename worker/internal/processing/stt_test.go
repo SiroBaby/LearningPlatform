@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 const (
@@ -92,6 +93,12 @@ func TestPlanAudioChunks(t *testing.T) {
 		{name: "NaN duration", duration: math.NaN(), body: 600, overlap: 5, wantErr: true},
 		{name: "overlap too large", duration: 100, body: 10, overlap: 5, wantErr: true},
 		{name: "negative overlap", duration: 100, body: 10, overlap: -1, wantErr: true},
+		{name: "huge duration with tiny body does not allocate", duration: 1e12, body: 0.01, overlap: 0, wantErr: true},
+		{name: "duration above media maximum", duration: 7201, body: 600, overlap: 5, wantErr: true},
+		{name: "body below minimum", duration: 100, body: 0.5, overlap: 0, wantErr: true},
+		{name: "infinite body", duration: 100, body: math.Inf(1), overlap: 0, wantErr: true},
+		{name: "too many chunks", duration: 7200, body: 1, overlap: 0, wantErr: true},
+		{name: "maximum duration is accepted", duration: 7200, body: 600, overlap: 5, expected: nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -104,6 +111,12 @@ func TestPlanAudioChunks(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.expected == nil {
+				if len(actual) != 12 {
+					t.Fatalf("chunks = %d, want 12", len(actual))
+				}
+				return
 			}
 			if !reflect.DeepEqual(actual, test.expected) {
 				t.Fatalf("plan = %+v, want %+v", actual, test.expected)
@@ -206,6 +219,32 @@ func TestStitchTranscriptEdgeCases(t *testing.T) {
 			name: "start beyond duration tolerance is invalid", duration: 10, spans: []AudioChunkSpan{{0, 0, 10, 0, 10}},
 			results: []AudioChunkResult{{0, []TranscriptSegment{segment(12, 13, "vượt")}}},
 			wantErr: true,
+		},
+		{
+			name: "end beyond duration tolerance is invalid", duration: 42, spans: twoSpans,
+			results: []AudioChunkResult{{0, nil}, {1, []TranscriptSegment{segment(3, 9999, "vượt")}}},
+			wantErr: true,
+		},
+		{
+			name: "result for unknown chunk is invalid", duration: 10, spans: []AudioChunkSpan{{0, 0, 10, 0, 10}},
+			results: []AudioChunkResult{{0, nil}, {7, nil}},
+			wantErr: true,
+		},
+		{
+			name: "start regressing across chunks beyond tolerance is invalid", duration: 42, spans: twoSpans,
+			results: []AudioChunkResult{
+				{0, []TranscriptSegment{segment(19.9, 19.95, "a")}},
+				{1, []TranscriptSegment{segment(0, 6, "b")}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "start regressing across chunks within tolerance is lifted", duration: 42, spans: twoSpans,
+			results: []AudioChunkResult{
+				{0, []TranscriptSegment{segment(19.9, 19.95, "a")}},
+				{1, []TranscriptSegment{segment(1, 9, "b")}},
+			},
+			expected: []TranscriptSegment{segment(19.9, 19.95, "a"), segment(19.9, 27, "b")},
 		},
 		{
 			name: "negative start is invalid", duration: 10, spans: []AudioChunkSpan{{0, 0, 10, 0, 10}},
@@ -425,5 +464,55 @@ func TestChunkTranscriptKeepsZeroStartLocatorInJSON(t *testing.T) {
 	actual, err := json.Marshal(chunks[0].Locator)
 	if err != nil || string(actual) != `{"kind":"time","startSec":0,"endSec":2}` {
 		t.Fatalf("locator JSON = %s, err = %v", actual, err)
+	}
+}
+
+func TestChunkTranscriptHardSplitsOversizedToken(t *testing.T) {
+	token := strings.Repeat("ế", 850) // 2550 bytes, 850 runes, no spaces
+	chunks, err := ChunkTranscript(sttTestDocumentID, sttTestOwnerID, []ExtractedSegment{
+		{Text: token, Locator: Locator{Kind: "time", StartSec: 0, EndSec: 85}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("chunks = %d", len(chunks))
+	}
+	for index, chunk := range chunks {
+		if len(chunk.Text) > maxChars || !utf8.ValidString(chunk.Text) {
+			t.Fatalf("chunk %d invalid: %d bytes valid=%v", index, len(chunk.Text), utf8.ValidString(chunk.Text))
+		}
+	}
+}
+
+func TestChunkTranscriptRoundsInterpolatedTimesToMillis(t *testing.T) {
+	text := strings.TrimSpace(strings.Repeat("đoạn dài ", 400))
+	chunks, err := ChunkTranscript(sttTestDocumentID, sttTestOwnerID, []ExtractedSegment{
+		{Text: text, Locator: Locator{Kind: "time", StartSec: 0, EndSec: 100.0 / 3}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chunk := range chunks[:len(chunks)-1] {
+		for _, value := range []float64{chunk.Locator.StartSec, chunk.Locator.EndSec} {
+			if value != roundMillis(value) {
+				t.Fatalf("time %v is not rounded to milliseconds", value)
+			}
+		}
+	}
+}
+
+func TestNewChunkKeepsExistingPDFChunkIDStable(t *testing.T) {
+	chunks, err := ChunkText(sttTestDocumentID, sttTestOwnerID, []struct {
+		Text    string
+		Locator Locator
+	}{{Text: "Nội dung trang một.", Locator: Locator{Kind: "page", Page: 1}}})
+	if err != nil || len(chunks) != 1 {
+		t.Fatalf("chunks = %+v, err = %v", chunks, err)
+	}
+	// Computed independently of Go (python uuid5(NAMESPACE_OID, "doc:owner:0:sha256")).
+	if chunks[0].ID != "9430de94-3198-5f54-906e-be93fa87b1e9" ||
+		chunks[0].ContentHash != "eaac84affdecf202fe73711f9b25a1188237886123b3d3aee4725fac90d4c87a" {
+		t.Fatalf("chunk identity changed: %s %s", chunks[0].ID, chunks[0].ContentHash)
 	}
 }
