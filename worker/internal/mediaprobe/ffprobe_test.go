@@ -44,16 +44,16 @@ func TestFFProbeRunnerRequiresExactNormalizedArtifactVersion(t *testing.T) {
 		observed string
 		wantErr  bool
 	}{
-		{name: "exact pinned version", observed: "n8.1.3-16-ge0a878dd70-20261009"},
+		{name: "exact pinned version", observed: "n8.1.3-27-g8dca1586f4-20261031"},
 		{name: "short release version", observed: "8.1", wantErr: true},
-		{name: "release prefix", observed: "8.1.3-16-ge0a878dd70", wantErr: true},
+		{name: "release prefix", observed: "8.1.3-27-g8dca1586f4", wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			binary := writeExecutable(t, `#!/bin/sh
 printf '%s\\n' 'ffprobe version `+test.observed+` Copyright (c) 2007-2026 the FFmpeg developers'
 `)
-			err := (FFProbeRunner{BinaryPath: binary, ExpectedVersion: "8.1.3-16-ge0a878dd70-20261009", OutputMaxBytes: 4096}).CheckVersion(context.Background())
+			err := (FFProbeRunner{BinaryPath: binary, ExpectedVersion: "8.1.3-27-g8dca1586f4-20261031", OutputMaxBytes: 4096}).CheckVersion(context.Background())
 			if (err != nil) != test.wantErr {
 				t.Fatalf("CheckVersion() error = %v, wantErr %t", err, test.wantErr)
 			}

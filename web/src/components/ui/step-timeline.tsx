@@ -39,10 +39,10 @@ export function StepTimeline({ steps }: { steps: ProcessingStep[] }) {
           >
             {step.label}
             {step.status === "running" && (
-              <span className="ml-2 text-xs text-brand-600">đang chạy…</span>
+              <span className="ml-2 text-xs text-brand-600">đang xử lý…</span>
             )}
             {step.status === "failed" && (
-              <span className="ml-2 text-xs text-error-600">thất bại</span>
+              <span className="ml-2 text-xs text-error-600">chưa thành công</span>
             )}
           </span>
         </li>

@@ -97,4 +97,52 @@ expect_braces_rejected "${TEMP_DIR}/braces.json" "${TEMP_DIR}/braces-runtime-tre
 
 expect_braces_rejected "${TEMP_DIR}/braces.json" "${TEMP_DIR}/tree.json" 'braces exception was accepted without an installed braces tree'
 
+
+readonly DEEPMERGE_URL='https://github.com/advisories/GHSA-gcqx-w48m-w2h4'
+readonly DEEPMERGE_RANGE='>=4.2.0 <=4.3.1'
+readonly DEEPMERGE_TREE='{"name":"fixture","dependencies":{"@nestjs/cli":{"version":"11.0.24","dependencies":{"fork-ts-checker-webpack-plugin":{"version":"9.1.0","dependencies":{"deepmerge":{"version":"4.3.1"}}}}},"jest":{"version":"30.4.2","dependencies":{"@jest/core":{"version":"30.4.2","dependencies":{"jest-config":{"version":"30.4.2","dependencies":{"deepmerge":{"version":"4.3.1"}}}}}}}}}'
+
+write_deepmerge_audit() {
+  local output_path="$1"
+  local url="$2"
+  local range="$3"
+  local extra_via="${4:-}"
+  printf '{"vulnerabilities":{"deepmerge":{"name":"deepmerge","via":[{"url":"%s","range":"%s"}%s]},"fork-ts-checker-webpack-plugin":{"name":"fork-ts-checker-webpack-plugin","via":["deepmerge"]},"@nestjs/cli":{"name":"@nestjs/cli","via":["fork-ts-checker-webpack-plugin"]},"jest-config":{"name":"jest-config","via":["deepmerge"]},"@jest/core":{"name":"@jest/core","via":["jest-config"]},"jest":{"name":"jest","via":["@jest/core"]}}}\n' \
+    "${url}" "${range}" "${extra_via}" > "${output_path}"
+}
+
+printf '%s\n' "${DEEPMERGE_TREE}" > "${TEMP_DIR}/deepmerge-tree.json"
+write_deepmerge_audit "${TEMP_DIR}/deepmerge.json" "${DEEPMERGE_URL}" "${DEEPMERGE_RANGE}"
+node "${AUDIT_SCRIPT}" "${TEMP_DIR}/deepmerge.json" "${TEMP_DIR}/deepmerge-tree.json" "${TEMP_DIR}/empty-production-tree.json"
+
+if node "${AUDIT_SCRIPT}" "${TEMP_DIR}/deepmerge.json" "${TEMP_DIR}/deepmerge-tree.json"; then
+  printf '%s\n' 'audit test failed: deepmerge exception was accepted without a production tree' >&2
+  exit 1
+fi
+
+printf '%s\n' "${DEEPMERGE_TREE//\"version\":\"4.3.1\"/\"version\":\"4.3.2\"}" > "${TEMP_DIR}/deepmerge-other-version-tree.json"
+expect_braces_rejected "${TEMP_DIR}/deepmerge.json" "${TEMP_DIR}/deepmerge-other-version-tree.json" 'an unapproved deepmerge version was accepted'
+
+cat > "${TEMP_DIR}/deepmerge-other-path-tree.json" <<'JSON'
+{"name":"fixture","dependencies":{"@nestjs/cli":{"version":"11.0.24","dependencies":{"fork-ts-checker-webpack-plugin":{"version":"9.1.0","dependencies":{"deepmerge":{"version":"4.3.1"}}}}},"some-runtime-lib":{"version":"1.0.0","dependencies":{"deepmerge":{"version":"4.3.1"}}}}}
+JSON
+expect_braces_rejected "${TEMP_DIR}/deepmerge.json" "${TEMP_DIR}/deepmerge-other-path-tree.json" 'deepmerge outside the approved dev paths was accepted'
+
+cat > "${TEMP_DIR}/deepmerge-production-tree.json" <<'JSON'
+{"name":"fixture","dependencies":{"some-runtime-lib":{"version":"1.0.0","dependencies":{"deepmerge":{"version":"4.3.1"}}}}}
+JSON
+expect_braces_rejected "${TEMP_DIR}/deepmerge.json" "${TEMP_DIR}/deepmerge-tree.json" \
+  'deepmerge present in the production tree was accepted' "${TEMP_DIR}/deepmerge-production-tree.json"
+
+write_deepmerge_audit "${TEMP_DIR}/deepmerge-other-advisory.json" 'https://github.com/advisories/example' "${DEEPMERGE_RANGE}"
+expect_braces_rejected "${TEMP_DIR}/deepmerge-other-advisory.json" "${TEMP_DIR}/deepmerge-tree.json" 'an unapproved deepmerge advisory URL was accepted'
+
+write_deepmerge_audit "${TEMP_DIR}/deepmerge-other-range.json" "${DEEPMERGE_URL}" '>=4.2.0 <4.3.2'
+expect_braces_rejected "${TEMP_DIR}/deepmerge-other-range.json" "${TEMP_DIR}/deepmerge-tree.json" 'deepmerge exception survived a changed advisory range'
+
+write_deepmerge_audit "${TEMP_DIR}/deepmerge-extra-advisory.json" "${DEEPMERGE_URL}" "${DEEPMERGE_RANGE}" ',{"url":"https://github.com/advisories/example","range":"<9.9.9"}'
+expect_braces_rejected "${TEMP_DIR}/deepmerge-extra-advisory.json" "${TEMP_DIR}/deepmerge-tree.json" 'deepmerge exception accepted an extra advisory'
+
+expect_braces_rejected "${TEMP_DIR}/deepmerge.json" "${TEMP_DIR}/tree.json" 'deepmerge exception was accepted without an installed deepmerge tree'
+
 printf '%s\n' 'audit wrapper tests passed'

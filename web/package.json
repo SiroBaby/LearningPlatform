@@ -7,11 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:runtime": "node --test src/lib/auth/backend-client.runtime.test.mjs src/lib/auth/session-state.test.mjs src/lib/auth/session.test.mjs src/components/shared/system-state.test.mjs src/lib/date-time.test.mjs src/lib/learner-nav-active.test.mjs src/lib/phase0/mappers.test.mjs src/lib/phase0/document-failure.test.mjs src/lib/phase0/document-failure-contract.test.mjs src/lib/phase0/document-deletion.test.mjs src/lib/phase0/document-deletion-wiring.test.mjs src/lib/phase0/client.test.mjs src/lib/phase0/route-handler.test.mjs"
+    "test:runtime": "node --test src/lib/auth/backend-client.runtime.test.mjs src/lib/auth/session-state.test.mjs src/lib/auth/session.test.mjs src/components/shared/system-state.test.mjs src/lib/date-time.test.mjs src/lib/routes.test.mjs src/lib/test-runtime-script.test.mjs src/lib/support-contact.test.mjs src/lib/learner-nav-active.test.mjs src/lib/phase0/mappers.test.mjs src/lib/phase0/document-failure.test.mjs src/lib/phase0/document-failure-contract.test.mjs src/lib/phase0/document-deletion.test.mjs src/lib/phase0/document-deletion-wiring.test.mjs src/lib/phase0/client.test.mjs src/lib/phase0/route-handler.test.mjs"
   },
   "dependencies": {
     "lucide-react": "1.23.0",
-    "next": "16.4.0",
+    "next": "16.4.5",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
@@ -21,7 +21,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.4.0",
+    "eslint-config-next": "16.4.5",
     "tailwindcss": "4.3.2",
     "typescript": "5.9.3"
   },
@@ -35,8 +35,7 @@
     "minimatch@3.1.5": {
       "brace-expansion": "1.1.21"
     },
-    "minimatch@10.2.6": {
-      "brace-expansion": "5.0.12"
-    }
+    "minimatch@10.2.6": "11.0.1",
+    "zod": "4.6.7"
   }
 }

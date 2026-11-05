@@ -13,9 +13,6 @@ export const routes = {
   // Auth
   login: "/login",
   signup: "/signup",
-  forgotPassword: "/forgot-password",
-  resetPassword: "/reset-password",
-  verifyEmail: "/verify-email",
   onboarding: "/onboarding",
 
   // Learner app
@@ -28,7 +25,6 @@ export const routes = {
   quizPlay: (quizId: string) => `/quiz/${quizId}/play`,
   quizResult: (quizId: string, attemptId: string) =>
     `/quiz/${quizId}/result/${attemptId}`,
-  videoPlayer: (docId: string) => `/library/${docId}/video`,
   deck: (deckId: string) => `/flashcards/${deckId}`,
   deckReview: (deckId: string) => `/flashcards/${deckId}/review`,
   review: "/review",

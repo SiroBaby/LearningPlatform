@@ -218,15 +218,15 @@ check_image_policy() {
 check_media_probe_ffprobe_artifact_pin() {
   local dockerfile="${WORKSPACE_DIR}/worker/Dockerfile"
 
-  if ! grep -Fqx 'ARG FFPROBE_RELEASE=autobuild-2026-10-09-14-16' "${dockerfile}" \
-    || ! grep -Fqx 'ARG FFPROBE_ASSET=ffmpeg-n8.1.3-16-ge0a878dd70-linux64-gpl-8.1.tar.xz' "${dockerfile}" \
+  if ! grep -Fqx 'ARG FFPROBE_RELEASE=autobuild-2026-10-31-12-59' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_ASSET=ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-8.1.tar.xz' "${dockerfile}" \
     || ! grep -Fqx 'ARG FFPROBE_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFPROBE_RELEASE}/${FFPROBE_ASSET}' "${dockerfile}" \
-    || ! grep -Fqx 'ARG FFPROBE_SHA256=968255015cc65dd999a7eddf8016be89a8a1bbef063ea7d3e9c3a229b0f6faaf' "${dockerfile}" \
-    || ! grep -Fqx 'ARG FFPROBE_VERSION=8.1.3-16-ge0a878dd70' "${dockerfile}" \
-    || ! grep -Fqx 'ARG FFPROBE_BUILD_VERSION=8.1.3-16-ge0a878dd70-20261009' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_SHA256=41e9c565594c390622cf968d82fa4135d9e9a11d06c1515644288cbc844e3380' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_VERSION=8.1.3-27-g8dca1586f4' "${dockerfile}" \
+    || ! grep -Fqx 'ARG FFPROBE_BUILD_VERSION=8.1.3-27-g8dca1586f4-20261031' "${dockerfile}" \
     || ! grep -Fq 'test "${ffprobe_version}" = "${FFPROBE_BUILD_VERSION}"' "${dockerfile}" \
-    || ! grep -Fq 'MEDIA_PROBE_FFPROBE_VERSION=8.1.3-16-ge0a878dd70-20261009' "${dockerfile}" \
-    || ! grep -Fq "              value: '8.1.3-16-ge0a878dd70-20261009'" "${INFRA_DIR}/k8s/apps.yaml.j2" \
+    || ! grep -Fq 'MEDIA_PROBE_FFPROBE_VERSION=8.1.3-27-g8dca1586f4-20261031' "${dockerfile}" \
+    || ! grep -Fq "              value: '8.1.3-27-g8dca1586f4-20261031'" "${INFRA_DIR}/k8s/apps.yaml.j2" \
     || ! grep -Fqx 'FROM ai-worker AS default' <(tail -n 1 "${dockerfile}") \
     || grep -Eq 'FFPROBE_(URL|ASSET)=.*latest' "${dockerfile}"; then
     fail 'FFprobe must remain pinned, while the Docker default target remains the AI worker.'
