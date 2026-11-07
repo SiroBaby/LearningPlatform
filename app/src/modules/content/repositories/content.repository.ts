@@ -1057,8 +1057,21 @@ export class ContentRepository extends BaseRepository<Document> {
         lock: { mode: 'pessimistic_write' },
       });
       const outcome = await this.applyProcessingProjection(manager, command);
-      if (outcome === 'APPLIED' && document && command.settlement) {
-        await this.settleProjectedReservation(manager, document, command, command.settlement);
+      if (command.settlement) {
+        if (outcome === 'APPLIED' && document) {
+          await this.settleProjectedReservation(manager, document, command, command.settlement);
+        } else if (outcome !== 'APPLIED' && document?.status === DocumentStatus.DELETING) {
+          // A Document deleted mid-processing never projects, but its reservation must still settle (state stays DELETING).
+          await this.settleProjectedReservation(manager, document, command, command.settlement);
+        } else if (!document) {
+          this.logger.warn({
+            documentId: command.documentId,
+            event: 'content.settlement.skipped',
+            eventJobId: command.jobId,
+            reason: 'document_missing',
+            runtime: 'worker',
+          });
+        }
       }
       return outcome;
     });

@@ -7,6 +7,7 @@ import {
   createPhase0UploadUrl,
   Phase0ClientError,
 } from "@/lib/phase0/client";
+import { getInsufficientCreditsMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
 import { UploadEstimatePanel } from "./upload-estimate-panel";
 import { UploadModelPanel } from "./upload-model-panel";
@@ -24,6 +25,11 @@ import {
 import { useUploadModelEstimate } from "./use-upload-model-estimate";
 
 function getClientErrorMessage(error: unknown, fallback: string): string {
+  const insufficientCreditsMessage = getInsufficientCreditsMessage(error);
+  if (insufficientCreditsMessage) {
+    return insufficientCreditsMessage;
+  }
+
   if (error instanceof Phase0ClientError) {
     return error.message;
   }

@@ -35,6 +35,7 @@ import {
 export class Phase0ClientError extends Error {
   public readonly code?: string;
   public readonly retryable?: boolean;
+  public readonly shortfallCredits?: number;
   public readonly status: number;
 
   public constructor(status: number, error: Phase0ApiError) {
@@ -43,6 +44,7 @@ export class Phase0ClientError extends Error {
     this.status = status;
     this.code = error.code;
     this.retryable = error.retryable;
+    this.shortfallCredits = error.shortfallCredits;
   }
 }
 

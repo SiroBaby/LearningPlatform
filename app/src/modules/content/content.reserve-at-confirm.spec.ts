@@ -313,4 +313,66 @@ describe('PDF/TXT credit reservation at confirm and retry (#274)', () => {
     expect(projected.status).toBe(DocumentStatus.READY);
     expect(projected.budgetStatus).toBe('SETTLED');
   });
+
+  describe('Document deleted while processing', () => {
+    const buckets = { documents: 'learning-platform-dev-documents', media: 'learning-platform-dev-media' };
+
+    async function confirmThenDelete(): Promise<Document> {
+      const inputOwnerId = randomUUID();
+      const inputDocument = await seedDocument(inputOwnerId);
+      await seedWallet(inputOwnerId);
+      const confirmed = await service.confirm(inputOwnerId, inputDocument.id);
+      await new ContentRepository(ds).deleteOwnedDocument(inputOwnerId, inputDocument.id, buckets);
+      return confirmed;
+    }
+
+    it('settles actual usage and releases the rest on READY while the Document stays DELETING', async () => {
+      const confirmed = await confirmThenDelete();
+      await seedResult(confirmed, {
+        usage: { llm: [{ inputTokens: 100, model: 'gpt-5.4-mini', outputTokens: 20 }], uncertainDispatches: 0 },
+      });
+
+      await createRelay().pump(10);
+
+      const suffix = `${confirmed.fullPipelineJobId}:${Number(confirmed.processingAttempt)}`;
+      expect(await readLedger(confirmed.ownerId)).toEqual({
+        [`reserve:${suffix}`]: String(FAKE_PLAN_ESTIMATE_FOR_1024_BYTES),
+        [`settle:${suffix}`]: '140',
+        [`release:${suffix}`]: String(FAKE_PLAN_ESTIMATE_FOR_1024_BYTES - 140),
+      });
+      expect(await readWallet(confirmed.ownerId)).toEqual({
+        available_credits: String(WALLET_CREDITS - 140),
+        reserved_credits: '0',
+      });
+      expect((await documents.findOneByOrFail({ id: confirmed.id })).status).toBe(DocumentStatus.DELETING);
+    });
+
+    it('releases everything on a FAILED result before any provider call and stays idempotent on replay', async () => {
+      const confirmed = await confirmThenDelete();
+      const failedPayload = {
+        errorCode: DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND,
+        status: DocumentStatus.FAILED,
+        usage: { llm: [], uncertainDispatches: 0 },
+      };
+      await seedResult(confirmed, failedPayload);
+      await seedResult(confirmed, failedPayload);
+
+      await createRelay().pump(10);
+
+      expect(await readWallet(confirmed.ownerId)).toEqual({ available_credits: String(WALLET_CREDITS), reserved_credits: '0' });
+      expect(Object.keys(await readLedger(confirmed.ownerId))).toHaveLength(3);
+      expect((await documents.findOneByOrFail({ id: confirmed.id })).status).toBe(DocumentStatus.DELETING);
+    });
+
+    it('skips without failing when the Document row is already gone', async () => {
+      const confirmed = await confirmThenDelete();
+      await db.client.query('DELETE FROM "course"."documents" WHERE "id" = $1', [confirmed.id]);
+      await seedResult(confirmed, { usage: { llm: [], uncertainDispatches: 0 } });
+
+      await createRelay().pump(10);
+
+      expect((await readWallet(confirmed.ownerId)).reserved_credits).toBe(String(FAKE_PLAN_ESTIMATE_FOR_1024_BYTES));
+      expect((await aiOutbox.find({ where: { aggregateId: confirmed.fullPipelineJobId } }))[0]?.publishedAt).not.toBeNull();
+    });
+  });
 });

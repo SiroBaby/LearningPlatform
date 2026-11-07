@@ -1,3 +1,7 @@
+// The native Node test runner loads this source directly, so the import needs the .ts extension.
+// @ts-expect-error TS5097: relative .ts import is required for node --test.
+import { getInsufficientCreditsMessage } from "../../lib/phase0/ui-errors.ts";
+
 const RETRY_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   DOCUMENT_RETRY_NOT_ALLOWED: "Tài liệu này chưa thể thử lại ở trạng thái hiện tại. Hãy kiểm tra trạng thái hoặc tải lên tài liệu mới.",
   REQUEST_TIMEOUT: "Hệ thống phản hồi quá lâu. Bạn hãy thử lại sau ít phút.",
@@ -23,6 +27,11 @@ function isSafeClientError(error: unknown): error is Error & {
 }
 
 export function getRetryConfirmErrorMessage(error: unknown): string {
+  const insufficientCreditsMessage = getInsufficientCreditsMessage(error);
+  if (insufficientCreditsMessage) {
+    return insufficientCreditsMessage;
+  }
+
   if (isSafeClientError(error) && error.code && RETRY_ERROR_MESSAGES[error.code]) {
     return RETRY_ERROR_MESSAGES[error.code];
   }
