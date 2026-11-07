@@ -18,10 +18,10 @@ kế**, được đánh dấu **[Đề xuất]**. PR thực thi được phép �
 chỉnh chúng bằng đo đạc thật mà không cần sửa ADR, miễn là vẫn giữ D1-D10 và
 các ràng buộc bảo mật.
 
-Điều kiện chưa xác minh (chặn PR adapter STT): chưa có bằng chứng rằng endpoint
-STT trên dev hỗ trợ `POST /audio/transcriptions` với `whisper-1` và
-`response_format=verbose_json`. `openai-base-url` hiện trên dev là router riêng
-của Owner. Xem mục "Điều kiện xác minh trước adapter STT".
+**Cập nhật 2026-11-07 (Owner chốt):** D1 đổi provider từ OpenAI `whisper-1`
+sang `groq/whisper-large-v3` gọi qua router riêng của Owner (9router). Endpoint
+đã được gọi thử thật và trả `segments[]` có `start`/`end`; xem mục "Điều kiện
+xác minh trước adapter STT".
 
 ## Bối cảnh
 
@@ -64,10 +64,22 @@ nhưng mới dùng fixture/mock; PR6 nối dữ liệu thật và chỉnh cách 
 
 ## Quyết định
 
-### D1. STT provider: `whisper-1`, cấu hình riêng
+### D1. STT provider: `groq/whisper-large-v3` qua 9router, cấu hình riêng
 
-- Dùng `whisper-1` qua `POST /audio/transcriptions` với
-  `response_format=verbose_json` để nhận `segments[]` có `start`/`end`.
+- Dùng model `groq/whisper-large-v3` qua `POST /v1/audio/transcriptions` của
+  9router (router riêng của Owner, định dạng OpenAI; 9router chuyển tiếp sang
+  Groq) với `response_format=verbose_json` để nhận `segments[]` có
+  `start`/`end`. Owner chốt ngày 2026-11-07, thay cho OpenAI `whisper-1` (chốt
+  2026-11-05) vì chưa muốn mua OpenAI API key.
+- Chọn `whisper-large-v3` thay vì `whisper-large-v3-turbo`: khi gọi thử, `turbo`
+  sai chính tả tiếng Việt ("quá trìm" thay vì "quá trình"), trong khi quiz được
+  sinh từ transcript nên độ chính xác quan trọng hơn chi phí. `turbo` chia
+  segment theo câu chi tiết hơn; `large-v3` có thể gộp đoạn dài hơn (tối đa
+  khoảng 30 s/segment theo cửa sổ Whisper), vẫn đủ cho citation theo khoảng thời
+  gian.
+- Response của 9router/Groq **không có `usage`**: số giây STT tính theo thời
+  lượng chunk đã gửi (duration giải mã, D10), không đọc từ provider. Trường
+  `language` trả tên đầy đủ (`"Vietnamese"`), không phải mã ISO.
 - Thêm port `Transcriber` riêng (không nhét vào `Generator`) với hai
   implementation: `OpenAITranscriber` (endpoint OpenAI-compatible) và
   `FakeTranscriber` cho CI/E2E offline. Capability khai báo tường minh
@@ -91,8 +103,8 @@ nhưng mới dùng fixture/mock; PR6 nối dữ liệu thật và chỉnh cách 
   Việt tổng hợp ngắn và kiểm tra response có `segments[]` hợp lệ; thất bại thì
   worker không Ready.
 
-Lựa chọn đã loại: (a) dùng chung `OPENAI_BASE_URL`: không biết router có route
-audio, và proxy kiểu LiteLLM/OpenRouter có thể không hỗ trợ; (b)
+Lựa chọn đã loại: (a) OpenAI `whisper-1` trực tiếp: cần mua OpenAI API key,
+Owner chưa muốn; (b)
 `gpt-4o-transcribe`/`gpt-4o-mini-transcribe`: theo hiểu biết hiện có chỉ trả
 `json`/`text`, không có segment timestamp, chưa xác minh; (c) biến thể
 diarize: không cần speaker ở MVP-2; (d) self-host Whisper: cần GPU và mở rộng
@@ -391,19 +403,20 @@ Mỗi PR đi qua AI review, worker sửa, AI review lại, rồi mới tới Own
 
 ## Điều kiện xác minh trước adapter STT
 
-Trước khi viết `OpenAITranscriber`, phải gọi **một lần thật** tới endpoint STT
-của dev và ghi kết quả vào #160:
+Đã gọi **một lần thật** ngày 2026-11-07 (bằng chứng trong comment #160):
 
 ```text
-POST {STT_BASE_URL}/audio/transcriptions
-  model=whisper-1, response_format=verbose_json,
-  timestamp_granularities[]=segment, file=<mẫu ngắn>
+POST https://9router.sirobabycloud.io.vn/v1/audio/transcriptions
+  model=groq/whisper-large-v3, language=vi, response_format=verbose_json,
+  file=<clip tiếng Việt 12,2 s>
 ```
 
-Phải xác nhận: route tồn tại; response có `segments[]` với `start`/`end`;
-phản hồi lỗi cho file quá cỡ. Trạng thái hiện tại: **chưa xác minh**. Nếu
-endpoint không có route audio, cần một endpoint STT riêng và D1 phải cập nhật.
-Việc này tốn chi phí nhỏ và dùng credential của Owner; không in secret.
+Kết quả: HTTP 200 trong 1,2 s; transcript đúng hoàn toàn; `segments[]` có
+`id`, `start`, `end`, `text`, `seek`, `tokens`, `avg_logprob`,
+`no_speech_prob`. Chưa kiểm phản hồi lỗi cho file quá cỡ (giới hạn file của
+Groq theo tài liệu bên thứ ba khoảng 25 MB ở gói miễn phí; mỗi chunk dự kiến
+khoảng 2,4 MB). Nếu đổi provider/model, phải gọi thử lại theo cách này trước
+khi đổi cấu hình.
 
 ## Hệ quả và đánh đổi
 
