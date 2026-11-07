@@ -36,6 +36,12 @@ type Options struct {
 	FenceCheckInterval time.Duration
 	TempDir            string
 	MaxDownloadSize    int64
+	// AudioPrep, when non-nil, decodes and chunks audio after a successful probe
+	// (#160). Nil keeps the probe-only behavior.
+	AudioPrep *AudioPrep
+	// MediaBucket is the bucket that receives derived audio. It must be the
+	// bucket the media is probed from; jobs for other buckets fail closed.
+	MediaBucket string
 }
 
 const (
@@ -203,24 +209,30 @@ func (worker *Worker) processClaimed(ctx context.Context, job Job) error {
 	if err := validateLocator(*locator, job); err != nil {
 		return worker.finishFailure(ctx, job, err)
 	}
-	var metadata Metadata
+	var result ProbeResult
 	err := worker.withActiveFence(ctx, job, func(operationCtx context.Context) error {
 		filePath, err := worker.downloadToTemp(operationCtx, job, *locator)
 		if err != nil {
 			return err
 		}
 		defer os.Remove(filePath)
-		metadata, err = worker.runner.Run(operationCtx, filePath)
-		return err
+		metadata, err := worker.runner.Run(operationCtx, filePath)
+		if err != nil {
+			return err
+		}
+		if err := operationCtx.Err(); err != nil {
+			return err
+		}
+		result, err = ValidateMetadata(metadata, locator.ContentLength)
+		if err != nil {
+			return err
+		}
+		return worker.prepareAudio(operationCtx, job, filePath, metadata, &result)
 	})
 	if err != nil {
 		return worker.finishFailure(ctx, job, err)
 	}
 	if err := ctx.Err(); err != nil {
-		return worker.finishFailure(ctx, job, err)
-	}
-	result, err := ValidateMetadata(metadata, locator.ContentLength)
-	if err != nil {
 		return worker.finishFailure(ctx, job, err)
 	}
 	result.Locator = *locator
@@ -237,6 +249,35 @@ func (worker *Worker) processClaimed(ctx context.Context, job Job) error {
 	if !completed {
 		return ErrJobFenceLost
 	}
+	return nil
+}
+
+// prepareAudio runs the optional ffmpeg step and records its outcome on result.
+func (worker *Worker) prepareAudio(ctx context.Context, job Job, filePath string, metadata Metadata, result *ProbeResult) error {
+	if worker.options.AudioPrep == nil {
+		return nil
+	}
+	if job.SourceBucket != worker.options.MediaBucket {
+		return Failure{Code: FailureAudioPrep}
+	}
+	metadataSec, err := parseDurationSeconds(metadata.Format.Duration)
+	if err != nil {
+		return Failure{Code: FailureMediaProbe}
+	}
+	preparer := audioPreparer{
+		prep:     *worker.options.AudioPrep,
+		store:    worker.store,
+		logger:   worker.logger,
+		tempDir:  worker.options.TempDir,
+		bucketOf: func(Job) string { return worker.options.MediaBucket },
+	}
+	prepared, err := preparer.prepare(ctx, job, filePath, metadataSec)
+	if err != nil {
+		logAudioPrepFailure(worker.logger, job, err)
+		return err
+	}
+	result.DecodedDurationMs = int(prepared.DecodedDurationMs)
+	result.AudioChunkCount = len(prepared.Chunks)
 	return nil
 }
 

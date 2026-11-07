@@ -182,6 +182,71 @@ describe('ContentRepository.deleteOwnedDocument', () => {
     expect(processingRows[0].status).toBe(JobStatus.CANCELLED);
   });
 
+  it('adds derived audio chunk versions to the purge manifest', async () => {
+    const ownerId = randomUUID();
+    const mediaBucket = 'learning-platform-dev-media';
+    const document = await seedDocument(ownerId, DocumentType.VIDEO, {
+      bucket: mediaBucket,
+      versionId: 'version-source',
+      etag: 'etag-source',
+      contentLength: 1024,
+    });
+    const jobId = randomUUID();
+    const probeGeneration = randomUUID();
+    await mediaProbeJobs.save(mediaProbeJobs.create({
+      id: jobId,
+      documentId: document.id,
+      ownerId,
+      correlationId: randomUUID(),
+      probeGeneration,
+      policyVersion: 'media-v1',
+      deletionFence: 0,
+      fullPipelineJobId: document.fullPipelineJobId,
+      sourceBucket: mediaBucket,
+      sourceKey: document.storageRef,
+      sourceVersionId: 'version-source',
+      sourceEtag: 'etag-source',
+      sourceContentLength: 1024,
+      status: MediaProbeJobStatus.COMPLETED,
+      idempotencyKey: randomUUID(),
+    }));
+    const chunkKey = (index: number): string =>
+      `derived-audio/${ownerId}/${document.id}/${probeGeneration}/000${index}.mp3`;
+    for (const index of [0, 1]) {
+      await insertAudioChunk({ jobId, document, probeGeneration, index, key: chunkKey(index), bucket: mediaBucket });
+    }
+    // A row in another bucket is not ours to purge.
+    await insertAudioChunk({
+      jobId, document, probeGeneration, index: 2, key: chunkKey(2), bucket: 'some-other-bucket',
+    });
+
+    await repository.deleteOwnedDocument(ownerId, document.id, {
+      documents: 'learning-platform-dev-documents',
+      media: mediaBucket,
+    });
+
+    const manifest = await manifests.findOneByOrFail({ documentId: document.id });
+    expect(manifest.locators).toEqual(expect.arrayContaining([
+      { bucket: mediaBucket, key: document.storageRef, versionId: 'version-source', etag: 'etag-source', contentLength: 1024 },
+      { bucket: mediaBucket, key: chunkKey(0), versionId: 'chunk-version-0', etag: 'chunk-etag', contentLength: 2048 },
+      { bucket: mediaBucket, key: chunkKey(1), versionId: 'chunk-version-1', etag: 'chunk-etag', contentLength: 2048 },
+    ]));
+    expect(manifest.locators).toHaveLength(3);
+  });
+
+  it('keeps a single locator for a PDF document', async () => {
+    const ownerId = randomUUID();
+    const document = await seedDocument(ownerId, DocumentType.PDF);
+
+    await repository.deleteOwnedDocument(ownerId, document.id, {
+      documents: 'learning-platform-dev-documents',
+      media: '',
+    });
+
+    const manifest = await manifests.findOneByOrFail({ documentId: document.id });
+    expect(manifest.locators).toHaveLength(1);
+  });
+
   it('canonicalizes whitespace around a persisted media VersionId during purge', async () => {
     const ownerId = randomUUID();
     const document = await seedDocument(ownerId, DocumentType.VIDEO, {
@@ -799,6 +864,27 @@ describe('ContentRepository.deleteOwnedDocument', () => {
     expect(await outbox.countBy({ aggregateId: document.id, eventType: 'DocumentPurgeRequested' })).toBe(1);
     expect(Number((await documents.findOneByOrFail({ id: document.id })).deletionFence)).toBe(1);
   });
+
+  async function insertAudioChunk(input: {
+    readonly jobId: string;
+    readonly document: Document;
+    readonly probeGeneration: string;
+    readonly index: number;
+    readonly key: string;
+    readonly bucket: string;
+  }): Promise<void> {
+    await db.client.query(
+      `INSERT INTO "ai"."media_audio_chunks"
+         ("media_probe_job_id", "document_id", "owner_id", "probe_generation", "deletion_fence",
+          "chunk_index", "bucket", "object_key", "version_id", "etag", "sha256", "content_length",
+          "body_start_ms", "body_end_ms", "file_start_ms", "file_end_ms")
+       VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, 'chunk-etag', $9, 2048, 0, 1000, 0, 1000)`,
+      [
+        input.jobId, input.document.id, input.document.ownerId, input.probeGeneration, input.index,
+        input.bucket, input.key, `chunk-version-${input.index}`, 'ab'.repeat(32),
+      ],
+    );
+  }
 
   async function seedDocument(
     ownerId: string,

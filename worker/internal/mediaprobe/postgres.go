@@ -268,16 +268,20 @@ func (store *PostgresStore) Complete(ctx context.Context, job Job, result ProbeR
 		SELECT "id" FROM "ai"."media_probe_results"
 		 WHERE "media_probe_job_id" = $1`, job.ID).Scan(&resultID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if err := ensureAudioChunkManifest(ctx, tx, job, result); err != nil {
+			return false, err
+		}
 		err = tx.QueryRow(ctx, `
 			INSERT INTO "ai"."media_probe_results"
 			  ("media_probe_job_id", "document_id", "owner_id", "probe_generation",
 			   "policy_version", "deletion_fence", "duration_sec", "bucket", "object_key",
-			   "version_id", "etag", "content_length", "full_pipeline_job_id")
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			   "version_id", "etag", "content_length", "full_pipeline_job_id", "decoded_duration_ms")
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			 RETURNING "id"`,
 			job.ID, job.DocumentID, job.OwnerID, job.ProbeGeneration, job.PolicyVersion,
 			job.DeletionFence, result.DurationSec, result.Locator.Bucket, result.Locator.Key,
-			result.Locator.VersionID, result.Locator.ETag, result.Locator.ContentLength, job.FullPipelineJobID).Scan(&resultID)
+			result.Locator.VersionID, result.Locator.ETag, result.Locator.ContentLength, job.FullPipelineJobID,
+			nullableDecodedDuration(result.DecodedDurationMs)).Scan(&resultID)
 	}
 	if err != nil {
 		return false, PersistenceError{Err: err}
@@ -304,7 +308,9 @@ func (store *PostgresStore) Complete(ctx context.Context, job Job, result ProbeR
 		"jobType": "MEDIA_PROBE", "probeGeneration": job.ProbeGeneration,
 		"policyVersion": job.PolicyVersion, "deletionFence": job.DeletionFence,
 		"durationSec": result.DurationSec, "fullPipelineJobId": job.FullPipelineJobID,
-		"probeResultId": resultID, "locator": map[string]any{
+		"decodedDurationMs": nullableDecodedDuration(result.DecodedDurationMs),
+		"audioChunkCount":   result.AudioChunkCount,
+		"probeResultId":     resultID, "locator": map[string]any{
 			"bucket": result.Locator.Bucket, "key": result.Locator.Key,
 			"versionId": result.Locator.VersionID, "etag": result.Locator.ETag,
 			"contentLength": result.Locator.ContentLength, "policyVersion": job.PolicyVersion,
@@ -472,10 +478,12 @@ func ensureResultMatches(ctx context.Context, tx pgx.Tx, resultID string, job Jo
 		   AND "deletion_fence" = $6 AND "duration_sec" = $7
 		   AND "bucket" = $8 AND "object_key" = $9 AND "version_id" = $10
 		   AND "etag" = $11 AND "content_length" = $12 AND "full_pipeline_job_id" = $13
+		   AND "decoded_duration_ms" IS NOT DISTINCT FROM $14::integer
 		  FROM "ai"."media_probe_results" WHERE "id" = $1`,
 		resultID, job.DocumentID, job.OwnerID, job.ProbeGeneration, job.PolicyVersion,
 		job.DeletionFence, result.DurationSec, result.Locator.Bucket, result.Locator.Key,
-		result.Locator.VersionID, result.Locator.ETag, result.Locator.ContentLength, job.FullPipelineJobID).Scan(&matches)
+		result.Locator.VersionID, result.Locator.ETag, result.Locator.ContentLength, job.FullPipelineJobID,
+		nullableDecodedDuration(result.DecodedDurationMs)).Scan(&matches)
 	if err != nil {
 		return PersistenceError{Err: err}
 	}

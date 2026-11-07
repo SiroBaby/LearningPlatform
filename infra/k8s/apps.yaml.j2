@@ -974,7 +974,7 @@ spec:
   template:
     metadata:
       annotations:
-        learning-platform.io/rollout-revision: media-probe-worker-v2
+        learning-platform.io/rollout-revision: media-probe-worker-v3
       labels:
         app.kubernetes.io/name: learning-platform
         app.kubernetes.io/component: media-probe-worker
@@ -1013,6 +1013,17 @@ spec:
               value: /usr/local/bin/ffprobe
             - name: MEDIA_PROBE_FFPROBE_VERSION
               value: '8.1.3-27-g8dca1586f4-20261031'
+            # Audio preparation (ffmpeg decode, chunk, PutObject under derived-audio/)
+            # stays OFF until the owner has granted the prefix IAM and lifecycle
+            # (docs/deployment/RUNBOOK-media-audio-prep-dev.md, #160).
+            - name: MEDIA_PROBE_AUDIO_PREP_ENABLED
+              value: '{{ media_probe_audio_prep_enabled | default(false) | bool | ternary("true", "false") }}'
+            - name: MEDIA_PROBE_FFMPEG_PATH
+              value: /usr/local/bin/ffmpeg
+            - name: MEDIA_PROBE_FFMPEG_VERSION
+              value: '8.1.3-27-g8dca1586f4-20261031'
+            - name: MEDIA_PROBE_AUDIO_PREP_TIMEOUT_MS
+              value: '180000'
             - name: MEDIA_PROBE_TIMEOUT_MS
               value: '120000'
             - name: MEDIA_PROBE_OUTPUT_MAX_BYTES
@@ -1057,9 +1068,10 @@ spec:
             failureThreshold: 3
           resources: {{ media_probe_worker_resources | to_json }}
       volumes:
+        # 500 MiB source download + one chunk capped at 25 MiB + headroom.
         - name: media-probe-temp
           emptyDir:
-            sizeLimit: 550Mi
+            sizeLimit: 600Mi
 {% endif %}
 {% if 'worker' in deployment_targets and document_purge_enabled | default(false) | bool %}
 ---

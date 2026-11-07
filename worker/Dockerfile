@@ -15,7 +15,8 @@ EXPOSE 3403
 ENTRYPOINT ["/app/ai-worker"]
 
 # BtbN publishes a reproducible, statically packaged FFmpeg build. The archive
-# checksum is the supply-chain pin; the runtime image carries only ffprobe.
+# checksum is the supply-chain pin; the runtime image carries ffprobe and, for
+# derived audio (ADR-0032 D3), ffmpeg from the very same archive.
 # worker/scripts/install-media-tools.sh reads these ARG literals so CI tests the
 # same artifact; keep each value literal on one line. BtbN deletes daily
 # autobuilds after ~2 weeks, so FFPROBE_RELEASE must be a month-end build.
@@ -34,21 +35,29 @@ RUN curl --fail --location --silent --show-error --retry 3 --connect-timeout 10 
       "${FFPROBE_URL}" --output ffmpeg.tar.xz \
     && printf '%s  %s\n' "${FFPROBE_SHA256}" ffmpeg.tar.xz | sha256sum --check --status \
     && tar --extract --xz --file ffmpeg.tar.xz --strip-components=2 \
-      --directory /usr/local/bin "ffmpeg-n${FFPROBE_VERSION}-linux64-gpl-8.1/bin/ffprobe" \
+      --directory /usr/local/bin \
+      "ffmpeg-n${FFPROBE_VERSION}-linux64-gpl-8.1/bin/ffprobe" \
+      "ffmpeg-n${FFPROBE_VERSION}-linux64-gpl-8.1/bin/ffmpeg" \
     && ffprobe_version="$(/usr/local/bin/ffprobe -version | awk 'NR == 1 { print $3; exit }')" \
     && ffprobe_version="${ffprobe_version#n}" \
     && test "${ffprobe_version}" = "${FFPROBE_BUILD_VERSION}" \
+    && ffmpeg_version="$(/usr/local/bin/ffmpeg -version | awk 'NR == 1 { print $3; exit }')" \
+    && ffmpeg_version="${ffmpeg_version#n}" \
+    && test "${ffmpeg_version}" = "${FFPROBE_BUILD_VERSION}" \
     && rm -rf /tmp/ffprobe
 
 FROM --platform=linux/amd64 gcr.io/distroless/base-debian12:nonroot@sha256:5883c320d81f76c764e114c9ab14054f037bb040907816fc9028d80d9602a7c3 AS media-probe
 WORKDIR /app
 COPY --from=build /out/media-probe-worker /app/media-probe-worker
 COPY --from=media-probe-artifact /usr/local/bin/ffprobe /usr/local/bin/ffprobe
-# The pinned BtbN binary links to libgcc_s, which is not included in the
-# distroless base image by default.
+COPY --from=media-probe-artifact /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+# The pinned BtbN binaries (ffprobe and ffmpeg link the same libraries) need
+# libgcc_s, which is not included in the distroless base image by default.
 COPY --from=media-probe-artifact /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/x86_64-linux-gnu/libgcc_s.so.1
 ENV MEDIA_PROBE_FFPROBE_PATH=/usr/local/bin/ffprobe \
     MEDIA_PROBE_FFPROBE_VERSION=8.1.3-27-g8dca1586f4-20261031 \
+    MEDIA_PROBE_FFMPEG_PATH=/usr/local/bin/ffmpeg \
+    MEDIA_PROBE_FFMPEG_VERSION=8.1.3-27-g8dca1586f4-20261031 \
     MEDIA_PROBE_TEMP_DIR=/tmp/media-probe
 USER 65532:65532
 EXPOSE 3404

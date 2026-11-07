@@ -71,10 +71,28 @@ export function getDocumentFailurePresentation(
         description: "Hãy bổ sung thêm nội dung rõ ràng, có ý chính đầy đủ rồi tải lại.",
         retryable: false,
       };
+    case "MEDIA_AUDIO_PREP_FAILED":
+      return {
+        title: "Chưa thể xử lý âm thanh của file",
+        description: "Hệ thống không tách được âm thanh để chuyển thành văn bản. Hãy xuất lại file rồi tải lại; nếu vẫn lỗi, hãy liên hệ quản trị viên.",
+        retryable: false,
+      };
     case "MEDIA_AUDIO_TRACK_REQUIRED":
       return {
         title: "Video chưa có âm thanh phù hợp",
         description: "Hãy dùng video có một luồng âm thanh chính chứa lời giảng rồi tải lại.",
+        retryable: false,
+      };
+    case "MEDIA_DURATION_EXCEEDED":
+      return {
+        title: "File dài hơn giới hạn",
+        description: "Âm thanh thực tế dài quá 2 giờ. Hãy cắt ngắn file rồi tải lại.",
+        retryable: false,
+      };
+    case "MEDIA_DURATION_MISMATCH":
+      return {
+        title: "Thời lượng file không khớp",
+        description: "Thời lượng ghi trong file khác nhiều so với âm thanh thật. Hãy xuất lại file rồi tải lại.",
         retryable: false,
       };
     case "MEDIA_OBJECT_TOO_LARGE":

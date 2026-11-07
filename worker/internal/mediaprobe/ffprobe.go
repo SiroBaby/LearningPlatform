@@ -45,8 +45,14 @@ func (runner FFProbeRunner) CheckVersion(ctx context.Context) error {
 
 // ffprobeVersionMatches requires the exact normalized artifact version.
 func ffprobeVersionMatches(output []byte, expected string) bool {
+	return toolVersionMatches(output, "ffprobe", expected)
+}
+
+// toolVersionMatches checks the first line of `<tool> -version` against the
+// exact normalized artifact version.
+func toolVersionMatches(output []byte, tool, expected string) bool {
 	fields := strings.Fields(string(output))
-	if len(fields) < 3 || fields[0] != "ffprobe" || fields[1] != "version" {
+	if len(fields) < 3 || fields[0] != tool || fields[1] != "version" {
 		return false
 	}
 	observed := strings.TrimPrefix(fields[2], "n")

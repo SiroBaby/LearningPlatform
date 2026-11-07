@@ -335,6 +335,7 @@ export class ContentRepository extends BaseRepository<Document> {
         this.mediaPurgeLocatorFromDocument(document, buckets.media),
         this.canonicalizeMediaPurgeLocator(additionalLocator),
         ...(await this.findHistoricalMediaPurgeLocators(manager, document, buckets.media)),
+        ...(await this.findDerivedAudioPurgeLocators(manager, document, buckets.media)),
       ];
       const unique = new Map<string, DocumentPurgeLocator>();
       for (const locator of candidates) {
@@ -401,6 +402,40 @@ export class ContentRepository extends BaseRepository<Document> {
       }))
       .filter((locator): locator is DocumentPurgeLocator => this.isStoredMediaPurgeLocator(locator, mediaBucket))
       .sort((left, right) => this.purgeLocatorKey(left).localeCompare(this.purgeLocatorKey(right)));
+  }
+
+  /**
+   * Derived audio chunks (#160) live under `derived-audio/` in the media bucket.
+   * The probe worker records each exact VersionId under the same advisory lock
+   * that deletion already holds, so a chunk is either listed here or fenced.
+   */
+  private async findDerivedAudioPurgeLocators(
+    manager: EntityManager,
+    document: Document,
+    mediaBucket: string,
+  ): Promise<DocumentPurgeLocator[]> {
+    const rows = await manager.query<Array<{
+      readonly bucket: string;
+      readonly key: string;
+      readonly versionId: string;
+      readonly etag: string;
+      readonly contentLength: string | number;
+    }>>(
+      `SELECT "bucket", "object_key" AS "key", "version_id" AS "versionId",
+              "etag", "content_length" AS "contentLength"
+         FROM "ai"."media_audio_chunks"
+        WHERE "document_id" = $1 AND "owner_id" = $2
+          AND "bucket" = $3 AND "object_key" LIKE 'derived-audio/%'
+        ORDER BY "object_key", "version_id"`,
+      [document.id, document.ownerId, mediaBucket],
+    );
+    return rows.map((row) => ({
+      bucket: row.bucket,
+      key: row.key,
+      versionId: normalizeStorageVersionId(row.versionId) ?? null,
+      etag: row.etag,
+      contentLength: Number(row.contentLength),
+    }));
   }
 
   private purgeLocatorKey(locator: DocumentPurgeLocator): string {
