@@ -175,3 +175,17 @@ test("restores retry focus only when a new retry error appears after submit fini
     false,
   );
 });
+
+test("maps INSUFFICIENT_CREDITS retry failures to credit copy, not a wait-and-retry hint", () => {
+  const error = new Error("Not enough credits to process this Document with the selected platform model.");
+  error.name = "Phase0ClientError";
+  error.status = 402;
+  error.code = "INSUFFICIENT_CREDITS";
+  error.retryable = true;
+  error.shortfallCredits = 120;
+
+  assert.equal(
+    getRetryConfirmErrorMessage(error),
+    "Bạn không đủ credit để xử lý tài liệu này. Cần thêm khoảng 120 credit. Hãy bổ sung credit hoặc dùng tệp nhỏ hơn.",
+  );
+});

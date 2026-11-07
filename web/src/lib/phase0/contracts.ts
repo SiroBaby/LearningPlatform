@@ -257,4 +257,5 @@ export interface Phase0ApiError {
   readonly code?: string;
   readonly message: string;
   readonly retryable?: boolean;
+  readonly shortfallCredits?: number;
 }

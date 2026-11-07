@@ -18,6 +18,17 @@ test("preserves safe machine-readable backend error fields", () => {
   });
 });
 
+test("preserves a safe shortfallCredits and drops malformed values", () => {
+  assert.deepEqual(
+    mapSafeBackendError({ code: "INSUFFICIENT_CREDITS", message: "x", shortfallCredits: 12, availableCredits: 3 }),
+    { code: "INSUFFICIENT_CREDITS", message: "x", shortfallCredits: 12 },
+  );
+  assert.deepEqual(
+    mapSafeBackendError({ code: "INSUFFICIENT_CREDITS", message: "x", shortfallCredits: -1 }),
+    { code: "INSUFFICIENT_CREDITS", message: "x" },
+  );
+});
+
 test("drops malformed optional backend error fields", () => {
   const error = mapSafeBackendError({
     code: 42,

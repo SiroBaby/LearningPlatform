@@ -4,6 +4,7 @@ export interface SafeBackendError {
   readonly code?: string;
   readonly message: string;
   readonly retryable?: boolean;
+  readonly shortfallCredits?: number;
 }
 
 export function sanitizeBackendErrorText(value: string): string {
@@ -37,5 +38,8 @@ export function mapSafeBackendError(value: unknown): SafeBackendError | null {
     ...error,
     code: sanitizeBackendErrorText(source.code),
     ...(typeof source.retryable === "boolean" ? { retryable: source.retryable } : {}),
+    ...(typeof source.shortfallCredits === "number" && Number.isSafeInteger(source.shortfallCredits) && source.shortfallCredits >= 0
+      ? { shortfallCredits: source.shortfallCredits }
+      : {}),
   };
 }

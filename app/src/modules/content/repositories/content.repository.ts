@@ -7,12 +7,13 @@ import type { EntityManager } from 'typeorm';
 import { BaseRepository } from '../../../database/base.repository';
 import { normalizeStorageVersionId } from '../../../storage/storage-version-id';
 import { CreateUploadUrlCommand } from '../contracts/create-upload-url.command';
+import { InsufficientCreditsError } from '../contracts/insufficient-credits.error';
 import {
   DocumentStatusProjectionPersistenceCommand,
   DocumentStatusProjectionOutcome,
 } from '../contracts/document-status-projection.port';
 import { createApplicationLogger } from '../../../common/logging/application-logger.factory';
-import { settleReservation } from './credit-settlement';
+import { reserveCredits, settleReservation } from './credit-settlement';
 import { Document } from '../entities/document.entity';
 import {
   DocumentPurgeManifest,
@@ -522,6 +523,7 @@ export class ContentRepository extends BaseRepository<Document> {
     ownerId: string,
     id: string,
     selection: DocumentModelSelection,
+    reservation?: ProcessingReservation,
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       const started = await this.startProcessing(manager, ownerId, id, [
@@ -531,6 +533,7 @@ export class ContentRepository extends BaseRepository<Document> {
 
       if (started) {
         const document = await manager.findOneByOrFail(Document, { id, ownerId });
+        await this.reserveProcessingCredits(manager, document, reservation);
         await this.enqueueProcessing(
           manager,
           ownerId,
@@ -1017,6 +1020,7 @@ export class ContentRepository extends BaseRepository<Document> {
     ownerId: string,
     id: string,
     selection: DocumentModelSelection,
+    reservation?: ProcessingReservation,
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       const started = await this.startProcessing(manager, ownerId, id, [DocumentStatus.FAILED]);
@@ -1025,6 +1029,7 @@ export class ContentRepository extends BaseRepository<Document> {
       }
 
       const document = await manager.findOneByOrFail(Document, { id, ownerId });
+      await this.reserveProcessingCredits(manager, document, reservation);
       await this.enqueueProcessing(
         manager,
         ownerId,
@@ -1052,8 +1057,21 @@ export class ContentRepository extends BaseRepository<Document> {
         lock: { mode: 'pessimistic_write' },
       });
       const outcome = await this.applyProcessingProjection(manager, command);
-      if (outcome === 'APPLIED' && document && command.settlement) {
-        await this.settleProjectedReservation(manager, document, command, command.settlement);
+      if (command.settlement) {
+        if (outcome === 'APPLIED' && document) {
+          await this.settleProjectedReservation(manager, document, command, command.settlement);
+        } else if (outcome !== 'APPLIED' && document?.status === DocumentStatus.DELETING) {
+          // A Document deleted mid-processing never projects, but its reservation must still settle (state stays DELETING).
+          await this.settleProjectedReservation(manager, document, command, command.settlement);
+        } else if (!document) {
+          this.logger.warn({
+            documentId: command.documentId,
+            event: 'content.settlement.skipped',
+            eventJobId: command.jobId,
+            reason: 'document_missing',
+            runtime: 'worker',
+          });
+        }
       }
       return outcome;
     });
@@ -1217,6 +1235,37 @@ export class ContentRepository extends BaseRepository<Document> {
     return 'IGNORED';
   }
 
+  /**
+   * Reserve the coarse estimate for a PDF/TXT Platform Model start. Runs after the Document CAS (row lock held) and
+   * before the outbox write, in the same transaction, so a short balance rolls back the whole start and a replay
+   * cannot reserve twice. Lock order is Document -> wallet, as in settlement.
+   */
+  private async reserveProcessingCredits(
+    manager: EntityManager,
+    document: Document,
+    reservation: ProcessingReservation | undefined,
+  ): Promise<void> {
+    if (!reservation || reservation.estimatedCredits <= 0) return;
+    const processingAttempt = Number(document.processingAttempt);
+    if (!document.fullPipelineJobId?.trim() || !Number.isSafeInteger(processingAttempt) || processingAttempt < 1) {
+      throw new Error('Document processing identity is unavailable');
+    }
+    const outcome = await reserveCredits(manager, {
+      estimatedCredits: reservation.estimatedCredits,
+      jobId: document.fullPipelineJobId,
+      ownerId: document.ownerId,
+      processingAttempt,
+    });
+    if (outcome.kind === 'INSUFFICIENT') {
+      throw new InsufficientCreditsError(outcome.availableCredits, reservation.estimatedCredits);
+    }
+    await manager.update(
+      Document,
+      { id: document.id, ownerId: document.ownerId },
+      { budgetStatus: 'RESERVED', estimatedCredits: reservation.estimatedCredits, estimateStatus: 'COARSE' },
+    );
+  }
+
   private async startProcessing(
     manager: EntityManager,
     ownerId: string,
@@ -1265,6 +1314,11 @@ export class ContentRepository extends BaseRepository<Document> {
     };
     await manager.save(outbox);
   }
+}
+
+/** Coarse credit estimate to reserve when a PDF/TXT Document starts processing with a Platform Model. */
+export interface ProcessingReservation {
+  readonly estimatedCredits: number;
 }
 
 interface ProjectionStateRow {
