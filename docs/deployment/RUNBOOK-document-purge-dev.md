@@ -198,9 +198,11 @@ thật không mất nhưng phải dọn marker như hướng dẫn ở mục 4.
    ```
 
    Kỳ vọng: media `{"Status": "Enabled"}`; documents trả rỗng (chưa từng bật).
-3. **Purge identity không đọc/ghi/list được object**: `get-object`,
-   `put-object` và `list-object-versions` bằng profile `lp-dev-purge` đều phải
-   `AccessDenied`.
+3. **Purge identity không đọc/ghi object**: `get-object` và `put-object` bằng
+   profile `lp-dev-purge` đều phải `AccessDenied`. Từ #159 PR-4, purge identity
+   được `s3:ListBucketVersions` **chỉ** với prefix `media/` (cho orphan scanner):
+   `list-object-versions --prefix media/` phải chạy được, còn không có `--prefix`
+   hoặc prefix khác (ví dụ `derived-audio/`) phải `AccessDenied`.
 4. **Purge identity không xóa được ngoài prefix cho phép** (bắt buộc): xác nhận
    resource `<MEDIA_BUCKET>/media/*` không bị nới thành `<MEDIA_BUCKET>/*` khi tạo policy.
 

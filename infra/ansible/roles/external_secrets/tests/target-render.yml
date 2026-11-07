@@ -8,6 +8,12 @@
   vars:
     learning_platform_namespace: learning-platform-dev
   tasks:
+    # Purge-enabled variants pass document_purge_enabled explicitly; pin the dev
+    # value off so the target contracts do not depend on the current dev flag.
+    - name: Pin the purge gate off for the target render contracts
+      ansible.builtin.set_fact:
+        document_purge_enabled: false
+
     - name: Render API-only runtime resources
       ansible.builtin.set_fact:
         external_secrets_api_resources: >-
@@ -36,7 +42,8 @@
       ansible.builtin.set_fact:
         external_secrets_worker_resources: >-
           {{ lookup('template', playbook_dir ~ '/../templates/external-secrets.yaml.j2',
-             template_vars={'deployment_targets': ['worker'], 'media_probe_worker_enabled': true}) | from_yaml_all | list }}
+             template_vars={'deployment_targets': ['worker'], 'media_probe_worker_enabled': true,
+                            'document_purge_enabled': false}) | from_yaml_all | list }}
       no_log: true
 
     - name: Require the worker-only document and remote-reference contract
