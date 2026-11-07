@@ -96,3 +96,9 @@ test("explains in Vietnamese that custom connections cannot process media", () =
   assert.match(presentation.description, /kết nối riêng/u);
   assert.match(presentation.description, /mô hình có trong gói/u);
 });
+
+test("explains the decoded duration rejections without retry", () => {
+  assert.match(getDocumentFailurePresentation("MEDIA_DURATION_EXCEEDED").description, /2 giờ/u);
+  assert.match(getDocumentFailurePresentation("MEDIA_DURATION_MISMATCH").description, /xuất lại/u);
+  assert.equal(isRetryableDocumentFailureCode("MEDIA_DURATION_MISMATCH"), false);
+});

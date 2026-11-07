@@ -175,8 +175,14 @@ function readNullableDocumentProcessingFailureCode(
       return "GENERATION_OUTPUT_TRUNCATED";
     case "INSUFFICIENT_VALID_QUESTIONS":
       return "INSUFFICIENT_VALID_QUESTIONS";
+    case "MEDIA_AUDIO_PREP_FAILED":
+      return "MEDIA_AUDIO_PREP_FAILED";
     case "MEDIA_AUDIO_TRACK_REQUIRED":
       return "MEDIA_AUDIO_TRACK_REQUIRED";
+    case "MEDIA_DURATION_EXCEEDED":
+      return "MEDIA_DURATION_EXCEEDED";
+    case "MEDIA_DURATION_MISMATCH":
+      return "MEDIA_DURATION_MISMATCH";
     case "MEDIA_OBJECT_TOO_LARGE":
       return "MEDIA_OBJECT_TOO_LARGE";
     case "MEDIA_PROBE_FAILED":
