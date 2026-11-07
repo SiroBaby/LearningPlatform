@@ -153,7 +153,8 @@ describe('AuthRepository access-token expiry', () => {
         normalizedEmail: 'admin@example.com',
         role: AccountRole.SUPER_ADMIN,
         status: AccountStatus.ACTIVE,
-        superAdminExpiresAt: new Date(Date.now() - 1),
+        // Hết hạn từ 1 phút trước: không phụ thuộc mili-giây trôi giữa lúc repository chốt `now` và lúc mock chạy (#218).
+        superAdminExpiresAt: new Date(Date.now() - 60_000),
       })),
     };
     const manager = {
@@ -175,6 +176,49 @@ describe('AuthRepository access-token expiry', () => {
     await repository.expireExpiredBreakGlassSuperAdmins();
     expect(manager.query).toHaveBeenCalledWith(expect.stringContaining("SET \"role\" = 'ADMIN'"));
     expect(manager.query).toHaveBeenCalledWith(expect.stringContaining("revoked_reason\" = 'BREAK_GLASS_EXPIRED'"), [['user-1']]);
+  });
+
+  it('treats a temporary SUPER_ADMIN as expired exactly at superAdminExpiresAt', async () => {
+    const inputNow = new Date('2026-11-07T00:00:00.000Z');
+    jest.useFakeTimers({
+      doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'clearImmediate', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'hrtime', 'performance'],
+      now: inputNow,
+    });
+    try {
+      const sessionRepository = {
+        findOne: jest.fn(async () => ({
+          expiresAt: new Date(inputNow.getTime() + 60_000),
+          id: 'session-boundary',
+          revokedAt: null,
+          userId: 'user-boundary',
+        })),
+        update: jest.fn(async () => ({ affected: 1 })),
+      };
+      const userRepository = {
+        findOne: jest.fn(async () => ({
+          id: 'user-boundary',
+          normalizedEmail: 'boundary@example.com',
+          role: AccountRole.SUPER_ADMIN,
+          status: AccountStatus.ACTIVE,
+          superAdminExpiresAt: new Date(inputNow.getTime()),
+        })),
+      };
+      const manager = {
+        query: jest.fn(async (sql: string) => (sql.includes('pg_try_advisory_xact_lock') ? [{ acquired: true }] : [])),
+      };
+      const dataSource = {
+        createEntityManager: jest.fn(() => ({})),
+        getRepository: jest.fn((entity: unknown) => entity === Session ? sessionRepository : userRepository),
+        transaction: jest.fn(async (callback: (value: typeof manager) => unknown) => callback(manager)),
+      };
+      const repository = new AuthRepository(dataSource as never);
+
+      const actualUser = await repository.getUserByAccessToken('boundary-break-glass-token');
+
+      expect(actualUser).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('does not wait for expiry cleanup before resolving a normal access lookup', async () => {
