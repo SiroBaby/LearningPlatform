@@ -152,13 +152,16 @@ func (transcriber *HTTPTranscriber) encode(request TranscribeRequest) ([]byte, s
 }
 
 // classifyTranscribeStatus maps a non-2xx status. 408 and 5xx can come from a proxy after the provider already
-// processed the audio, so they stay uncertain and retryable. 429 is a definite, retryable rejection. Every other
-// 4xx (and any redirect) is a definite rejection that retrying the same request cannot fix.
+// processed the audio, so they stay uncertain and retryable. 429, 401, 403, 404 and redirects are definite rejections
+// that cost nothing; they are operator-side conditions (rotated key, wrong base URL or /v1 path, moved endpoint), so
+// they are technical and retryable instead of blaming the user's file. Other 4xx (400, 413, 415, 422, ...) say the
+// request itself is unacceptable: terminal business PROVIDER_INCOMPATIBLE.
 func classifyTranscribeStatus(status int) error {
 	switch {
 	case status == http.StatusRequestTimeout || status >= http.StatusInternalServerError:
 		return TranscribeError{Failure: Failure{Code: ProviderUnavailable, Technical: true}, Sent: true, Uncertain: true}
-	case status == http.StatusTooManyRequests:
+	case status == http.StatusTooManyRequests || status == http.StatusUnauthorized || status == http.StatusForbidden ||
+		status == http.StatusNotFound || (status >= 300 && status < 400):
 		return TranscribeError{Failure: Failure{Code: ProviderUnavailable, Technical: true}, Sent: true}
 	default:
 		return TranscribeError{Failure: Failure{Code: ProviderIncompatible}, Sent: true}

@@ -2,6 +2,8 @@ package processing
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"reflect"
@@ -9,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const testSTTIdentity = "fake-identity"
@@ -25,6 +28,9 @@ type memorySTTStore struct {
 	fenceAfter   int
 	// saveFenceLost makes SaveSTTOutcome report a lost fence.
 	saveFenceLost bool
+	// failSaves makes the first failSaves SaveSTTOutcome calls fail with a database-style error.
+	failSaves int
+	saveCalls int
 }
 
 func (store *memorySTTStore) CheckActive(context.Context, Job) error {
@@ -54,8 +60,13 @@ func (store *memorySTTStore) STTCheckpoints(context.Context, string, string) (ma
 func (store *memorySTTStore) SaveSTTOutcome(_ context.Context, _ Job, outcome STTOutcome) error {
 	store.mutex.Lock()
 	defer store.mutex.Unlock()
+	store.saveCalls++
 	if store.saveFenceLost {
 		return ErrJobFenceLost
+	}
+	if store.failSaves > 0 {
+		store.failSaves--
+		return NewPersistenceError(FailureOperationChunkReplacement, errors.New("database unavailable"))
 	}
 	store.saved = append(store.saved, outcome)
 	return nil
@@ -132,6 +143,23 @@ func (transcriber *scriptedTranscriber) calledChunks() []int {
 
 // testManifest describes two 600 s bodies with 5 s overlap over 1200 s of decoded audio.
 func testManifest() AudioManifest {
+	return manifestWithDigests(testManifestWithoutDigests())
+}
+
+func testAudioDigest(key string) string {
+	digest := sha256.Sum256([]byte("audio:" + key))
+	return hex.EncodeToString(digest[:])
+}
+
+// manifestWithDigests fills each chunk's SHA256 with the digest of the bytes memoryAudioObjects serves for its key.
+func manifestWithDigests(manifest AudioManifest) AudioManifest {
+	for index := range manifest.Chunks {
+		manifest.Chunks[index].SHA256 = testAudioDigest(manifest.Chunks[index].Locator.Key)
+	}
+	return manifest
+}
+
+func testManifestWithoutDigests() AudioManifest {
 	locator := func(index int) ObjectLocator {
 		return ObjectLocator{Bucket: "media", Key: "derived-audio/owner/document/generation/" + string(rune('0'+index)) + ".mp3", VersionID: "version", ETag: "etag", ContentLength: 2_400_000}
 	}
@@ -139,7 +167,7 @@ func testManifest() AudioManifest {
 		ProbeResultID:     "probe-result",
 		DecodedDurationMs: 1_200_000,
 		Chunks: []AudioChunkRef{
-			{Index: 0, Locator: locator(0), BodyStartMs: 0, BodyEndMs: 600_000, FileStartMs: 0, FileEndMs: 605_000},
+			{Index: 0, Locator: locator(0), BodyStartMs: 0, BodyEndMs: 600_000, FileStartMs: 0, FileEndMs: 600_000},
 			{Index: 1, Locator: locator(1), BodyStartMs: 600_000, BodyEndMs: 1_200_000, FileStartMs: 595_000, FileEndMs: 1_200_000},
 		},
 	}
@@ -189,8 +217,8 @@ func TestMediaTranscriptionBuildsTimeCitedChunksAndCheckpointsEveryChunk(t *test
 		t.Fatalf("language=%q audio=%v reads=%d", transcriber.language, transcriber.audio, objects.reads.Load())
 	}
 	wantOutcomes := []STTOutcome{
-		{ProbeResultID: "probe-result", ChunkIndex: 0, Identity: testSTTIdentity, Segments: testSegments()[0], BilledMs: 605_000},
-		{ProbeResultID: "probe-result", ChunkIndex: 1, Identity: testSTTIdentity, Segments: testSegments()[1], BilledMs: 605_000},
+		{ProbeResultID: "probe-result", ChunkIndex: 0, Identity: testSTTIdentity, Segments: testSegments()[0], BilledMs: 600_000},
+		{ProbeResultID: "probe-result", ChunkIndex: 1, Identity: testSTTIdentity, Segments: testSegments()[1], BilledMs: 600_000},
 	}
 	if got := store.savedOutcomes(); !reflect.DeepEqual(got, wantOutcomes) {
 		t.Fatalf("checkpoints = %#v, want %#v", got, wantOutcomes)
@@ -244,7 +272,7 @@ func TestMediaTranscriptionStopsAtALostFenceBeforeTheNextPaidCall(t *testing.T) 
 	if got := transcriber.calledChunks(); !reflect.DeepEqual(got, []int{0}) {
 		t.Fatalf("STT called for %v, want only chunk 0: the fence was lost before chunk 1", got)
 	}
-	if got := store.savedOutcomes(); len(got) != 1 || got[0].ChunkIndex != 0 || got[0].BilledMs != 605_000 {
+	if got := store.savedOutcomes(); len(got) != 1 || got[0].ChunkIndex != 0 || got[0].BilledMs != 600_000 {
 		t.Fatalf("saved = %#v, want the already paid chunk 0 kept", got)
 	}
 }
@@ -275,8 +303,8 @@ func TestMediaTranscriptionRecordsUncertainAndBilledDispatches(t *testing.T) {
 		wantCode    FailureCode
 		technical   bool
 	}{
-		{"timeout is uncertain spend", uncertain, &STTOutcome{ProbeResultID: "probe-result", ChunkIndex: 0, Identity: testSTTIdentity, UncertainMs: 605_000}, ProviderUnavailable, true},
-		{"2xx with unusable body is billed", invalid, &STTOutcome{ProbeResultID: "probe-result", ChunkIndex: 0, Identity: testSTTIdentity, BilledMs: 605_000}, TranscriptionOutputInvalid, false},
+		{"timeout is uncertain spend", uncertain, &STTOutcome{ProbeResultID: "probe-result", ChunkIndex: 0, Identity: testSTTIdentity, UncertainMs: 600_000}, ProviderUnavailable, true},
+		{"2xx with unusable body is billed", invalid, &STTOutcome{ProbeResultID: "probe-result", ChunkIndex: 0, Identity: testSTTIdentity, BilledMs: 600_000}, TranscriptionOutputInvalid, false},
 		{"definite rejection costs nothing", rejected, nil, ProviderIncompatible, false},
 	}
 	for _, test := range tests {
@@ -320,7 +348,7 @@ func TestMediaTranscriptionKeepsPaidSiblingsWhenOneChunkFails(t *testing.T) {
 		t.Fatalf("Chunks() error = %v, want PROVIDER_UNAVAILABLE", err)
 	}
 	saved := store.savedOutcomes()
-	if len(saved) != 2 || saved[0].UncertainMs != 605_000 || saved[1].ChunkIndex != 1 || saved[1].BilledMs != 605_000 || saved[1].Segments == nil {
+	if len(saved) != 2 || saved[0].UncertainMs != 600_000 || saved[1].ChunkIndex != 1 || saved[1].BilledMs != 600_000 || saved[1].Segments == nil {
 		t.Fatalf("saved = %#v, want chunk 0 uncertain and the in-flight chunk 1 checkpointed", saved)
 	}
 }
@@ -337,7 +365,7 @@ func TestMediaTranscriptionBoundsConcurrency(t *testing.T) {
 		})
 		results[index] = []TranscriptSegment{{StartSec: 1, EndSec: 2, Text: "doan van"}}
 	}
-	store := &memorySTTStore{manifest: manifest}
+	store := &memorySTTStore{manifest: manifestWithDigests(manifest)}
 	release := make(chan struct{})
 	transcriber := &scriptedTranscriber{results: results, release: release}
 	pipeline, _ := newMediaTranscription(store, transcriber, 2)
@@ -376,6 +404,8 @@ func TestMediaTranscriptionRejectsAnUnusableManifestBeforeAnyPaidCall(t *testing
 		"missing version":       mutate(func(manifest *AudioManifest) { manifest.Chunks[0].Locator.VersionID = "" }),
 		"oversized chunk":       mutate(func(manifest *AudioManifest) { manifest.Chunks[0].Locator.ContentLength = MaxSTTChunkBytes + 1 }),
 		"body not increasing":   mutate(func(manifest *AudioManifest) { manifest.Chunks[0].BodyEndMs = 0 }),
+		"missing digest":        mutate(func(manifest *AudioManifest) { manifest.Chunks[0].SHA256 = "" }),
+		"malformed digest":      mutate(func(manifest *AudioManifest) { manifest.Chunks[0].SHA256 = "XYZ" }),
 		"file inside body":      mutate(func(manifest *AudioManifest) { manifest.Chunks[1].FileStartMs = 600_001 }),
 	}
 	for name, manifest := range tests {
@@ -479,5 +509,95 @@ func TestFakeTranscriberIsAnIdentifiedTranscriber(t *testing.T) {
 	var transcriber IdentifiedTranscriber = FakeTranscriber{Results: testSegments()}
 	if len(transcriber.Identity()) != 64 {
 		t.Fatalf("identity = %q, want a 64 char hex digest", transcriber.Identity())
+	}
+}
+
+func TestMediaTranscriptionFailsClosedWhenTheChunkBytesDifferFromTheManifestDigest(t *testing.T) {
+	manifest := testManifest()
+	manifest.Chunks[0].SHA256 = testAudioDigest("other bytes")
+	store := &memorySTTStore{manifest: manifest}
+	transcriber := &scriptedTranscriber{results: testSegments()}
+	pipeline, _ := newMediaTranscription(store, transcriber, 1)
+
+	_, err := pipeline.Chunks(context.Background(), testJob())
+
+	assertFailure(t, err, ProcessingFailed, true)
+	if got := transcriber.calledChunks(); len(got) != 0 {
+		t.Fatalf("STT called for %v, want no paid call for tampered audio", got)
+	}
+}
+
+func TestMediaTranscriptionRetriesAFailedCheckpointWrite(t *testing.T) {
+	store := &memorySTTStore{manifest: testManifest(), failSaves: 2}
+	transcriber := &scriptedTranscriber{results: testSegments()}
+	pipeline, _ := newMediaTranscription(store, transcriber, 1)
+	pipeline.SaveBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	tracker := NewUsageTracker()
+
+	_, err := pipeline.Chunks(WithUsageTracker(context.Background(), tracker), testJob())
+
+	if err != nil {
+		t.Fatalf("Chunks() error = %v", err)
+	}
+	if got := store.savedOutcomes(); len(got) != 2 || got[0].BilledMs != 600_000 {
+		t.Fatalf("saved = %#v, want both chunks written after the retries", got)
+	}
+	if unsaved := tracker.UnsavedSTT(); len(unsaved) != 0 {
+		t.Fatalf("unsaved = %#v, want none once a retry succeeded", unsaved)
+	}
+}
+
+func TestMediaTranscriptionCarriesSpendInMemoryWhenCheckpointWritesKeepFailing(t *testing.T) {
+	store := &memorySTTStore{manifest: testManifest(), failSaves: 1000}
+	transcriber := &scriptedTranscriber{results: testSegments(), errs: map[int]error{1: TranscribeError{Failure: Failure{Code: ProviderUnavailable, Technical: true}, Sent: true, Uncertain: true}}}
+	pipeline, _ := newMediaTranscription(store, transcriber, 1)
+	pipeline.SaveBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	tracker := NewUsageTracker()
+
+	_, err := pipeline.Chunks(WithUsageTracker(context.Background(), tracker), testJob())
+
+	var failure Failure
+	if !errors.As(err, &failure) || failure.Code != ProviderUnavailable {
+		t.Fatalf("Chunks() error = %v, want the chunk 1 failure", err)
+	}
+	unsaved := tracker.UnsavedSTT()
+	if len(unsaved) != 2 {
+		t.Fatalf("unsaved = %#v, want chunk 0 (billed, with segments) and chunk 1 (uncertain)", unsaved)
+	}
+	sort.Slice(unsaved, func(left, right int) bool { return unsaved[left].ChunkIndex < unsaved[right].ChunkIndex })
+	if unsaved[0].BilledMs != 600_000 || unsaved[0].Segments == nil || unsaved[1].UncertainMs != 600_000 || unsaved[1].BilledMs != 0 {
+		t.Fatalf("unsaved = %#v", unsaved)
+	}
+	if store.saveCalls < 2*sttSaveAttempts {
+		t.Fatalf("save calls = %d, want %d attempts per outcome", store.saveCalls, sttSaveAttempts)
+	}
+}
+
+func TestMediaTranscriptionNeverRetriesAFencedSave(t *testing.T) {
+	store := &memorySTTStore{manifest: testManifest(), saveFenceLost: true}
+	pipeline, _ := newMediaTranscription(store, &scriptedTranscriber{results: testSegments()}, 1)
+	pipeline.SaveBackoff = []time.Duration{time.Millisecond}
+
+	_, err := pipeline.Chunks(WithUsageTracker(context.Background(), NewUsageTracker()), testJob())
+
+	if !errors.Is(err, ErrJobFenceLost) || store.saveCalls != 1 {
+		t.Fatalf("Chunks() error = %v after %d save calls, want ErrJobFenceLost after exactly one", err, store.saveCalls)
+	}
+}
+
+func TestMediaTranscriptionBillsTheBodySpanNotTheOverlap(t *testing.T) {
+	store := &memorySTTStore{manifest: testManifest()}
+	pipeline, _ := newMediaTranscription(store, &scriptedTranscriber{results: testSegments()}, 1)
+
+	if _, err := pipeline.Chunks(context.Background(), testJob()); err != nil {
+		t.Fatalf("Chunks() error = %v", err)
+	}
+
+	total := 0
+	for _, outcome := range store.savedOutcomes() {
+		total += outcome.BilledMs
+	}
+	if total != 1_200_000 {
+		t.Fatalf("billed = %d ms, want the decoded duration 1200000 (overlap is platform cost)", total)
 	}
 }

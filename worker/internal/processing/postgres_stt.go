@@ -26,7 +26,7 @@ func (store *PostgresStore) AudioManifest(ctx context.Context, job Job) (AudioMa
 	rows, err := store.pool.Query(ctx, `
 		SELECT result.id::text, COALESCE(result.decoded_duration_ms, 0),
 		       chunk.chunk_index, chunk.bucket, chunk.object_key, chunk.version_id, chunk.etag, chunk.content_length,
-		       chunk.body_start_ms, chunk.body_end_ms, chunk.file_start_ms, chunk.file_end_ms
+		       chunk.body_start_ms, chunk.body_end_ms, chunk.file_start_ms, chunk.file_end_ms, chunk.sha256::text
 		  FROM ai.processing_jobs AS pipeline
 		  JOIN ai.media_probe_results AS result
 		    ON result.id = pipeline.probe_result_id
@@ -53,7 +53,7 @@ func (store *PostgresStore) AudioManifest(ctx context.Context, job Job) (AudioMa
 		var chunk AudioChunkRef
 		if err := rows.Scan(&manifest.ProbeResultID, &manifest.DecodedDurationMs,
 			&chunk.Index, &chunk.Locator.Bucket, &chunk.Locator.Key, &chunk.Locator.VersionID, &chunk.Locator.ETag, &chunk.Locator.ContentLength,
-			&chunk.BodyStartMs, &chunk.BodyEndMs, &chunk.FileStartMs, &chunk.FileEndMs); err != nil {
+			&chunk.BodyStartMs, &chunk.BodyEndMs, &chunk.FileStartMs, &chunk.FileEndMs, &chunk.SHA256); err != nil {
 			return AudioManifest{}, NewPersistenceError(FailureOperationSourceDescriptorRead, err)
 		}
 		manifest.Chunks = append(manifest.Chunks, chunk)
@@ -101,14 +101,6 @@ func (store *PostgresStore) STTCheckpoints(ctx context.Context, probeResultID, i
 // lease, status, cancellation, access revocation). A lost fence discards the result instead of committing it stale.
 // Spend only accumulates: repeated outcomes for a chunk add to billed_ms/uncertain_ms and never erase segments.
 func (store *PostgresStore) SaveSTTOutcome(ctx context.Context, job Job, outcome STTOutcome) error {
-	var segments []byte
-	if outcome.Segments != nil {
-		encoded, err := json.Marshal(outcome.Segments)
-		if err != nil {
-			return err
-		}
-		segments = encoded
-	}
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return NewPersistenceError(FailureOperationChunkReplacement, err)
@@ -120,7 +112,26 @@ func (store *PostgresStore) SaveSTTOutcome(ctx context.Context, job Job, outcome
 		}
 		return NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
-	if _, err = tx.Exec(ctx, `
+	if err = upsertSTTOutcome(ctx, tx, job, outcome); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return NewPersistenceError(FailureOperationTransactionCommit, err)
+	}
+	return nil
+}
+
+// upsertSTTOutcome adds one outcome to its chunk row; the caller already holds the active job lock.
+func upsertSTTOutcome(ctx context.Context, tx pgx.Tx, job Job, outcome STTOutcome) error {
+	var segments []byte
+	if outcome.Segments != nil {
+		encoded, err := json.Marshal(outcome.Segments)
+		if err != nil {
+			return err
+		}
+		segments = encoded
+	}
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO ai.media_stt_chunk_results
 		  (probe_result_id, document_id, owner_id, chunk_index, stt_provider_identity, segments, billed_ms, uncertain_ms)
 		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7, $8)
@@ -132,8 +143,16 @@ func (store *PostgresStore) SaveSTTOutcome(ctx context.Context, job Job, outcome
 		outcome.ProbeResultID, job.DocumentID, job.OwnerID, outcome.ChunkIndex, outcome.Identity, segments, outcome.BilledMs, outcome.UncertainMs); err != nil {
 		return NewPersistenceError(FailureOperationChunkReplacement, err)
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return NewPersistenceError(FailureOperationTransactionCommit, err)
+	return nil
+}
+
+// flushUnsavedSTT writes outcomes whose checkpoint save kept failing, inside a transaction that already holds the
+// active job lock. Callers clear the tracker only after the transaction commits.
+func flushUnsavedSTT(ctx context.Context, tx pgx.Tx, job Job) error {
+	for _, outcome := range UsageTrackerFrom(ctx).UnsavedSTT() {
+		if err := upsertSTTOutcome(ctx, tx, job, outcome); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -142,6 +161,9 @@ func (store *PostgresStore) SaveSTTOutcome(ctx context.Context, job Job, outcome
 // kept once the job has a final outcome and the spend of every attempt reaches the return seam exactly once. It
 // returns nil when the job never dispatched speech-to-text (PDF/TEXT), leaving those payloads unchanged.
 func consumeSTTTotals(ctx context.Context, tx pgx.Tx, job Job) (*sttTotals, error) {
+	if err := flushUnsavedSTT(ctx, tx, job); err != nil {
+		return nil, err
+	}
 	var billedMs, uncertainMs, rowCount int64
 	err := tx.QueryRow(ctx, `
 		WITH removed AS (

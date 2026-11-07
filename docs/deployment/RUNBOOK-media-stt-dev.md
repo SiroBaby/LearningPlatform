@@ -12,7 +12,8 @@ Mặc định cờ là `false`: không có gì thay đổi cho tới khi owner l
   1. Đọc manifest `ai.media_audio_chunks` của probe result gắn với job; thiếu hoặc
      sai hợp đồng là `MEDIA_AUDIO_NOT_PREPARED` (lỗi nghiệp vụ, không gọi STT).
   2. Với mỗi chunk chưa có checkpoint: kiểm fence, đọc đúng `VersionId` trong
-     `derived-audio/`, gọi `POST {STT_BASE_URL}/audio/transcriptions`
+     `derived-audio/` và kiểm `sha256` của bytes với manifest (lệch là lỗi kỹ thuật,
+     không gọi STT), gọi `POST {STT_BASE_URL}/audio/transcriptions`
      (`model=groq/whisper-large-v3`, `response_format=verbose_json`, `language=vi`),
      rồi ghi kết quả vào `ai.media_stt_chunk_results` trong transaction có
      `lockActiveJob`. Retry kỹ thuật chỉ gọi lại các chunk còn thiếu.
@@ -23,12 +24,18 @@ Mặc định cờ là `false`: không có gì thay đổi cho tới khi owner l
      `usage.sttUncertainSeconds` vào payload `DocumentProcessingResult`, rồi xóa
      checkpoint.
 - **Cách tính số giây**: response của 9router không có `usage`, nên số giây = tổng
-  thời lượng file (thân + overlap) của các chunk đã gửi. HTTP 2xx là `billed`; timeout,
-  mất kết nối, 408 và 5xx là `uncertain` (Node giữ `HELD` theo ADR-0022); 4xx khác và
-  429 là bị từ chối rõ ràng, không tính. Không có fallback sang model hay endpoint khác.
-- **Lỗi**: 4xx (trừ 408/429) là `PROVIDER_INCOMPATIBLE` (không retry); 429/408/5xx/timeout
-  là `PROVIDER_UNAVAILABLE` (retry kỹ thuật 5 giây, 30 giây, 5 phút rồi DLQ); body 2xx sai
-  hợp đồng là `TRANSCRIPTION_OUTPUT_INVALID`; transcript rỗng là `MEDIA_TRANSCRIPT_EMPTY`.
+  thời lượng **thân** (body, không tính overlap) của các chunk đã gửi, nên tổng khớp
+  thời lượng giải mã mà ước tính và D10 dùng; phần overlap 5 giây mỗi phía là chi phí
+  nền tảng, không tính cho người dùng. HTTP 2xx là `billed`; timeout, mất kết nối, 408
+  và 5xx là `uncertain` (Node giữ `HELD` theo ADR-0022); 429, 401, 403, 404 và redirect
+  là bị từ chối rõ ràng, không tính. Không có fallback sang model hay endpoint khác.
+- **Lỗi**: 400/413/415/422 và 4xx khác là `PROVIDER_INCOMPATIBLE` (lỗi nghiệp vụ, không
+  retry). 401/403/404/redirect (key hết hạn hoặc sai, thiếu `/v1`, endpoint đổi chỗ) là
+  lỗi cấu hình phía vận hành nên được xử lý như `PROVIDER_UNAVAILABLE`, tức retry kỹ thuật,
+  không đổ lỗi cho file; log `worker.processing.retry.scheduled` có `category=PROVIDER_UNAVAILABLE`
+  lặp lại là dấu hiệu cần kiểm tra `STT_BASE_URL`/`STT_API_KEY`. 429/408/5xx/timeout cũng là
+  `PROVIDER_UNAVAILABLE` (retry 5 giây, 30 giây, 5 phút rồi DLQ); body 2xx sai hợp đồng là
+  `TRANSCRIPTION_OUTPUT_INVALID`; transcript rỗng là `MEDIA_TRANSCRIPT_EMPTY`.
 - **Cờ và cấu hình**: `go_worker_media_stt_enabled` (mặc định `false`) render thành
   `AI_MEDIA_STT_ENABLED`. Khi `true` manifest thêm `STT_BASE_URL`, `STT_API_KEY` (secretKeyRef)
   và các hằng số không bí mật `STT_MODEL`, `STT_LANGUAGE`, `STT_REQUEST_TIMEOUT_MS=120000`,
@@ -110,13 +117,25 @@ Việc tách là quyết định của PR7.
 
 ## 5. Giới hạn đã biết
 
-- Ghi checkpoint thất bại sau khi provider đã trả 2xx (lỗi DB không phải mất fence) không
-  được tính vào `sttBilledSeconds`; chunk đó bị gọi lại ở lần retry. Rủi ro thấp, nhỏ hơn
-  một chunk (khoảng 10 phút audio) mỗi lần xảy ra.
-- Số giây tính theo thời lượng file gửi đi (có overlap 5 giây mỗi phía), lớn hơn thời
-  lượng giải mã; ước tính của Node dùng thời lượng giải mã, nên settlement có thể cao hơn
-  ước tính vài phần trăm.
+- **Ghi checkpoint thất bại**: sau khi provider đã trả kết quả, ghi checkpoint được thử
+  tối đa 3 lần (nghỉ 100 ms rồi 300 ms, vẫn kiểm fence trong transaction). Nếu vẫn lỗi
+  (không phải mất fence), kết quả và số giây được giữ trong bộ nhớ của attempt rồi ghi
+  vào transaction kế tiếp có khóa job (lên lịch retry hoặc kết quả cuối), nên chi phí không
+  bị mất. Chỉ khi chính tiến trình bị dừng đột ngột giữa lúc đó thì mới mất phần chưa ghi
+  (nhỏ hơn một chunk).
+- **Uncertain rồi retry thành công vẫn `HELD`**: một chunk gặp 5xx/timeout (uncertain) rồi
+  được gọi lại thành công vẫn cộng `sttUncertainSeconds`, nên Document kết thúc với
+  `budget_status = 'HELD'` dù transcript đầy đủ. Đây là hành vi chủ ý theo ADR-0022 (không
+  đoán chi phí) và quyết định giữ/thả còn chờ owner. Cách nhận biết: Document media
+  `READY` có `course.documents.budget_status = 'HELD'`, hoặc payload
+  `DocumentProcessingResult.usage.sttUncertainSeconds > 0` trong `ai.outbox`. Hiện chưa có
+  đường tự động thả phần `HELD`; owner kiểm tra log nhà cung cấp (9router/Groq) xem các
+  request đó có bị tính tiền không, rồi xử lý thủ công theo ADR-0022 (hoặc chờ quyết định
+  thả tự động).
+- Số giây tính theo thân chunk, nên tổng bằng thời lượng giải mã (làm tròn lên từng
+  tổng): settlement không vượt phần giữ trước theo thời lượng. Overlap do nền tảng chịu.
 - Ngưỡng lọc segment nghi hallucinate theo `no_speech_prob`/`avg_logprob` (ADR-0032) chưa
   làm; hiện chỉ lọc segment rỗng.
-- Web chưa hiển thị riêng các mã lỗi mới (`MEDIA_AUDIO_NOT_PREPARED`, `MEDIA_TRANSCRIPT_EMPTY`,
-  `TRANSCRIPTION_OUTPUT_INVALID`, `PROVIDER_INCOMPATIBLE`); thuộc PR6.
+- Web hiển thị các mã lỗi mới (`MEDIA_AUDIO_NOT_PREPARED`, `MEDIA_TRANSCRIPT_EMPTY`,
+  `TRANSCRIPTION_OUTPUT_INVALID`, `PROVIDER_INCOMPATIBLE`) bằng nội dung tối thiểu; PR6
+  chỉnh lại nếu cần.

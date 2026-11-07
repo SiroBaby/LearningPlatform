@@ -22,7 +22,12 @@ const (
 	sttSaveTimeout = 15 * time.Second
 	// DefaultSTTConcurrency is the number of chunks sent to the provider at once.
 	DefaultSTTConcurrency = 3
+	// sttSaveAttempts bounds how often a failed checkpoint write is retried before the spend is carried in memory.
+	sttSaveAttempts = 3
 )
+
+// defaultSTTSaveBackoff is the pause before each retry of a checkpoint write.
+var defaultSTTSaveBackoff = []time.Duration{100 * time.Millisecond, 300 * time.Millisecond}
 
 // AudioChunkRef is one manifest row of derived audio written by the media probe.
 type AudioChunkRef struct {
@@ -32,6 +37,8 @@ type AudioChunkRef struct {
 	BodyEndMs   int
 	FileStartMs int
 	FileEndMs   int
+	// SHA256 is the lowercase hex digest the probe recorded for the chunk bytes.
+	SHA256 string
 }
 
 // AudioManifest is the validated derived-audio manifest of a Document's probe result.
@@ -43,7 +50,7 @@ type AudioManifest struct {
 
 // STTOutcome is what one chunk dispatch cost and returned. Segments is nil when the call produced no usable result
 // (invalid 2xx body, uncertain dispatch); an empty non-nil slice is a valid silent chunk. Milliseconds are the audio
-// the provider received (file span, overlap included): BilledMs for a 2xx answer, UncertainMs for an unknown outcome.
+// the provider received (body span, overlap excluded: D10 bills by decoded duration; the overlap is platform cost): BilledMs for a 2xx answer, UncertainMs for an unknown outcome.
 type STTOutcome struct {
 	ProbeResultID string
 	ChunkIndex    int
@@ -76,6 +83,8 @@ type MediaTranscription struct {
 	Transcriber IdentifiedTranscriber
 	Language    string
 	Concurrency int
+	// SaveBackoff overrides the pauses between checkpoint write attempts (tests); nil uses the default.
+	SaveBackoff []time.Duration
 }
 
 // Chunks reads the manifest, transcribes the missing chunks with bounded concurrency, stitches the transcript and
@@ -123,7 +132,7 @@ func manifestSpans(manifest AudioManifest) ([]AudioChunkSpan, error) {
 	for position, chunk := range manifest.Chunks {
 		locator := chunk.Locator
 		if chunk.Index != position || locator.Bucket == "" || !strings.HasPrefix(locator.Key, derivedAudioPrefix) || locator.VersionID == "" || locator.ETag == "" ||
-			locator.ContentLength <= 0 || locator.ContentLength > MaxSTTChunkBytes ||
+			locator.ContentLength <= 0 || locator.ContentLength > MaxSTTChunkBytes || !isSHA256Hex(chunk.SHA256) ||
 			chunk.BodyEndMs <= chunk.BodyStartMs || chunk.FileStartMs > chunk.BodyStartMs || chunk.FileEndMs < chunk.BodyEndMs || chunk.FileStartMs < 0 {
 			return nil, notPrepared
 		}
@@ -222,7 +231,12 @@ func (pipeline *MediaTranscription) transcribeChunk(ctx context.Context, job Job
 	if err != nil {
 		return nil, err
 	}
-	sentMs := chunk.FileEndMs - chunk.FileStartMs
+	// Fail closed (technical, so a retry re-reads it) when the bytes are not the ones the probe recorded.
+	if digest := sha256.Sum256(audio); hex.EncodeToString(digest[:]) != chunk.SHA256 {
+		return nil, Failure{Code: ProcessingFailed, Technical: true}
+	}
+	// Bill the body span so the total tracks the decoded duration (D10); the overlap is platform cost.
+	sentMs := chunk.BodyEndMs - chunk.BodyStartMs
 	segments, err := pipeline.Transcriber.Transcribe(ctx, TranscribeRequest{ChunkIndex: chunk.Index, Language: pipeline.Language, Audio: bytes.NewReader(audio)})
 	outcome := STTOutcome{ProbeResultID: probeResultID, ChunkIndex: chunk.Index, Identity: identity}
 	if err == nil {
@@ -231,7 +245,10 @@ func (pipeline *MediaTranscription) transcribeChunk(ctx context.Context, job Job
 			outcome.Segments = []TranscriptSegment{}
 		}
 		outcome.BilledMs = sentMs
-		return segments, pipeline.save(ctx, job, outcome)
+		if saveErr := pipeline.save(ctx, job, outcome); saveErr != nil {
+			return nil, saveErr
+		}
+		return segments, nil
 	}
 	var transcribeErr TranscribeError
 	if !errors.As(err, &transcribeErr) {
@@ -252,11 +269,33 @@ func (pipeline *MediaTranscription) transcribeChunk(ctx context.Context, job Job
 }
 
 // save writes a paid or uncertain result on a context detached from cancellation: a deadline or shutdown must not
-// drop money already spent. The store still refuses the write when the fence is lost.
+// drop money already spent. The store still refuses the write when the fence is lost, and that is final. Any other
+// failure is retried a bounded number of times; if it persists, the outcome (spend and segments) is carried on the
+// attempt's UsageTracker and flushed by the next transaction that writes the job (retry schedule or terminal result),
+// so the spend is never silently dropped. In that case save reports nil: the result is not lost, only deferred.
 func (pipeline *MediaTranscription) save(ctx context.Context, job Job, outcome STTOutcome) error {
-	saveContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), sttSaveTimeout)
-	defer cancel()
-	return pipeline.Store.SaveSTTOutcome(saveContext, job, outcome)
+	backoff := pipeline.SaveBackoff
+	if backoff == nil {
+		backoff = defaultSTTSaveBackoff
+	}
+	var err error
+	for attempt := 0; attempt < sttSaveAttempts; attempt++ {
+		if attempt > 0 && attempt-1 < len(backoff) {
+			time.Sleep(backoff[attempt-1])
+		}
+		saveContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), sttSaveTimeout)
+		err = pipeline.Store.SaveSTTOutcome(saveContext, job, outcome)
+		cancel()
+		if err == nil || errors.Is(err, ErrJobFenceLost) {
+			return err
+		}
+	}
+	tracker := UsageTrackerFrom(ctx)
+	if tracker == nil {
+		return err
+	}
+	tracker.AddUnsavedSTT(outcome)
+	return nil
 }
 
 // SelectQuestionChunks returns the indexes (ascending) of at most limit chunks, spread evenly over the timeline when
@@ -292,4 +331,16 @@ func STTProviderIdentity(providerType, baseURL, model, capabilityVersion string)
 // Identity makes FakeTranscriber usable as an IdentifiedTranscriber in offline tests.
 func (fake FakeTranscriber) Identity() string {
 	return STTProviderIdentity("fake", "fake://transcriber", "fake", STTCapabilityVersion)
+}
+
+func isSHA256Hex(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }

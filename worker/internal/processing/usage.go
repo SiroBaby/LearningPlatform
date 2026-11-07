@@ -32,6 +32,7 @@ type UsageTracker struct {
 	byModel   map[string]ModelUsage
 	dispatch  int
 	completed int
+	unsaved   []STTOutcome
 }
 
 func NewUsageTracker() *UsageTracker {
@@ -71,6 +72,37 @@ func (tracker *UsageTracker) Reported(model string, inputTokens, outputTokens in
 	entry.InputTokens += inputTokens
 	entry.OutputTokens += outputTokens
 	tracker.byModel[model] = entry
+}
+
+// AddUnsavedSTT keeps a speech-to-text outcome whose checkpoint write kept failing. The next transaction that holds the
+// job lock (retry schedule or terminal result) writes it, so paid or uncertain spend is never lost.
+func (tracker *UsageTracker) AddUnsavedSTT(outcome STTOutcome) {
+	if tracker == nil {
+		return
+	}
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	tracker.unsaved = append(tracker.unsaved, outcome)
+}
+
+// UnsavedSTT returns a copy of the outcomes still waiting for a durable write.
+func (tracker *UsageTracker) UnsavedSTT() []STTOutcome {
+	if tracker == nil {
+		return nil
+	}
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	return append([]STTOutcome(nil), tracker.unsaved...)
+}
+
+// ClearUnsavedSTT drops the outcomes after their transaction committed.
+func (tracker *UsageTracker) ClearUnsavedSTT() {
+	if tracker == nil {
+		return
+	}
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	tracker.unsaved = nil
 }
 
 // Snapshot returns a stable (model-sorted) copy of the usage so far.

@@ -233,6 +233,7 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 	if err = tx.Commit(ctx); err != nil {
 		return true, NewPersistenceError(FailureOperationTransactionCommit, err)
 	}
+	UsageTrackerFrom(ctx).ClearUnsavedSTT()
 	return true, nil
 }
 func (store *PostgresStore) Fail(ctx context.Context, job Job, failure Failure) (bool, error) {
@@ -266,6 +267,7 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 	if err = tx.Commit(ctx); err != nil {
 		return true, NewPersistenceError(FailureOperationTransactionCommit, err)
 	}
+	UsageTrackerFrom(ctx).ClearUnsavedSTT()
 	return true, nil
 }
 
@@ -323,10 +325,15 @@ func (store *PostgresStore) Retry(ctx context.Context, job Job, code FailureCode
 	if tag.RowsAffected() != 1 {
 		return RetryResult{}, ErrJobFenceLost
 	}
+	// Spend whose checkpoint write kept failing is kept for the next attempt instead of being dropped.
+	if err = flushUnsavedSTT(ctx, tx, job); err != nil {
+		return RetryResult{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		// The update may have committed even when the client cannot confirm it.
 		return RetryResult{Scheduled: true}, NewPersistenceError(FailureOperationTransactionCommit, err)
 	}
+	UsageTrackerFrom(ctx).ClearUnsavedSTT()
 	return RetryResult{Scheduled: true}, nil
 }
 
@@ -360,5 +367,6 @@ func (store *PostgresStore) finalizeWithDLQ(ctx context.Context, job Job, code F
 	if err = tx.Commit(ctx); err != nil {
 		return true, NewPersistenceError(FailureOperationTransactionCommit, err)
 	}
+	UsageTrackerFrom(ctx).ClearUnsavedSTT()
 	return true, nil
 }

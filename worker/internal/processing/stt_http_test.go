@@ -171,13 +171,13 @@ func TestHTTPTranscriberClassifiesStatusCodes(t *testing.T) {
 	uncertain := TranscribeError{Failure: Failure{Code: ProviderUnavailable, Technical: true}, Sent: true, Uncertain: true}
 	tests := map[int]TranscribeError{
 		http.StatusBadRequest:            rejected(ProviderIncompatible, false),
-		http.StatusUnauthorized:          rejected(ProviderIncompatible, false),
-		http.StatusForbidden:             rejected(ProviderIncompatible, false),
-		http.StatusNotFound:              rejected(ProviderIncompatible, false),
+		http.StatusUnauthorized:          rejected(ProviderUnavailable, true),
+		http.StatusForbidden:             rejected(ProviderUnavailable, true),
+		http.StatusNotFound:              rejected(ProviderUnavailable, true),
 		http.StatusRequestEntityTooLarge: rejected(ProviderIncompatible, false),
 		http.StatusUnsupportedMediaType:  rejected(ProviderIncompatible, false),
 		http.StatusUnprocessableEntity:   rejected(ProviderIncompatible, false),
-		http.StatusTemporaryRedirect:     rejected(ProviderIncompatible, false),
+		http.StatusTemporaryRedirect:     rejected(ProviderUnavailable, true),
 		http.StatusTooManyRequests:       rejected(ProviderUnavailable, true),
 		http.StatusRequestTimeout:        uncertain,
 		http.StatusInternalServerError:   uncertain,
@@ -209,7 +209,7 @@ func TestHTTPTranscriberDoesNotFollowRedirects(t *testing.T) {
 
 	_, err := transcribeChunk(NewHTTPTranscriber("key", redirector.URL, "model", time.Second), "audio")
 
-	assertTranscribeError(t, err, TranscribeError{Failure: Failure{Code: ProviderIncompatible}, Sent: true})
+	assertTranscribeError(t, err, TranscribeError{Failure: Failure{Code: ProviderUnavailable, Technical: true}, Sent: true})
 	if targetHits != 0 {
 		t.Fatalf("redirect target received %d requests, want 0 (the key and audio must not be replayed)", targetHits)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -110,6 +111,9 @@ func TestPostgresStoreMediaSTT(t *testing.T) {
 		}
 		if _, err := manifestSpans(manifest); err != nil {
 			t.Fatalf("manifestSpans() error = %v, want the stored manifest accepted", err)
+		}
+		if manifest.Chunks[0].SHA256 != strings.Repeat("a", 64) {
+			t.Fatalf("sha256 = %q, want the recorded digest read back without padding", manifest.Chunks[0].SHA256)
 		}
 	})
 
@@ -346,6 +350,56 @@ func TestPostgresStoreMediaSTT(t *testing.T) {
 		}
 		if count := countRows(t, ctx, database.admin, `SELECT count(*) FROM ai.media_stt_chunk_results WHERE probe_result_id=$1`, media.probeResultID); count != 1 {
 			t.Fatalf("checkpoints after a scheduled retry = %d, want 1 kept", count)
+		}
+	})
+
+	t.Run("unsaved spend carried on the tracker is written by the terminal transaction", func(t *testing.T) {
+		media, job := claimMedia(t, 1_500_000)
+		tracker := NewUsageTracker()
+		tracker.AddUnsavedSTT(STTOutcome{ProbeResultID: media.probeResultID, ChunkIndex: 0, Identity: sttTestIdentity, Segments: segments, BilledMs: 600_000})
+		tracker.AddUnsavedSTT(STTOutcome{ProbeResultID: media.probeResultID, ChunkIndex: 1, Identity: sttTestIdentity, UncertainMs: 600_000})
+
+		finalized, err := database.store.Fail(WithUsageTracker(ctx, tracker), job, Failure{Code: MediaTranscriptEmpty})
+
+		if err != nil || !finalized {
+			t.Fatalf("Fail() = (%t, %v)", finalized, err)
+		}
+		usage := readUsage(t, job)
+		if usage["sttBilledSeconds"] != float64(600) || usage["sttUncertainSeconds"] != float64(600) {
+			t.Fatalf("usage = %#v, want the carried 600 s billed and 600 s uncertain", usage)
+		}
+		if len(tracker.UnsavedSTT()) != 0 {
+			t.Fatal("the tracker must be cleared after the terminal commit")
+		}
+	})
+
+	t.Run("a scheduled retry persists carried spend and the next attempt reports it once", func(t *testing.T) {
+		media, job := claimMedia(t, 1_500_000)
+		tracker := NewUsageTracker()
+		tracker.AddUnsavedSTT(STTOutcome{ProbeResultID: media.probeResultID, ChunkIndex: 0, Identity: sttTestIdentity, Segments: segments, BilledMs: 600_000})
+
+		result, err := database.store.Retry(WithUsageTracker(ctx, tracker), job, ProviderUnavailable)
+
+		if err != nil || !result.Scheduled {
+			t.Fatalf("Retry() = (%#v, %v), want scheduled", result, err)
+		}
+		if len(tracker.UnsavedSTT()) != 0 {
+			t.Fatal("the tracker must be cleared after the retry commit")
+		}
+		checkpoints, err := database.store.STTCheckpoints(ctx, media.probeResultID, sttTestIdentity)
+		if err != nil || !reflect.DeepEqual(checkpoints, map[int][]TranscriptSegment{0: segments}) {
+			t.Fatalf("checkpoints = (%#v, %v), want the carried chunk resumable", checkpoints, err)
+		}
+		if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET next_visible_at=now() WHERE id=$1`, job.ID); err != nil {
+			t.Fatalf("make retry visible: %v", err)
+		}
+		next := database.claim(t, ctx)
+		if _, err := database.store.Fail(WithUsageTracker(ctx, NewUsageTracker()), *next, Failure{Code: MediaTranscriptEmpty}); err != nil {
+			t.Fatalf("Fail() error = %v", err)
+		}
+		usage := readUsage(t, *next)
+		if usage["sttBilledSeconds"] != float64(600) {
+			t.Fatalf("usage = %#v, want 600 s billed exactly once", usage)
 		}
 	})
 
