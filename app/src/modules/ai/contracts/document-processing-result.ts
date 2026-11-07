@@ -106,6 +106,8 @@ export interface DocumentProcessingResult {
   readonly estimateStatus: string | null;
   readonly errorCode: DocumentProcessingFailureCode | null;
   readonly errorMessage: string | null;
+  /** Set by Go only for TEXT_EXTRACT results (ADR-0033); such a job never has a reservation to settle. */
+  readonly jobType?: string | null;
   readonly leaseId: string | null;
   readonly ownerId: string;
   readonly questions: readonly DocumentProcessingQuestion[] | null;

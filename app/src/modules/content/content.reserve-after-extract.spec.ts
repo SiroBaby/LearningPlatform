@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { ConsoleLogger } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
 
 import { clearDocumentFlowData } from '../../../test/support/test-database-cleanup';
@@ -160,9 +161,13 @@ describe('PDF/TXT credit reservation after extraction (#281, ADR-0033)', () => {
     }));
   }
 
-  async function seedResult(document: Document, overrides: Record<string, unknown>): Promise<void> {
+  async function seedResult(
+    document: Document,
+    overrides: Record<string, unknown>,
+    aggregateId: string = document.fullPipelineJobId,
+  ): Promise<void> {
     await aiOutbox.save(aiOutbox.create({
-      aggregateId: document.fullPipelineJobId,
+      aggregateId,
       eventType: 'DocumentProcessingResult',
       payload: {
         attempt: GO_QUEUE_ATTEMPT,
@@ -484,24 +489,80 @@ describe('PDF/TXT credit reservation after extraction (#281, ADR-0033)', () => {
       expect((await documents.findOneByOrFail({ id: inputDocument.id })).status).toBe(DocumentStatus.READY);
     });
 
-    it('fails the Document without credit side effects when the extraction job itself fails', async () => {
+    it('fails the Document without credit side effects or a settlement warning when the extraction job itself fails', async () => {
       const inputOwnerId = randomUUID();
       await seedWallet(inputOwnerId);
       const inputDocument = await seedDocument(inputOwnerId);
       await service.confirm(inputOwnerId, inputDocument.id);
       const confirmed = await documents.findOneByOrFail({ id: inputDocument.id });
+      // A TEXT_EXTRACT job has its own id, different from the Document's fullPipelineJobId.
       await seedResult(confirmed, {
         errorCode: DocumentProcessingFailureCode.PDF_TEXT_NOT_FOUND,
+        jobType: 'TEXT_EXTRACT',
         status: DocumentStatus.FAILED,
-      });
+      }, randomUUID());
+      const warn = jest.spyOn(ConsoleLogger.prototype, 'warn').mockImplementation(() => undefined);
 
       await createRelay().pump(10);
 
+      const settlementWarnings = warn.mock.calls.filter(([message]) =>
+        (message as { event?: string }).event === 'content.settlement.skipped');
+      warn.mockRestore();
       const actualDocument = await documents.findOneByOrFail({ id: inputDocument.id });
+      expect(settlementWarnings).toHaveLength(0);
       expect(actualDocument.status).toBe(DocumentStatus.FAILED);
       expect(actualDocument.errorCode).toBe(DocumentProcessingFailureCode.PDF_TEXT_NOT_FOUND);
       expect(await readLedger(inputOwnerId)).toEqual({});
       expect(await readWallet(inputOwnerId)).toEqual({ available_credits: String(WALLET_CREDITS), reserved_credits: '0' });
+    });
+
+    it('still warns for a stale FULL_PIPELINE result whose job id is not the Document pipeline job', async () => {
+      const inputOwnerId = randomUUID();
+      await seedWallet(inputOwnerId);
+      const reserved = await confirmAndExtract(inputOwnerId);
+      const staleJobId = randomUUID();
+      await seedResult(reserved, { usage: { llm: [], uncertainDispatches: 0 } }, staleJobId);
+      const warn = jest.spyOn(ConsoleLogger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await createRelay().pump(10);
+
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+        event: 'content.settlement.skipped',
+        eventJobId: staleJobId,
+        reason: 'job_id_mismatch',
+      }));
+      warn.mockRestore();
+    });
+
+    it('logs the measurement and estimate at reservation time so calibration can join them with the actual usage', async () => {
+      const inputOwnerId = randomUUID();
+      await seedWallet(inputOwnerId);
+      const log = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
+
+      const reserved = await confirmAndExtract(inputOwnerId);
+      await seedResult(reserved, {
+        usage: { llm: [{ inputTokens: 100, model: 'gpt-5.4-mini', outputTokens: 20 }], uncertainDispatches: 0 },
+      });
+      await createRelay().pump(10);
+
+      const events = log.mock.calls.map(([message]) => message as Record<string, unknown>);
+      log.mockRestore();
+      expect(events).toContainEqual(expect.objectContaining({
+        chunkCount: CHUNK_COUNT,
+        documentId: reserved.id,
+        estimatedCredits: EXPECTED_ESTIMATE,
+        event: 'content.extraction.credit_estimated',
+        extractedChars: EXTRACTED_CHARS,
+        jobId: reserved.fullPipelineJobId,
+        model: 'gpt-5.4-mini',
+      }));
+      expect(events).toContainEqual(expect.objectContaining({
+        documentId: reserved.id,
+        event: 'content.settlement.actual_usage',
+        inputTokens: 100,
+        jobId: reserved.fullPipelineJobId,
+        outputTokens: 20,
+      }));
     });
   });
 
@@ -531,6 +592,46 @@ describe('PDF/TXT credit reservation after extraction (#281, ADR-0033)', () => {
       expect(await readWallet(inputOwnerId)).toEqual({ available_credits: String(WALLET_CREDITS), reserved_credits: '0' });
       expect((await documents.findOneByOrFail({ id: inputDocument.id })).status).toBe(DocumentStatus.DELETING);
       expect(await readRequestJobTypes(inputDocument.id)).not.toContain('FULL_PIPELINE');
+    });
+
+    it('cancels a running TEXT_EXTRACT job in the deletion transaction and leaves a placeholder per job type', async () => {
+      const inputOwnerId = randomUUID();
+      await seedWallet(inputOwnerId);
+      const inputDocument = await seedDocument(inputOwnerId);
+      await service.confirm(inputOwnerId, inputDocument.id);
+      await createForwardRelay().pump(10);
+      await db.client.query(
+        `UPDATE "ai"."processing_jobs" SET "status" = 'RUNNING', "lease_id" = gen_random_uuid(), "lease_until" = now() + interval '5 minutes' WHERE "document_id" = $1`,
+        [inputDocument.id],
+      );
+
+      await new ContentRepository(ds).deleteOwnedDocument(inputOwnerId, inputDocument.id, buckets);
+
+      const actualJobs = await jobs.find({ where: { documentId: inputDocument.id } });
+      expect(actualJobs.map((job) => `${job.jobType}:${job.status}`).sort()).toEqual([
+        'FULL_PIPELINE:CANCELLED',
+        'TEXT_EXTRACT:CANCELLED',
+      ]);
+      expect(actualJobs.find((job) => job.jobType === ('TEXT_EXTRACT' as never))).toMatchObject({
+        leaseId: null,
+        leaseUntil: null,
+      });
+    });
+
+    it('leaves placeholders for both job types when the Document is deleted before the forward relay ran', async () => {
+      const inputOwnerId = randomUUID();
+      await seedWallet(inputOwnerId);
+      const inputDocument = await seedDocument(inputOwnerId);
+      await service.confirm(inputOwnerId, inputDocument.id);
+
+      await new ContentRepository(ds).deleteOwnedDocument(inputOwnerId, inputDocument.id, buckets);
+      await createForwardRelay().pump(10);
+
+      const actualJobs = await jobs.find({ where: { documentId: inputDocument.id } });
+      expect(actualJobs.map((job) => `${job.jobType}:${job.status}`).sort()).toEqual([
+        'FULL_PIPELINE:CANCELLED',
+        'TEXT_EXTRACT:CANCELLED',
+      ]);
     });
 
     it('cancels the AI jobs on deletion so a stale forward event cannot re-arm the extraction', async () => {

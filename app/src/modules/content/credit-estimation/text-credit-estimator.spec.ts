@@ -39,6 +39,8 @@ describe('estimateTextCredits', () => {
 
     const actualCredits = estimateTextCredits({ chunkCount: 8, extractedChars: 9_000, model });
 
+    // Lower bound: 8 chunks cost at least their prompt overhead plus the text (8*200 + 3000 input tokens).
+    expect(actualCredits).toBeGreaterThan(8 * 200 + 3000);
     expect(actualCredits).toBeLessThan(sizeBasedEstimate / 4);
   });
 

@@ -59,21 +59,15 @@ export class AiIngestionService implements AiIngestion {
       if (!cmd.fullPipelineJobId || !Number.isSafeInteger(cmd.processingAttempt) || cmd.processingAttempt < 1) {
         throw new Error('TEXT_EXTRACT requires fullPipelineJobId and processingAttempt');
       }
-      await this.processingJobs.enqueueTextExtract(cmd, this.buildTextExtractKey(cmd));
+      await this.processingJobs.enqueueTextExtract(cmd, this.buildDocumentJobKey(cmd));
       return;
     }
 
-    await this.processingJobs.enqueue(cmd, this.buildFullPipelineKey(cmd));
+    await this.processingJobs.enqueue(cmd, this.buildDocumentJobKey(cmd));
   }
 
-  private buildTextExtractKey(cmd: Extract<EnqueueCommand, { jobType: typeof TEXT_EXTRACT_JOB_TYPE }>): string {
-    return createHash('sha256')
-      .update(`${cmd.documentId}:${cmd.jobType}`)
-      .digest('hex')
-      .slice(0, 64);
-  }
-
-  private buildFullPipelineKey(cmd: Extract<EnqueueCommand, { jobType: 'FULL_PIPELINE' }>): string {
+  /** Document-scoped idempotency key (ADR-0005): hash(document_id + job_type), one job row per type. */
+  private buildDocumentJobKey(cmd: Extract<EnqueueCommand, { jobType: 'FULL_PIPELINE' | typeof TEXT_EXTRACT_JOB_TYPE }>): string {
     return createHash('sha256')
       .update(`${cmd.documentId}:${cmd.jobType}`)
       .digest('hex')

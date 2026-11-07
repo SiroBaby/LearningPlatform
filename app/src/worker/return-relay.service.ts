@@ -9,7 +9,7 @@ import {
   DocumentProcessingResultStatus,
   DocumentProcessingUsage,
 } from '../modules/ai/contracts/document-processing-result';
-import { MEDIA_PROBE_JOB_TYPE } from '../modules/ai/contracts/ai-ingestion.port';
+import { MEDIA_PROBE_JOB_TYPE, TEXT_EXTRACT_JOB_TYPE } from '../modules/ai/contracts/ai-ingestion.port';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
 import {
   QUIZ_GENERATION_HANDOFF,
@@ -191,6 +191,7 @@ export class ReturnRelay {
           errorMessage: payload.errorMessage,
           eventCreatedAt: row.createdAt,
           jobId: row.aggregateId,
+          jobType: payload.jobType,
           leaseId: payload.leaseId,
           ownerId: payload.ownerId,
           settledCredits: payload.settledCredits,
@@ -258,6 +259,7 @@ export class ReturnRelay {
               errorMessage: 'Not enough valid questions were generated',
               eventCreatedAt: row.createdAt,
               jobId: row.aggregateId,
+              jobType: payload.jobType,
               leaseId: payload.leaseId,
               ownerId: payload.ownerId,
               settledCredits: payload.settledCredits,
@@ -354,6 +356,7 @@ export class ReturnRelay {
       estimateStatus,
       errorCode,
       errorMessage: payload.errorMessage,
+      jobType: payload.jobType === TEXT_EXTRACT_JOB_TYPE ? TEXT_EXTRACT_JOB_TYPE : null,
       leaseId,
       ownerId: payload.ownerId,
       questions,

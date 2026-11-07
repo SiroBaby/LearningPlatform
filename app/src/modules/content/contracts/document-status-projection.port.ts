@@ -117,6 +117,8 @@ export interface DocumentStatusProjectionCommand {
   readonly eventCreatedAt: Date;
   /** ai.outbox aggregate id = the Go FULL_PIPELINE job id; must equal the Document's fullPipelineJobId to settle. */
   readonly jobId: string | null;
+  /** `TEXT_EXTRACT` marks a result that never owns a reservation, so settlement is skipped without a warning. */
+  readonly jobType?: string | null;
   readonly leaseId: string | null;
   readonly ownerId: string;
   readonly settledCredits: number | null;

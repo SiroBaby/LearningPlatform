@@ -280,7 +280,7 @@ export class ContentRepository extends BaseRepository<Document> {
     }
 
     const cancellationMarkerId = randomUUID();
-    const cancelledJobs: Array<{ readonly id: string }> = await manager.query(
+    await manager.query(
       `UPDATE "ai"."processing_jobs"
        SET "status" = 'CANCELLED',
            "cancellation_marker_id" = COALESCE("cancellation_marker_id", $3::uuid),
@@ -291,33 +291,47 @@ export class ContentRepository extends BaseRepository<Document> {
            "updated_at" = now()
        WHERE "document_id" = $1
          AND "owner_id" = $2
-         AND "job_type" = 'FULL_PIPELINE'
-         AND "status" NOT IN ('COMPLETED', 'CANCELLED')
-       RETURNING "id"`,
+         AND "job_type" IN ('FULL_PIPELINE', 'TEXT_EXTRACT')
+         AND "status" NOT IN ('COMPLETED', 'CANCELLED')`,
       [documentId, ownerId, cancellationMarkerId],
     );
 
-    if (cancelledJobs.length === 0) {
-      // A placeholder occupies the document-scoped unique slot when the
-      // forward relay has not created FULL_PIPELINE yet.
-      await manager.query(
-        `INSERT INTO "ai"."processing_jobs"
-           ("document_id", "owner_id", "job_type", "status", "idempotency_key",
-            "correlation_id", "deletion_fence", "cancellation_marker_id",
-            "cancellation_reason", "cancelled_at")
-         VALUES ($1, $2, 'FULL_PIPELINE', 'CANCELLED', $3, $4, $5, $6,
-                 'DOCUMENT_DELETED', now())
-         ON CONFLICT ("document_id") WHERE "job_type" = 'FULL_PIPELINE' DO NOTHING`,
-        [
-          documentId,
-          ownerId,
-          `document-cancel:${documentId}:FULL_PIPELINE`,
-          randomUUID(),
-          deletionFence,
-          cancellationMarkerId,
-        ],
-      );
+    // A placeholder occupies each job type's document-scoped unique slot when the forward relay has not created
+    // that job yet (or it already finished), so a late enqueue cannot re-arm work after deletion. An existing row
+    // of the type makes the insert a no-op.
+    for (const jobType of [JobType.FULL_PIPELINE, TEXT_EXTRACT_JOB_TYPE]) {
+      await this.insertCancellationPlaceholder(manager, { cancellationMarkerId, deletionFence, documentId, jobType, ownerId });
     }
+  }
+
+  private async insertCancellationPlaceholder(
+    manager: EntityManager,
+    input: {
+      readonly cancellationMarkerId: string;
+      readonly deletionFence: number;
+      readonly documentId: string;
+      readonly jobType: JobType.FULL_PIPELINE | typeof TEXT_EXTRACT_JOB_TYPE;
+      readonly ownerId: string;
+    },
+  ): Promise<void> {
+    // jobType is a closed constant union, never user input, and partial-index inference needs a literal predicate.
+    await manager.query(
+      `INSERT INTO "ai"."processing_jobs"
+         ("document_id", "owner_id", "job_type", "status", "idempotency_key",
+          "correlation_id", "deletion_fence", "cancellation_marker_id",
+          "cancellation_reason", "cancelled_at")
+       VALUES ($1, $2, '${input.jobType}', 'CANCELLED', $3, $4, $5, $6,
+               'DOCUMENT_DELETED', now())
+       ON CONFLICT ("document_id") WHERE "job_type" = '${input.jobType}' DO NOTHING`,
+      [
+        input.documentId,
+        input.ownerId,
+        `document-cancel:${input.documentId}:${input.jobType}`,
+        randomUUID(),
+        input.deletionFence,
+        input.cancellationMarkerId,
+      ],
+    );
   }
 
   private async lockMediaProbe(manager: EntityManager, documentId: string, ownerId: string): Promise<void> {
@@ -1071,8 +1085,6 @@ export class ContentRepository extends BaseRepository<Document> {
     settlement: NonNullable<DocumentStatusProjectionPersistenceCommand['settlement']>,
   ): Promise<void> {
     const processingAttempt = Number(document.processingAttempt);
-    // A TEXT_EXTRACT result carries its own job id and never has a reservation (ADR-0033): nothing to settle, nothing to warn about.
-    if (document.budgetStatus !== 'RESERVED' && document.fullPipelineJobId !== command.jobId) return;
     if (
       command.jobId === null ||
       document.fullPipelineJobId !== command.jobId ||

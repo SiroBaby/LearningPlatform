@@ -256,7 +256,7 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
-	payload, err := marshalResult(ctx, stt, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": result, "errorCode": nilIfEmpty(code), "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	payload, err := marshalResult(ctx, stt, withJobType(job, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": result, "errorCode": nilIfEmpty(code), "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil}))
 	if err != nil {
 		return false, err
 	}
@@ -269,6 +269,15 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 	}
 	UsageTrackerFrom(ctx).ClearUnsavedSTT()
 	return true, nil
+}
+
+// withJobType marks results of a TEXT_EXTRACT job so Node knows no reservation exists to settle (ADR-0033).
+// FULL_PIPELINE payloads keep their legacy shape.
+func withJobType(job Job, payload map[string]any) map[string]any {
+	if job.IsTextExtract() {
+		payload["jobType"] = JobTypeTextExtract
+	}
+	return payload
 }
 
 // marshalResult encodes the return-seam payload and attaches the actual-usage block when the attempt tracked one.
@@ -357,7 +366,7 @@ func (store *PostgresStore) finalizeWithDLQ(ctx context.Context, job Job, code F
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
-	payload, err := marshalResult(ctx, stt, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	payload, err := marshalResult(ctx, stt, withJobType(job, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil}))
 	if err != nil {
 		return false, err
 	}

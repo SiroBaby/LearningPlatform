@@ -464,6 +464,38 @@ func TestPostgresStoreIntegration(t *testing.T) {
 			t.Fatalf("a cancelled extraction wrote %d outbox rows", got)
 		}
 	})
+
+	t.Run("marks the failure result of a TEXT_EXTRACT job and leaves FULL_PIPELINE payloads unchanged", func(t *testing.T) {
+		documentID, _ := database.insertDocumentAndJob(t, ctx)
+		database.convertToTextExtract(t, ctx, documentID, 1)
+		extractJob := database.claim(t, ctx)
+		if finalized, err := database.store.Fail(ctx, *extractJob, Failure{Code: PDFTextNotFound}); err != nil || !finalized {
+			t.Fatalf("fail extract job = (%t, %v), want (true, nil)", finalized, err)
+		}
+		database.insertDocumentAndJob(t, ctx)
+		pipelineJob := database.claim(t, ctx)
+		if finalized, err := database.store.Fail(ctx, *pipelineJob, Failure{Code: PDFInvalid}); err != nil || !finalized {
+			t.Fatalf("fail pipeline job = (%t, %v), want (true, nil)", finalized, err)
+		}
+		readJobType := func(job Job) (any, bool) {
+			var encoded []byte
+			if err := database.admin.QueryRow(ctx, `SELECT payload FROM ai.outbox WHERE aggregate_id=$1 AND event_type='DocumentProcessingResult'`, job.ID).Scan(&encoded); err != nil {
+				t.Fatalf("read result payload: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(encoded, &payload); err != nil {
+				t.Fatalf("decode result payload: %v", err)
+			}
+			value, present := payload["jobType"]
+			return value, present
+		}
+		if value, present := readJobType(*extractJob); !present || value != JobTypeTextExtract {
+			t.Fatalf("extract failure payload jobType = (%v, %t), want TEXT_EXTRACT", value, present)
+		}
+		if _, present := readJobType(*pipelineJob); present {
+			t.Fatal("a FULL_PIPELINE payload must keep its legacy shape (no jobType)")
+		}
+	})
 }
 
 func startPostgresIntegration(t *testing.T, ctx context.Context) *postgresIntegration {

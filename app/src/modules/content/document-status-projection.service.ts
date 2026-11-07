@@ -23,6 +23,7 @@ import {
 } from '../ai/contracts/document-processing-result';
 import { MAX_MEDIA_DURATION_SEC } from './contracts/media-probe-policy';
 import { ModelPriceTableError } from './credit-estimation/model-price-table';
+import { TEXT_EXTRACT_JOB_TYPE } from '../ai/contracts/ai-ingestion.port';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
 import { estimateTextCredits } from './credit-estimation/text-credit-estimator';
 import { ContentRepository } from './repositories/content.repository';
@@ -66,15 +67,25 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
       return { kind: 'UNAVAILABLE' };
     }
     try {
-      return {
-        kind: 'ESTIMATED',
-        estimatedCredits: estimateTextCredits({
-          chunkCount: command.chunkCount,
-          extractedChars: command.extractedChars,
-          model,
-        }),
-        platformModelId: document.platformModelId,
-      };
+      const estimatedCredits = estimateTextCredits({
+        chunkCount: command.chunkCount,
+        extractedChars: command.extractedChars,
+        model,
+      });
+      // Joined with `content.settlement.actual_usage` by documentId/jobId to calibrate the estimate (#281).
+      this.logger.log({
+        chunkCount: command.chunkCount,
+        documentId: command.documentId,
+        estimatedCredits,
+        event: 'content.extraction.credit_estimated',
+        extractedChars: command.extractedChars,
+        jobId: command.fullPipelineJobId,
+        model: model.model,
+        platformModelId: model.id,
+        processingAttempt: command.processingAttempt,
+        runtime: 'worker',
+      });
+      return { kind: 'ESTIMATED', estimatedCredits, platformModelId: document.platformModelId };
     } catch (error) {
       if (!(error instanceof RangeError)) throw error;
       this.logger.error({
@@ -112,6 +123,8 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
    *    anything else may have spent credits unobserved and stays HELD.
    */
   private async planSettlement(command: DocumentStatusProjectionCommand): Promise<SettlementPlanning> {
+    // A TEXT_EXTRACT job runs before any reservation exists (ADR-0033); its FAILED result has nothing to settle.
+    if (command.jobType === TEXT_EXTRACT_JOB_TYPE) return { settlement: null };
     const document = await this.contentRepository.findByOwnerId(command.ownerId, command.documentId);
     if (!document || document.modelSelectionKind !== 'PLAN') return { settlement: null };
     const { usage } = command;
@@ -136,7 +149,9 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
           event: 'content.settlement.actual_usage',
           generationCredits: actual.generationCredits,
           hasUncertainDispatch,
+          inputTokens: usage.llm.reduce((total, entry) => total + entry.inputTokens, 0),
           jobId: command.jobId,
+          outputTokens: usage.llm.reduce((total, entry) => total + entry.outputTokens, 0),
           priceTableVersion: actual.priceTableVersion,
           runtime: 'worker',
           sttCredits: actual.sttCredits,
