@@ -6,6 +6,11 @@
 MVP-2; tài liệu không tự xác nhận rằng workload, image hoặc hạ tầng đã được
 triển khai thành công.
 
+> **Sửa đổi bởi [ADR-0032](0032-stt-cho-media-va-citation-thoi-gian.md):** §4
+> được mở rộng. Image `media-probe-worker` chứa thêm `ffmpeg` (cùng artifact đã
+> pin) để trích audio cho STT và có quyền `PutObject` vào prefix
+> `derived-audio/`; full-pipeline worker không bao giờ chạy ffmpeg.
+
 ## Bối cảnh
 
 MVP-2 nhận thêm MP3 và MP4 do Owner upload. Trước khi chạy STT hoặc bước AI,
