@@ -30,6 +30,12 @@ api_pid=""
 relay_pid=""
 go_pid=""
 media_probe_pid=""
+stt_pid=""
+stt_port=""
+stt_log=""
+stt_request_count_file=""
+stt_port_file=""
+stt_reject_file=""
 media_probe_container_created=false
 network_created=false
 postgres_volume_created=false
@@ -69,7 +75,7 @@ cleanup() {
   trap - ERR
   set +e
   PHASE=cleanup-pids
-  for pid in "$api_pid" "$relay_pid" "$go_pid" "$media_probe_pid"; do
+  for pid in "$api_pid" "$relay_pid" "$go_pid" "$media_probe_pid" "$stt_pid"; do
     if [[ -n "$pid" ]]; then
       kill "$pid" >/dev/null 2>&1
       wait "$pid" >/dev/null 2>&1
@@ -468,6 +474,16 @@ start_go_worker() {
     export AI_WORKER_HEALTH_ADDRESS="127.0.0.1:${go_health_port}"
     export AI_WORKER_CONCURRENCY=1
     export AI_WORKER_POLL_INTERVAL_MS=100
+    # Media (#160): the full-pipeline worker reads derived audio with its own identity and transcribes it through the
+    # local fake STT endpoint, so the real HTTP adapter runs offline.
+    export OBJECT_STORAGE_MEDIA_BUCKET=media
+    export OBJECT_STORAGE_FULL_PIPELINE_MEDIA_ACCESS_KEY=minioadmin
+    export OBJECT_STORAGE_FULL_PIPELINE_MEDIA_SECRET_KEY=minioadmin
+    export AI_MEDIA_STT_ENABLED=true
+    export STT_BASE_URL="http://127.0.0.1:${stt_port}"
+    export STT_API_KEY=local-document-e2e-stt-key
+    export STT_MODEL=local-document-e2e-stt
+    export STT_LANGUAGE=vi
     export DB_HOST=127.0.0.1
     export DB_PORT="$postgres_port"
     export DB_USER=learning
@@ -492,6 +508,10 @@ read_ffprobe_version() {
   "$1" -version 2>/dev/null | awk 'NR == 1 && $1 == "ffprobe" && $2 == "version" { sub(/^n/, "", $3); print $3 }'
 }
 
+read_ffmpeg_version() {
+  "$1" -version 2>/dev/null | awk 'NR == 1 && $1 == "ffmpeg" && $2 == "version" { sub(/^n/, "", $3); print $3 }'
+}
+
 start_media_probe_worker() {
   media_probe_log="$temp_dir/media-probe-worker.log"
   if [[ -n "${LOCAL_DOCUMENT_E2E_MEDIA_PROBE_IMAGE:-}" ]]; then
@@ -504,6 +524,7 @@ start_media_probe_worker() {
       --env NODE_ENV=development \
       --env AI_WORKER_ALLOW_INSECURE_LOCAL_ENDPOINTS=true \
       --env MEDIA_PROBE_HEALTH_ADDRESS=0.0.0.0:3404 \
+      --env MEDIA_PROBE_AUDIO_PREP_ENABLED=true \
       --env DB_HOST="$postgres_container" \
       --env DB_PORT=5432 \
       --env DB_NAME=learning \
@@ -542,6 +563,11 @@ start_media_probe_worker() {
     export OBJECT_STORAGE_MEDIA_BUCKET=media
     export OBJECT_STORAGE_MEDIA_PROBE_ACCESS_KEY=minioadmin
     export OBJECT_STORAGE_MEDIA_PROBE_SECRET_KEY=minioadmin
+    export MEDIA_PROBE_AUDIO_PREP_ENABLED=true
+    export MEDIA_PROBE_FFMPEG_PATH="${MEDIA_PROBE_FFMPEG_PATH:-$(command -v ffmpeg)}"
+    MEDIA_PROBE_FFMPEG_VERSION=$(read_ffmpeg_version "$MEDIA_PROBE_FFMPEG_PATH")
+    [[ -n "$MEDIA_PROBE_FFMPEG_VERSION" ]] || exit 1
+    export MEDIA_PROBE_FFMPEG_VERSION
     export MEDIA_PROBE_FFPROBE_PATH="${MEDIA_PROBE_FFPROBE_PATH:-$(command -v ffprobe)}"
     # Native runs use the host ffprobe, so pin the version that binary reports instead of the image artifact version.
     MEDIA_PROBE_FFPROBE_VERSION=$(read_ffprobe_version "$MEDIA_PROBE_FFPROBE_PATH")
@@ -706,13 +732,233 @@ async function main() {
   }
 
   if (!processing) throw new FlowFailure('document-timeout');
-  // #158 stops after media probing; AUDIO/VIDEO extraction and READY belong to #160.
+  // Stops once probing handed over to the full pipeline; STT, quiz and grading run in run_grade_flow.
   process.stdout.write(`DOCUMENT_ID ${upload.documentId}\n`);
 }
 
 void main().catch((error) => {
   const marker = error instanceof FlowFailure ? error.marker : 'unknown';
   process.stdout.write(`${marker}\n`);
+  process.exitCode = 1;
+});
+NODE
+}
+
+# Offline OpenAI-compatible transcription endpoint (#160). It validates the request contract the real HTTPTranscriber
+# sends and answers a deterministic Vietnamese verbose_json transcript that fits the 30 second fixture, so the real
+# HTTP adapter, stitcher, chunker and time citations run without any network or paid provider.
+start_fake_stt_server() {
+  stt_log="$temp_dir/fake-stt.log"
+  stt_request_count_file="$temp_dir/fake-stt-request-count"
+  stt_port_file="$temp_dir/fake-stt-port"
+  stt_reject_file="$temp_dir/fake-stt-reject"
+  printf '0\n' >"$stt_request_count_file"
+  cat >"$temp_dir/fake-stt-server.js" <<'NODE'
+const fs = require('node:fs');
+const http = require('node:http');
+
+const portFile = process.argv[2];
+const countFile = process.argv[3];
+const rejectFile = process.argv[4];
+const expectedAuthorization = 'Bearer local-document-e2e-stt-key';
+const sentences = [
+  'Cấu trúc dữ liệu là cách tổ chức và lưu trữ dữ liệu để chương trình truy cập và cập nhật chúng hiệu quả.',
+  'Mảng lưu các phần tử liên tiếp trong bộ nhớ nên truy cập theo chỉ số mất thời gian hằng số.',
+  'Danh sách liên kết gắn mỗi phần tử với con trỏ tới phần tử kế tiếp nên chèn và xóa không cần dịch chuyển dữ liệu.',
+  'Ngăn xếp hoạt động theo nguyên tắc vào sau ra trước và thường dùng để quản lý lời gọi hàm và hoàn tác thao tác.',
+  'Hàng đợi hoạt động theo nguyên tắc vào trước ra trước và phù hợp với việc xử lý công việc theo thứ tự đến.',
+  'Bảng băm dùng hàm băm để ánh xạ khóa tới vị trí lưu trữ, nhờ đó tìm kiếm trung bình gần như hằng số.',
+];
+const segments = sentences.map((sentence, index) => ({
+  id: index,
+  start: index * 5,
+  end: index * 5 + 4.5,
+  text: `${sentence} ${sentence} ${sentence}`,
+}));
+
+function reject(response, status, reason) {
+  fs.writeFileSync(rejectFile, `${reason}\n`);
+  response.writeHead(status, { 'Content-Type': 'application/json' });
+  response.end('{}');
+}
+
+const server = http.createServer((request, response) => {
+  const chunks = [];
+  request.on('data', (chunk) => chunks.push(chunk));
+  request.on('end', () => {
+    const body = Buffer.concat(chunks).toString('latin1');
+    const checks = [
+      ['method', request.method === 'POST'],
+      ['path', request.url === '/audio/transcriptions'],
+      ['auth', request.headers.authorization === expectedAuthorization],
+      ['multipart', /^multipart\/form-data; boundary=/u.test(request.headers['content-type'] || '')],
+      ['model', /name="model"\r\n\r\nlocal-document-e2e-stt\r\n/u.test(body)],
+      ['format', /name="response_format"\r\n\r\nverbose_json\r\n/u.test(body)],
+      ['language', /name="language"\r\n\r\nvi\r\n/u.test(body)],
+      ['file', /name="file"; filename="chunk-\d+\.mp3"/u.test(body)],
+      ['size', chunks.reduce((total, chunk) => total + chunk.length, 0) > 1024],
+    ];
+    const failed = checks.find(([, passed]) => !passed);
+    if (failed) {
+      reject(response, 400, failed[0]);
+      return;
+    }
+    const count = Number(fs.readFileSync(countFile, 'utf8').trim()) + 1;
+    fs.writeFileSync(countFile, `${count}\n`);
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({
+      language: 'vi',
+      duration: 30,
+      text: segments.map((segment) => segment.text).join(' '),
+      segments,
+    }));
+  });
+});
+server.on('error', () => process.exit(1));
+server.listen(0, '127.0.0.1', () => {
+  fs.writeFileSync(portFile, String(server.address().port));
+});
+NODE
+  node "$temp_dir/fake-stt-server.js" "$stt_port_file" "$stt_request_count_file" "$stt_reject_file" >"$stt_log" 2>&1 &
+  stt_pid=$!
+}
+
+run_grade_flow() {
+  node - "http://127.0.0.1:${api_port}" "$auth_access_token" "$document_id" <<'NODE'
+const apiBaseUrl = process.argv[2];
+const accessToken = process.argv[3];
+const documentId = process.argv[4];
+const requestTimeoutMs = 10_000;
+const pollDeadlineMs = 180_000;
+const pollIntervalMs = 1_000;
+// The fake question generator emits one fixed question, so Questions are deduplicated to one per Document.
+const minimumQuestionCount = 1;
+// A phrase from the fake STT transcript: the citation snippet must come from STT output.
+const transcriptPhrase = 'Cấu trúc dữ liệu';
+let phase = 'unknown';
+
+class FlowFailure extends Error {
+  constructor(marker) {
+    super();
+    this.marker = marker;
+  }
+}
+
+function requireMarker(condition, marker) {
+  if (!condition) throw new FlowFailure(marker);
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function requestJson(path, init = {}) {
+  let response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      ...init,
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(requestTimeoutMs),
+    });
+  } catch {
+    throw new FlowFailure('network');
+  }
+  if (!response.ok) throw new FlowFailure(phase);
+  return response.json();
+}
+
+function isTimeLocator(locator) {
+  return Boolean(locator) && locator.kind === 'time'
+    && Number.isFinite(locator.startSec) && Number.isFinite(locator.endSec)
+    && locator.startSec >= 0 && locator.endSec >= locator.startSec;
+}
+
+async function waitForReady() {
+  const deadline = Date.now() + pollDeadlineMs;
+  while (Date.now() < deadline) {
+    phase = 'document-status';
+    const document = await requestJson(`/api/v1/documents/${documentId}`);
+    if (document.status === 'READY') return;
+    if (document.status === 'FAILED') throw new FlowFailure('document-failed');
+    await sleep(pollIntervalMs);
+  }
+  throw new FlowFailure('document-timeout');
+}
+
+async function main() {
+  await waitForReady();
+  process.stdout.write('DOCUMENT_STATUS READY\n');
+
+  phase = 'document-quiz';
+  const documentQuiz = await requestJson(`/api/v1/documents/${documentId}/quiz`);
+  requireMarker(
+    typeof documentQuiz.quizId === 'string' && documentQuiz.documentId === documentId
+      && Number.isInteger(documentQuiz.questionCount) && documentQuiz.questionCount >= minimumQuestionCount,
+    'document-quiz-contract',
+  );
+  process.stdout.write(`QUIZ_QUESTION_COUNT ${documentQuiz.questionCount}\n`);
+
+  phase = 'quiz-endpoint';
+  const quiz = await requestJson(`/api/v1/quizzes/${documentQuiz.quizId}`);
+  requireMarker(
+    quiz.id === documentQuiz.quizId && Array.isArray(quiz.questions) && quiz.questions.length === documentQuiz.questionCount
+      && quiz.questions.every((question) => Array.isArray(question.options) && question.options.length >= 2),
+    'quiz-contract',
+  );
+
+  phase = 'attempt-submit';
+  const attempt = await requestJson(`/api/v1/quizzes/${quiz.id}/attempts`, {
+    method: 'POST',
+    body: JSON.stringify({
+      answers: quiz.questions.map((question) => ({ questionId: question.id, optionId: question.options[0].id })),
+    }),
+  });
+  requireMarker(
+    typeof attempt.attemptId === 'string' && Number.isInteger(attempt.score)
+      && attempt.questionCount === quiz.questions.length && attempt.score >= 0 && attempt.score <= attempt.questionCount
+      && Array.isArray(attempt.results) && attempt.results.length === attempt.questionCount,
+    'grade-contract',
+  );
+  phase = 'attempt-result';
+  const persisted = await requestJson(`/api/v1/quizzes/${quiz.id}/attempts/${attempt.attemptId}`);
+  requireMarker(
+    persisted.attemptId === attempt.attemptId && persisted.score === attempt.score
+      && persisted.questionCount === attempt.questionCount
+      && Array.isArray(persisted.results) && persisted.results.length === attempt.questionCount,
+    'grade-persisted',
+  );
+  const submitted = new Map(quiz.questions.map((question) => [question.id, question.options[0].id]));
+  const persistedByQuestion = new Map(persisted.results.map((result) => [result.questionId, result]));
+  function isGradedConsistently(result, expectedCorrect) {
+    return typeof result.isCorrect === 'boolean' && typeof result.explanation === 'string' && result.explanation.length > 0
+      && submitted.get(result.questionId) === result.selectedOptionId
+      && result.isCorrect === expectedCorrect;
+  }
+  requireMarker(
+    persisted.results.every((result) => typeof result.correctOptionId === 'string'
+      && isGradedConsistently(result, result.selectedOptionId === result.correctOptionId)),
+    'grade-contract',
+  );
+  requireMarker(
+    attempt.results.every((result) => persistedByQuestion.has(result.questionId)
+      && isGradedConsistently(result, persistedByQuestion.get(result.questionId).isCorrect)),
+    'grade-contract',
+  );
+  for (const graded of [attempt, persisted]) {
+    requireMarker(graded.score === graded.results.filter((result) => result.isCorrect).length, 'grade-contract');
+    requireMarker(
+      graded.results.every((result) => result.citation && isTimeLocator(result.citation.locator)
+        && typeof result.citation.snippet === 'string' && result.citation.snippet.includes(transcriptPhrase)),
+      'citation-locator',
+    );
+  }
+  process.stdout.write(`ATTEMPT_SCORE ${attempt.score}/${attempt.questionCount}\n`);
+  process.stdout.write(`CITATION_LOCATOR_KIND time count=${attempt.results.length}\n`);
+  process.stdout.write('GRADE_RESULT ok\n');
+}
+
+void main().catch((error) => {
+  process.stdout.write(`${error instanceof FlowFailure ? error.marker : 'unknown'}\n`);
   process.exitCode = 1;
 });
 NODE
@@ -1010,12 +1256,12 @@ LIMIT 1;
 }
 
 read_document_failure_code() {
-  docker exec "$postgres_container" psql \
-    --no-psqlrc --tuples-only --no-align --quiet \
-    --set=ON_ERROR_STOP=1 \
-    --set=document_id="$document_id" \
-    --username=learning --dbname=learning \
-    --command 'SELECT COALESCE((SELECT failure_code FROM ai.processing_jobs WHERE document_id = :\x27document_id\x27 ORDER BY created_at DESC LIMIT 1), \x27NONE\x27);' 2>/dev/null || printf 'UNKNOWN\n'
+  printf '%s\n' "SELECT COALESCE((SELECT failure_code FROM ai.processing_jobs WHERE document_id = :'document_id' ORDER BY created_at DESC LIMIT 1), 'NONE');" \
+    | docker exec -i "$postgres_container" psql \
+      --no-psqlrc --tuples-only --no-align --quiet \
+      --set=ON_ERROR_STOP=1 \
+      --set=document_id="$document_id" \
+      --username=learning --dbname=learning 2>/dev/null || printf 'UNKNOWN\n'
 }
 
 verify_media_probe_flow() {
@@ -1140,7 +1386,7 @@ emit_phase configure-minio
 configure_minio_buckets
 emit_phase create-media-fixture
 ffmpeg -hide_banner -loglevel error \
-  -f lavfi -i sine=frequency=1000:duration=1 \
+  -f lavfi -i sine=frequency=1000:duration=30 \
   -c:a libmp3lame -q:a 9 \
   "$temp_dir/document-e2e.mp3" >/dev/null 2>&1
 export LOCAL_DOCUMENT_E2E_INPUT_PATH="$temp_dir/document-e2e.mp3"
@@ -1192,7 +1438,7 @@ if ! run_document_flow >"$document_flow_result" 2>"$document_flow_error"; then
   rg '^NETWORK_ERROR phase=(presigned-upload|upload-url|uploaded-status|confirm|document-status) category=[a-z-]+ error=[A-Za-z]+ code=[A-Z0-9_]+ causeCode=[A-Z0-9_]+' "$document_flow_result" || true
   document_flow_marker=$(tail -n 1 "$document_flow_result")
   case "$document_flow_marker" in
-    upload-url|presigned-upload|uploaded-status|confirm|document-failed|document-timeout|document-status|document-quiz|quiz-endpoint|network|upload-contract|confirm-missing|confirm-uploaded|confirm-probing|confirm-ready|confirm-failed|confirm-processing-unexpected|confirm-unknown|ready-status|processing-status|document-quiz-contract|question-count|quiz-contract|quiz-learner-projection|unknown)
+    upload-url|presigned-upload|uploaded-status|confirm|document-failed|document-timeout|document-status|document-quiz|quiz-endpoint|attempt-submit|attempt-result|grade-contract|grade-persisted|citation-locator|network|upload-contract|confirm-missing|confirm-uploaded|confirm-probing|confirm-ready|confirm-failed|confirm-processing-unexpected|confirm-unknown|ready-status|processing-status|document-quiz-contract|question-count|quiz-contract|quiz-learner-projection|unknown)
       printf 'DOCUMENT_FLOW_MARKER %s\n' "$document_flow_marker"
       ;;
     *)
@@ -1227,3 +1473,64 @@ document_id=$(awk '$1 == "DOCUMENT_ID" { print $2; exit }' "$document_flow_resul
 [[ "$document_id" =~ ^[0-9a-fA-F-]{36}$ ]] || exit 1
 emit_phase verify-media-probe-flow
 verify_media_probe_flow
+
+emit_phase start-fake-stt
+start_fake_stt_server
+stt_listening=false
+for _ in $(seq 1 20); do
+  kill -0 "$stt_pid" >/dev/null 2>&1 || exit 1
+  if [[ -s "$stt_port_file" ]]; then
+    stt_port=$(cat "$stt_port_file")
+    if [[ "$stt_port" =~ ^[0-9]+$ ]] && node -e 'const net=require("node:net");const s=net.connect(Number(process.argv[1]),"127.0.0.1",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))' "$stt_port"; then
+      stt_listening=true
+      break
+    fi
+  fi
+  sleep 1
+done
+[[ "$stt_listening" == true ]]
+emit_phase start-go-worker
+start_go_worker
+emit_phase wait-go-ready
+wait_for_process_http wait-go-ready "http://127.0.0.1:${go_health_port}/readyz" "$go_pid"
+emit_phase grade-flow
+grade_flow_result="$temp_dir/grade-flow-result"
+if ! run_grade_flow >"$grade_flow_result" 2>/dev/null; then
+  PHASE=grade-flow-marker
+  grade_flow_marker=$(tail -n 1 "$grade_flow_result")
+  case "$grade_flow_marker" in
+    document-failed|document-timeout|document-status|document-quiz|document-quiz-contract|quiz-endpoint|quiz-contract|attempt-submit|attempt-result|grade-contract|grade-persisted|citation-locator|network|unknown)
+      printf 'GRADE_FLOW_MARKER %s\n' "$grade_flow_marker"
+      ;;
+    *)
+      printf 'GRADE_FLOW_MARKER unknown\n'
+      ;;
+  esac
+  stt_reject_reason=$(tr -d '[:space:]' <"$stt_reject_file" 2>/dev/null || true)
+  case "$stt_reject_reason" in
+    method|path|auth|multipart|model|format|language|file|size)
+      printf 'FAKE_STT_REJECT %s\n' "$stt_reject_reason"
+      ;;
+    *)
+      printf 'FAKE_STT_REJECT none\n'
+      ;;
+  esac
+  printf 'PIPELINE_STAGE %s\n' "$(classify_pipeline_stage)"
+  document_failure_code=$(read_document_failure_code)
+  case "$document_failure_code" in
+    [A-Z_]*|NONE|UNKNOWN)
+      printf 'DOCUMENT_FAILURE_CODE %s\n' "$document_failure_code"
+      ;;
+    *)
+      printf 'DOCUMENT_FAILURE_CODE UNKNOWN\n'
+      ;;
+  esac
+  false
+fi
+cat "$grade_flow_result"
+emit_phase verify-fake-stt-requests
+stt_request_count=$(tr -d '[:space:]' <"$stt_request_count_file")
+if [[ ! "$stt_request_count" =~ ^[0-9]+$ ]] || (( stt_request_count < 1 )); then
+  false
+fi
+printf 'STT_REQUEST_COUNT %s\n' "$stt_request_count"
