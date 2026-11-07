@@ -36,3 +36,7 @@ test("labels a single point as Tại when the end is missing or not after the st
   assert.equal(formatTimeCitationLabel(65.9, 65.95), "Tại 1:05");
   assert.equal(formatTimeCitationLabel(-3, -1), "Tại 0:00");
 });
+
+test("rounds both ends down at a minute boundary", () => {
+  assert.equal(formatTimeCitationLabel(59.9, 60.2), "Từ 0:59 đến 1:00");
+});

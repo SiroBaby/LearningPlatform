@@ -23,9 +23,9 @@ export function formatMediaTime(totalSec: number): string {
 /** "Từ m:ss đến m:ss", or "Tại m:ss" when the end is missing or not after the start. */
 export function formatTimeCitationLabel(startSec: number, endSec?: number | null): string {
   const start = toWholeSeconds(startSec);
-  const hasRange = typeof endSec === "number" && Number.isFinite(endSec) && toWholeSeconds(endSec) > start;
-  if (!hasRange) {
+  const end = typeof endSec === "number" ? toWholeSeconds(endSec) : start;
+  if (end <= start) {
     return `Tại ${formatMediaTime(start)}`;
   }
-  return `Từ ${formatMediaTime(start)} đến ${formatMediaTime(endSec)}`;
+  return `Từ ${formatMediaTime(start)} đến ${formatMediaTime(end)}`;
 }
