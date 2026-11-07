@@ -5,6 +5,7 @@ import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/co
 import { DeleteDocumentButton } from "@/components/library/delete-document-button";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
 import { routes } from "@/lib/routes";
+import { getModelLabel } from "@/components/upload/upload-workspace-utils";
 import { SUPPORT_EMAIL, SUPPORT_MAILTO_HREF } from "@/lib/support-contact";
 import {
   formatBytes,
@@ -51,7 +52,7 @@ export function ProcessingHeader({ document, detailHref, libraryHref, error }: P
   const title = document?.originalName ?? "Đang tải trạng thái tài liệu";
   const description = isFailed
     ? "Chưa xử lý được. Xem lý do bên dưới."
-    : "Trang tự cập nhật tiến độ và credit.";
+    : "Tiến độ và credit được cập nhật tự động.";
 
   return (
     <Card>
@@ -61,7 +62,7 @@ export function ProcessingHeader({ document, detailHref, libraryHref, error }: P
             <div className="flex flex-wrap items-center gap-2">
               {document ? <TypeBadge type={mappedType} /> : null}
               <StatusPill status={mappedStatus} />
-              <Badge tone="brand">Tự cập nhật</Badge>
+              <Badge tone="brand">Tự động cập nhật</Badge>
             </div>
             <div>
               <h2 className="text-2xl font-semibold tracking-tight text-ink-900">{title}</h2>
@@ -144,11 +145,11 @@ export function ProcessingStatusPanel({
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <SpecItem label="Cách xử lý đã chọn" value={document?.selectedModelLabel ?? "Chưa có"} />
+          <SpecItem label="Cách xử lý đã chọn" value={document?.selectedModelLabel ? getModelLabel(document.selectedModelLabel) : "Chưa có"} />
           <SpecItem label="Nguồn xử lý" value={getModelSourceLabel(document?.selectedModelKind ?? null)} />
           <SpecItem label="Ước tính ban đầu" value={getEstimateStatusLabel(document)} />
-          <SpecItem label="Lượt dùng đã chốt" value={getSettledCreditsLabel(document)} />
-          <SpecItem label="Mức ngân sách" value={getBudgetStatusLabel(document?.budgetStatus ?? null)} />
+          <SpecItem label="Credit đã dùng" value={getSettledCreditsLabel(document)} />
+          <SpecItem label="Tình trạng credit" value={getBudgetStatusLabel(document?.budgetStatus ?? null)} />
           <SpecItem label="Cập nhật gần nhất" value={document ? formatDateTime(document.updatedAt) : "Chưa có"} />
         </div>
 
@@ -251,7 +252,7 @@ export function ProcessingDocumentInfoPanel({ document, detailHref }: Processing
         <SpecRow label="Cập nhật lúc" value={document ? formatDateTime(document.updatedAt) : "Chưa có"} />
         <SpecRow label="Ngôn ngữ" value={document?.language ?? "Chưa có"} />
         <SpecRow label="Số trang" value={document?.pageCount !== null && document?.pageCount !== undefined ? String(document.pageCount) : "Chưa có"} />
-        <SpecRow label="Cách xử lý đã chọn" value={document?.selectedModelLabel ?? "Chưa có"} />
+        <SpecRow label="Cách xử lý đã chọn" value={document?.selectedModelLabel ? getModelLabel(document.selectedModelLabel) : "Chưa có"} />
         <SpecRow label="Nguồn xử lý" value={getModelSourceLabel(document?.selectedModelKind ?? null)} />
         <div className="flex flex-wrap gap-2 pt-2">
           <LinkButton href={detailHref} size="sm">

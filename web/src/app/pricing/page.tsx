@@ -140,7 +140,7 @@ const planDefinitions: readonly PlanDefinition[] = [
     monthlyPrice: "Custom",
     yearlyMonthlyPrice: "Custom",
     yearlyBilled: "Liên hệ",
-    credits: "Theo ngân sách và policy",
+    credits: "Theo thỏa thuận",
     uploads: "Theo workspace",
     pages: "Theo hợp đồng",
     minutes: "Theo hợp đồng",
