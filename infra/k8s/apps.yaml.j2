@@ -1217,6 +1217,26 @@ spec:
               value: '3600000'
             - name: DOCUMENT_PURGE_STORAGE_REQUEST_TIMEOUT_MS
               value: '10000'
+            # Media orphan scanner (#159 PR-4). Off by default; when enabled it
+            # only reports (dry-run) until the owner sets
+            # media_orphan_scanner_delete_enabled after reviewing the report and
+            # granting s3:ListBucketVersions (RUNBOOK-document-purge-dev.md section 10).
+            - name: MEDIA_ORPHAN_SCANNER_ENABLED
+              value: '{{ media_orphan_scanner_enabled | default(false) | bool | lower }}'
+            - name: MEDIA_ORPHAN_SCANNER_DELETE_ENABLED
+              value: '{{ media_orphan_scanner_delete_enabled | default(false) | bool | lower }}'
+            - name: MEDIA_ORPHAN_SCANNER_INTERVAL_MS
+              value: '3600000'
+            - name: MEDIA_ORPHAN_SCANNER_MIN_AGE_MS
+              value: '86400000'
+            - name: MEDIA_ORPHAN_SCANNER_PAGE_SIZE
+              value: '500'
+            - name: MEDIA_ORPHAN_SCANNER_MAX_OBJECTS_PER_RUN
+              value: '5000'
+            - name: MEDIA_ORPHAN_SCANNER_MAX_DELETES_PER_RUN
+              value: '100'
+            - name: MEDIA_ORPHAN_SCANNER_DELETE_DELAY_MS
+              value: '250'
             - name: OBJECT_STORAGE_EGRESS_PROXY_URL
               value: {{ media_probe_worker_proxy_url | quote }}
 {% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_MEDIA_BUCKET', 'OBJECT_STORAGE_PURGE_ACCESS_KEY', 'OBJECT_STORAGE_PURGE_SECRET_KEY'] %}

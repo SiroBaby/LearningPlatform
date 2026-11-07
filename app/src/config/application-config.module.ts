@@ -6,6 +6,7 @@ import aiConfig from './ai.config';
 import { ApplicationConfigService } from './application-config.service';
 import databaseConfig from './database.config';
 import documentPurgeConfig from './document-purge.config';
+import mediaOrphanScannerConfig from './media-orphan-scanner.config';
 import storageConfig from './storage.config';
 import workerConfig from './worker.config';
 
@@ -14,7 +15,7 @@ import workerConfig from './worker.config';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [aiConfig, appConfig, databaseConfig, documentPurgeConfig, storageConfig, workerConfig],
+      load: [aiConfig, appConfig, databaseConfig, documentPurgeConfig, mediaOrphanScannerConfig, storageConfig, workerConfig],
     }),
   ],
   providers: [ApplicationConfigService],

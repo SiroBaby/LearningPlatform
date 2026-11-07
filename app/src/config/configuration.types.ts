@@ -140,6 +140,20 @@ export interface DocumentPurgeSettings {
   readonly storage: DocumentPurgeStorageConnection;
 }
 
+/** Settings of the media orphan scanner, which runs inside the document-purge runtime. */
+export interface MediaOrphanScannerSettings {
+  /** Off by default; nothing is listed or deleted while false. */
+  readonly enabled: boolean;
+  /** Dry-run (report only) unless true; requires `enabled`. */
+  readonly deleteEnabled: boolean;
+  readonly intervalMs: number;
+  readonly minAgeMs: number;
+  readonly pageSize: number;
+  readonly maxObjectsPerRun: number;
+  readonly maxDeletesPerRun: number;
+  readonly deleteDelayMs: number;
+}
+
 export interface DocumentPurgeStorageConnection {
   readonly accessKey: string;
   readonly egressProxyUrl: string | undefined;
@@ -237,6 +251,16 @@ export const CONFIG_PATH = {
     pollIntervalMs: 'documentPurge.pollIntervalMs',
     secretKey: 'documentPurge.secretKey',
     storageRequestTimeoutMs: 'documentPurge.storageRequestTimeoutMs',
+  },
+  mediaOrphanScanner: {
+    deleteDelayMs: 'mediaOrphanScanner.deleteDelayMs',
+    deleteEnabled: 'mediaOrphanScanner.deleteEnabled',
+    enabled: 'mediaOrphanScanner.enabled',
+    intervalMs: 'mediaOrphanScanner.intervalMs',
+    maxDeletesPerRun: 'mediaOrphanScanner.maxDeletesPerRun',
+    maxObjectsPerRun: 'mediaOrphanScanner.maxObjectsPerRun',
+    minAgeMs: 'mediaOrphanScanner.minAgeMs',
+    pageSize: 'mediaOrphanScanner.pageSize',
   },
   storage: {
     accessKey: 'storage.accessKey',

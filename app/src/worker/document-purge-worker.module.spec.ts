@@ -4,10 +4,12 @@ import { MODULE_METADATA } from '@nestjs/common/constants';
 import { AiModule } from '../modules/ai/ai.module';
 import { LlmProviderModule } from '../modules/ai/llm-provider.module';
 import { ForwardRelay } from '../modules/content/forward-relay.service';
+import { MediaOrphanScannerService } from '../modules/content/media-orphan-scanner.service';
 import { StorageModule } from '../storage/storage.module';
 import { StorageService } from '../storage/storage.service';
 import { DocumentPurgeRunner } from './document-purge-runner.service';
 import { DocumentPurgeWorkerModule } from './document-purge-worker.module';
+import { MediaOrphanScannerRunner } from './media-orphan-scanner-runner.service';
 import { ReturnRelay } from './return-relay.service';
 import { WorkerRunner } from './worker-runner.service';
 
@@ -25,5 +27,8 @@ describe('DocumentPurgeWorkerModule', () => {
     expect(providers).not.toContain(ReturnRelay);
     expect(providers).not.toContain(WorkerRunner);
     expect(providers).toContain(DocumentPurgeRunner);
+    // The scanner shares the purge identity; it adds no credential or module.
+    expect(providers).toContain(MediaOrphanScannerRunner);
+    expect(providers).toContain(MediaOrphanScannerService);
   });
 });

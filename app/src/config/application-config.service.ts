@@ -13,6 +13,7 @@ import {
   LlmCapabilityVersion,
   LlmStructuredOutputMode,
   LlmTransport,
+  MediaOrphanScannerSettings,
   OpenAiGeneralSettings,
   StorageSettings,
   WorkerExecutionMode,
@@ -25,6 +26,22 @@ import {
  * each bounded by a connection and a response timeout, plus the final write.
  */
 const MIN_PURGE_LEASE_REQUEST_TIMEOUTS = 5;
+/** Orphan scanner never touches an object younger than this (6 hours). */
+const MIN_ORPHAN_SCANNER_AGE_MS = 21_600_000;
+/** S3 returns at most 1000 keys per ListObjectVersions page. */
+const MAX_ORPHAN_SCANNER_PAGE_SIZE = 1_000;
+
+/** Returned while the scanner is off; the runner reads only `enabled`. */
+const INERT_ORPHAN_SCANNER_SETTINGS: MediaOrphanScannerSettings = {
+  deleteDelayMs: 0,
+  deleteEnabled: false,
+  enabled: false,
+  intervalMs: 0,
+  maxDeletesPerRun: 0,
+  maxObjectsPerRun: 0,
+  minAgeMs: 0,
+  pageSize: 0,
+};
 
 @Injectable()
 export class ApplicationConfigService {
@@ -325,6 +342,44 @@ export class ApplicationConfigService {
     return settings;
   }
 
+  /**
+   * Orphan scanner settings. Validated only when the purge runtime asks for
+   * them, and the tuning only when the scanner is enabled. The minimum age has a floor so a typo cannot make the scanner race
+   * a presigned upload that is still being written.
+   */
+  get mediaOrphanScanner(): MediaOrphanScannerSettings {
+    const enabled = this.required<boolean>(CONFIG_PATH.mediaOrphanScanner.enabled);
+    const deleteEnabled = this.required<boolean>(CONFIG_PATH.mediaOrphanScanner.deleteEnabled);
+    if (typeof enabled !== 'boolean' || typeof deleteEnabled !== 'boolean') {
+      throw new Error('MEDIA_ORPHAN_SCANNER_ENABLED and MEDIA_ORPHAN_SCANNER_DELETE_ENABLED must be booleans');
+    }
+    if (deleteEnabled && !enabled) {
+      throw new Error('MEDIA_ORPHAN_SCANNER_DELETE_ENABLED requires MEDIA_ORPHAN_SCANNER_ENABLED');
+    }
+    // A disabled scanner must never be able to crash the purge worker over its tuning.
+    if (!enabled) return INERT_ORPHAN_SCANNER_SETTINGS;
+    const settings: MediaOrphanScannerSettings = {
+      deleteDelayMs: this.nonNegativeInteger(CONFIG_PATH.mediaOrphanScanner.deleteDelayMs),
+      deleteEnabled,
+      enabled,
+      intervalMs: this.positiveInteger(CONFIG_PATH.mediaOrphanScanner.intervalMs),
+      maxDeletesPerRun: this.positiveInteger(CONFIG_PATH.mediaOrphanScanner.maxDeletesPerRun),
+      maxObjectsPerRun: this.positiveInteger(CONFIG_PATH.mediaOrphanScanner.maxObjectsPerRun),
+      minAgeMs: this.positiveInteger(CONFIG_PATH.mediaOrphanScanner.minAgeMs),
+      pageSize: this.positiveInteger(CONFIG_PATH.mediaOrphanScanner.pageSize),
+    };
+    if (settings.minAgeMs < MIN_ORPHAN_SCANNER_AGE_MS) {
+      throw new Error(`MEDIA_ORPHAN_SCANNER_MIN_AGE_MS must be at least ${MIN_ORPHAN_SCANNER_AGE_MS}`);
+    }
+    if (settings.pageSize > MAX_ORPHAN_SCANNER_PAGE_SIZE) {
+      throw new Error(`MEDIA_ORPHAN_SCANNER_PAGE_SIZE must not exceed ${MAX_ORPHAN_SCANNER_PAGE_SIZE}`);
+    }
+    if (settings.maxObjectsPerRun < settings.pageSize) {
+      throw new Error('MEDIA_ORPHAN_SCANNER_MAX_OBJECTS_PER_RUN must be at least MEDIA_ORPHAN_SCANNER_PAGE_SIZE');
+    }
+    return settings;
+  }
+
   get worker(): WorkerSettings {
     const worker = {
       chunkInsertBatchSize: this.positiveInteger(CONFIG_PATH.worker.chunkInsertBatchSize),
@@ -453,6 +508,14 @@ export class ApplicationConfigService {
     const value = this.required<number>(path);
     if (!Number.isSafeInteger(value) || value < 1) {
       throw new Error(`Configuration ${path} must be a positive integer`);
+    }
+    return value;
+  }
+
+  private nonNegativeInteger(path: string): number {
+    const value = this.required<number>(path);
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`Configuration ${path} must be a non-negative integer`);
     }
     return value;
   }

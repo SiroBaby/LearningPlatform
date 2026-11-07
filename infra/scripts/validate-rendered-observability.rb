@@ -150,6 +150,18 @@ LOKI_ALERT_RULES = {
   'DocumentPurgeBacklogMissing' => {
     'severity' => 'warning',
     'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"document.purge.backlog" [1h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.backlog\"" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [1h]))'
+  },
+  'MediaOrphanScanFailed' => {
+    'severity' => 'warning',
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "media.orphan.scan.failed" [10m])) > 0'
+  },
+  'MediaOrphanVersionsDetected' => {
+    'severity' => 'warning',
+    'expr' => 'sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "media.orphan.scan.completed" | json orphanCount="message.orphanCount", mode="message.mode" | __error__="" | mode="dry-run" | unwrap orphanCount [30m])) > 0'
+  },
+  'MediaOrphanScanStale' => {
+    'severity' => 'warning',
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"media.orphan.scan." [6h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "media.orphan.scan.completed" [3h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [6h]))'
   }
 }.freeze
 APPLICATION_PROMETHEUS_GROUP_NAME = 'learning-platform.application'

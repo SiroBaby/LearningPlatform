@@ -129,8 +129,9 @@ Policy này khớp đúng các lệnh S3 mà purger gọi
   versioning, cần `s3:DeleteObject`.
 - Preflight và nhánh PDF: `GetBucketVersioning` trên hai bucket.
 
-Không cấp: `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `s3:ListBucketVersions`,
-quyền trên bucket khác, wildcard bucket. Bucket dùng SSE-KMS thì xóa không cần
+Không cấp: `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, quyền trên bucket khác,
+wildcard bucket. `s3:ListBucketVersions` **không** nằm trong policy này; chỉ thêm
+đúng một statement ở mục 10.4 khi owner quyết định bật orphan scanner. Bucket dùng SSE-KMS thì xóa không cần
 `kms:Decrypt`.
 
 Tạo access key cho user này, không lưu vào file trong repo, chỉ nhập thẳng vào SSM ở mục 4.
@@ -477,3 +478,171 @@ Nếu worker vẫn Ready mà manifest không giảm, đọc `last_error_code` v�
 - **Thu hồi quyền ở S3**: vô hiệu hóa access key của IAM user purge. Làm **sau**
   khi đã scale về 0; nếu worker còn chạy, các manifest đang xử lý sẽ vào
   `DEAD_LETTER` `PURGE_ACCESS_DENIED` và cần đưa lại hàng đợi theo mục 7.
+
+## 10. Orphan scanner (#159 PR-4)
+
+### 10.1 Orphan scanner là gì và chạy ở đâu
+
+- **Dùng để làm gì**: purge chỉ xóa các version nằm trong purge manifest (Q1). Một
+  version phát sinh ngoài manifest, ví dụ người dùng upload bằng presigned URL (link
+  upload ký sẵn) còn hạn sau khi đã xóa Document, sẽ không bao giờ bị purge xóa.
+  Orphan scanner (bộ quét object mồ côi) dọn các version đó sau tối thiểu 24 giờ.
+  Nó **không thay purge chính**.
+- **Chạy ở đâu**: trong chính Deployment `document-purge-worker`, cùng identity
+  purge, cùng S3 client (đi qua `media-egress-proxy`, tắt dualstack, pin region).
+  Lý do: scanner cần đúng khả năng xóa `DeleteObjectVersion` của purge, nên dùng
+  workload riêng chỉ nhân đôi Secret, NetworkPolicy và ServiceAccount mà không giảm
+  quyền. Scanner có vòng lặp timer riêng, không chặn vòng purge; lỗi scanner không
+  làm worker mất Ready. Code: `app/src/modules/content/media-orphan-scanner.service.ts`.
+- **Phạm vi quét (Q6)**: chỉ media bucket, chỉ prefix `media/`, và chỉ key đúng
+  dạng `media/<uuid>/<uuid>[.ext]` (cách API đặt key). Mọi key khác (kể cả tên
+  lạ trong `media/`) bị bỏ qua và chỉ được đếm. Documents bucket không bao giờ bị quét.
+- **Quy mô**: mỗi trang `ListObjectVersions` kéo theo một truy vấn
+  `course.documents WHERE storage_ref = ANY(...)`. Cột `storage_ref` **chưa có
+  index**, nên ở dev truy vấn là sequential scan; khi bảng lớn lên cần index
+  `course.documents(storage_ref)` bằng migration expand-only riêng (chưa làm ở PR này,
+  cần owner duyệt).
+- **Không cần migration**: scanner chỉ đọc `course.documents` và
+  `course.document_purge_manifests`; không có bảng hay cột mới. Con trỏ phân trang
+  nằm trong bộ nhớ (restart thì quét lại từ đầu); lock một-runner dùng PostgreSQL
+  advisory lock `media-orphan-scanner`, tự nhả khi kết nối đứt.
+
+### 10.2 Khi nào một version bị coi là orphan
+
+Một version chỉ là orphan khi **đồng thời**: key đúng namespace ở 10.1, có
+`VersionId` thật (không phải `null`), `LastModified` cũ hơn `MIN_AGE` (mặc định
+24 giờ, sàn cứng 6 giờ), và **không** có tham chiếu nào sau đây. Khi không chắc thì
+giữ lại.
+
+| Tham chiếu | Được bảo vệ |
+| --- | --- |
+| Document có `storage_ref` = key và `status` khác `DELETING` | mọi version của key |
+| Document `DELETING` mà manifest chưa có hoặc đang `PENDING`/`FAILED`/`RUNNING` | mọi version của key |
+| Locator của manifest chưa `COMPLETED` không có `VersionId`, hoặc manifest còn `PENDING`/`FAILED`/`RUNNING` | mọi version của key |
+| Locator của manifest `DEAD_LETTER` có `VersionId` | đúng version đó (chờ owner xử lý theo mục 7) |
+
+Hệ quả: version upload sau khi Document `DELETING` đã có manifest `COMPLETED` (hoặc
+`DEAD_LETTER` `PURGE_LOCATORS_UNRESOLVED` không có locator) là orphan và sẽ được
+dọn sau 24 giờ. Delete marker chỉ được **đếm** (`deleteMarkerCount`), scanner không
+xóa marker. Trước mỗi lần xóa thật, scanner kiểm tra lại tham chiếu của đúng key đó và kiểm tra
+kết nối giữ advisory lock còn sống (mất lock thì dừng, `ORPHAN_SCAN_LOCK_LOST`).
+
+**DLQ và scanner tương tác với nhau (on-call cần biết)**: manifest `DEAD_LETTER` với
+locators rỗng (`PURGE_LOCATORS_UNRESOLVED`) **không** bảo vệ key nào. Document
+`DELETING` đó coi như purge đã xong, nên nếu bucket còn version của key, scanner sẽ
+xóa sau `MIN_AGE` (đúng thiết kế Q1: phần còn lại của purge giao cho scanner). Ngược
+lại manifest `DEAD_LETTER` khác (ví dụ `PURGE_ACCESS_DENIED`) vẫn bảo vệ đúng
+version nó nêu; đưa manifest đó lại hàng đợi theo mục 7 thay vì chờ scanner.
+
+### 10.3 Cờ, giá trị mặc định và giới hạn
+
+Hai cờ là biến Ansible trong `infra/ansible/vars/dev.yml` (boolean thật, không
+đặt dấu nháy), đều mặc định `false`; cờ chỉ có tác dụng khi `document_purge_enabled`
+là `true`. Cần đổi một dòng rồi merge và deploy target `worker`.
+
+| Biến Ansible / env | Mặc định | Ý nghĩa |
+| --- | --- | --- |
+| `media_orphan_scanner_enabled` / `MEDIA_ORPHAN_SCANNER_ENABLED` | `false` | Bật scanner. `false` thì không list, không xóa gì. |
+| `media_orphan_scanner_delete_enabled` / `MEDIA_ORPHAN_SCANNER_DELETE_ENABLED` | `false` | `false` = **dry-run** (chỉ báo cáo). `true` mới xóa thật; bắt buộc kèm cờ trên. |
+| `MEDIA_ORPHAN_SCANNER_INTERVAL_MS` | `3600000` | Chu kỳ giữa hai lần quét (1 giờ). |
+| `MEDIA_ORPHAN_SCANNER_MIN_AGE_MS` | `86400000` | Tuổi tối thiểu (24 giờ); config từ chối giá trị dưới 6 giờ. |
+| `MEDIA_ORPHAN_SCANNER_PAGE_SIZE` | `500` | Số version mỗi trang `ListObjectVersions` (tối đa 1000). |
+| `MEDIA_ORPHAN_SCANNER_MAX_OBJECTS_PER_RUN` | `5000` | Trần số version quét mỗi lần chạy. |
+| `MEDIA_ORPHAN_SCANNER_MAX_DELETES_PER_RUN` | `100` | Trần số orphan (dry-run: số ứng viên báo cáo) mỗi lần chạy. |
+| `MEDIA_ORPHAN_SCANNER_DELETE_DELAY_MS` | `250` | Nghỉ giữa hai lần xóa (rate limit). |
+
+Các biến `MEDIA_ORPHAN_SCANNER_*` còn lại là literal trong manifest, không phải SSM.
+Khi chạm trần, lần chạy sau tiếp tục từ version đã xử lý cuối cùng
+(`truncated: true`, `completedPass: false`); chạy hết prefix thì `completedPass: true`.
+
+### 10.4 IAM cần thêm (owner làm trên AWS Console)
+
+Purge IAM user ở mục 3 **chưa có** quyền list version, nên scanner sẽ fail-closed
+(`media.orphan.scan.failed`, `errorCode=PURGE_ACCESS_DENIED`,
+`requiredPermission=s3:ListBucketVersions`) và không xóa gì. Repo này không thay đổi
+AWS. Trước khi bật cờ `media_orphan_scanner_enabled`, owner thêm đúng statement
+này vào policy của IAM user purge (thay `<MEDIA_BUCKET>` như ở mục 3):
+
+```json
+{
+  "Sid": "ListMediaVersionsForOrphanScanner",
+  "Effect": "Allow",
+  "Action": ["s3:ListBucketVersions"],
+  "Resource": "arn:aws:s3:::<MEDIA_BUCKET>",
+  "Condition": {"StringLike": {"s3:prefix": ["media/*"]}}
+}
+```
+
+Scanner luôn gửi `prefix=media/` nên điều kiện `s3:prefix` khớp; không cần quyền nào
+trên documents bucket. Xóa thật vẫn dùng `s3:DeleteObjectVersion` trên `media/*` đã
+có ở mục 3. Kiểm tra (owner, profile của purge key, qua đường S3 bình thường):
+`aws s3api list-object-versions --bucket <MEDIA_BUCKET> --prefix media/ --max-items 1`
+thành công, còn cùng lệnh với `--prefix other/` bị `AccessDenied`.
+
+### 10.5 Quy trình dry-run lần đầu
+
+1. Hoàn tất mục 2 và 6 (purge worker đã chạy ổn) và thêm statement ở 10.4.
+2. PR đổi `media_orphan_scanner_enabled: true` (để `media_orphan_scanner_delete_enabled: false`),
+   merge, deploy target `worker`. Log khởi động có
+   `media.orphan.scanner.enabled mode=dry-run`.
+3. Đợi ít nhất một lần quét chạy hết prefix (`completedPass: true`); với bucket
+   lớn có thể cần nhiều chu kỳ. Xem log:
+
+   ```bash
+   sudo k3s kubectl -n learning-platform-dev logs deployment/document-purge-worker | grep 'media.orphan'
+   ```
+
+4. **Cách đọc báo cáo** (`media.orphan.scan.completed`, JSON ở production):
+   - `mode`: phải là `dry-run`. `outcome`: `COMPLETED`, `SKIPPED_LOCK_HELD` (pod khác đang quét) hoặc `FAILED`.
+   - `scannedVersionCount`, `skippedOutOfScopeCount` (key ngoài namespace),
+     `skippedUnversionedCount`, `skippedYoungCount`, `skippedReferencedCount`,
+     `deleteMarkerCount`: các nhóm được **giữ lại**.
+   - `orphanCount`: số version sẽ bị xóa nếu bật xóa. Mỗi ứng viên có một log
+     `media.orphan.candidate` (`action=would_delete`, `key`, `versionId`, `lastModified`).
+   - `truncated`/`completedPass`: xem 10.3.
+5. Đối chiếu **từng** ứng viên: key không có Document nào hoặc Document ở trạng thái
+   `DELETING` với manifest đã `COMPLETED` (truy vấn chỉ đọc):
+
+   ```sql
+   SELECT d.id, d.status, m.status AS manifest_status
+   FROM course.documents d
+   LEFT JOIN course.document_purge_manifests m ON m.document_id = d.id
+   WHERE d.storage_ref = '<key từ log>';
+   ```
+
+   Nếu thấy Document đang dùng (`READY`, `PROCESSING`, ...) mà vẫn bị báo orphan thì
+   **dừng**, đó là bug: giữ cờ xóa ở `false` và báo lại ticket #159.
+6. Ghi báo cáo (số liệu, không ghi key/VersionId vào ticket công khai nếu coi là nhạy cảm) vào ticket #159.
+
+### 10.6 Bật xóa thật (sau khi owner duyệt báo cáo)
+
+1. Chỉ làm khi báo cáo dry-run đã được duyệt, không có ứng viên bất thường và
+   `MEDIA_ORPHAN_SCANNER_MAX_DELETES_PER_RUN` còn là giá trị bảo thủ (100).
+2. PR đổi `media_orphan_scanner_delete_enabled: true`, merge, deploy target `worker`.
+   Log khởi động có `mode=delete`; mỗi version xóa có log `media.orphan.deleted`.
+3. Theo dõi hai chu kỳ đầu: `deletedCount` khớp `orphanCount`, không có
+   `media.orphan.scan.failed`. Xóa là hard-delete đúng `VersionId`, không tạo delete marker.
+4. **Tắt nhanh**: PR đặt lại `media_orphan_scanner_delete_enabled: false` (về dry-run)
+   hoặc `media_orphan_scanner_enabled: false`; hoặc khẩn cấp scale `document-purge-worker`
+   về 0 như mục 9. Version đã xóa không khôi phục được.
+
+### 10.7 Alert
+
+Hai Loki alert (cùng ruler ở mục 8, container `document-purge-worker`):
+
+- `MediaOrphanScanFailed` (`warning`): có log `media.orphan.scan.failed` trong 10
+  phút. Đọc `errorCode`: `PURGE_ACCESS_DENIED` = thiếu `s3:ListBucketVersions` hoặc
+  `s3:DeleteObjectVersion` (mục 10.4); `PURGE_CONFIGURATION` = sai bucket/endpoint;
+  `PURGE_STORAGE_TEMPORARY` = lỗi tạm hoặc proxy từ chối (scanner thử lại ở chu kỳ
+  sau, version lỗi được giữ nguyên); `ORPHAN_SCAN_UNEXPECTED` = lỗi khác (ví dụ
+  database), xem log pod.
+- `MediaOrphanVersionsDetected` (`warning`): lần quét hoàn tất gần nhất (cửa sổ 30
+  phút) ở **dry-run** có `orphanCount > 0`; tín hiệu cần duyệt báo cáo (mục 10.5).
+  Cố ý chỉ báo ở dry-run: khi đã bật xóa, scanner tự dọn và sự cố đã có
+  `MediaOrphanScanFailed`/`MediaOrphanScanStale`, nên alert này không lặp lại mỗi
+  chu kỳ. Tự resolve khoảng 30 phút sau.
+- `MediaOrphanScanStale` (`warning`): trong 6 giờ qua có log `media.orphan.scan.*`
+  nhưng 3 giờ không có `media.orphan.scan.completed` (chu kỳ mặc định 1 giờ). Khi scan
+  liên tiếp lỗi, runner nhân đôi thời gian chờ tới tối đa 8 lần chu kỳ, và reset khi
+  một lần quét thành công. Alert bị chặn trong 6 giờ sau log
+  `document.purge.shutdown.completed` (restart hoặc tắt cờ), giống `DocumentPurgeBacklogMissing`.
