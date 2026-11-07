@@ -225,11 +225,17 @@ check_media_probe_ffprobe_artifact_pin() {
     || ! grep -Fqx 'ARG FFPROBE_VERSION=8.1.3-27-g8dca1586f4' "${dockerfile}" \
     || ! grep -Fqx 'ARG FFPROBE_BUILD_VERSION=8.1.3-27-g8dca1586f4-20261031' "${dockerfile}" \
     || ! grep -Fq 'test "${ffprobe_version}" = "${FFPROBE_BUILD_VERSION}"' "${dockerfile}" \
+    || ! grep -Fq 'test "${ffmpeg_version}" = "${FFPROBE_BUILD_VERSION}"' "${dockerfile}" \
+    || ! grep -Fq '/bin/ffmpeg" \' "${dockerfile}" \
+    || ! grep -Fq 'COPY --from=media-probe-artifact /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg' "${dockerfile}" \
     || ! grep -Fq 'MEDIA_PROBE_FFPROBE_VERSION=8.1.3-27-g8dca1586f4-20261031' "${dockerfile}" \
-    || ! grep -Fq "              value: '8.1.3-27-g8dca1586f4-20261031'" "${INFRA_DIR}/k8s/apps.yaml.j2" \
+    || ! grep -Fq 'MEDIA_PROBE_FFMPEG_VERSION=8.1.3-27-g8dca1586f4-20261031' "${dockerfile}" \
+    || ! grep -Fq 'MEDIA_PROBE_FFMPEG_PATH=/usr/local/bin/ffmpeg' "${dockerfile}" \
+    || [ "$(grep -Fc "              value: '8.1.3-27-g8dca1586f4-20261031'" "${INFRA_DIR}/k8s/apps.yaml.j2")" -ne 2 ] \
+    || ! grep -Fq '            - name: MEDIA_PROBE_FFMPEG_VERSION' "${INFRA_DIR}/k8s/apps.yaml.j2" \
     || ! grep -Fqx 'FROM ai-worker AS default' <(tail -n 1 "${dockerfile}") \
     || grep -Eq 'FFPROBE_(URL|ASSET)=.*latest' "${dockerfile}"; then
-    fail 'FFprobe must remain pinned, while the Docker default target remains the AI worker.'
+    fail 'FFprobe and ffmpeg must remain pinned to one artifact, while the Docker default target remains the AI worker.'
   fi
 }
 
@@ -938,6 +944,8 @@ check_ansible_when_installed() {
       "${ANSIBLE_DIR}/roles/applications/tests/media-egress-proxy-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-probe-flag-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/media-audio-prep-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-probe-db-egress-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \

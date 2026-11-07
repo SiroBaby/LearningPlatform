@@ -9,6 +9,15 @@
       api_media_enabled requires media_probe_worker_enabled; otherwise uploaded
       media Documents wait in PROBING with no worker to probe them.
 
+- name: Require a boolean audio preparation flag that never runs without the probe worker
+  ansible.builtin.assert:
+    that:
+      - media_probe_audio_prep_enabled | default(false) is boolean
+      - not (media_probe_audio_prep_enabled | default(false) | bool) or (media_probe_worker_enabled | default(false) | bool)
+    fail_msg: >-
+      media_probe_audio_prep_enabled must be a boolean and requires
+      media_probe_worker_enabled, because ffmpeg runs only inside the probe worker.
+
 - name: Validate enabled media probe worker contract
   ansible.builtin.assert:
     that:

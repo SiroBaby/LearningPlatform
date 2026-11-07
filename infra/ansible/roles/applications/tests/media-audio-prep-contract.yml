@@ -1,0 +1,125 @@
+---
+# Audio preparation (#160 PR4, ADR-0032 D3/D4) adds ffmpeg and PutObject to the
+# media-probe-worker. This contract pins what must NOT change: the feature is
+# OFF by default, the sandbox stays read-only and non-root, scratch space is a
+# bounded emptyDir that fits the source plus one capped chunk, and egress stays
+# DNS + the media proxy + the PostgreSQL forwarder only.
+- name: Verify the media audio preparation contract on the rendered manifests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  tasks:
+    - name: Require the production dev vars to keep audio preparation off
+      ansible.builtin.assert:
+        that:
+          - media_probe_audio_prep_enabled is boolean
+          - not media_probe_audio_prep_enabled
+        fail_msg: >-
+          vars/dev.yml must keep media_probe_audio_prep_enabled false until the owner
+          has granted derived-audio/ PutObject and the lifecycle rule (#160).
+
+    - name: Render the worker rollout with the production flag (off) and with the flag on
+      ansible.builtin.set_fact:
+        applications_audio_off_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['worker']})
+             | from_yaml_all | list }}
+        applications_audio_on_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['worker'], 'media_probe_audio_prep_enabled': true})
+             | from_yaml_all | list }}
+      no_log: true
+
+    - name: Select the media probe Deployment, pod spec and egress policy for both renders
+      ansible.builtin.set_fact:
+        applications_audio_off_pod: >-
+          {{ (applications_audio_off_manifests | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'media-probe-worker') | list | first).spec.template.spec }}
+        applications_audio_on_pod: >-
+          {{ (applications_audio_on_manifests | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'media-probe-worker') | list | first).spec.template.spec }}
+        applications_audio_on_egress: >-
+          {{ (applications_audio_on_manifests | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-probe-worker-egress') | list | first).spec }}
+        applications_audio_off_egress: >-
+          {{ (applications_audio_off_manifests | selectattr('kind', 'equalto', 'NetworkPolicy')
+             | selectattr('metadata.name', 'equalto', 'media-probe-worker-egress') | list | first).spec }}
+
+    - name: Index the container environment by name
+      ansible.builtin.set_fact:
+        applications_audio_off_env: >-
+          {{ dict(applications_audio_off_pod.containers[0].env | map(attribute='name')
+             | zip(applications_audio_off_pod.containers[0].env)) }}
+        applications_audio_on_env: >-
+          {{ dict(applications_audio_on_pod.containers[0].env | map(attribute='name')
+             | zip(applications_audio_on_pod.containers[0].env)) }}
+
+    - name: Require the flag to default off and to turn on only when set
+      ansible.builtin.assert:
+        that:
+          - applications_audio_off_env.MEDIA_PROBE_AUDIO_PREP_ENABLED.value == 'false'
+          - applications_audio_on_env.MEDIA_PROBE_AUDIO_PREP_ENABLED.value == 'true'
+        fail_msg: MEDIA_PROBE_AUDIO_PREP_ENABLED must render 'false' by default and 'true' only when the flag is true.
+
+    - name: Require ffmpeg to use the same pinned build as ffprobe
+      ansible.builtin.assert:
+        that:
+          - applications_audio_on_env.MEDIA_PROBE_FFMPEG_PATH.value == '/usr/local/bin/ffmpeg'
+          - applications_audio_on_env.MEDIA_PROBE_FFMPEG_VERSION.value == applications_audio_on_env.MEDIA_PROBE_FFPROBE_VERSION.value
+          - applications_audio_on_env.MEDIA_PROBE_AUDIO_PREP_TIMEOUT_MS.value == '180000'
+          - applications_audio_on_env.MEDIA_PROBE_AUDIO_PREP_TIMEOUT_MS.value | int < 600000
+        fail_msg: >-
+          ffmpeg must share the ffprobe artifact pin, an absolute path, and a per-run
+          timeout shorter than the 10 minute job timeout.
+
+    - name: Require the sandbox of the probe pod to stay locked down
+      ansible.builtin.assert:
+        that:
+          - applications_audio_on_pod.automountServiceAccountToken == false
+          - applications_audio_on_pod.securityContext.runAsNonRoot
+          - applications_audio_on_pod.securityContext.runAsUser == 65532
+          - applications_audio_on_pod.securityContext.runAsGroup == 65532
+          - applications_audio_on_pod.securityContext.seccompProfile.type == 'RuntimeDefault'
+          - applications_audio_on_pod.containers[0].securityContext.readOnlyRootFilesystem
+          - not applications_audio_on_pod.containers[0].securityContext.allowPrivilegeEscalation
+          - applications_audio_on_pod.containers[0].securityContext.capabilities.drop == ['ALL']
+          - applications_audio_on_pod.containers | length == 1
+        fail_msg: ffmpeg must run in the unchanged read-only, non-root, seccomp, drop-all sandbox.
+
+    - name: Require a bounded scratch volume that fits the source plus one capped chunk
+      vars:
+        applications_audio_max_download_mib: "{{ (applications_audio_on_env.MEDIA_PROBE_MAX_DOWNLOAD_BYTES.value | int) // 1048576 }}"
+        applications_audio_chunk_cap_mib: 25
+        applications_audio_empty_dir_mib: "{{ (applications_audio_on_pod.volumes | selectattr('name', 'equalto', 'media-probe-temp') | list | first).emptyDir.sizeLimit | regex_replace('Mi$', '') | int }}"
+      ansible.builtin.assert:
+        that:
+          - (applications_audio_on_pod.volumes | selectattr('name', 'equalto', 'media-probe-temp') | list | first).emptyDir.sizeLimit is match('^[0-9]+Mi$')
+          - applications_audio_empty_dir_mib | int >= (applications_audio_max_download_mib | int) + applications_audio_chunk_cap_mib
+          - applications_audio_on_pod.containers[0].resources.limits['ephemeral-storage'] == (applications_audio_empty_dir_mib ~ 'Mi')
+          - applications_audio_on_pod.containers[0].resources.requests['ephemeral-storage'] == (applications_audio_empty_dir_mib ~ 'Mi')
+          - applications_audio_on_env.MEDIA_PROBE_TEMP_DIR.value == '/tmp/media-probe'
+        fail_msg: >-
+          The probe emptyDir must be bounded and hold the maximum source download plus
+          one chunk capped at 25 MiB; ephemeral-storage must equal the volume limit.
+
+    - name: Require egress to stay DNS, the media proxy and the PostgreSQL forwarder only
+      ansible.builtin.assert:
+        that:
+          - applications_audio_on_egress == applications_audio_off_egress
+          - applications_audio_on_egress.egress | length == 3
+          - >-
+            applications_audio_on_egress.egress | map(attribute='ports') | flatten
+            | map(attribute='port') | sort == [53, 53, 3128, 5432] | sort
+          - applications_audio_on_egress.egress | selectattr('to.0.ipBlock', 'defined') | list | length == 0
+        fail_msg: >-
+          PutObject must reuse the existing media-egress-proxy route; no new egress rule
+          or direct S3 CIDR is allowed.

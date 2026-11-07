@@ -93,6 +93,11 @@ media_probe_worker_enabled: true
 api_media_enabled: true
 # Shared in-cluster proxy route for the API, ai-worker and media-probe-worker.
 media_probe_worker_proxy_url: http://media-egress-proxy:3128
+# Derived audio for media STT (#160): the probe decodes with ffmpeg, cuts chunks
+# and PutObjects them under derived-audio/ in the media bucket. Keep false until
+# the owner has granted s3:PutObject on derived-audio/* to the probe identity and
+# created the 2-day lifecycle rule (docs/deployment/RUNBOOK-media-audio-prep-dev.md).
+media_probe_audio_prep_enabled: false
 media_probe_worker_dns_ip: 10.43.0.10
 media_probe_worker_egress_proxy_port: 3128
 # The probe reaches PostgreSQL only through the media-probe-db-egress
@@ -122,8 +127,8 @@ go_worker_resources:
   limits: {cpu: "1", memory: 1Gi}
 media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:REPLACE_WITH_64_HEX_DIGEST
 media_probe_worker_resources:
-  requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 550Mi}
-  limits: {cpu: 500m, memory: 512Mi, ephemeral-storage: 550Mi}
+  requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 600Mi}
+  limits: {cpu: 500m, memory: 512Mi, ephemeral-storage: 600Mi}
 go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:REPLACE_WITH_64_HEX_DIGEST
 # A poll loop that issues a few S3 deletes; 25m keeps the dev CPU budget (#206).
 document_purge_worker_resources:
