@@ -1,0 +1,34 @@
+{
+  "description": "Offline Vietnamese transcript fixture (UTF-8, full diacritics). Two chunks with a 2 s overlap; relative times per chunk. Hand-written, no real audio or provider output.",
+  "durationSec": 42,
+  "bodySec": 20,
+  "overlapSec": 2,
+  "chunks": [
+    {
+      "index": 0,
+      "segments": [
+        {"startSec": 0.0, "endSec": 6.5, "text": "Xin chào các bạn, hôm nay chúng ta học về quang hợp ở thực vật."},
+        {"startSec": 6.5, "endSec": 14.0, "text": "Quang hợp là quá trình lá cây hấp thụ ánh sáng mặt trời."},
+        {"startSec": 14.0, "endSec": 19.2, "text": "Diệp lục trong lục lạp giữ vai trò quan trọng nhất."},
+        {"startSec": 19.2, "endSec": 21.5, "text": "Quá trình này tạo ra đường và giải phóng khí ôxi."}
+      ]
+    },
+    {
+      "index": 1,
+      "segments": [
+        {"startSec": 1.2, "endSec": 3.5, "text": "Quá trình này tạo ra đường và giải phóng khí ôxi."},
+        {"startSec": 3.5, "endSec": 12.0, "text": "Nhờ vậy, cây xanh cung cấp ôxi cho mọi sinh vật trên Trái Đất."},
+        {"startSec": 12.0, "endSec": 18.0, "text": "   "},
+        {"startSec": 18.0, "endSec": 24.0, "text": "Cảm ơn các bạn đã lắng nghe!"}
+      ]
+    }
+  ],
+  "expected": [
+    {"startSec": 0.0, "endSec": 6.5, "text": "Xin chào các bạn, hôm nay chúng ta học về quang hợp ở thực vật."},
+    {"startSec": 6.5, "endSec": 14.0, "text": "Quang hợp là quá trình lá cây hấp thụ ánh sáng mặt trời."},
+    {"startSec": 14.0, "endSec": 19.2, "text": "Diệp lục trong lục lạp giữ vai trò quan trọng nhất."},
+    {"startSec": 19.2, "endSec": 21.5, "text": "Quá trình này tạo ra đường và giải phóng khí ôxi."},
+    {"startSec": 21.5, "endSec": 30.0, "text": "Nhờ vậy, cây xanh cung cấp ôxi cho mọi sinh vật trên Trái Đất."},
+    {"startSec": 36.0, "endSec": 42.0, "text": "Cảm ơn các bạn đã lắng nghe!"}
+  ]
+}
