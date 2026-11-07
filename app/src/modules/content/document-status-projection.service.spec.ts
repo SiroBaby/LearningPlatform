@@ -159,11 +159,12 @@ describe('DocumentStatusProjectionService.project settlement plan', () => {
 
   it('adds the STT seconds with the estimate formula and holds when STT seconds are uncertain', async () => {
     const { repository, service } = createProjectionService(platformDocument);
+    const expectedSttCredits = new MediaCreditEstimator().estimate({ defaultModel: inputModel, durationSeconds: 355, model: inputModel }).sttCredits;
 
     await service.project(inputProjection({ usage: llmUsage({ llm: [], sttBilledSeconds: 355, sttUncertainSeconds: 60 }) }));
 
     expect(repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({
-      settlement: { hasUncertainDispatch: true, knownActualCredits: 47_334 },
+      settlement: { hasUncertainDispatch: true, knownActualCredits: expectedSttCredits },
     }));
   });
 

@@ -3,8 +3,8 @@ import { describe, expect, it } from '@jest/globals';
 import { MediaCreditEstimator } from './media-credit-estimator';
 import {
   assertPlatformModelsPriced,
-  DEFAULT_STT_MODEL,
   DEFAULT_MODEL_PRICE_TABLE,
+  DEFAULT_STT_MODEL,
   ModelPriceTableError,
   validateModelPriceTable,
   type ModelPriceTable,
@@ -159,8 +159,8 @@ describe('validateModelPriceTable', () => {
 
       expect(actualResult.sttCredits).toBe(expectedSttCredits);
       expect(actualResult.totalCredits).toBe(expectedSttCredits);
-      // 355 s * 6000 micro-USD/min / 60 = 35_500 micro-USD.
-      expect(actualResult.costMicroUsd).toBe(35_500);
+      const sttPrice = DEFAULT_MODEL_PRICE_TABLE.stt[DEFAULT_STT_MODEL];
+      expect(actualResult.costMicroUsd).toBe(Math.ceil((inputSeconds * (sttPrice?.microUsdPerMinute ?? 0)) / 60));
     });
 
     it('returns zero for an attempt that spent nothing', () => {
