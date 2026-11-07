@@ -62,7 +62,7 @@ export function getStatusLabel(status: Phase0Document["status"]): string {
     case "UPLOADED":
       return "Đã tải lên";
     case "PROBING":
-      return "Đang kiểm tra tệp";
+      return "Đang kiểm tra file";
     case "PROCESSING":
       return "Đang xử lý";
     case "READY":
@@ -84,7 +84,7 @@ export function getModelSourceLabel(kind: Phase0ModelSelectionKind | null): stri
   }
 
   if (kind === "CUSTOM") {
-    return "Kết nối riêng của bạn";
+    return "Tự cấu hình";
   }
 
   return "Chưa có";
@@ -96,10 +96,10 @@ export function getEstimateStatusLabel(document: Phase0Document | null): string 
   }
 
   if (document.selectedModelKind === "CUSTOM") {
-    return "Không dùng lượt dùng trong gói";
+    return "Không tính credit trong gói";
   }
 
-  return `Khoảng ${formatCredits(document.estimatedCredits)} lượt dùng`;
+  return `Khoảng ${formatCredits(document.estimatedCredits)} credit`;
 }
 
 export function getSettledCreditsLabel(document: Phase0Document | null): string {
@@ -107,21 +107,21 @@ export function getSettledCreditsLabel(document: Phase0Document | null): string 
     return document?.status === "FAILED" ? "Chưa ghi nhận" : "Đang chờ chốt";
   }
 
-  return `${formatCredits(document.settledCredits)} lượt dùng`;
+  return `${formatCredits(document.settledCredits)} credit`;
 }
 
 export function getBudgetStatusLabel(status: Phase0BudgetStatus | null): string {
   switch (status) {
     case "NOT_RESERVED":
-      return "Chưa giữ lượt dùng";
+      return "Chưa giữ credit";
     case "CUSTOM_ZERO_COST":
-      return "Không dùng lượt dùng trong gói";
+      return "Không tính credit trong gói";
     case "SETTLED":
-      return "Đã chốt lượt dùng";
+      return "Đã chốt credit";
     case "HELD":
-      return "Đang giữ lượt dùng";
+      return "Đang giữ credit";
     case "EXHAUSTED":
-      return "Đã dùng hết lượt dùng";
+      return "Đã hết credit";
     case null:
       return "Đang cập nhật";
   }
@@ -129,22 +129,22 @@ export function getBudgetStatusLabel(status: Phase0BudgetStatus | null): string 
 
 export function getBudgetMessage(document: Phase0Document | null): string {
   if (!document) {
-    return "Sau khi có thêm dữ liệu xử lý, trang này sẽ cập nhật mức ước tính và số lượt dùng cuối cùng.";
+    return "Credit sẽ hiện khi có dữ liệu xử lý.";
   }
 
   if (document.status === "FAILED") {
-    return "Lần xử lý này chưa thành công nên số lượt dùng cuối cùng có thể chưa xuất hiện hoặc chưa được ghi nhận đầy đủ.";
+    return "Xử lý chưa thành công nên credit có thể chưa được ghi nhận.";
   }
 
   if (document.selectedModelKind === "CUSTOM") {
-    return "Kết nối riêng không dùng lượt dùng trong gói. Nhà cung cấp bạn chọn có thể tính phí riêng ngoài hệ thống này.";
+    return "Không tính credit trong gói. Nhà cung cấp của bạn có thể tính phí riêng.";
   }
 
   if (document.settledCredits !== null) {
-    return "Số lượt dùng cuối cùng đã được ghi nhận cho lần xử lý này.";
+    return "Đã ghi nhận credit cho lần xử lý này.";
   }
 
-  return "Số lượt dùng đang hiển thị là ước tính ban đầu, chưa phải số chốt cuối cùng.";
+  return "Credit đang hiển thị là ước tính, chưa phải số chốt.";
 }
 
 function getClientErrorMessage(error: unknown): string {

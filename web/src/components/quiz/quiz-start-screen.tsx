@@ -186,7 +186,7 @@ export function QuizStartScreen({ quiz }: QuizStartScreenProps) {
       ...currentDraftByMode,
       [mode]: undefined,
     }));
-    notify("Đã xóa phần làm dở. Bạn có thể bắt đầu lại từ đầu.", "success");
+    notify("Đã xóa phần làm dở. Bắt đầu lại từ đầu.", "success");
   }
 
   if (quiz.questions.length === 0) {
@@ -196,7 +196,7 @@ export function QuizStartScreen({ quiz }: QuizStartScreenProps) {
           <CardBody className="space-y-4">
             <h2 className="text-xl font-semibold text-ink-900">Quiz chưa có câu hỏi</h2>
             <p className="text-sm leading-6 text-ink-600">
-              Bộ câu hỏi chưa sẵn sàng để làm. Bạn hãy quay lại thư viện sau ít phút.
+              Bộ câu hỏi chưa sẵn sàng để làm. Quay lại thư viện sau ít phút.
             </p>
             <LinkButton href={routes.library} variant="outline">Về thư viện</LinkButton>
           </CardBody>

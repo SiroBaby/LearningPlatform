@@ -1,7 +1,7 @@
 import type { Phase0Document } from "@/lib/phase0/contracts";
 
-const DOCUMENT_DELETION_RETRY_LATER_MESSAGE = "Chưa thể xóa tài liệu lúc này. Bạn hãy thử lại sau ít phút.";
-const DOCUMENT_DELETION_FALLBACK_MESSAGE = "Chưa thể xóa tài liệu. Bạn hãy thử lại sau.";
+const DOCUMENT_DELETION_RETRY_LATER_MESSAGE = "Chưa thể xóa tài liệu. Thử lại sau ít phút.";
+const DOCUMENT_DELETION_FALLBACK_MESSAGE = "Chưa thể xóa tài liệu. Thử lại sau.";
 const NOT_FOUND_STATUS = 404;
 const PURGE_METADATA_UNAVAILABLE_CODE = "DOCUMENT_PURGE_METADATA_UNAVAILABLE";
 

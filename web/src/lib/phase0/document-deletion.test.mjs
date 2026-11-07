@@ -47,14 +47,14 @@ test("asks the learner to retry later when purge metadata is temporarily unavail
 
   assert.equal(
     getDocumentDeletionErrorMessage(mockError),
-    "Chưa thể xóa tài liệu lúc này. Bạn hãy thử lại sau ít phút.",
+    "Chưa thể xóa tài liệu. Thử lại sau ít phút.",
   );
 });
 
 test("asks the learner to retry later on a client timeout", () => {
   const mockError = createClientError({ status: 408, code: "REQUEST_TIMEOUT", retryable: true });
 
-  assert.match(getDocumentDeletionErrorMessage(mockError), /thử lại sau ít phút/u);
+  assert.match(getDocumentDeletionErrorMessage(mockError), /thử lại sau ít phút/iu);
 });
 
 test("recognizes a missing document as already deleted", () => {
@@ -67,9 +67,9 @@ test("recognizes a missing document as already deleted", () => {
 test("never shows backend text for unknown failures", () => {
   const mockClientError = createClientError({ status: 500, code: "INTERNAL" });
 
-  assert.equal(getDocumentDeletionErrorMessage(mockClientError), "Chưa thể xóa tài liệu. Bạn hãy thử lại sau.");
-  assert.equal(getDocumentDeletionErrorMessage(new Error("boom")), "Chưa thể xóa tài liệu. Bạn hãy thử lại sau.");
-  assert.equal(getDocumentDeletionErrorMessage("boom"), "Chưa thể xóa tài liệu. Bạn hãy thử lại sau.");
+  assert.equal(getDocumentDeletionErrorMessage(mockClientError), "Chưa thể xóa tài liệu. Thử lại sau.");
+  assert.equal(getDocumentDeletionErrorMessage(new Error("boom")), "Chưa thể xóa tài liệu. Thử lại sau.");
+  assert.equal(getDocumentDeletionErrorMessage("boom"), "Chưa thể xóa tài liệu. Thử lại sau.");
 });
 
 test("stops polling once the document is READY, FAILED or DELETING", () => {

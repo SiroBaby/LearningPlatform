@@ -72,9 +72,9 @@ export function ProcessingStatusScreen({ documentId }: ProcessingStatusScreenPro
           return;
         }
         if (error instanceof Phase0ClientError && error.status === 404) {
-          setQuizError("Quiz đang được chuẩn bị. Hãy thử cập nhật lại sau ít phút.");
+          setQuizError("Quiz đang được chuẩn bị. Thử lại sau ít phút.");
         } else {
-          setQuizError(getPhase0UiErrorMessage(error, "Chưa thể mở quiz lúc này. Hãy thử lại sau."));
+          setQuizError(getPhase0UiErrorMessage(error, "Chưa thể mở quiz. Thử lại sau."));
         }
       } finally {
         if (!cancelled) {
@@ -99,7 +99,7 @@ export function ProcessingStatusScreen({ documentId }: ProcessingStatusScreenPro
       <EmptyState
         icon={Trash2}
         title="Không tìm thấy tài liệu"
-        description="Không tìm thấy tài liệu này hoặc tài liệu đã bị xóa. Bạn có thể quay lại thư viện để chọn tài liệu khác."
+        description="Tài liệu không còn tồn tại. Về thư viện để chọn tài liệu khác."
         action={<LinkButton href={libraryHref}>Về thư viện</LinkButton>}
       />
     );

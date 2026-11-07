@@ -171,7 +171,7 @@ export function UploadWorkspace({ isMediaUploadEnabled }: UploadWorkspaceProps) 
       setConfirmError(
         getClientErrorMessage(
           error,
-          "Tệp đã tải lên xong nhưng chưa thể chuyển sang bước xử lý. Bạn hãy thử lại.",
+          "File đã tải lên nhưng chưa xử lý được. Thử lại.",
         ),
       );
     }
@@ -182,13 +182,13 @@ export function UploadWorkspace({ isMediaUploadEnabled }: UploadWorkspaceProps) 
 
     if (!selectedFile) {
       setValidationError(isMediaUploadEnabled
-        ? "Hãy chọn tệp PDF, TXT, MP3 hoặc MP4 trước khi tiếp tục."
-        : "Hãy chọn tệp PDF hoặc TXT trước khi tiếp tục.");
+        ? "Chọn file PDF, TXT, MP3 hoặc MP4 để tiếp tục."
+        : "Chọn file PDF hoặc TXT để tiếp tục.");
       return;
     }
 
     if (!uploadSelection) {
-      setValidationError("Hãy chọn cách xử lý trước khi tải tài liệu lên.");
+      setValidationError("Chọn cách xử lý trước khi tải lên.");
       return;
     }
 
@@ -210,7 +210,7 @@ export function UploadWorkspace({ isMediaUploadEnabled }: UploadWorkspaceProps) 
         ...uploadSelection,
       });
     } catch (error) {
-      setStorageError(getClientErrorMessage(error, "Chưa thể bắt đầu tải tệp lên. Hãy thử lại."));
+      setStorageError(getClientErrorMessage(error, "Chưa thể bắt đầu tải file lên. Thử lại."));
       setStep("idle");
       return;
     }
@@ -221,7 +221,7 @@ export function UploadWorkspace({ isMediaUploadEnabled }: UploadWorkspaceProps) 
     try {
       await uploadFileToStorage(upload.uploadUrl, upload.uploadFields, selectedFile.file);
     } catch (error) {
-      setStorageError(getClientErrorMessage(error, "Chưa thể tải tệp lên. Hãy thử lại sau."));
+      setStorageError(getClientErrorMessage(error, "Chưa thể tải file lên. Thử lại sau."));
       setStep("idle");
       return;
     }

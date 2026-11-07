@@ -35,7 +35,7 @@ const planCards: readonly PlanCard[] = [
     video: "Video ngắn",
     features: [
       "Phù hợp để thử tải tài liệu, tạo bài kiểm tra và xem kết quả",
-      "Cảnh báo khi chạm giới hạn lượt dùng hoặc dung lượng tệp",
+      "Cảnh báo khi gần hết credit hoặc file quá lớn",
       "Không phù hợp với video dài hoặc tạo lại nội dung nhiều lần",
     ],
   },
@@ -52,7 +52,7 @@ const planCards: readonly PlanCard[] = [
     video: "Điểm dừng và bản chép lời",
     highlight: true,
     features: [
-      "Tăng lượt dùng cho giai đoạn ôn thi cường độ cao",
+      "Thêm credit cho giai đoạn ôn thi",
       "Mở điểm dừng trong video và công cụ ôn thi đầy đủ",
       "Phù hợp với sinh viên có nhiều tài liệu theo môn học",
     ],
@@ -70,7 +70,7 @@ const planCards: readonly PlanCard[] = [
     video: "Xử lý nhiều tài liệu cùng lúc",
     features: [
       "Dành cho người học nhiều môn cùng lúc",
-      "Nhiều lượt dùng hơn để tạo lại nội dung, hỏi trợ giảng và luyện đề",
+      "Nhiều credit hơn để tạo lại nội dung, hỏi trợ giảng và luyện đề",
       "Phù hợp khi bạn học với ứng dụng hằng ngày",
     ],
   },
@@ -78,7 +78,7 @@ const planCards: readonly PlanCard[] = [
 
 const featureRows = [
   {
-    label: "Lượt dùng AI",
+    label: "Credit",
     values: ["100 / tháng", "450 / tháng", "1.000 / tháng"],
   },
   {
@@ -98,8 +98,8 @@ const featureRows = [
     values: ["Cơ bản", "Đầy đủ", "Lập kế hoạch nâng cao"],
   },
   {
-    label: "Khi dùng hết lượt",
-    values: ["Nâng cấp gói", "Mua thêm lượt hoặc nâng cấp", "Mua thêm lượt linh hoạt"],
+    label: "Khi hết credit",
+    values: ["Nâng cấp gói", "Mua thêm credit hoặc nâng cấp", "Mua thêm credit linh hoạt"],
   },
 ] as const;
 
@@ -115,7 +115,7 @@ export function UpgradeScreen() {
       return;
     }
 
-    notify(`Bạn đã chọn gói ${plan.name}. Thanh toán chưa được mở trong phiên bản này.`, "success");
+    notify(`Đã chọn gói ${plan.name}. Chưa mở thanh toán.`, "success");
   }
 
   return (
@@ -131,7 +131,7 @@ export function UpgradeScreen() {
               Chọn gói trước khi bắt đầu buổi học dài
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-600">
-              Bạn đang chuẩn bị thi, lượt dùng còn thấp và có video trong môn học hiện tại. Student Plus cân bằng giữa chi phí, số lượt dùng, trợ giảng và theo dõi tiến độ.
+              Đang chuẩn bị thi, sắp hết credit và có video trong môn học. Student Plus cân bằng giữa chi phí, credit, trợ giảng và theo dõi tiến độ.
             </p>
           </div>
           <div className="inline-flex rounded-xl border border-ink-200 bg-ink-50 p-1">
@@ -181,9 +181,9 @@ export function UpgradeScreen() {
                   {plan.id === usage.planTier ? <Badge tone="warning">Đang dùng</Badge> : null}
                 </div>
                 <div className="space-y-2 text-sm text-ink-600">
-                  <p><span className="font-medium text-ink-900">Lượt dùng:</span> {plan.credits}</p>
+                  <p><span className="font-medium text-ink-900">Credit:</span> {plan.credits}</p>
                   <p><span className="font-medium text-ink-900">Tài liệu:</span> {plan.uploads}</p>
-                  <p><span className="font-medium text-ink-900">Tệp hỗ trợ:</span> {plan.maxFile}</p>
+                  <p><span className="font-medium text-ink-900">File hỗ trợ:</span> {plan.maxFile}</p>
                   <p><span className="font-medium text-ink-900">Trợ giảng:</span> {plan.tutor}</p>
                   <p><span className="font-medium text-ink-900">Theo dõi tiến độ:</span> {plan.analytics}</p>
                   <p><span className="font-medium text-ink-900">Video:</span> {plan.video}</p>
@@ -257,9 +257,9 @@ export function UpgradeScreen() {
               <div className="flex items-start gap-3">
                 <Clock3 className="mt-0.5 h-5 w-5 text-warning-700" />
                 <div>
-                  <p className="text-sm font-semibold text-warning-800">Lượt dùng sắp là giới hạn chính</p>
+                  <p className="text-sm font-semibold text-warning-800">Credit sắp thành giới hạn chính</p>
                   <p className="mt-1 text-sm leading-6 text-warning-800/90">
-                    Gói Miễn phí còn 18 lượt dùng. Một video bài giảng hoặc vài lần tạo lại lời giải có thể dùng hết trong ngày.
+                    Gói Miễn phí còn 18 credit. Một video bài giảng có thể dùng hết trong ngày.
                   </p>
                 </div>
               </div>
@@ -281,7 +281,7 @@ export function UpgradeScreen() {
                 <div>
                   <p className="text-sm font-semibold text-success-800">Theo dõi tiến độ không bị gián đoạn</p>
                   <p className="mt-1 text-sm leading-6 text-success-800/90">
-                    Khi không bị chặn bởi giới hạn lượt dùng, tiến độ phản ánh đúng hơn và kế hoạch học không cần cắt bớt việc ôn tập.
+                    Khi không bị chặn bởi giới hạn credit, kế hoạch học không cần cắt bớt việc ôn tập.
                   </p>
                 </div>
               </div>

@@ -103,7 +103,7 @@ export function DeleteDocumentButton({ documentId, documentName }: DeleteDocumen
       >
         <div className="space-y-3 text-sm leading-6 text-ink-600">
           <p>
-            Tài liệu <span className="break-words font-semibold text-ink-900">{documentName}</span> và tệp gốc
+            Tài liệu <span className="break-words font-semibold text-ink-900">{documentName}</span> và file gốc
             sẽ bị xóa khỏi thư viện của bạn.
           </p>
           <p>Bạn không thể hoàn tác thao tác này. Nếu tài liệu đang được xử lý, quá trình xử lý sẽ dừng lại.</p>

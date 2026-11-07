@@ -40,7 +40,7 @@ const UPLOAD_FILE_POLICIES: readonly UploadFilePolicy[] = [
     extension: "pdf",
     acceptedMimeTypes: ["application/pdf"],
     maxSizeBytes: MAX_DOCUMENT_SIZE_BYTES,
-    maxSizeLabel: "1 GiB",
+    maxSizeLabel: "1 GB",
   },
   {
     type: "TEXT",
@@ -48,7 +48,7 @@ const UPLOAD_FILE_POLICIES: readonly UploadFilePolicy[] = [
     extension: "txt",
     acceptedMimeTypes: ["text/plain"],
     maxSizeBytes: MAX_DOCUMENT_SIZE_BYTES,
-    maxSizeLabel: "1 GiB",
+    maxSizeLabel: "1 GB",
   },
   {
     type: "AUDIO",
@@ -56,7 +56,7 @@ const UPLOAD_FILE_POLICIES: readonly UploadFilePolicy[] = [
     extension: "mp3",
     acceptedMimeTypes: ["audio/mpeg"],
     maxSizeBytes: MAX_MP3_SIZE_BYTES,
-    maxSizeLabel: "300 MiB",
+    maxSizeLabel: "300 MB",
   },
   {
     type: "VIDEO",
@@ -64,11 +64,11 @@ const UPLOAD_FILE_POLICIES: readonly UploadFilePolicy[] = [
     extension: "mp4",
     acceptedMimeTypes: ["video/mp4"],
     maxSizeBytes: MAX_MP4_SIZE_BYTES,
-    maxSizeLabel: "500 MiB",
+    maxSizeLabel: "500 MB",
   },
 ];
 
-export const ESTIMATE_HELPER_TEXT = "Đây là ước tính sơ bộ dựa trên dung lượng tệp, chưa phải mức giữ. Hệ thống chỉ giữ lượt dùng sau khi đọc nội dung chữ thật của tệp.";
+export const ESTIMATE_HELPER_TEXT = "Ước tính theo dung lượng file. Credit thật được tính sau khi đọc nội dung file.";
 
 export function formatBytes(sizeBytes: number): string {
   if (sizeBytes < 1024) {
@@ -110,22 +110,22 @@ export function normalizeFileSelection(file: File): SelectedPhase0File | { reado
   const policy = getUploadFilePolicy(extension);
 
   if (file.size <= 0) {
-    return { error: "Tệp này đang trống nên chưa thể tải lên." };
+    return { error: "File trống. Chọn file khác." };
   }
 
   if (!policy) {
-    return { error: "Hiện chỉ hỗ trợ tệp PDF, TXT, MP3 hoặc MP4." };
+    return { error: "Chỉ hỗ trợ PDF, TXT, MP3, MP4." };
   }
 
   if (mime.length > 0 && !policy.acceptedMimeTypes.includes(mime)) {
     return {
-      error: `Định dạng tệp không khớp với phần mở rộng .${extension}. Hãy chọn đúng tệp ${policy.label} gốc.`,
+      error: `File không đúng định dạng .${extension}. Chọn đúng file ${policy.label}.`,
     };
   }
 
   if (file.size > policy.maxSizeBytes) {
     return {
-      error: `Tệp ${policy.label} vượt giới hạn ${policy.maxSizeLabel}. Hãy giảm dung lượng rồi tải lại.`,
+      error: `File ${policy.label} quá lớn. Thử lại với file nhẹ hơn (tối đa ${policy.maxSizeLabel}).`,
     };
   }
 
@@ -158,8 +158,8 @@ export async function uploadFileToStorage(
     const detail = responseText.trim();
     throw new Error(
       detail.length > 0
-        ? `Không thể tải tệp lên: ${detail}`
-        : "Không thể tải tệp lên. Hãy thử lại sau.",
+        ? `Chưa thể tải file lên: ${detail}`
+        : "Chưa thể tải file lên. Thử lại sau.",
     );
   }
 }
@@ -177,8 +177,8 @@ export function groupModelOptions(models: readonly Phase0ModelOption[]): readonl
     },
     {
       kind: "CUSTOM",
-      title: "Kết nối riêng của bạn",
-      description: "Dùng lựa chọn từ kết nối riêng của bạn.",
+      title: "Tự cấu hình",
+      description: "Dùng nhà cung cấp AI bạn đã tự thiết lập.",
       options: customOptions,
     },
   ];
@@ -234,7 +234,7 @@ export function formatCredits(value: number): string {
 }
 
 export function getModelSourceLabel(kind: Phase0ModelOption["kind"]): string {
-  return kind === "PLAN" ? "Có trong gói của bạn" : "Kết nối riêng của bạn";
+  return kind === "PLAN" ? "Có trong gói của bạn" : "Tự cấu hình";
 }
 
 export function getModelLabel(label: string): string {
@@ -243,14 +243,14 @@ export function getModelLabel(label: string): string {
 
 export function getEstimateSummary(estimate: Phase0EstimateResponse): string {
   if (estimate.selectedModelKind === "CUSTOM") {
-    return "Tài liệu này không dùng lượt dùng trong gói. Nhà cung cấp kết nối riêng của bạn có thể tính phí riêng.";
+    return "Không tính credit trong gói. Nhà cung cấp của bạn có thể tính phí riêng.";
   }
 
   if (estimate.estimatedCredits === null) {
-    return "Lượt dùng sẽ được tính sau khi hệ thống kiểm tra tệp âm thanh hoặc video.";
+    return "Credit được tính sau khi kiểm tra file MP3/MP4.";
   }
 
-  return `Ước tính sơ bộ khoảng ${formatCredits(estimate.estimatedCredits)} lượt dùng. Đây chưa phải mức hệ thống giữ; mức thật được tính sau khi đọc nội dung tệp.`;
+  return `Ước tính khoảng ${formatCredits(estimate.estimatedCredits)} credit. Credit thật được tính sau khi đọc nội dung file.`;
 }
 
 export function getUploadStepLabel(step: UploadStep): string {
@@ -260,9 +260,9 @@ export function getUploadStepLabel(step: UploadStep): string {
     case "creating":
       return "Đang chuẩn bị";
     case "uploading":
-      return "Đang tải tệp lên";
+      return "Đang tải file lên";
     case "uploaded":
-      return "Đã tải tệp lên";
+      return "Đã tải file lên";
     case "confirming":
       return "Đang chuyển sang xử lý";
     case "confirmed":

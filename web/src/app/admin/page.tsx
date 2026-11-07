@@ -33,8 +33,7 @@ export default async function AdminOverviewPage(): Promise<React.ReactNode> {
             Chưa thể tải thông tin vận hành
           </h2>
           <p className="mt-2 max-w-xl text-sm leading-6 text-error-700">
-            Hãy tải lại trang sau ít phút. Nếu tình trạng kéo dài, liên hệ người phụ
-            trách hệ thống.
+            Tải lại trang sau ít phút. Nếu vẫn lỗi, liên hệ người phụ trách hệ thống.
           </p>
         </section>
       )}

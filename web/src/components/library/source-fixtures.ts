@@ -127,7 +127,7 @@ const sourceFixtures: Record<string, readonly SourceSegment[]> = {
       heading: "Không đủ nội dung để xem trước",
       locator: { kind: "page", page: 1 },
       body:
-        "Tệp văn bản quá ngắn nên hệ thống không trích xuất được đủ bằng chứng để sinh câu hỏi và trích dẫn đáng tin cậy. Hãy tải lên ghi chú dài hơn hoặc ghép nhiều đoạn liên quan thành một document.",
+        "File văn bản quá ngắn nên hệ thống không trích xuất được đủ bằng chứng để sinh câu hỏi và trích dẫn đáng tin cậy. Tải lên ghi chú dài hơn hoặc ghép nhiều đoạn liên quan thành một document.",
       citationChunkIds: [],
     },
   ],

@@ -77,8 +77,8 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
   const type = useMemo(() => mapType(document.type), [document.type]);
   const status = useMemo(() => mapStatus(document.status), [document.status]);
   const failurePresentation = useMemo(
-    () => document.status === "FAILED" ? getDocumentFailurePresentation(document.errorCode, document.errorMessage) : null,
-    [document.errorCode, document.errorMessage, document.status],
+    () => document.status === "FAILED" ? getDocumentFailurePresentation(document.errorCode) : null,
+    [document.errorCode, document.status],
   );
   const canRetryFailure = useMemo(
     () => document.status === "FAILED" && isRetryableDocumentFailureCode(document.errorCode),
@@ -233,7 +233,7 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
 
             {!isQuizLoading && quizUnavailable ? (
               <div className="rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm text-ink-700">
-                Tài liệu này chưa có quiz. Bạn có thể quay lại sau để kiểm tra lại.
+                Tài liệu này chưa có quiz. Quay lại sau để kiểm tra lại.
               </div>
             ) : null}
 
@@ -253,7 +253,7 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
             ) : null}
 
             <div className="rounded-2xl border border-warning-100 bg-warning-50/60 p-4 text-sm leading-6 text-warning-800">
-              Khi quiz đã sẵn sàng, bạn có thể mở ngay từ đây để bắt đầu làm bài.
+              Khi quiz sẵn sàng, mở ngay tại đây để làm bài.
             </div>
           </CardBody>
         </Card>

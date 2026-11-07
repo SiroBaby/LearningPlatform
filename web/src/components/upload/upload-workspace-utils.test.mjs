@@ -18,22 +18,21 @@ test("keeps media hard caps and duration limit aligned with the server policy", 
   assert.match(source, /MAX_MP3_SIZE_BYTES = 300 \* 1024 \* 1024/u);
   assert.match(source, /MAX_MP4_SIZE_BYTES = 500 \* 1024 \* 1024/u);
   assert.match(source, /MAX_MEDIA_DURATION_SECONDS = 2 \* 60 \* 60/u);
-  assert.match(source, /maxSizeLabel: "300 MiB"/u);
-  assert.match(source, /maxSizeLabel: "500 MiB"/u);
+  assert.match(source, /maxSizeLabel: "300 MB"/u);
+  assert.match(source, /maxSizeLabel: "500 MB"/u);
 });
 
 test("validates extension, MIME type and size before upload", () => {
   assert.match(source, /if \(!policy\)/u);
   assert.match(source, /mime.length > 0 && !policy.acceptedMimeTypes.includes\(mime\)/u);
   assert.match(source, /file.size > policy.maxSizeBytes/u);
-  assert.match(source, /Tệp \$\{policy.label\} vượt giới hạn \$\{policy.maxSizeLabel\}/u);
+  assert.match(source, /File \$\{policy.label\} quá lớn/u);
 });
 
 test("keeps the retry warning visible in the upload policy copy", () => {
   const pickerSource = readFileSync(resolve(dirname(import.meta.filename), "upload-picker-section.tsx"), "utf8");
 
-  assert.match(pickerSource, /tải lại.*bắt đầu từ đầu/u);
-  assert.match(pickerSource, /chưa hỗ trợ tiếp tục từ phần đã tải/u);
+  assert.match(pickerSource, /mạng bị ngắt.*tải lại từ đầu/u);
 });
 
 test("keeps media types hidden until the server enables the feature", () => {

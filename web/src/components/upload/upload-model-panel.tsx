@@ -32,7 +32,7 @@ export function UploadModelPanel({
         value={serializeModelChoice(selectedModel)}
         onChange={(event) => onChange(event.target.value)}
         disabled={isLoadingModels || groupedModelOptions.length === 0}
-        error={!selectedModel && !isLoadingModels && groupedModelOptions.length > 0 ? "Hãy chọn một cách xử lý để tiếp tục." : undefined}
+        error={!selectedModel && !isLoadingModels && groupedModelOptions.length > 0 ? "Chọn một cách xử lý để tiếp tục." : undefined}
         hint={isLoadingModels ? "Đang tải các lựa chọn…" : "Các lựa chọn được nhóm theo nguồn để bạn dễ cân nhắc."}
       >
         <option value="">Chọn cách phù hợp</option>

@@ -7,22 +7,19 @@ import { formatDateTime, notifications } from "@/lib/mock-data";
 export const metadata: Metadata = {
   title: "Thông báo",
   description:
-    "Theo dõi tài liệu sẵn sàng, lần xử lý chưa thành công, lượt ôn đến hạn và các tín hiệu quan trọng khác trong quá trình học.",
+    "Xem tài liệu sẵn sàng, lỗi xử lý và lượt ôn đến hạn.",
 };
 
 function localizeNotificationText(value: string): string {
   return value
-    .replace(/\bflashcards?\b/gi, "thẻ ghi nhớ")
-    .replace(/\bquiz\b/gi, "bài kiểm tra")
-    .replace(/\bcredits?\b/gi, "lượt dùng")
-    .replace(/Tín dụng/g, "Lượt dùng");
+    .replace(/\bflashcards?\b/gi, "thẻ ghi nhớ");
 }
 
 export default function NotificationsPage() {
   return (
     <LearnerShell
       title="Thông báo"
-      subtitle="Mỗi thông báo đưa bạn trở lại đúng nơi cần tiếp tục học hoặc xử lý."
+      subtitle="Mở thông báo để quay lại đúng chỗ cần làm."
     >
       <Card>
         <CardHeader>

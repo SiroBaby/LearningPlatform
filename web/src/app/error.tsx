@@ -22,7 +22,7 @@ export default function ErrorPage({
       <SystemStatePage
         badge="Lỗi tạm thời"
         title="Chưa mở được trang này"
-        description="Hãy thử lại hoặc về trang chủ."
+        description="Thử lại hoặc về trang chủ."
         icon="error"
         tone="error"
         primaryAction={

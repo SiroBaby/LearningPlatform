@@ -67,7 +67,7 @@ test("retry action surfaces safe error when confirm fails", async () => {
 
   await retry();
 
-  assert.deepEqual(retryErrors, [null, "Tài liệu này chưa thể thử lại ở trạng thái hiện tại. Hãy kiểm tra trạng thái hoặc tải lên tài liệu mới."]);
+  assert.deepEqual(retryErrors, [null, "Chưa thể thử lại tài liệu này. Kiểm tra trạng thái hoặc tải lên tài liệu mới."]);
   assert.deepEqual(submittingStates, [true, false]);
 });
 
@@ -109,7 +109,7 @@ test("retry action ignores duplicate submissions while confirm is in flight", as
 test("maps unknown retry confirm failures to safe fallback copy", () => {
   assert.equal(
     getRetryConfirmErrorMessage(new Error("connect ECONNREFUSED 127.0.0.1:3000")),
-    "Chưa thể thử lại tài liệu lúc này. Bạn hãy đợi một chút rồi thử lại.",
+    "Chưa thể thử lại tài liệu. Đợi một chút rồi thử lại.",
   );
 });
 
@@ -121,7 +121,7 @@ test("maps typed retry failures without exposing backend messages", () => {
 
   assert.equal(
     getRetryConfirmErrorMessage(error),
-    "Tài liệu này chưa thể thử lại ở trạng thái hiện tại. Hãy kiểm tra trạng thái hoặc tải lên tài liệu mới.",
+    "Chưa thể thử lại tài liệu này. Kiểm tra trạng thái hoặc tải lên tài liệu mới.",
   );
 });
 
@@ -134,7 +134,7 @@ test("maps request timeouts to bounded learner-facing copy", () => {
 
   assert.equal(
     getRetryConfirmErrorMessage(error),
-    "Hệ thống phản hồi quá lâu. Bạn hãy thử lại sau ít phút.",
+    "Hệ thống phản hồi quá lâu. Thử lại sau ít phút.",
   );
 });
 
@@ -142,7 +142,7 @@ test("restores retry focus only when a new retry error appears after submit fini
   assert.equal(
     shouldRestoreRetryFocus({
       previousRetryError: null,
-      retryError: "Bạn hãy đợi một chút rồi thử lại.",
+      retryError: "Đợi một chút rồi thử lại.",
       isRetrySubmitting: false,
     }),
     true,
@@ -150,8 +150,8 @@ test("restores retry focus only when a new retry error appears after submit fini
 
   assert.equal(
     shouldRestoreRetryFocus({
-      previousRetryError: "Bạn hãy đợi một chút rồi thử lại.",
-      retryError: "Bạn hãy đợi một chút rồi thử lại.",
+      previousRetryError: "Đợi một chút rồi thử lại.",
+      retryError: "Đợi một chút rồi thử lại.",
       isRetrySubmitting: false,
     }),
     false,
@@ -160,7 +160,7 @@ test("restores retry focus only when a new retry error appears after submit fini
   assert.equal(
     shouldRestoreRetryFocus({
       previousRetryError: null,
-      retryError: "Bạn hãy đợi một chút rồi thử lại.",
+      retryError: "Đợi một chút rồi thử lại.",
       isRetrySubmitting: true,
     }),
     false,
@@ -186,6 +186,6 @@ test("maps INSUFFICIENT_CREDITS retry failures to credit copy, not a wait-and-re
 
   assert.equal(
     getRetryConfirmErrorMessage(error),
-    "Bạn không đủ credit để xử lý tài liệu này. Cần thêm khoảng 120 credit. Hãy bổ sung credit hoặc dùng tệp nhỏ hơn.",
+    "Không đủ credit. Nạp thêm hoặc thử lại với file nhẹ hơn.",
   );
 });

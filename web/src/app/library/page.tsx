@@ -14,7 +14,7 @@ export default function LibraryPage() {
   return (
     <LearnerShell
       title="Thư viện"
-      subtitle="Tất cả tài liệu của bạn ở đây để xem lại, theo dõi xử lý và mở quiz khi sẵn sàng."
+      subtitle="Xem tài liệu, theo dõi xử lý và mở quiz khi sẵn sàng."
     >
       <Suspense fallback={<SkeletonCard />}>
         <LibraryBrowser />

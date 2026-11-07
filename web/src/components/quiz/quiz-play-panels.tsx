@@ -97,7 +97,7 @@ export function QuizQuestionCard({
             className="rounded-2xl border border-error-100 bg-error-50 p-4 text-sm text-error-800 focus:outline-none focus:ring-2 focus:ring-error-500 focus:ring-offset-2"
           >
             <p className="font-semibold">Bạn còn {missingAnswerSummary.count} câu chưa trả lời.</p>
-            <p className="mt-1">Hãy bắt đầu từ câu {missingAnswerSummary.firstDisplayPosition} rồi nộp bài lại.</p>
+            <p className="mt-1">Bắt đầu từ câu {missingAnswerSummary.firstDisplayPosition} rồi nộp bài lại.</p>
           </div>
         ) : null}
 
