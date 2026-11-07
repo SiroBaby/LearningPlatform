@@ -294,8 +294,16 @@ describe('ReturnRelay credit settlement (#160 D7)', () => {
   it('treats malformed usage like absent usage instead of blocking the relay', async () => {
     const run = await seedReservedRun();
     const event = await seedResult(run, { usage: { llm: [{ inputTokens: -1, model: 'gpt-5.4-mini', outputTokens: 0 }] } });
+    const warn = jest.spyOn(ConsoleLogger.prototype, 'warn').mockImplementation(() => undefined);
 
     await relay.pump(10);
+
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: run.document.id,
+      event: 'ai.job.return.usage_malformed',
+      jobId: run.jobId,
+    }));
+    warn.mockRestore();
 
     expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
     expect(Object.keys(await readLedger(run.jobId))).toContain(key('hold', run.jobId));
@@ -328,9 +336,19 @@ describe('ReturnRelay credit settlement (#160 D7)', () => {
 
   it('does not settle another job reservation when the event job id is not the Document pipeline job', async () => {
     const run = await seedReservedRun();
-    await seedResult(run, { usage: { llm: [], uncertainDispatches: 0 } }, randomUUID());
+    const otherJobId = randomUUID();
+    await seedResult(run, { usage: { llm: [], uncertainDispatches: 0 } }, otherJobId);
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'warn').mockImplementation(() => undefined);
 
     await relay.pump(10);
+
+    expect(logger).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: run.document.id,
+      event: 'content.settlement.skipped',
+      eventJobId: otherJobId,
+      reason: 'job_id_mismatch',
+    }));
+    logger.mockRestore();
 
     expect(Object.keys(await readLedger(run.jobId))).toEqual([key('reserve', run.jobId)]);
     expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '4000', reserved_credits: '1000' });

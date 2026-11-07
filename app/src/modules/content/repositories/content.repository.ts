@@ -11,6 +11,7 @@ import {
   DocumentStatusProjectionPersistenceCommand,
   DocumentStatusProjectionOutcome,
 } from '../contracts/document-status-projection.port';
+import { createApplicationLogger } from '../../../common/logging/application-logger.factory';
 import { settleReservation } from './credit-settlement';
 import { Document } from '../entities/document.entity';
 import {
@@ -35,6 +36,8 @@ import { MAX_MEDIA_DURATION_SEC, MEDIA_PROBE_JOB_TYPE } from '../contracts/media
 
 @Injectable()
 export class ContentRepository extends BaseRepository<Document> {
+  private readonly logger = createApplicationLogger({ context: ContentRepository.name });
+
   constructor(private readonly dataSource: DataSource) {
     super(Document, dataSource);
   }
@@ -1038,6 +1041,16 @@ export class ContentRepository extends BaseRepository<Document> {
       !Number.isSafeInteger(processingAttempt) ||
       processingAttempt < 1
     ) {
+      // A silent skip would leave the reservation locked with no trace, so make it visible.
+      this.logger.warn({
+        documentId: command.documentId,
+        event: 'content.settlement.skipped',
+        eventJobId: command.jobId,
+        fullPipelineJobId: document.fullPipelineJobId,
+        processingAttempt: document.processingAttempt,
+        reason: command.jobId === null || document.fullPipelineJobId !== command.jobId ? 'job_id_mismatch' : 'invalid_processing_attempt',
+        runtime: 'worker',
+      });
       return;
     }
     const outcome = await settleReservation(manager, {

@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { ConsoleLogger } from '@nestjs/common';
 
 import type { DocumentProbeCompletionCommand, DocumentStatusProjectionCommand } from './contracts/document-status-projection.port';
 import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
@@ -189,6 +190,20 @@ describe('DocumentStatusProjectionService.project settlement plan', () => {
     expect(repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({
       settlement: { hasUncertainDispatch: expectedUncertain, knownActualCredits: 0 },
     }));
+  });
+
+  it('logs the actual usage only after the projection was applied', async () => {
+    const { repository, service } = createProjectionService(platformDocument);
+    const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
+    repository.projectProcessingResult.mockResolvedValueOnce('IGNORED' as never);
+
+    await service.project(inputProjection({ usage: llmUsage() }));
+    expect(logger).not.toHaveBeenCalled();
+    await service.project(inputProjection({ usage: llmUsage() }));
+
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(logger).toHaveBeenCalledWith(expect.objectContaining({ event: 'content.settlement.actual_usage', jobId: 'job-1' }));
+    logger.mockRestore();
   });
 
   it('holds instead of throwing when the Document model is no longer configured', async () => {

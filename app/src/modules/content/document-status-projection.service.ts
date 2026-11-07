@@ -23,6 +23,11 @@ import { ModelPriceTableError } from './credit-estimation/model-price-table';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
 import { ContentRepository } from './repositories/content.repository';
 
+interface SettlementPlanning {
+  readonly logActualUsage?: () => void;
+  readonly settlement: DocumentSettlementPlan | null;
+}
+
 @Injectable()
 export class DocumentStatusProjectionService implements DocumentStatusProjection {
   private readonly logger = createApplicationLogger({ context: DocumentStatusProjectionService.name });
@@ -43,8 +48,11 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
   }
 
   async project(command: DocumentStatusProjectionCommand): Promise<DocumentStatusProjectionOutcome> {
-    const settlement = await this.planSettlement(command);
-    return this.contentRepository.projectProcessingResult({ ...command, settlement });
+    const { settlement, logActualUsage } = await this.planSettlement(command);
+    const outcome = await this.contentRepository.projectProcessingResult({ ...command, settlement });
+    // Only a projection that was applied settles; an IGNORED/ALREADY_APPLIED event must not log a settlement.
+    if (outcome === 'APPLIED') logActualUsage?.();
+    return outcome;
   }
 
   /**
@@ -54,13 +62,13 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
    *  - usage absent (payload from an older worker): FAILED before any provider call releases everything,
    *    anything else may have spent credits unobserved and stays HELD.
    */
-  private async planSettlement(command: DocumentStatusProjectionCommand): Promise<DocumentSettlementPlan | null> {
+  private async planSettlement(command: DocumentStatusProjectionCommand): Promise<SettlementPlanning> {
     const document = await this.contentRepository.findByOwnerId(command.ownerId, command.documentId);
-    if (!document || document.modelSelectionKind !== 'PLAN') return null;
+    if (!document || document.modelSelectionKind !== 'PLAN') return { settlement: null };
     const { usage } = command;
     if (!usage) {
       const isKnownUnspent = command.status === DocumentStatus.FAILED && isFailureBeforeProviderDispatch(command.errorCode);
-      return { hasUncertainDispatch: !isKnownUnspent, knownActualCredits: 0 };
+      return { settlement: { hasUncertainDispatch: !isKnownUnspent, knownActualCredits: 0 } };
     }
     const hasUncertainDispatch = usage.uncertainDispatches > 0 || (usage.sttUncertainSeconds ?? 0) > 0;
     const platformModels = this.config.ai.platformModels;
@@ -68,27 +76,29 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
     const defaultModel = platformModels[0];
     if (!model || !defaultModel) {
       this.logSettlementUnpriced(command, 'platform_model_not_configured');
-      return { hasUncertainDispatch: true, knownActualCredits: 0 };
+      return { settlement: { hasUncertainDispatch: true, knownActualCredits: 0 } };
     }
     try {
       const actual = this.mediaCreditEstimator.calculateActual({ defaultModel, model, usage });
-      this.logger.log({
-        actualCostMicroUsd: actual.costMicroUsd,
-        documentId: command.documentId,
-        event: 'content.settlement.actual_usage',
-        generationCredits: actual.generationCredits,
-        hasUncertainDispatch,
-        jobId: command.jobId,
-        priceTableVersion: actual.priceTableVersion,
-        runtime: 'worker',
-        sttCredits: actual.sttCredits,
-        totalCredits: actual.totalCredits,
-      });
-      return { hasUncertainDispatch, knownActualCredits: actual.totalCredits };
+      return {
+        logActualUsage: () => this.logger.log({
+          actualCostMicroUsd: actual.costMicroUsd,
+          documentId: command.documentId,
+          event: 'content.settlement.actual_usage',
+          generationCredits: actual.generationCredits,
+          hasUncertainDispatch,
+          jobId: command.jobId,
+          priceTableVersion: actual.priceTableVersion,
+          runtime: 'worker',
+          sttCredits: actual.sttCredits,
+          totalCredits: actual.totalCredits,
+        }),
+        settlement: { hasUncertainDispatch, knownActualCredits: actual.totalCredits },
+      };
     } catch (error) {
       if (!(error instanceof ModelPriceTableError)) throw error;
       this.logSettlementUnpriced(command, 'price_missing');
-      return { hasUncertainDispatch: true, knownActualCredits: 0 };
+      return { settlement: { hasUncertainDispatch: true, knownActualCredits: 0 } };
     }
   }
 

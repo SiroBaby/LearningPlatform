@@ -34,6 +34,9 @@ const INSERT_LEDGER_ENTRY = 'INSERT INTO "course"."credit_ledger_entries" ("owne
  *
  * No RESERVE row means nothing was reserved (PDF/TXT on the Go path, Custom AI): the call is a no-op so credits can
  * never be charged without a reservation. A repeated call returns the recorded outcome and writes nothing.
+ *
+ * Known overshoot: actual usage above the reservation is settled in full, so the wallet can go negative (same as the
+ * legacy settleBudget). Accepted for now; credits are redesigned around real cost in #268.
  */
 export async function settleReservation(manager: EntityManager, input: SettleReservationInput): Promise<ReservationSettlementOutcome> {
   const { jobId, ownerId, processingAttempt } = input;

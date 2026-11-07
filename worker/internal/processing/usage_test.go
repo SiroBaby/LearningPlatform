@@ -85,14 +85,29 @@ func TestOpenAIGenerateMarksSuccessWithoutUsageAsUncertain(t *testing.T) {
 	}
 }
 
-func TestOpenAIGenerateTreatsProviderRejectionAsUnspentAndTransportLossAsUncertain(t *testing.T) {
-	rejecting := usageTestServer(t, http.StatusServiceUnavailable, `{}`)
-	defer rejecting.Close()
-	rejectedTracker := NewUsageTracker()
-	_, _ = NewOpenAI("key", rejecting.URL, "model-a", chatCompletionsJSONProfile(), time.Second).Generate(WithUsageTracker(context.Background(), rejectedTracker), "source")
-	if actual := rejectedTracker.Snapshot(); actual.UncertainDispatches != 0 || len(actual.LLM) != 0 {
-		t.Fatalf("rejected usage = %#v, want nothing spent and nothing uncertain", actual)
+func TestOpenAIGenerateClassifiesHTTPErrorStatusesByWhetherSpendIsKnown(t *testing.T) {
+	tests := map[int]int{
+		http.StatusBadRequest:          0,
+		http.StatusUnauthorized:        0,
+		http.StatusTooManyRequests:     0,
+		http.StatusRequestTimeout:      1,
+		http.StatusInternalServerError: 1,
+		http.StatusBadGateway:          1,
+		http.StatusServiceUnavailable:  1,
+		http.StatusGatewayTimeout:      1,
 	}
+	for status, expectedUncertain := range tests {
+		server := usageTestServer(t, status, `{}`)
+		tracker := NewUsageTracker()
+		_, _ = NewOpenAI("key", server.URL, "model-a", chatCompletionsJSONProfile(), time.Second).Generate(WithUsageTracker(context.Background(), tracker), "source")
+		server.Close()
+		if actual := tracker.Snapshot(); actual.UncertainDispatches != expectedUncertain || len(actual.LLM) != 0 {
+			t.Fatalf("status %d usage = %#v, want %d uncertain dispatches and nothing spent", status, actual, expectedUncertain)
+		}
+	}
+}
+
+func TestOpenAIGenerateTreatsTransportLossAsUncertain(t *testing.T) {
 
 	closed := usageTestServer(t, http.StatusOK, `{}`)
 	closedURL := closed.URL

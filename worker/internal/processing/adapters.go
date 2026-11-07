@@ -298,7 +298,11 @@ func (provider *OpenAI) request(ctx context.Context, instructions, input string,
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		tracker.Rejected()
+		// 408 and 5xx can come from a proxy after the provider already processed the request, so the spend is
+		// unknown and the call stays uncertain. Other 4xx (including 429) are definitive rejections: unspent.
+		if response.StatusCode != http.StatusRequestTimeout && response.StatusCode < 500 {
+			tracker.Rejected()
+		}
 		return "", Failure{Code: ProviderUnavailable, Technical: true}
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))

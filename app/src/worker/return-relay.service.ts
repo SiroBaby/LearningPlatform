@@ -145,7 +145,7 @@ export class ReturnRelay {
           continue;
         }
 
-        payload = this.parseResult(row.payload);
+        payload = this.parseResult(row.payload, row.aggregateId);
         const projectionStartedAt = performance.now();
         stage = 'document-project';
         const projectionOutcome = await this.projection.project({
@@ -270,7 +270,7 @@ export class ReturnRelay {
     }
   }
 
-  private parseResult(payload: Record<string, unknown>): DocumentProcessingResult {
+  private parseResult(payload: Record<string, unknown>, jobId: string): DocumentProcessingResult {
     // Pre-fence v1 rows may omit both fields; partial or malformed fences fail closed.
     const attempt = payload.attempt === undefined
       ? null
@@ -326,7 +326,7 @@ export class ReturnRelay {
       questions,
       settledCredits,
       status: payload.status,
-      usage: this.parseUsage(payload.usage),
+      usage: this.parseUsage(payload.usage, typeof payload.documentId === 'string' ? payload.documentId : null, jobId),
       version: payload.version,
     };
   }
@@ -335,8 +335,17 @@ export class ReturnRelay {
    * Lenient on purpose: usage is optional and advisory for older payloads. Absent or malformed usage becomes null
    * (the settlement then falls back to the conservative no-usage rule) instead of blocking the relay on one event.
    */
-  private parseUsage(value: unknown): DocumentProcessingUsage | null {
-    if (typeof value !== 'object' || value === null) return null;
+  private parseUsage(value: unknown, documentId: string | null, jobId: string): DocumentProcessingUsage | null {
+    if (value === undefined || value === null) return null;
+    const usage = this.parseUsageBlock(value);
+    if (usage === null) {
+      this.logger.warn({ documentId, event: 'ai.job.return.usage_malformed', jobId, runtime: 'worker' });
+    }
+    return usage;
+  }
+
+  private parseUsageBlock(value: unknown): DocumentProcessingUsage | null {
+    if (typeof value !== 'object') return null;
     const usage = value as Record<string, unknown>;
     if (!Array.isArray(usage.llm)) return null;
     const llm: DocumentProcessingUsage['llm'][number][] = [];
