@@ -168,12 +168,25 @@ func run() error {
 	if err := objects.Check(ctx); err != nil {
 		return newBootstrapFailure(bootstrapStorage)
 	}
-	bootstrap := consumer.NewWithOptions(store, objects, generator, consumer.Options{
+	options := consumer.Options{
 		Concurrency:     workerConfig.Concurrency,
 		JobTimeout:      workerConfig.JobTimeout,
 		PollInterval:    workerConfig.PollInterval,
 		ShutdownTimeout: workerConfig.ShutdownTimeout,
-	})
+	}
+	if workerConfig.MediaSTT.Enabled {
+		stt := workerConfig.MediaSTT
+		options.Media = &processing.MediaTranscription{
+			Store:       store,
+			Objects:     objects,
+			Transcriber: processing.NewHTTPTranscriber(stt.APIKey, stt.BaseURL, stt.Model, stt.RequestTimeout),
+			Language:    stt.Language,
+			Concurrency: stt.Concurrency,
+		}
+		options.MediaGenerationConcurrency = stt.GenerationConcurrency
+		slog.Info("worker.media_stt.enabled", "event", "worker.media_stt.enabled", "stt_concurrency", stt.Concurrency, "generation_concurrency", stt.GenerationConcurrency)
+	}
+	bootstrap := consumer.NewWithOptions(store, objects, generator, options)
 	if err := bootstrap.Start(ctx); err != nil {
 		return newBootstrapFailure(bootstrapConsumer)
 	}

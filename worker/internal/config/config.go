@@ -57,6 +57,14 @@ const (
 	audioPrepFFmpegPathEnvironment        = "MEDIA_PROBE_FFMPEG_PATH"
 	audioPrepFFmpegVersionEnvironment     = "MEDIA_PROBE_FFMPEG_VERSION"
 	audioPrepTimeoutEnvironment           = "MEDIA_PROBE_AUDIO_PREP_TIMEOUT_MS"
+	mediaSTTEnabledEnvironment            = "AI_MEDIA_STT_ENABLED"
+	sttBaseURLEnvironment                 = "STT_BASE_URL"
+	sttAPIKeyEnvironment                  = "STT_API_KEY"
+	sttModelEnvironment                   = "STT_MODEL"
+	sttLanguageEnvironment                = "STT_LANGUAGE"
+	sttRequestTimeoutEnvironment          = "STT_REQUEST_TIMEOUT_MS"
+	sttConcurrencyEnvironment             = "STT_CONCURRENCY"
+	mediaGenerationConcurrencyEnvironment = "AI_MEDIA_GENERATION_CONCURRENCY"
 )
 
 type LookupEnv func(string) (string, bool)
@@ -73,7 +81,25 @@ type Config struct {
 	MediaStorage          Storage
 	ObjectStorageProxyURL string
 	LLM                   LLM
+	MediaSTT              MediaSTT
 	Probe                 Probe
+}
+
+// MediaSTT configures real speech-to-text for AUDIO/VIDEO Documents in the full-pipeline worker (#160 PR5). It is
+// separate from the LLM configuration (D1) and off unless AI_MEDIA_STT_ENABLED is exactly "true": with the flag off
+// the worker behaves as before and the STT_* variables are not read.
+type MediaSTT struct {
+	Enabled bool
+	BaseURL string
+	APIKey  string
+	Model   string
+	// Language is the ISO-639 hint sent to the provider (default "vi").
+	Language       string
+	RequestTimeout time.Duration
+	// Concurrency bounds chunks sent to the STT provider at once.
+	Concurrency int
+	// GenerationConcurrency bounds question generation calls for a media Document (D6).
+	GenerationConcurrency int
 }
 
 type Storage struct{ Endpoint, AccessKey, SecretKey, Bucket string }
@@ -137,7 +163,10 @@ func LoadMediaProbe(lookup LookupEnv) (Config, error) {
 		case storageSecretKeyEnvironment:
 			return lookup(mediaProbeSecretKeyEnvironment)
 		case mediaBucketEnvironment, mediaProbeAccessKeyEnvironment, mediaProbeSecretKeyEnvironment,
-			fullPipelineMediaAccessKeyEnvironment, fullPipelineMediaSecretKeyEnvironment:
+			fullPipelineMediaAccessKeyEnvironment, fullPipelineMediaSecretKeyEnvironment,
+			mediaSTTEnabledEnvironment, sttBaseURLEnvironment, sttAPIKeyEnvironment, sttModelEnvironment,
+			sttLanguageEnvironment, sttRequestTimeoutEnvironment, sttConcurrencyEnvironment, mediaGenerationConcurrencyEnvironment:
+			// The probe never holds STT credentials or the STT flag.
 			return "", false
 		}
 		return lookup(key)
@@ -331,7 +360,70 @@ func Load(lookup LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return Config{HealthAddress: healthAddress, Database: database, MigrationsDir: migrationsDir, Concurrency: concurrency, JobTimeout: jobTimeout, PollInterval: pollInterval, ShutdownTimeout: shutdownTimeout, Storage: Storage{endpoint, accessKey, secretKey, bucket}, MediaStorage: mediaStorage, ObjectStorageProxyURL: objectStorageProxyURL, LLM: llm}, nil
+	mediaSTT, err := loadMediaSTT(lookup, jobTimeout, mediaStorage.Bucket != "")
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{HealthAddress: healthAddress, Database: database, MigrationsDir: migrationsDir, Concurrency: concurrency, JobTimeout: jobTimeout, PollInterval: pollInterval, ShutdownTimeout: shutdownTimeout, Storage: Storage{endpoint, accessKey, secretKey, bucket}, MediaStorage: mediaStorage, ObjectStorageProxyURL: objectStorageProxyURL, LLM: llm, MediaSTT: mediaSTT}, nil
+}
+
+// loadMediaSTT reads the media STT flag. Only the literal "true" or "false" is accepted so a typo cannot silently
+// leave the feature in the wrong state. The STT_* settings are read, and required, only when the flag is on.
+func loadMediaSTT(lookup LookupEnv, jobTimeout time.Duration, hasMediaStorage bool) (MediaSTT, error) {
+	switch value(lookup, mediaSTTEnabledEnvironment, "false") {
+	case "false":
+		return MediaSTT{}, nil
+	case "true":
+	default:
+		return MediaSTT{}, fmt.Errorf("%s must be true or false", mediaSTTEnabledEnvironment)
+	}
+	if !hasMediaStorage {
+		return MediaSTT{}, fmt.Errorf("%s requires %s and the full-pipeline media credentials", mediaSTTEnabledEnvironment, mediaBucketEnvironment)
+	}
+	stt := MediaSTT{Enabled: true}
+	var err error
+	if stt.BaseURL, err = required(lookup, sttBaseURLEnvironment); err != nil {
+		return MediaSTT{}, err
+	}
+	if err = requireSecureExternalURL(lookup, sttBaseURLEnvironment, stt.BaseURL); err != nil {
+		return MediaSTT{}, err
+	}
+	if stt.APIKey, err = required(lookup, sttAPIKeyEnvironment); err != nil {
+		return MediaSTT{}, err
+	}
+	if stt.Model, err = required(lookup, sttModelEnvironment); err != nil {
+		return MediaSTT{}, err
+	}
+	stt.Language = value(lookup, sttLanguageEnvironment, "vi")
+	if !isLanguageHint(stt.Language) {
+		return MediaSTT{}, fmt.Errorf("%s must be a 2 or 3 letter lowercase ISO-639 code", sttLanguageEnvironment)
+	}
+	if stt.RequestTimeout, err = boundedDuration(lookup, sttRequestTimeoutEnvironment, 2*time.Minute, time.Second, 5*time.Minute); err != nil {
+		return MediaSTT{}, err
+	}
+	// One STT request at or above the job timeout would always surface as a retryable job deadline.
+	if stt.RequestTimeout >= jobTimeout {
+		return MediaSTT{}, fmt.Errorf("%s must be shorter than %s", sttRequestTimeoutEnvironment, jobTimeoutEnvironment)
+	}
+	if stt.Concurrency, err = boundedInt(lookup, sttConcurrencyEnvironment, 3, 1, 8); err != nil {
+		return MediaSTT{}, err
+	}
+	if stt.GenerationConcurrency, err = boundedInt(lookup, mediaGenerationConcurrencyEnvironment, 4, 1, 8); err != nil {
+		return MediaSTT{}, err
+	}
+	return stt, nil
+}
+
+func isLanguageHint(language string) bool {
+	if len(language) < 2 || len(language) > 3 {
+		return false
+	}
+	for _, character := range language {
+		if character < 'a' || character > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 func optionalMediaStorage(lookup LookupEnv, endpoint string) (Storage, error) {

@@ -175,6 +175,8 @@ function readNullableDocumentProcessingFailureCode(
       return "GENERATION_OUTPUT_TRUNCATED";
     case "INSUFFICIENT_VALID_QUESTIONS":
       return "INSUFFICIENT_VALID_QUESTIONS";
+    case "MEDIA_AUDIO_NOT_PREPARED":
+      return "MEDIA_AUDIO_NOT_PREPARED";
     case "MEDIA_AUDIO_PREP_FAILED":
       return "MEDIA_AUDIO_PREP_FAILED";
     case "MEDIA_AUDIO_TRACK_REQUIRED":
@@ -197,6 +199,8 @@ function readNullableDocumentProcessingFailureCode(
       return "MEDIA_PRICING_UNAVAILABLE";
     case "MEDIA_REQUIRES_PLATFORM_MODEL":
       return "MEDIA_REQUIRES_PLATFORM_MODEL";
+    case "MEDIA_TRANSCRIPT_EMPTY":
+      return "MEDIA_TRANSCRIPT_EMPTY";
     case "MEDIA_UNSUPPORTED_AUDIO_CODEC":
       return "MEDIA_UNSUPPORTED_AUDIO_CODEC";
     case "MEDIA_UNSUPPORTED_CONTAINER":
@@ -211,8 +215,12 @@ function readNullableDocumentProcessingFailureCode(
       return "PROCESSING_FAILED";
     case "PROCESSING_TIMED_OUT":
       return "PROCESSING_TIMED_OUT";
+    case "PROVIDER_INCOMPATIBLE":
+      return "PROVIDER_INCOMPATIBLE";
     case "PROVIDER_UNAVAILABLE":
       return "PROVIDER_UNAVAILABLE";
+    case "TRANSCRIPTION_OUTPUT_INVALID":
+      return "TRANSCRIPTION_OUTPUT_INVALID";
     default:
       return null;
   }

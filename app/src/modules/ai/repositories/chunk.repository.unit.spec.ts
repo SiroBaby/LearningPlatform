@@ -47,4 +47,50 @@ describe('ChunkRepository', () => {
     expect(insert).toHaveBeenCalledTimes(3);
     expect(insert.mock.calls.map(([, batch]) => batch.length)).toEqual([2, 2, 1]);
   });
+
+  it('persists time locators as start_sec and end_sec and leaves page rows untouched', async () => {
+    const jobId = randomUUID();
+    const insert = jest.fn(async (_target: unknown, _entities: unknown[]) => undefined);
+    const manager = {
+      insert,
+      query: jest.fn(async (sql: string) => (
+        sql.includes('SELECT "id"') ? [{ id: jobId }] : undefined
+      )),
+    };
+    const dataSource = {
+      createEntityManager: () => ({}),
+      transaction: async <T>(callback: (transactionManager: typeof manager) => Promise<T>) =>
+        callback(manager),
+    } as unknown as DataSource;
+    const repository = new ChunkRepository(dataSource);
+    const candidates: ChunkCandidate[] = [
+      {
+        chunkIndex: 0,
+        contentHash: '0'.padStart(64, '0'),
+        id: randomUUID(),
+        locator: { kind: 'time', startSec: 0, endSec: 12.02 },
+        text: 'Xin chào các bạn',
+      },
+      {
+        chunkIndex: 1,
+        contentHash: '1'.padStart(64, '0'),
+        id: randomUUID(),
+        locator: { kind: 'page', page: 3 },
+        text: 'page chunk',
+      },
+    ];
+
+    await repository.replaceForDocument({
+      attempt: 1,
+      chunks: candidates,
+      documentId: randomUUID(),
+      jobId,
+      leaseId: randomUUID(),
+      ownerId: randomUUID(),
+    });
+
+    const rows = insert.mock.calls[0]?.[1] as Array<Record<string, unknown>>;
+    expect(rows[0]).toMatchObject({ pageNumber: null, startSec: '0.000', endSec: '12.020' });
+    expect(rows[1]).toMatchObject({ pageNumber: 3, startSec: null, endSec: null });
+  });
 });

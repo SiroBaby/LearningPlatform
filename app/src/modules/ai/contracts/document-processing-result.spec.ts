@@ -41,6 +41,8 @@ describe('isDocumentProcessingFailureRetryable', () => {
 const NON_PROBE_MEDIA_CODES: ReadonlySet<string> = new Set([
   DocumentProcessingFailureCode.MEDIA_PRICING_UNAVAILABLE,
   DocumentProcessingFailureCode.MEDIA_REQUIRES_PLATFORM_MODEL,
+  DocumentProcessingFailureCode.MEDIA_AUDIO_NOT_PREPARED,
+  DocumentProcessingFailureCode.MEDIA_TRANSCRIPT_EMPTY,
 ]);
 
 describe('media probe failure contract', () => {
@@ -66,5 +68,17 @@ describe('media probe failure contract', () => {
     const goTypes = readFileSync(join(__dirname, '../../../../../worker/internal/processing/types.go'), 'utf8');
 
     expect(goTypes).toContain(`"${DocumentProcessingFailureCode.MEDIA_REQUIRES_PLATFORM_MODEL}"`);
+  });
+
+  it.each([
+    DocumentProcessingFailureCode.MEDIA_AUDIO_NOT_PREPARED,
+    DocumentProcessingFailureCode.MEDIA_TRANSCRIPT_EMPTY,
+    DocumentProcessingFailureCode.TRANSCRIPTION_OUTPUT_INVALID,
+    DocumentProcessingFailureCode.PROVIDER_INCOMPATIBLE,
+  ])('keeps the full-pipeline STT failure code %s identical in the Go worker', (code) => {
+    const goTypes = readFileSync(join(__dirname, '../../../../../worker/internal/processing/types.go'), 'utf8');
+
+    expect(goTypes).toContain(`"${code}"`);
+    expect(isDocumentProcessingFailureRetryable(code)).toBe(false);
   });
 });

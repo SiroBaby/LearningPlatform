@@ -40,8 +40,8 @@ export class ChunkRepository extends BaseRepository<Chunk> implements ChunkStore
           documentId: input.documentId,
           ownerId: input.ownerId,
           pageNumber: chunk.locator.kind === 'page' ? chunk.locator.page : null,
-          startSec: null,
-          endSec: null,
+          startSec: chunk.locator.kind === 'time' ? chunk.locator.startSec.toFixed(3) : null,
+          endSec: chunk.locator.kind === 'time' ? chunk.locator.endSec.toFixed(3) : null,
         })));
       }
       return true;

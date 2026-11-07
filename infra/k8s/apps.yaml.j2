@@ -396,6 +396,30 @@ spec:
               value: {{ media_probe_worker_proxy_url | quote }}
 {% endif %}
 {% endif %}
+            # Real speech-to-text for MP3/MP4 (#160 PR5) stays OFF until the owner has enabled derived audio and
+            # confirmed the egress path to STT_BASE_URL (docs/deployment/RUNBOOK-media-stt-dev.md). The STT
+            # settings are read only when the flag is true.
+            - name: AI_MEDIA_STT_ENABLED
+              value: '{{ go_worker_media_stt_enabled | default(false) | bool | ternary("true", "false") }}'
+{% if go_worker_media_stt_enabled | default(false) | bool %}
+{% for key in ['STT_BASE_URL', 'STT_API_KEY'] %}
+            - name: {{ key }}
+              valueFrom:
+                secretKeyRef:
+                  name: learning-platform-go-worker-runtime
+                  key: {{ key }}
+{% endfor %}
+            - name: STT_MODEL
+              value: groq/whisper-large-v3
+            - name: STT_LANGUAGE
+              value: vi
+            - name: STT_REQUEST_TIMEOUT_MS
+              value: '120000'
+            - name: STT_CONCURRENCY
+              value: '3'
+            - name: AI_MEDIA_GENERATION_CONCURRENCY
+              value: '4'
+{% endif %}
           readinessProbe:
             httpGet:
               path: /readyz

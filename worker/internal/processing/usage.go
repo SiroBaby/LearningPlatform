@@ -16,10 +16,14 @@ type ModelUsage struct {
 // Usage is the actual-usage block of the DocumentProcessingResult payload (additive; version stays 1).
 // UncertainDispatches counts provider calls whose spend is unknown: they were sent but no answer or token count
 // came back (timeout, connection loss, or a 2xx body without usage). Node holds the matching credits (ADR-0022).
-// Speech-to-text seconds are intentionally absent until the STT pipeline reports them.
+// STTBilledSeconds and STTUncertainSeconds are present only for media Documents that dispatched speech-to-text: whole
+// seconds of audio sent with a known (2xx) outcome, and sent without a known outcome (Node holds those credits).
+// A pointer keeps a legitimate zero on the wire while non-media payloads omit the fields.
 type Usage struct {
 	LLM                 []ModelUsage `json:"llm"`
 	UncertainDispatches int          `json:"uncertainDispatches"`
+	STTBilledSeconds    *int64       `json:"sttBilledSeconds,omitempty"`
+	STTUncertainSeconds *int64       `json:"sttUncertainSeconds,omitempty"`
 }
 
 // UsageTracker accumulates provider usage of one claimed attempt. It is safe for concurrent use.
@@ -96,13 +100,4 @@ func WithUsageTracker(ctx context.Context, tracker *UsageTracker) context.Contex
 func UsageTrackerFrom(ctx context.Context) *UsageTracker {
 	tracker, _ := ctx.Value(usageTrackerKey{}).(*UsageTracker)
 	return tracker
-}
-
-// usagePayload returns the payload block, or nil when no tracker is attached (nothing to report).
-func usagePayload(ctx context.Context) any {
-	tracker := UsageTrackerFrom(ctx)
-	if tracker == nil {
-		return nil
-	}
-	return tracker.Snapshot()
 }

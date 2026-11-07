@@ -136,7 +136,7 @@ func (store *PostgresStore) ReplaceChunks(ctx context.Context, job Job, chunks [
 		if err != nil {
 			return false, err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO ai.chunks(id,document_id,owner_id,chunk_index,text,locator,page_number,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, chunk.ID, job.DocumentID, job.OwnerID, chunk.Index, chunk.Text, locator, nullPage(chunk.Locator), chunk.ContentHash); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO ai.chunks(id,document_id,owner_id,chunk_index,text,locator,page_number,start_sec,end_sec,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, chunk.ID, job.DocumentID, job.OwnerID, chunk.Index, chunk.Text, locator, nullPage(chunk.Locator), nullStartSec(chunk.Locator), nullEndSec(chunk.Locator), chunk.ContentHash); err != nil {
 			return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 		}
 	}
@@ -155,6 +155,21 @@ func (store *PostgresStore) ReplaceChunks(ctx context.Context, job Job, chunks [
 func nullPage(locator Locator) any {
 	if locator.Kind == "page" {
 		return locator.Page
+	}
+	return nil
+}
+
+// nullStartSec and nullEndSec fill the numeric(12,3) time columns for kind "time" and stay NULL for page/text-range.
+func nullStartSec(locator Locator) any {
+	if locator.Kind == LocatorKindTime {
+		return locator.StartSec
+	}
+	return nil
+}
+
+func nullEndSec(locator Locator) any {
+	if locator.Kind == LocatorKindTime {
+		return locator.EndSec
 	}
 	return nil
 }
@@ -193,7 +208,7 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 		if marshalErr != nil {
 			return false, marshalErr
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO ai.chunks(id,document_id,owner_id,chunk_index,text,locator,page_number,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, chunk.ID, job.DocumentID, job.OwnerID, chunk.Index, chunk.Text, locator, nullPage(chunk.Locator), chunk.ContentHash); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO ai.chunks(id,document_id,owner_id,chunk_index,text,locator,page_number,start_sec,end_sec,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, chunk.ID, job.DocumentID, job.OwnerID, chunk.Index, chunk.Text, locator, nullPage(chunk.Locator), nullStartSec(chunk.Locator), nullEndSec(chunk.Locator), chunk.ContentHash); err != nil {
 			return false, NewPersistenceError(FailureOperationChunkReplacement, err)
 		}
 	}
@@ -204,7 +219,11 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 	if tag.RowsAffected() != 1 {
 		return false, ErrJobFenceLost
 	}
-	payload, err := marshalResult(ctx, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "READY", "questions": questions, "promptVersion": "phase0-v1", "minimumQuestionCount": 1, "errorCode": nil, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	stt, err := consumeSTTTotals(ctx, tx, job)
+	if err != nil {
+		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
+	}
+	payload, err := marshalResult(ctx, stt, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "READY", "questions": questions, "promptVersion": "phase0-v1", "minimumQuestionCount": 1, "errorCode": nil, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
 	if err != nil {
 		return false, err
 	}
@@ -232,7 +251,11 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 	if tag.RowsAffected() != 1 {
 		return false, ErrJobFenceLost
 	}
-	payload, err := marshalResult(ctx, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": result, "errorCode": nilIfEmpty(code), "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	stt, err := consumeSTTTotals(ctx, tx, job)
+	if err != nil {
+		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
+	}
+	payload, err := marshalResult(ctx, stt, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": result, "errorCode": nilIfEmpty(code), "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
 	if err != nil {
 		return false, err
 	}
@@ -247,10 +270,17 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 }
 
 // marshalResult encodes the return-seam payload and attaches the actual-usage block when the attempt tracked one.
-func marshalResult(ctx context.Context, payload map[string]any) ([]byte, error) {
-	if usage := usagePayload(ctx); usage != nil {
-		payload["usage"] = usage
+func marshalResult(ctx context.Context, stt *sttTotals, payload map[string]any) ([]byte, error) {
+	tracker := UsageTrackerFrom(ctx)
+	if tracker == nil && stt == nil {
+		return json.Marshal(payload)
 	}
+	usage := tracker.Snapshot()
+	if stt != nil {
+		usage.STTBilledSeconds = &stt.billedSeconds
+		usage.STTUncertainSeconds = &stt.uncertainSeconds
+	}
+	payload["usage"] = usage
 	return json.Marshal(payload)
 }
 func nilIfEmpty(value string) any {
@@ -316,7 +346,11 @@ func (store *PostgresStore) finalizeWithDLQ(ctx context.Context, job Job, code F
 	if _, err = tx.Exec(ctx, `INSERT INTO ai.processing_job_dlq(job_id,document_id,owner_id,correlation_id,idempotency_key,last_attempt,reason_code) SELECT id,document_id,owner_id,correlation_id,idempotency_key,attempts,$2 FROM ai.processing_jobs WHERE id=$1`, job.ID, code); err != nil {
 		return false, NewPersistenceError(FailureOperationDLQInsert, err)
 	}
-	payload, err := marshalResult(ctx, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	stt, err := consumeSTTTotals(ctx, tx, job)
+	if err != nil {
+		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
+	}
+	payload, err := marshalResult(ctx, stt, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
 	if err != nil {
 		return false, err
 	}
