@@ -170,7 +170,7 @@ const comparisonRows = [
 const limitStates = [
   {
     title: "Free limit reached",
-    reason: "Bạn đã dùng gần hết credits tháng này và không còn quota để xử lý thêm tài liệu lớn.",
+    reason: "Bạn đã dùng gần hết credit tháng này, không đủ để xử lý thêm tài liệu lớn.",
     ctaLabel: "Upgrade to Student Plus",
     ctaHref: routes.upgrade,
     alternative: "Hoặc thử sample/demo để xem output trước khi nâng cấp.",
@@ -179,7 +179,7 @@ const limitStates = [
   },
   {
     title: "File too large for current plan",
-    reason: "File 420 MB vượt quá dung lượng tối đa của Free và Student Plus — việc tải lên vẫn bị chặn trước khi trừ credits.",
+    reason: "File 420 MB vượt quá dung lượng tối đa của Free và Student Plus — việc tải lên vẫn bị chặn trước khi trừ credit.",
     ctaLabel: "Compare higher tiers",
     ctaHref: `${routes.pricing}?billing=yearly`,
     alternative: "Hoặc tách file theo chương / lecture để xử lý rẻ hơn.",

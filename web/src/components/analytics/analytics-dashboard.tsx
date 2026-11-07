@@ -340,7 +340,7 @@ export function AnalyticsDashboard() {
               </Link>
             ))}
             <div className="rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm text-warning-700">
-              Tài liệu đang xử lý mới nhất là “{documents[3].title}”. Khi sẵn sàng, hãy thêm vào kế hoạch học để chuẩn bị tốt hơn cho kỳ thi.
+              Tài liệu đang xử lý mới nhất là “{documents[3].title}”. Khi sẵn sàng, thêm vào kế hoạch học để chuẩn bị cho kỳ thi.
             </div>
           </CardBody>
         </Card>

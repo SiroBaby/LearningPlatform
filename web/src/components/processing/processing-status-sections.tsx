@@ -160,7 +160,7 @@ export function ProcessingStatusPanel({
             </div>
             {!failurePresentation.retryable ? (
               <p className="leading-6 text-error-800">
-                Nếu lỗi vẫn tiếp diễn, hãy liên hệ hỗ trợ tại{" "}
+                Nếu vẫn lỗi, liên hệ hỗ trợ tại{" "}
                 <a
                   href={SUPPORT_MAILTO_HREF}
                   className="font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"

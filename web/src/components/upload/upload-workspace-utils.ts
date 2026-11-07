@@ -177,8 +177,8 @@ export function groupModelOptions(models: readonly Phase0ModelOption[]): readonl
     },
     {
       kind: "CUSTOM",
-      title: "Lựa chọn riêng của bạn",
-      description: "Dùng lựa chọn bạn đã tự thiết lập.",
+      title: "Tự cấu hình",
+      description: "Dùng nhà cung cấp AI bạn đã tự thiết lập.",
       options: customOptions,
     },
   ];
@@ -234,7 +234,7 @@ export function formatCredits(value: number): string {
 }
 
 export function getModelSourceLabel(kind: Phase0ModelOption["kind"]): string {
-  return kind === "PLAN" ? "Có trong gói của bạn" : "Lựa chọn riêng của bạn";
+  return kind === "PLAN" ? "Có trong gói của bạn" : "Tự cấu hình";
 }
 
 export function getModelLabel(label: string): string {

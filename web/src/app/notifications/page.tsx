@@ -12,8 +12,7 @@ export const metadata: Metadata = {
 
 function localizeNotificationText(value: string): string {
   return value
-    .replace(/\bflashcards?\b/gi, "thẻ ghi nhớ")
-    .replace(/\bquiz\b/gi, "bài kiểm tra");
+    .replace(/\bflashcards?\b/gi, "thẻ ghi nhớ");
 }
 
 export default function NotificationsPage() {

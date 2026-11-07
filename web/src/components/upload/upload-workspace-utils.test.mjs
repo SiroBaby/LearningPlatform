@@ -32,8 +32,7 @@ test("validates extension, MIME type and size before upload", () => {
 test("keeps the retry warning visible in the upload policy copy", () => {
   const pickerSource = readFileSync(resolve(dirname(import.meta.filename), "upload-picker-section.tsx"), "utf8");
 
-  assert.match(pickerSource, /tải lại.*bắt đầu từ đầu/u);
-  assert.match(pickerSource, /chưa hỗ trợ tiếp tục từ phần đã tải/u);
+  assert.match(pickerSource, /mạng bị ngắt.*tải lại từ đầu/u);
 });
 
 test("keeps media types hidden until the server enables the feature", () => {

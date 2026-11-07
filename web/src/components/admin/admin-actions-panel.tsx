@@ -278,7 +278,7 @@ export function AdminActionsPanel({
           return;
         }
         const message = "Đã gửi yêu cầu đổi vai trò.";
-        setFeedback({ tone: "success", message, detail: "Bạn có thể theo dõi trạng thái ở danh sách bên dưới." });
+        setFeedback({ tone: "success", message, detail: "Xem trạng thái ở danh sách bên dưới." });
         notify(message, "success");
         await refreshRoleChangeRequests();
       } else {

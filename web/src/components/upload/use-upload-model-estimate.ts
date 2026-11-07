@@ -191,6 +191,6 @@ export function toUploadEstimateSummaryPresentation(
         : `Ước tính khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} credit theo dung lượng file. Credit thật được tính sau khi đọc nội dung file.`
       : "Không tính credit trong gói. Nhà cung cấp của bạn có thể tính phí riêng.",
     badgeTone: estimate.selectedModelKind === "PLAN" ? "brand" : "neutral",
-    badgeLabel: estimate.selectedModelKind === "PLAN" ? "Có trong gói của bạn" : "Lựa chọn riêng của bạn",
+    badgeLabel: estimate.selectedModelKind === "PLAN" ? "Có trong gói của bạn" : "Tự cấu hình",
   };
 }

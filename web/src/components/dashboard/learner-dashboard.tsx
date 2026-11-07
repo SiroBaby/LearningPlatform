@@ -255,7 +255,7 @@ function RecommendedNextActionCard({ weakTopic }: { weakTopic?: WeakTopic }) {
       </CardHeader>
       <CardBody className="space-y-4">
         <div className="rounded-2xl border border-warning-100 bg-warning-50/70 p-4 text-sm leading-6 text-ink-700">
-          Sai <span className="font-semibold text-ink-900">{weakTopic.missedQuestions} câu</span> thuộc chủ đề này. Xem lại tài liệu rồi làm lại.
+          Bạn sai <span className="font-semibold text-ink-900">{weakTopic.missedQuestions} câu</span> ở chủ đề này. Xem lại tài liệu rồi làm lại.
         </div>
 
         <CitationSnippet citation={weakTopic.citations[0]} />
@@ -488,7 +488,7 @@ function ProcessingJobsCard({
                 <StatusPill status={queuedDocument.status} />
               </div>
               <p className="mt-3 text-sm leading-6 text-ink-600">
-                File đã tải lên, đang chờ xử lý.
+                File đã tải lên, đang kiểm tra file.
               </p>
             </div>
           ) : null}
@@ -713,7 +713,7 @@ function UsageWarningCard({
           </div>
 
           <div className="rounded-2xl border border-warning-100 bg-white/80 p-4 text-sm leading-6 text-ink-700">
-            Credit hiện tại đủ cho thêm một PDF trung bình. Để video hoặc MP3 dài sau khi có thêm credit.
+            Credit hiện tại đủ cho thêm một PDF trung bình. Video hoặc MP3 dài nên chờ khi có thêm credit.
           </div>
         </div>
 

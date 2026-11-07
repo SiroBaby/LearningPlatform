@@ -70,7 +70,7 @@ export function getDocumentFailurePresentation(
     case "INSUFFICIENT_CREDITS_AFTER_EXTRACT":
       return {
         title: "Chưa đủ credit để tạo câu hỏi",
-        description: "Không đủ credit. Nạp thêm rồi thử lại.",
+        description: "Nạp thêm credit rồi thử lại.",
         retryable: true,
       };
     case "INSUFFICIENT_VALID_QUESTIONS":
@@ -130,7 +130,7 @@ export function getDocumentFailurePresentation(
     case "MEDIA_PROBE_OUTPUT_CAP_EXCEEDED":
       return {
         title: "File có cấu trúc quá phức tạp",
-        description: "Thử lại với định dạng MP4 đơn giản hơn.",
+        description: "Thử lại với MP4 chỉ có một video và một âm thanh.",
         retryable: false,
       };
     case "MEDIA_PROBE_STORAGE_TEMPORARY":
@@ -172,7 +172,7 @@ export function getDocumentFailurePresentation(
     case "MEDIA_UNSUPPORTED_VIDEO_CODEC":
       return {
         title: "Video chưa được hỗ trợ",
-        description: "Thử lại với MP4 tối đa 1080p.",
+        description: "Thử lại với MP4 tối đa 1080p, 30 khung hình/giây.",
         retryable: false,
       };
     case "PDF_INVALID":

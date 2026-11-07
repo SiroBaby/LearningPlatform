@@ -115,7 +115,7 @@ export function UpgradeScreen() {
       return;
     }
 
-    notify(`Bạn đã chọn gói ${plan.name}. Thanh toán chưa được mở trong phiên bản này.`, "success");
+    notify(`Đã chọn gói ${plan.name}. Chưa mở thanh toán.`, "success");
   }
 
   return (
@@ -257,7 +257,7 @@ export function UpgradeScreen() {
               <div className="flex items-start gap-3">
                 <Clock3 className="mt-0.5 h-5 w-5 text-warning-700" />
                 <div>
-                  <p className="text-sm font-semibold text-warning-800">Credit sắp là giới hạn chính</p>
+                  <p className="text-sm font-semibold text-warning-800">Credit sắp thành giới hạn chính</p>
                   <p className="mt-1 text-sm leading-6 text-warning-800/90">
                     Gói Miễn phí còn 18 credit. Một video bài giảng có thể dùng hết trong ngày.
                   </p>

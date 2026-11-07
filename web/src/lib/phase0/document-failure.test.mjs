@@ -75,7 +75,7 @@ test("keeps unsupported media video copy short without codec specs", () => {
 
   assert.equal(presentation.retryable, false);
   assert.equal(presentation.title, "Video chưa được hỗ trợ");
-  assert.equal(presentation.description, "Thử lại với MP4 tối đa 1080p.");
+  assert.equal(presentation.description, "Thử lại với MP4 tối đa 1080p, 30 khung hình/giây.");
 });
 
 test("covers protected files for unsupported media container", () => {
@@ -102,7 +102,7 @@ test("shows short credit copy without numbers for insufficient credits after ext
 
   assert.equal(presentation.retryable, true);
   assert.equal(presentation.title, "Chưa đủ credit để tạo câu hỏi");
-  assert.equal(presentation.description, "Không đủ credit. Nạp thêm rồi thử lại.");
+  assert.equal(presentation.description, "Nạp thêm credit rồi thử lại.");
   assert.doesNotMatch(presentation.description, /\d/u);
 });
 

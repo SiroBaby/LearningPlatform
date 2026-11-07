@@ -84,7 +84,7 @@ export function getModelSourceLabel(kind: Phase0ModelSelectionKind | null): stri
   }
 
   if (kind === "CUSTOM") {
-    return "Lựa chọn riêng của bạn";
+    return "Tự cấu hình";
   }
 
   return "Chưa có";

@@ -51,7 +51,7 @@ export function UploadPickerSection({ fileInputId, isMediaUploadEnabled, onFileC
           </p>
           {isMediaUploadEnabled ? (
             <p className="mt-1 text-ink-600">
-              MP4 tối đa 1080p.
+              MP4 tối đa 1080p, 30 khung hình/giây.
             </p>
           ) : null}
         </div>

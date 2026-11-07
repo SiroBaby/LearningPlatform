@@ -90,7 +90,7 @@ test("admin panel explains each quorum mode without exposing approval material",
   assert.match(panel, /Bước cấp quyền tạm thời được thực hiện qua quy trình vận hành/u);
   assert.match(panel, /Hệ thống chỉ còn một quản trị cấp cao/u);
   assert.match(panel, /currentMode === "NORMAL"/u);
-  assert.match(panel, /hoàn tất bước thiết lập nhóm quản trị bên ngoài/u);
+  assert.match(panel, /hoàn tất thiết lập nhóm quản trị bên ngoài/iu);
   assert.match(panel, /request\.expiresAt/u);
   assert.match(panel, /Đã hết hạn/u);
   assert.doesNotMatch(panel, /privateKey|approvalToken|jti/u);
