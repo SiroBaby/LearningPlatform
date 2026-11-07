@@ -256,6 +256,9 @@ func (bootstrap *Bootstrap) processOne(ctx context.Context) error {
 }
 
 func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.Job) (processOutcome, error, failureComponent) {
+	// One tracker per claimed attempt: the provider adapter feeds it and the store reads it when it writes the
+	// return payload, so Node can settle the credits reserved for this run.
+	ctx = processing.WithUsageTracker(ctx, processing.NewUsageTracker())
 	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
@@ -380,6 +383,8 @@ func (bootstrap *Bootstrap) finish(ctx context.Context, job processing.Job, err 
 		var cancel context.CancelFunc
 		persistCtx, cancel = context.WithTimeout(context.Background(), bootstrap.options.PersistTimeout)
 		defer cancel()
+		// The fresh context must still carry the usage already spent by this attempt.
+		persistCtx = processing.WithUsageTracker(persistCtx, processing.UsageTrackerFrom(ctx))
 	}
 	var failure processing.Failure
 	if !errors.As(err, &failure) {

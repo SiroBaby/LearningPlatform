@@ -87,6 +87,8 @@ export class StorageService implements OnModuleInit {
       this.logger.log(`Bucket "${bucket}" ready`);
     } catch (error) {
       const cause = error instanceof Error ? error : undefined;
+      // Bounded diagnostics only (no message, no credentials): lets CI tell DNS/connection errors from a 403/404 (#217).
+      this.logger.error(`storage.bootstrap.head_bucket_failed ${describeStorageFailure(error)}`);
       const sanitizedError = new Error('Object storage bucket is unavailable or misconfigured');
       if (cause) {
         Object.defineProperty(sanitizedError, 'cause', { value: cause });
@@ -210,4 +212,26 @@ export class StorageService implements OnModuleInit {
     }
     return client;
   }
+}
+
+const SAFE_DIAGNOSTIC_TOKEN = /^[A-Za-z0-9_.-]{1,64}$/u;
+
+function safeToken(value: unknown): string {
+  return typeof value === 'string' && SAFE_DIAGNOSTIC_TOKEN.test(value) ? value : 'unknown';
+}
+
+/** Name, HTTP status and system code of a storage error; never the message, which may echo endpoints or keys. */
+function describeStorageFailure(error: unknown): string {
+  const failure = (typeof error === 'object' && error !== null ? error : {}) as {
+    $metadata?: { httpStatusCode?: unknown };
+    Code?: unknown;
+    code?: unknown;
+    name?: unknown;
+  };
+  const status = failure.$metadata?.httpStatusCode;
+  return [
+    `errorName=${safeToken(failure.name)}`,
+    `code=${safeToken(failure.Code ?? failure.code)}`,
+    `httpStatus=${typeof status === 'number' && Number.isInteger(status) ? status : 'unknown'}`,
+  ].join(' ');
 }

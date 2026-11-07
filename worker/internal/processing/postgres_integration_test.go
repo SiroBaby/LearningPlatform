@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -336,6 +337,61 @@ func TestPostgresStoreIntegration(t *testing.T) {
 			t.Fatal("successful transaction must emit one result outbox event")
 		}
 		assertOutboxFence(t, ctx, database.admin, *job)
+	})
+
+	t.Run("writes the tracked usage into completed and failed result payloads", func(t *testing.T) {
+		readUsage := func(job Job) (usage Usage, present bool) {
+			var encoded []byte
+			if err := database.admin.QueryRow(ctx, `SELECT payload FROM ai.outbox WHERE aggregate_id=$1 AND event_type='DocumentProcessingResult' ORDER BY id DESC LIMIT 1`, job.ID).Scan(&encoded); err != nil {
+				t.Fatalf("read result outbox payload: %v", err)
+			}
+			var payload struct {
+				Usage *Usage `json:"usage"`
+			}
+			if err := json.Unmarshal(encoded, &payload); err != nil {
+				t.Fatalf("decode result outbox payload: %v", err)
+			}
+			if payload.Usage == nil {
+				return Usage{}, false
+			}
+			return *payload.Usage, true
+		}
+		trackedContext := func() context.Context {
+			tracker := NewUsageTracker()
+			tracker.Dispatched()
+			tracker.Reported("model-a", 12, 3)
+			tracker.Dispatched()
+			return WithUsageTracker(ctx, tracker)
+		}
+		expected := Usage{LLM: []ModelUsage{{Model: "model-a", InputTokens: 12, OutputTokens: 3}}, UncertainDispatches: 1}
+
+		database.insertDocumentAndJob(t, ctx)
+		completed := database.claim(t, ctx)
+		chunks := []Chunk{{ID: "44444444-4444-4444-8444-444444444444", Index: 0, Text: "usage chunk", ContentHash: "usage", Locator: Locator{Kind: "text-range", End: 11}}}
+		if persisted, err := database.store.PersistAndComplete(trackedContext(), *completed, chunks, nil); err != nil || !persisted {
+			t.Fatalf("complete job = (%t, %v), want (true, nil)", persisted, err)
+		}
+		if usage, present := readUsage(*completed); !present || !reflect.DeepEqual(usage, expected) {
+			t.Fatalf("completed usage = (%#v, %t), want %#v", usage, present, expected)
+		}
+
+		database.insertDocumentAndJob(t, ctx)
+		failed := database.claim(t, ctx)
+		if finalized, err := database.store.Fail(trackedContext(), *failed, Failure{Code: OutputInvalid}); err != nil || !finalized {
+			t.Fatalf("fail job = (%t, %v), want (true, nil)", finalized, err)
+		}
+		if usage, present := readUsage(*failed); !present || !reflect.DeepEqual(usage, expected) {
+			t.Fatalf("failed usage = (%#v, %t), want %#v", usage, present, expected)
+		}
+
+		database.insertDocumentAndJob(t, ctx)
+		untracked := database.claim(t, ctx)
+		if finalized, err := database.store.Fail(ctx, *untracked, Failure{Code: PDFInvalid}); err != nil || !finalized {
+			t.Fatalf("fail untracked job = (%t, %v), want (true, nil)", finalized, err)
+		}
+		if _, present := readUsage(*untracked); present {
+			t.Fatal("a result without a tracker must keep the legacy payload shape (no usage block)")
+		}
 	})
 }
 

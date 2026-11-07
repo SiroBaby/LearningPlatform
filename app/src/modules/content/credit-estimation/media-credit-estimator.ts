@@ -1,6 +1,7 @@
 import { Inject, Injectable, OnModuleInit, Optional } from '@nestjs/common';
 
 import { ApplicationConfigService } from '../../../config/application-config.service';
+import type { DocumentProcessingUsage } from '../../ai/contracts/document-processing-result';
 import type { PlanModelCatalogItem } from '../../ai/contracts/model-selection.contracts';
 import { COARSE_OUTPUT_TOKEN_CAP } from './credit-estimation.constants';
 import {
@@ -42,6 +43,23 @@ export interface MediaCreditEstimate {
   readonly totalCredits: number;
 }
 
+export interface ActualCreditInput {
+  /** The configured default platform model: anchors the wallet unit exactly as in the estimate. */
+  readonly defaultModel: PlanModelCatalogItem;
+  /** The model selected for the Document: its per-token credits price every LLM token. */
+  readonly model: PlanModelCatalogItem;
+  readonly usage: DocumentProcessingUsage;
+}
+
+export interface ActualCreditResult {
+  readonly generationCredits: number;
+  /** Real provider cost in micro-USD; null when any reported model has no price in the table. */
+  readonly costMicroUsd: number | null;
+  readonly priceTableVersion: string;
+  readonly sttCredits: number;
+  readonly totalCredits: number;
+}
+
 /**
  * Pure domain service: STT credits for the probed duration plus the credits of generating a quiz
  * from the expected transcript. No I/O.
@@ -71,12 +89,50 @@ export class MediaCreditEstimator implements OnModuleInit {
     if (!Number.isSafeInteger(input.durationSeconds) || input.durationSeconds <= 0) {
       throw new RangeError('Media duration must be a positive whole number of seconds');
     }
-    const sttCredits = this.estimateSttCredits(input);
+    const sttCredits = this.convertSttSecondsToCredits(input.durationSeconds, input.defaultModel);
     const generationCredits = this.estimateGenerationCredits(input);
     return { generationCredits, sttCredits, totalCredits: Math.max(1, sttCredits + generationCredits) };
   }
 
-  private estimateSttCredits({ defaultModel, durationSeconds }: MediaCreditEstimateInput): number {
+  /**
+   * Credits of the usage Go actually reported, with the same unit and anchor as {@link estimate}:
+   *   generationCredits = sum(inputTokens) * model.creditPerInputToken + sum(outputTokens) * model.creditPerOutputToken
+   *   sttCredits        = same conversion as the estimate, applied to the billed (decoded) seconds
+   * The cost in micro-USD is derived from the versioned price table and is informational (D2 of #160, #268).
+   */
+  calculateActual(input: ActualCreditInput): ActualCreditResult {
+    const { usage } = input;
+    const inputTokens = usage.llm.reduce((total, entry) => total + entry.inputTokens, 0);
+    const outputTokens = usage.llm.reduce((total, entry) => total + entry.outputTokens, 0);
+    const generationCredits = inputTokens * input.model.creditPerInputToken + outputTokens * input.model.creditPerOutputToken;
+    const sttSeconds = usage.sttBilledSeconds ?? 0;
+    const sttCredits = sttSeconds > 0 ? this.convertSttSecondsToCredits(sttSeconds, input.defaultModel) : 0;
+    return {
+      costMicroUsd: this.calculateCostMicroUsd(usage, sttSeconds),
+      generationCredits,
+      priceTableVersion: this.priceTable.version,
+      sttCredits,
+      totalCredits: generationCredits + sttCredits,
+    };
+  }
+
+  private calculateCostMicroUsd(usage: DocumentProcessingUsage, sttSeconds: number): number | null {
+    let cost = 0;
+    for (const entry of usage.llm) {
+      const price = this.priceTable.llm[entry.model];
+      if (!price) return null;
+      cost += Math.ceil((entry.inputTokens * price.inputMicroUsdPerMillionTokens) / TOKENS_PER_PRICE_UNIT);
+      cost += Math.ceil((entry.outputTokens * price.outputMicroUsdPerMillionTokens) / TOKENS_PER_PRICE_UNIT);
+    }
+    if (sttSeconds > 0) {
+      const sttPrice = this.priceTable.stt[DEFAULT_STT_MODEL];
+      if (!sttPrice) return null;
+      cost += Math.ceil((sttSeconds * sttPrice.microUsdPerMinute) / SECONDS_PER_MINUTE);
+    }
+    return cost;
+  }
+
+  private convertSttSecondsToCredits(durationSeconds: number, defaultModel: PlanModelCatalogItem): number {
     const sttPrice = this.priceTable.stt[DEFAULT_STT_MODEL];
     const llmPrice = this.priceTable.llm[defaultModel.model];
     if (!sttPrice) throw new ModelPriceTableError(`No STT price for model ${DEFAULT_STT_MODEL}`);
