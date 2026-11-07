@@ -27,7 +27,7 @@ Mặc định cờ là `false`: không có gì thay đổi cho tới khi owner l
   thời lượng **thân** (body, không tính overlap) của các chunk đã gửi, nên tổng khớp
   thời lượng giải mã mà ước tính và D10 dùng; phần overlap 5 giây mỗi phía là chi phí
   nền tảng, không tính cho người dùng. HTTP 2xx là `billed`; timeout, mất kết nối, 408
-  và 5xx là `uncertain` (Node giữ `HELD` theo ADR-0022); 429, 401, 403, 404 và redirect
+  và 5xx là `uncertain`; nếu chunk đó về sau được gọi lại thành công thì phần uncertain bị bỏ và chunk tính `billed` đúng một lần, còn chunk không bao giờ có kết quả giữ uncertain (Node giữ `HELD` theo ADR-0022); 429, 401, 403, 404 và redirect
   là bị từ chối rõ ràng, không tính. Không có fallback sang model hay endpoint khác.
 - **Lỗi**: 400/413/415/422 và 4xx khác là `PROVIDER_INCOMPATIBLE` (lỗi nghiệp vụ, không
   retry). 401/403/404/redirect (key hết hạn hoặc sai, thiếu `/v1`, endpoint đổi chỗ) là
@@ -123,15 +123,15 @@ Việc tách là quyết định của PR7.
   vào transaction kế tiếp có khóa job (lên lịch retry hoặc kết quả cuối), nên chi phí không
   bị mất. Chỉ khi chính tiến trình bị dừng đột ngột giữa lúc đó thì mới mất phần chưa ghi
   (nhỏ hơn một chunk).
-- **Uncertain rồi retry thành công vẫn `HELD`**: một chunk gặp 5xx/timeout (uncertain) rồi
-  được gọi lại thành công vẫn cộng `sttUncertainSeconds`, nên Document kết thúc với
-  `budget_status = 'HELD'` dù transcript đầy đủ. Đây là hành vi chủ ý theo ADR-0022 (không
-  đoán chi phí) và quyết định giữ/thả còn chờ owner. Cách nhận biết: Document media
-  `READY` có `course.documents.budget_status = 'HELD'`, hoặc payload
-  `DocumentProcessingResult.usage.sttUncertainSeconds > 0` trong `ai.outbox`. Hiện chưa có
-  đường tự động thả phần `HELD`; owner kiểm tra log nhà cung cấp (9router/Groq) xem các
-  request đó có bị tính tiền không, rồi xử lý thủ công theo ADR-0022 (hoặc chờ quyết định
-  thả tự động).
+- **Uncertain rồi retry thành công không còn `HELD`** (owner chốt 2026-11-07, không thả thủ
+  công): khi một chunk có dispatch uncertain (408/5xx/timeout/body bị cắt) rồi lần gọi sau
+  cho cùng chunk thành công, chunk được tính `billed` đúng một lần và số giây uncertain
+  trước đó bị bỏ (`billed_ms` giữ giá trị lớn nhất, `uncertain_ms` về 0 trong cùng câu
+  upsert). Nền tảng chịu rủi ro provider tính tiền hai lần, tối đa một chunk (khoảng 10
+  phút audio) cho mỗi chunk bị ảnh hưởng. Chỉ chunk chưa bao giờ có kết quả mới giữ
+  `sttUncertainSeconds`; phần còn lại là `HELD` và sẽ được reconciler của #275 tự giải
+  quyết (chưa nằm trong PR này). Cách nhận biết `HELD` còn lại: `course.documents.budget_status
+  = 'HELD'` hoặc `usage.sttUncertainSeconds > 0` trong payload `DocumentProcessingResult`.
 - Số giây tính theo thân chunk, nên tổng bằng thời lượng giải mã (làm tròn lên từng
   tổng): settlement không vượt phần giữ trước theo thời lượng. Overlap do nền tảng chịu.
 - Ngưỡng lọc segment nghi hallucinate theo `no_speech_prob`/`avg_logprob` (ADR-0032) chưa

@@ -99,7 +99,10 @@ func (store *PostgresStore) STTCheckpoints(ctx context.Context, probeResultID, i
 
 // SaveSTTOutcome upserts one chunk outcome inside a small transaction that first locks the active job row (attempt,
 // lease, status, cancellation, access revocation). A lost fence discards the result instead of committing it stale.
-// Spend only accumulates: repeated outcomes for a chunk add to billed_ms/uncertain_ms and never erase segments.
+// A chunk is billed at most once (billed_ms keeps the largest value, never a sum) and a definite billed answer
+// resolves any earlier or later uncertain dispatch of the same chunk to zero: the platform absorbs a possible
+// duplicate provider charge (owner decision, #160). Chunks that never got an answer keep their uncertain_ms.
+// Segments are never erased.
 func (store *PostgresStore) SaveSTTOutcome(ctx context.Context, job Job, outcome STTOutcome) error {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
@@ -137,8 +140,11 @@ func upsertSTTOutcome(ctx context.Context, tx pgx.Tx, job Job, outcome STTOutcom
 		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7, $8)
 		ON CONFLICT (probe_result_id, chunk_index, stt_provider_identity) DO UPDATE SET
 		  segments = COALESCE(EXCLUDED.segments, ai.media_stt_chunk_results.segments),
-		  billed_ms = ai.media_stt_chunk_results.billed_ms + EXCLUDED.billed_ms,
-		  uncertain_ms = ai.media_stt_chunk_results.uncertain_ms + EXCLUDED.uncertain_ms,
+		  billed_ms = GREATEST(ai.media_stt_chunk_results.billed_ms, EXCLUDED.billed_ms),
+		  uncertain_ms = CASE
+		    WHEN EXCLUDED.billed_ms > 0 OR ai.media_stt_chunk_results.billed_ms > 0 THEN 0
+		    ELSE ai.media_stt_chunk_results.uncertain_ms + EXCLUDED.uncertain_ms
+		  END,
 		  updated_at = now()`,
 		outcome.ProbeResultID, job.DocumentID, job.OwnerID, outcome.ChunkIndex, outcome.Identity, segments, outcome.BilledMs, outcome.UncertainMs); err != nil {
 		return NewPersistenceError(FailureOperationChunkReplacement, err)

@@ -278,9 +278,9 @@ func TestPostgresStoreMediaSTT(t *testing.T) {
 		}
 
 		usage := readUsage(t, job)
-		// Billed 605 + 610 + 300.5 = 1515.5 s -> 1516; the earlier uncertain dispatch of chunk 1 stays held: 610 s.
-		if usage["sttBilledSeconds"] != float64(1516) || usage["sttUncertainSeconds"] != float64(610) {
-			t.Fatalf("usage = %#v, want sttBilledSeconds 1516 and sttUncertainSeconds 610", usage)
+		// Billed 605 + 610 + 300.5 = 1515.5 s -> 1516; chunk 1's earlier uncertain dispatch was resolved by its later success.
+		if usage["sttBilledSeconds"] != float64(1516) || usage["sttUncertainSeconds"] != float64(0) {
+			t.Fatalf("usage = %#v, want sttBilledSeconds 1516 and sttUncertainSeconds 0", usage)
 		}
 		if count := countRows(t, ctx, database.admin, `SELECT count(*) FROM ai.media_stt_chunk_results WHERE probe_result_id=$1`, media.probeResultID); count != 0 {
 			t.Fatalf("checkpoints after completion = %d, want them removed with the terminal write", count)
@@ -400,6 +400,65 @@ func TestPostgresStoreMediaSTT(t *testing.T) {
 		usage := readUsage(t, *next)
 		if usage["sttBilledSeconds"] != float64(600) {
 			t.Fatalf("usage = %#v, want 600 s billed exactly once", usage)
+		}
+	})
+
+	t.Run("an uncertain dispatch resolved by a later success bills the chunk once; one that never succeeds stays uncertain", func(t *testing.T) {
+		media, job := claimMedia(t, 1_500_000)
+		save := func(outcome STTOutcome) {
+			t.Helper()
+			outcome.ProbeResultID, outcome.Identity = media.probeResultID, sttTestIdentity
+			if err := database.store.SaveSTTOutcome(ctx, job, outcome); err != nil {
+				t.Fatalf("SaveSTTOutcome() error = %v", err)
+			}
+		}
+		save(STTOutcome{ChunkIndex: 0, UncertainMs: 600_000})
+		save(STTOutcome{ChunkIndex: 0, Segments: segments, BilledMs: 600_000})
+		save(STTOutcome{ChunkIndex: 1, UncertainMs: 600_000})
+		save(STTOutcome{ChunkIndex: 1, UncertainMs: 600_000})
+		// A repeated or reordered billed answer never double bills, and a late uncertain row never re-opens a billed chunk.
+		save(STTOutcome{ChunkIndex: 2, Segments: segments, BilledMs: 600_000})
+		save(STTOutcome{ChunkIndex: 2, Segments: segments, BilledMs: 600_000})
+		save(STTOutcome{ChunkIndex: 2, UncertainMs: 600_000})
+		var billed0, uncertain0, billed1, uncertain1, billed2, uncertain2 int
+		row := func(index int, billed, uncertain *int) {
+			if err := database.admin.QueryRow(ctx, `SELECT billed_ms, uncertain_ms FROM ai.media_stt_chunk_results WHERE probe_result_id=$1 AND chunk_index=$2`, media.probeResultID, index).Scan(billed, uncertain); err != nil {
+				t.Fatalf("read chunk %d: %v", index, err)
+			}
+		}
+		row(0, &billed0, &uncertain0)
+		row(1, &billed1, &uncertain1)
+		row(2, &billed2, &uncertain2)
+		if billed0 != 600_000 || uncertain0 != 0 || billed1 != 0 || uncertain1 != 1_200_000 || billed2 != 600_000 || uncertain2 != 0 {
+			t.Fatalf("rows = (%d,%d) (%d,%d) (%d,%d), want chunk 0 billed once, chunk 1 uncertain only, chunk 2 billed once", billed0, uncertain0, billed1, uncertain1, billed2, uncertain2)
+		}
+
+		finalized, err := database.store.Fail(WithUsageTracker(ctx, NewUsageTracker()), job, Failure{Code: ProviderUnavailable})
+
+		if err != nil || !finalized {
+			t.Fatalf("Fail() = (%t, %v)", finalized, err)
+		}
+		usage := readUsage(t, job)
+		if usage["sttBilledSeconds"] != float64(1200) || usage["sttUncertainSeconds"] != float64(1200) {
+			t.Fatalf("usage = %#v, want 1200 s billed (chunks 0 and 2) and 1200 s uncertain (chunk 1 only)", usage)
+		}
+	})
+
+	t.Run("carried outcomes keep the same resolution when flushed in either order", func(t *testing.T) {
+		media, job := claimMedia(t, 1_500_000)
+		tracker := NewUsageTracker()
+		tracker.AddUnsavedSTT(STTOutcome{ProbeResultID: media.probeResultID, ChunkIndex: 0, Identity: sttTestIdentity, Segments: segments, BilledMs: 600_000})
+		tracker.AddUnsavedSTT(STTOutcome{ProbeResultID: media.probeResultID, ChunkIndex: 0, Identity: sttTestIdentity, UncertainMs: 600_000})
+		tracker.AddUnsavedSTT(STTOutcome{ProbeResultID: media.probeResultID, ChunkIndex: 1, Identity: sttTestIdentity, UncertainMs: 600_000})
+		tracker.AddUnsavedSTT(STTOutcome{ProbeResultID: media.probeResultID, ChunkIndex: 1, Identity: sttTestIdentity, Segments: segments, BilledMs: 600_000})
+
+		if _, err := database.store.Fail(WithUsageTracker(ctx, tracker), job, Failure{Code: MediaTranscriptEmpty}); err != nil {
+			t.Fatalf("Fail() error = %v", err)
+		}
+
+		usage := readUsage(t, job)
+		if usage["sttBilledSeconds"] != float64(1200) || usage["sttUncertainSeconds"] != float64(0) {
+			t.Fatalf("usage = %#v, want 1200 s billed and no uncertain seconds", usage)
 		}
 	})
 
