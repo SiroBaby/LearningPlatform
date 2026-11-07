@@ -186,6 +186,6 @@ test("maps INSUFFICIENT_CREDITS retry failures to credit copy, not a wait-and-re
 
   assert.equal(
     getRetryConfirmErrorMessage(error),
-    "Bạn không đủ credit để xử lý tài liệu này. Cần thêm khoảng 120 credit. Hãy bổ sung credit, chọn Custom AI hoặc dùng tệp nhỏ hơn.",
+    "Bạn không đủ credit để xử lý tài liệu này. Cần thêm khoảng 120 credit. Hãy bổ sung credit hoặc dùng tệp nhỏ hơn.",
   );
 });

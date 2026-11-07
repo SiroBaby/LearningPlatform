@@ -9,7 +9,7 @@ const PHASE0_ERROR_MESSAGES: Readonly<Record<string, string>> = {
 };
 
 const INSUFFICIENT_CREDITS_CODE = "INSUFFICIENT_CREDITS";
-const INSUFFICIENT_CREDITS_ADVICE = "Hãy bổ sung credit, chọn Custom AI hoặc dùng tệp nhỏ hơn.";
+const INSUFFICIENT_CREDITS_ADVICE = "Hãy bổ sung credit hoặc dùng tệp nhỏ hơn.";
 
 function isPhase0ClientError(error: unknown): error is Error & { readonly code?: string } {
   if (!(error instanceof Error) || error.name !== "Phase0ClientError") {

@@ -34,14 +34,14 @@ function createCreditError(shortfallCredits) {
 test("maps INSUFFICIENT_CREDITS to Vietnamese copy with the shortfall", () => {
   assert.equal(
     getInsufficientCreditsMessage(createCreditError(250)),
-    "Bạn không đủ credit để xử lý tài liệu này. Cần thêm khoảng 250 credit. Hãy bổ sung credit, chọn Custom AI hoặc dùng tệp nhỏ hơn.",
+    "Bạn không đủ credit để xử lý tài liệu này. Cần thêm khoảng 250 credit. Hãy bổ sung credit hoặc dùng tệp nhỏ hơn.",
   );
 });
 
 test("maps INSUFFICIENT_CREDITS without a shortfall and ignores other errors", () => {
   assert.equal(
     getInsufficientCreditsMessage(createCreditError()),
-    "Bạn không đủ credit để xử lý tài liệu này. Hãy bổ sung credit, chọn Custom AI hoặc dùng tệp nhỏ hơn.",
+    "Bạn không đủ credit để xử lý tài liệu này. Hãy bổ sung credit hoặc dùng tệp nhỏ hơn.",
   );
   assert.equal(getInsufficientCreditsMessage(new Error("boom")), null);
 });
