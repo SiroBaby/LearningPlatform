@@ -18,20 +18,21 @@
     go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
     media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
   tasks:
-    - name: Require the production dev vars to keep audio preparation off
+    - name: Require the production dev vars to keep audio preparation on
       ansible.builtin.assert:
         that:
           - media_probe_audio_prep_enabled is boolean
-          - not media_probe_audio_prep_enabled
+          - media_probe_audio_prep_enabled
         fail_msg: >-
-          vars/dev.yml must keep media_probe_audio_prep_enabled false until the owner
-          has granted derived-audio/ PutObject and the lifecycle rule (#160).
+          vars/dev.yml enables media_probe_audio_prep_enabled after the owner granted
+          derived-audio/ PutObject and the lifecycle rule (#160 PR7); roll back by
+          setting it to false together with go_worker_media_stt_enabled.
 
-    - name: Render the worker rollout with the production flag (off) and with the flag on
+    - name: Render the worker rollout with the flag off and with the flag on
       ansible.builtin.set_fact:
         applications_audio_off_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
-             template_vars={'deployment_targets': ['worker']})
+             template_vars={'deployment_targets': ['worker'], 'media_probe_audio_prep_enabled': false})
              | from_yaml_all | list }}
         applications_audio_on_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
