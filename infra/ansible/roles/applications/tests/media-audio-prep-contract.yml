@@ -32,7 +32,8 @@
       ansible.builtin.set_fact:
         applications_audio_off_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
-             template_vars={'deployment_targets': ['worker'], 'media_probe_audio_prep_enabled': false})
+             template_vars={'deployment_targets': ['worker'], 'media_probe_audio_prep_enabled': false,
+                            'go_worker_media_stt_enabled': false})
              | from_yaml_all | list }}
         applications_audio_on_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
