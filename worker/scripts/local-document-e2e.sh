@@ -34,6 +34,8 @@ stt_pid=""
 stt_port=""
 stt_log=""
 stt_request_count_file=""
+stt_port_file=""
+stt_reject_file=""
 media_probe_container_created=false
 network_created=false
 postgres_volume_created=false
@@ -748,13 +750,16 @@ NODE
 start_fake_stt_server() {
   stt_log="$temp_dir/fake-stt.log"
   stt_request_count_file="$temp_dir/fake-stt-request-count"
+  stt_port_file="$temp_dir/fake-stt-port"
+  stt_reject_file="$temp_dir/fake-stt-reject"
   printf '0\n' >"$stt_request_count_file"
   cat >"$temp_dir/fake-stt-server.js" <<'NODE'
 const fs = require('node:fs');
 const http = require('node:http');
 
-const port = Number(process.argv[2]);
+const portFile = process.argv[2];
 const countFile = process.argv[3];
+const rejectFile = process.argv[4];
 const expectedAuthorization = 'Bearer local-document-e2e-stt-key';
 const sentences = [
   'Cấu trúc dữ liệu là cách tổ chức và lưu trữ dữ liệu để chương trình truy cập và cập nhật chúng hiệu quả.',
@@ -771,7 +776,8 @@ const segments = sentences.map((sentence, index) => ({
   text: `${sentence} ${sentence} ${sentence}`,
 }));
 
-function reject(response, status) {
+function reject(response, status, reason) {
+  fs.writeFileSync(rejectFile, `${reason}\n`);
   response.writeHead(status, { 'Content-Type': 'application/json' });
   response.end('{}');
 }
@@ -781,17 +787,20 @@ const server = http.createServer((request, response) => {
   request.on('data', (chunk) => chunks.push(chunk));
   request.on('end', () => {
     const body = Buffer.concat(chunks).toString('latin1');
-    const isValid = request.method === 'POST'
-      && request.url === '/audio/transcriptions'
-      && request.headers.authorization === expectedAuthorization
-      && /^multipart\/form-data; boundary=/u.test(request.headers['content-type'] || '')
-      && /name="model"\r\n\r\nlocal-document-e2e-stt\r\n/u.test(body)
-      && /name="response_format"\r\n\r\nverbose_json\r\n/u.test(body)
-      && /name="language"\r\n\r\nvi\r\n/u.test(body)
-      && /name="file"; filename="chunk-\d+\.mp3"/u.test(body)
-      && chunks.reduce((total, chunk) => total + chunk.length, 0) > 1024;
-    if (!isValid) {
-      reject(response, 400);
+    const checks = [
+      ['method', request.method === 'POST'],
+      ['path', request.url === '/audio/transcriptions'],
+      ['auth', request.headers.authorization === expectedAuthorization],
+      ['multipart', /^multipart\/form-data; boundary=/u.test(request.headers['content-type'] || '')],
+      ['model', /name="model"\r\n\r\nlocal-document-e2e-stt\r\n/u.test(body)],
+      ['format', /name="response_format"\r\n\r\nverbose_json\r\n/u.test(body)],
+      ['language', /name="language"\r\n\r\nvi\r\n/u.test(body)],
+      ['file', /name="file"; filename="chunk-\d+\.mp3"/u.test(body)],
+      ['size', chunks.reduce((total, chunk) => total + chunk.length, 0) > 1024],
+    ];
+    const failed = checks.find(([, passed]) => !passed);
+    if (failed) {
+      reject(response, 400, failed[0]);
       return;
     }
     const count = Number(fs.readFileSync(countFile, 'utf8').trim()) + 1;
@@ -805,9 +814,12 @@ const server = http.createServer((request, response) => {
     }));
   });
 });
-server.listen(port, '127.0.0.1');
+server.on('error', () => process.exit(1));
+server.listen(0, '127.0.0.1', () => {
+  fs.writeFileSync(portFile, String(server.address().port));
+});
 NODE
-  node "$temp_dir/fake-stt-server.js" "$stt_port" "$stt_request_count_file" >"$stt_log" 2>&1 &
+  node "$temp_dir/fake-stt-server.js" "$stt_port_file" "$stt_request_count_file" "$stt_reject_file" >"$stt_log" 2>&1 &
   stt_pid=$!
 }
 
@@ -821,6 +833,8 @@ const pollDeadlineMs = 180_000;
 const pollIntervalMs = 1_000;
 // The fake question generator emits one fixed question, so Questions are deduplicated to one per Document.
 const minimumQuestionCount = 1;
+// A phrase from the fake STT transcript: the citation snippet must come from STT output.
+const transcriptPhrase = 'Cấu trúc dữ liệu';
 let phase = 'unknown';
 
 class FlowFailure extends Error {
@@ -905,22 +919,41 @@ async function main() {
       && Array.isArray(attempt.results) && attempt.results.length === attempt.questionCount,
     'grade-contract',
   );
+  phase = 'attempt-result';
+  const persisted = await requestJson(`/api/v1/quizzes/${quiz.id}/attempts/${attempt.attemptId}`);
   requireMarker(
-    attempt.results.every((result) => typeof result.isCorrect === 'boolean'
-      && typeof result.explanation === 'string' && result.explanation.length > 0),
+    persisted.attemptId === attempt.attemptId && persisted.score === attempt.score
+      && persisted.questionCount === attempt.questionCount
+      && Array.isArray(persisted.results) && persisted.results.length === attempt.questionCount,
+    'grade-persisted',
+  );
+  const submitted = new Map(quiz.questions.map((question) => [question.id, question.options[0].id]));
+  const persistedByQuestion = new Map(persisted.results.map((result) => [result.questionId, result]));
+  function isGradedConsistently(result, expectedCorrect) {
+    return typeof result.isCorrect === 'boolean' && typeof result.explanation === 'string' && result.explanation.length > 0
+      && submitted.get(result.questionId) === result.selectedOptionId
+      && result.isCorrect === expectedCorrect;
+  }
+  requireMarker(
+    persisted.results.every((result) => typeof result.correctOptionId === 'string'
+      && isGradedConsistently(result, result.selectedOptionId === result.correctOptionId)),
     'grade-contract',
   );
   requireMarker(
-    attempt.results.every((result) => result.citation && isTimeLocator(result.citation.locator)
-      && typeof result.citation.snippet === 'string' && result.citation.snippet.length > 0),
-    'citation-locator',
+    attempt.results.every((result) => persistedByQuestion.has(result.questionId)
+      && isGradedConsistently(result, persistedByQuestion.get(result.questionId).isCorrect)),
+    'grade-contract',
   );
+  for (const graded of [attempt, persisted]) {
+    requireMarker(graded.score === graded.results.filter((result) => result.isCorrect).length, 'grade-contract');
+    requireMarker(
+      graded.results.every((result) => result.citation && isTimeLocator(result.citation.locator)
+        && typeof result.citation.snippet === 'string' && result.citation.snippet.includes(transcriptPhrase)),
+      'citation-locator',
+    );
+  }
   process.stdout.write(`ATTEMPT_SCORE ${attempt.score}/${attempt.questionCount}\n`);
   process.stdout.write(`CITATION_LOCATOR_KIND time count=${attempt.results.length}\n`);
-
-  phase = 'attempt-result';
-  const persisted = await requestJson(`/api/v1/quizzes/${quiz.id}/attempts/${attempt.attemptId}`);
-  requireMarker(persisted.attemptId === attempt.attemptId && persisted.score === attempt.score, 'grade-persisted');
   process.stdout.write('GRADE_RESULT ok\n');
 }
 
@@ -1223,12 +1256,12 @@ LIMIT 1;
 }
 
 read_document_failure_code() {
-  docker exec "$postgres_container" psql \
-    --no-psqlrc --tuples-only --no-align --quiet \
-    --set=ON_ERROR_STOP=1 \
-    --set=document_id="$document_id" \
-    --username=learning --dbname=learning \
-    --command 'SELECT COALESCE((SELECT failure_code FROM ai.processing_jobs WHERE document_id = :\x27document_id\x27 ORDER BY created_at DESC LIMIT 1), \x27NONE\x27);' 2>/dev/null || printf 'UNKNOWN\n'
+  printf '%s\n' "SELECT COALESCE((SELECT failure_code FROM ai.processing_jobs WHERE document_id = :'document_id' ORDER BY created_at DESC LIMIT 1), 'NONE');" \
+    | docker exec -i "$postgres_container" psql \
+      --no-psqlrc --tuples-only --no-align --quiet \
+      --set=ON_ERROR_STOP=1 \
+      --set=document_id="$document_id" \
+      --username=learning --dbname=learning 2>/dev/null || printf 'UNKNOWN\n'
 }
 
 verify_media_probe_flow() {
@@ -1300,7 +1333,6 @@ api_port=${LOCAL_DOCUMENT_E2E_API_PORT:-3010}
 relay_health_port=$(find_loopback_port)
 go_health_port=$(find_loopback_port)
 media_probe_health_port=$(find_loopback_port)
-stt_port=$(find_loopback_port)
 
 emit_phase create-network
 docker network create "$network_name" >/dev/null 2>&1
@@ -1445,10 +1477,14 @@ verify_media_probe_flow
 emit_phase start-fake-stt
 start_fake_stt_server
 stt_listening=false
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  if node -e 'const net=require("node:net");const s=net.connect(Number(process.argv[1]),"127.0.0.1",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))' "$stt_port"; then
-    stt_listening=true
-    break
+for _ in $(seq 1 20); do
+  kill -0 "$stt_pid" >/dev/null 2>&1 || exit 1
+  if [[ -s "$stt_port_file" ]]; then
+    stt_port=$(cat "$stt_port_file")
+    if [[ "$stt_port" =~ ^[0-9]+$ ]] && node -e 'const net=require("node:net");const s=net.connect(Number(process.argv[1]),"127.0.0.1",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))' "$stt_port"; then
+      stt_listening=true
+      break
+    fi
   fi
   sleep 1
 done
@@ -1468,6 +1504,15 @@ if ! run_grade_flow >"$grade_flow_result" 2>/dev/null; then
       ;;
     *)
       printf 'GRADE_FLOW_MARKER unknown\n'
+      ;;
+  esac
+  stt_reject_reason=$(tr -d '[:space:]' <"$stt_reject_file" 2>/dev/null || true)
+  case "$stt_reject_reason" in
+    method|path|auth|multipart|model|format|language|file|size)
+      printf 'FAKE_STT_REJECT %s\n' "$stt_reject_reason"
+      ;;
+    *)
+      printf 'FAKE_STT_REJECT none\n'
       ;;
   esac
   printf 'PIPELINE_STAGE %s\n' "$(classify_pipeline_stage)"
