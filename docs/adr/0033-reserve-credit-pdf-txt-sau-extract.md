@@ -134,7 +134,7 @@ envelope mới cần version hoặc job type mới để Go cũ không claim nh�
 ## Khác biệt so với đề xuất ban đầu
 
 - Hàng `TEXT_EXTRACT` nằm trong `ai.processing_jobs` (job_type không có CHECK), không tạo bảng mới. Migration
-  `1787803982000_add_text_extract_job` chỉ thêm cột `full_pipeline_job_id`, `processing_attempt` (nullable) và unique index
+  `1787803983000_add_text_extract_job` chỉ thêm cột `full_pipeline_job_id`, `processing_attempt` (nullable) và unique index
   một hàng `TEXT_EXTRACT` mỗi Document. Go và Node cũ không đọc cột mới và không claim hàng `TEXT_EXTRACT`.
 - `TEXT_EXTRACT` không lưu chunk: nó chỉ báo `extractedChars` (số ký tự, không phải byte) và `chunkCount`. `FULL_PIPELINE`
   extract lại, nên không cần cờ "chunk còn mới" và job cũ đã xếp hàng chạy y như trước (reserve cũ nếu có, settle no-op nếu không).
@@ -146,7 +146,9 @@ envelope mới cần version hoặc job type mới để Go cũ không claim nh�
 
 ## Rollout
 
-Migration chạy khi API/worker khởi động. Triển khai Go trước hoặc cùng Node: Node mới ghi hàng `TEXT_EXTRACT`; nếu Go cũ còn chạy,
-hàng đó chờ tới khi Go mới claim (Document ở `PROCESSING`, chưa reserve). Event `DocumentExtractionCompleted` bị Node cũ bỏ qua
-(không nằm trong danh sách event của return relay cũ). Xác nhận sau rollout: upload PDF với ví Free, thấy ledger `RESERVE` chỉ xuất hiện
-sau `DocumentExtractionCompleted`, rồi `SETTLE`/`RELEASE` như #273.
+Migration chạy khi API/worker khởi động. Thứ tự rollout: Nest `worker` và `go-worker` là hai container trong cùng Deployment `worker`
+(`infra/k8s/apps.yaml.j2`, `strategy: Recreate`, 1 replica), nên bộ nhận event `DocumentExtractionCompleted` (Nest) và bộ claim
+`TEXT_EXTRACT` (Go) lên cùng một lần rollout. Node `api` (nơi confirm ghi hàng `TEXT_EXTRACT`) là Deployment riêng: nếu `api` mới lên trước
+`worker` mới, hàng `TEXT_EXTRACT` chỉ chờ trong hàng đợi (Document `PROCESSING`, chưa reserve) tới khi `worker` mới chạy. Không mất dữ liệu.
+Event `DocumentExtractionCompleted` bị Node cũ bỏ qua (không nằm trong danh sách event của return relay cũ). Xác nhận sau rollout: upload PDF
+với ví Free, thấy ledger `RESERVE` chỉ xuất hiện sau `DocumentExtractionCompleted`, rồi `SETTLE`/`RELEASE` như #273.

@@ -1071,6 +1071,8 @@ export class ContentRepository extends BaseRepository<Document> {
     settlement: NonNullable<DocumentStatusProjectionPersistenceCommand['settlement']>,
   ): Promise<void> {
     const processingAttempt = Number(document.processingAttempt);
+    // A TEXT_EXTRACT result carries its own job id and never has a reservation (ADR-0033): nothing to settle, nothing to warn about.
+    if (document.budgetStatus !== 'RESERVED' && document.fullPipelineJobId !== command.jobId) return;
     if (
       command.jobId === null ||
       document.fullPipelineJobId !== command.jobId ||
