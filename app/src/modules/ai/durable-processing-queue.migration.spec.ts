@@ -228,11 +228,17 @@ describe('durable processing queue migration', () => {
   it('does not remove document probe state owned by the earlier migration on down', async () => {
     const rollbackDb = await startTestDb();
     try {
-      const downSql = readFileSync(
-        join(__dirname, '../../database/migrations/1787803963000_add_media_probe_queue_contract.down.sql'),
-        'utf8',
-      );
-      await rollbackDb.client.query(downSql);
+      // Rollback is strictly latest-first (see runDown in database/migrate.ts):
+      // later migrations own objects that depend on ai.media_probe_jobs, so
+      // their downs must run before this migration's down can drop the table.
+      for (const name of [
+        '1787803980000_add_media_audio_chunks',
+        '1787803963000_add_media_probe_queue_contract',
+      ]) {
+        await rollbackDb.client.query(
+          readFileSync(join(__dirname, `../../database/migrations/${name}.down.sql`), 'utf8'),
+        );
+      }
 
       const documentColumns = await rollbackDb.client.query<{ readonly column_name: string }>(
         `SELECT "column_name"
