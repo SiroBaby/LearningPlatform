@@ -112,12 +112,15 @@ media_probe_database_upstream_port: 27158
 # identity (#159). Keep it false until the owner has created the purge IAM user,
 # both purge SSM parameters and the purge alerts (#222); turning it back to false deletes the purge
 # workload and its runtime Secret on the next worker rollout.
-document_purge_enabled: false
+# Enabled on dev 2026-11-07 after the runbook section 2 prerequisites were checked
+# (media versioning Enabled, documents bucket never versioned, purge SSM present,
+# DB host/port match, IAM simulated by the owner-approved read-only role).
+document_purge_enabled: true
 # The media orphan scanner runs inside the purge worker (#159 PR-4) and needs
 # document_purge_enabled. Enable it first (dry-run: report only); set the delete
 # flag only after the owner reviewed a dry-run report and granted the purge IAM
 # user s3:ListBucketVersions (RUNBOOK-document-purge-dev.md section 10).
-media_orphan_scanner_enabled: false
+media_orphan_scanner_enabled: true
 media_orphan_scanner_delete_enabled: false
 
 web_resources:

@@ -15,6 +15,13 @@
     worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
   tasks:
+    # The purge worker adds a fourth proxy caller only when document_purge_enabled
+    # is on; that branch is covered by document-purge-flag-contract.yml. Pin it off
+    # here so this contract does not depend on the current dev flag value.
+    - name: Pin the purge gate off for the proxy caller contract
+      ansible.builtin.set_fact:
+        document_purge_enabled: false
+
     - name: Render the proxy-disabled application manifest
       ansible.builtin.set_fact:
         media_egress_proxy_enabled: false

@@ -74,7 +74,7 @@ expect_rejected 'orphan scanner hard-coded on' apps.yaml.j2 \
 expect_rejected 'orphan scanner deleting by default' apps.yaml.j2 \
   "text.sub('media_orphan_scanner_delete_enabled | default(false)', 'media_orphan_scanner_delete_enabled | default(true)')"
 expect_rejected 'orphan scanner flag quoted in the dev vars' dev.yml \
-  "text.sub('media_orphan_scanner_enabled: false', \"media_orphan_scanner_enabled: 'false'\")"
+  "text.sub(/^media_orphan_scanner_enabled: (?:true|false)$/, \"media_orphan_scanner_enabled: 'true'\")"
 expect_rejected 'orphan scanner flag declared twice in the dev vars' dev.yml \
   "text.sub('media_orphan_scanner_delete_enabled: false', \"media_orphan_scanner_delete_enabled: false\nmedia_orphan_scanner_delete_enabled: false\")"
 expect_rejected 'orphan scanner minimum age lowered' apps.yaml.j2 \
@@ -82,6 +82,6 @@ expect_rejected 'orphan scanner minimum age lowered' apps.yaml.j2 \
 expect_rejected 'orphan scanner tuning sourced from SSM' external-secrets.yaml.j2 \
   "text.sub(\"  'OBJECT_STORAGE_PURGE_SECRET_KEY': ssm_parameter_keys.object_storage_media_purge_secret_key\n\", \"  'OBJECT_STORAGE_PURGE_SECRET_KEY': ssm_parameter_keys.object_storage_media_purge_secret_key,\n  'MEDIA_ORPHAN_SCANNER_ENABLED': ssm_parameter_keys.media_orphan_scanner_enabled\n\")"
 expect_rejected 'quoted flag value' dev.yml \
-  "text.sub('document_purge_enabled: false', \"document_purge_enabled: 'false'\")"
+  "text.sub(/^document_purge_enabled: (?:true|false)$/, \"document_purge_enabled: 'true'\")"
 
 printf '%s\n' 'PASS document purge workload contract'
