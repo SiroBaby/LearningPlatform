@@ -411,3 +411,58 @@ func TestLoadMediaProbeBoundsTheProbeTimeoutBelowTheJobTimeout(t *testing.T) {
 		})
 	}
 }
+
+func loadMediaProbeWithAudioPrep(t *testing.T, overrides map[string]string) (Config, error) {
+	t.Helper()
+	env := validEnvironment()
+	env[mediaBucketEnvironment] = "media"
+	env[mediaProbeAccessKeyEnvironment] = "media-probe-access"
+	env[mediaProbeSecretKeyEnvironment] = "media-probe-secret"
+	env[mediaProbeDatabaseUserEnvironment] = "media_probe"
+	env[mediaProbeDatabasePasswordEnvironment] = "media-probe-password"
+	for key, value := range overrides {
+		env[key] = value
+	}
+	return LoadMediaProbe(func(key string) (string, bool) { value, ok := env[key]; return value, ok })
+}
+
+func TestLoadMediaProbeKeepsAudioPreparationOffByDefault(t *testing.T) {
+	config, err := loadMediaProbeWithAudioPrep(t, nil)
+	if err != nil {
+		t.Fatalf("LoadMediaProbe() error = %v", err)
+	}
+	if config.Probe.AudioPrep.Enabled || config.Probe.AudioPrep.BinaryPath != "" {
+		t.Fatalf("audio preparation = %#v, want disabled and unconfigured by default", config.Probe.AudioPrep)
+	}
+}
+
+func TestLoadMediaProbeEnablesAudioPreparationOnlyForLiteralTrue(t *testing.T) {
+	config, err := loadMediaProbeWithAudioPrep(t, map[string]string{
+		audioPrepEnabledEnvironment:       "true",
+		audioPrepFFmpegPathEnvironment:    "/opt/ffmpeg",
+		audioPrepFFmpegVersionEnvironment: "8.1.3-27-g8dca1586f4-20261031",
+		audioPrepTimeoutEnvironment:       "90000",
+	})
+	if err != nil {
+		t.Fatalf("LoadMediaProbe() error = %v", err)
+	}
+	expected := AudioPrep{Enabled: true, BinaryPath: "/opt/ffmpeg", ExpectedVersion: "8.1.3-27-g8dca1586f4-20261031", Timeout: 90 * time.Second}
+	if config.Probe.AudioPrep != expected {
+		t.Fatalf("audio preparation = %#v, want %#v", config.Probe.AudioPrep, expected)
+	}
+	for _, invalid := range []string{"1", "TRUE", "yes", "on"} {
+		if _, err := loadMediaProbeWithAudioPrep(t, map[string]string{audioPrepEnabledEnvironment: invalid}); err == nil || !strings.Contains(err.Error(), audioPrepEnabledEnvironment) {
+			t.Fatalf("LoadMediaProbe(%q) error = %v, want a strict boolean error", invalid, err)
+		}
+	}
+}
+
+func TestLoadMediaProbeRejectsAudioPreparationTimeoutAtOrAboveJobTimeout(t *testing.T) {
+	_, err := loadMediaProbeWithAudioPrep(t, map[string]string{
+		audioPrepEnabledEnvironment: "true",
+		audioPrepTimeoutEnvironment: "600000",
+	})
+	if err == nil || !strings.Contains(err.Error(), audioPrepTimeoutEnvironment+" must be shorter than "+jobTimeoutEnvironment) {
+		t.Fatalf("LoadMediaProbe() error = %v, want the ffmpeg timeout bounded by the job timeout", err)
+	}
+}

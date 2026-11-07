@@ -53,6 +53,10 @@ const (
 	probeOutputBytesEnvironment           = "MEDIA_PROBE_OUTPUT_MAX_BYTES"
 	probeTempDirEnvironment               = "MEDIA_PROBE_TEMP_DIR"
 	probeMaxDownloadBytesEnvironment      = "MEDIA_PROBE_MAX_DOWNLOAD_BYTES"
+	audioPrepEnabledEnvironment           = "MEDIA_PROBE_AUDIO_PREP_ENABLED"
+	audioPrepFFmpegPathEnvironment        = "MEDIA_PROBE_FFMPEG_PATH"
+	audioPrepFFmpegVersionEnvironment     = "MEDIA_PROBE_FFMPEG_VERSION"
+	audioPrepTimeoutEnvironment           = "MEDIA_PROBE_AUDIO_PREP_TIMEOUT_MS"
 )
 
 type LookupEnv func(string) (string, bool)
@@ -86,6 +90,17 @@ type Probe struct {
 	OutputMaxBytes  int64
 	TempDir         string
 	MaxDownloadSize int64
+	AudioPrep       AudioPrep
+}
+
+// AudioPrep configures the optional ffmpeg audio preparation step (#160 PR4).
+// It is off unless MEDIA_PROBE_AUDIO_PREP_ENABLED is exactly "true".
+type AudioPrep struct {
+	Enabled         bool
+	BinaryPath      string
+	ExpectedVersion string
+	// Timeout bounds one ffmpeg execution (decode measurement or one chunk).
+	Timeout time.Duration
 }
 
 // LoadMediaProbe loads the shared database/storage contract without loading
@@ -158,6 +173,10 @@ func LoadMediaProbe(lookup LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	audioPrep, err := loadAudioPrep(lookup, loaded.JobTimeout)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		HealthAddress:         loaded.HealthAddress,
 		Database:              loaded.Database,
@@ -177,7 +196,35 @@ func LoadMediaProbe(lookup LookupEnv) (Config, error) {
 			OutputMaxBytes:  outputBytes,
 			TempDir:         value(lookup, probeTempDirEnvironment, "/tmp/media-probe"),
 			MaxDownloadSize: maxDownloadBytes,
+			AudioPrep:       audioPrep,
 		},
+	}, nil
+}
+
+// loadAudioPrep reads the audio preparation flag. Only the literal "true" or
+// "false" is accepted so a typo cannot silently leave the feature in the wrong
+// state. The ffmpeg binary settings are read only when the flag is on.
+func loadAudioPrep(lookup LookupEnv, jobTimeout time.Duration) (AudioPrep, error) {
+	switch value(lookup, audioPrepEnabledEnvironment, "false") {
+	case "false":
+		return AudioPrep{}, nil
+	case "true":
+	default:
+		return AudioPrep{}, fmt.Errorf("%s must be true or false", audioPrepEnabledEnvironment)
+	}
+	timeout, err := boundedDuration(lookup, audioPrepTimeoutEnvironment, 3*time.Minute, time.Second, 10*time.Minute)
+	if err != nil {
+		return AudioPrep{}, err
+	}
+	// One ffmpeg run at or above the job timeout would surface as a retryable job deadline.
+	if timeout >= jobTimeout {
+		return AudioPrep{}, fmt.Errorf("%s must be shorter than %s", audioPrepTimeoutEnvironment, jobTimeoutEnvironment)
+	}
+	return AudioPrep{
+		Enabled:         true,
+		BinaryPath:      value(lookup, audioPrepFFmpegPathEnvironment, "/usr/local/bin/ffmpeg"),
+		ExpectedVersion: value(lookup, audioPrepFFmpegVersionEnvironment, "8.1"),
+		Timeout:         timeout,
 	}, nil
 }
 

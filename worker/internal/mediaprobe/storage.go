@@ -99,6 +99,46 @@ func (store *S3Store) OpenVersion(ctx context.Context, locator Locator) (io.Read
 	return object, nil
 }
 
+// PutDerivedObject uploads one derived audio file and returns the exact
+// VersionId S3 assigned. A bucket without versioning returns no VersionId; that
+// is refused because later readers and the purge worker address exact versions.
+func (store *S3Store) PutDerivedObject(ctx context.Context, request PutObjectRequest) (PutObjectResult, error) {
+	if request.Bucket == "" || request.Key == "" || request.FilePath == "" {
+		return PutObjectResult{}, Failure{Code: FailureAudioPrep}
+	}
+	info, err := store.client.FPutObject(ctx, request.Bucket, request.Key, request.FilePath, minio.PutObjectOptions{
+		ContentType: request.ContentType,
+	})
+	if err != nil {
+		return PutObjectResult{}, classifyPutError(err)
+	}
+	if strings.TrimSpace(info.VersionID) == "" || strings.TrimSpace(info.ETag) == "" || info.Size < 0 {
+		return PutObjectResult{}, DerivedAudioError{Reason: DerivedAudioReasonVersionMissing, Failure: Failure{Code: FailureAudioPrep}}
+	}
+	return PutObjectResult{VersionID: info.VersionID, ETag: info.ETag, Size: info.Size}, nil
+}
+
+// classifyPutError separates a denied write, which no retry can fix, from
+// temporary storage trouble; the denial is tagged so operators can see the
+// missing IAM grant without the raw S3 message reaching logs.
+func classifyPutError(err error) error {
+	var response minio.ErrorResponse
+	if errors.As(err, &response) {
+		switch response.Code {
+		case "AccessDenied", "AllAccessDisabled", "InvalidAccessKeyId", "SignatureDoesNotMatch":
+			return DerivedAudioError{Reason: DerivedAudioReasonAccessDenied, Failure: Failure{Code: FailureAudioPrep}}
+		case "NoSuchBucket":
+			return DerivedAudioError{Reason: DerivedAudioReasonConfiguration, Failure: Failure{Code: FailureAudioPrep}}
+		}
+	}
+	classified := classifyStorageError(err)
+	var failure Failure
+	if errors.As(classified, &failure) && failure.Code == FailureMediaProbe && !failure.Technical {
+		return DerivedAudioError{Reason: DerivedAudioReasonRejected, Failure: Failure{Code: FailureAudioPrep}}
+	}
+	return classified
+}
+
 func classifyStorageError(err error) error {
 	var response minio.ErrorResponse
 	if errors.As(err, &response) {
@@ -123,3 +163,4 @@ func classifyStorageError(err error) error {
 }
 
 var _ ObjectStore = (*S3Store)(nil)
+var _ DerivedObjectStore = (*S3Store)(nil)

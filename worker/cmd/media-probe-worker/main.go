@@ -131,6 +131,21 @@ func run() error {
 		return newBootstrapFailure(bootstrapProbe)
 	}
 
+	var ffmpegRunner mediaprobe.FFmpegRunner
+	if workerConfig.Probe.AudioPrep.Enabled {
+		ffmpegRunner = mediaprobe.FFmpegRunner{
+			BinaryPath:      workerConfig.Probe.AudioPrep.BinaryPath,
+			ExpectedVersion: workerConfig.Probe.AudioPrep.ExpectedVersion,
+			Timeout:         workerConfig.Probe.AudioPrep.Timeout,
+		}
+		ffmpegContext, ffmpegCancel := context.WithTimeout(ctx, workerConfig.Probe.Timeout)
+		err = ffmpegRunner.CheckVersion(ffmpegContext)
+		ffmpegCancel()
+		if err != nil {
+			return newBootstrapFailure(bootstrapProbe)
+		}
+	}
+
 	poolConfig, err := workerConfig.Database.PoolConfig()
 	if err != nil {
 		return newDatabaseBootstrapFailure(err)
@@ -153,14 +168,19 @@ func run() error {
 	if err != nil {
 		return newBootstrapFailure(bootstrapStorage)
 	}
-	probeWorker := mediaprobe.NewWorker(store, objects, probeRunner, slog.Default(), mediaprobe.Options{
+	options := mediaprobe.Options{
 		Concurrency:     workerConfig.Concurrency,
 		PollInterval:    workerConfig.PollInterval,
 		JobTimeout:      workerConfig.JobTimeout,
 		ShutdownTimeout: workerConfig.ShutdownTimeout,
 		TempDir:         workerConfig.Probe.TempDir,
 		MaxDownloadSize: workerConfig.Probe.MaxDownloadSize,
-	})
+		MediaBucket:     workerConfig.Storage.Bucket,
+	}
+	if workerConfig.Probe.AudioPrep.Enabled {
+		options.AudioPrep = &mediaprobe.AudioPrep{Encoder: ffmpegRunner, Objects: objects, Chunks: store}
+	}
+	probeWorker := mediaprobe.NewWorker(store, objects, probeRunner, slog.Default(), options)
 	if err := probeWorker.Start(ctx); err != nil {
 		return newBootstrapFailure(bootstrapWorker)
 	}

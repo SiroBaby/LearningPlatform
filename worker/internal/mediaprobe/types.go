@@ -23,6 +23,9 @@ const (
 	FailureUnsupportedAudioCodec       FailureCode = "MEDIA_UNSUPPORTED_AUDIO_CODEC"
 	FailureAudioTrackRequired          FailureCode = "MEDIA_AUDIO_TRACK_REQUIRED"
 	FailureObjectTooLarge              FailureCode = "MEDIA_OBJECT_TOO_LARGE"
+	FailureDurationMismatch            FailureCode = "MEDIA_DURATION_MISMATCH"
+	FailureDurationExceeded            FailureCode = "MEDIA_DURATION_EXCEEDED"
+	FailureAudioPrep                   FailureCode = "MEDIA_AUDIO_PREP_FAILED"
 )
 
 type Failure struct {
@@ -70,6 +73,11 @@ type Locator struct {
 type ProbeResult struct {
 	DurationSec int
 	Locator     Locator
+	// DecodedDurationMs is the duration measured by decoding the audio (D10).
+	// Zero means audio preparation was off and nothing was measured.
+	DecodedDurationMs int
+	// AudioChunkCount is the number of derived audio chunks recorded for the job.
+	AudioChunkCount int
 }
 
 type ObjectStore interface {
