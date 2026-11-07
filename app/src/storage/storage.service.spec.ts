@@ -1,5 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { ApplicationConfigService } from '../config/application-config.service';
@@ -88,6 +89,19 @@ describe('StorageService.onModuleInit', () => {
     await expect(service.onModuleInit()).rejects.toThrow(
       'Object storage bucket is unavailable or misconfigured',
     );
+  });
+
+  it('logs only bounded diagnostics of a bucket lookup failure, never the message', async () => {
+    const failure = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:9000 secret-key'), { code: 'ECONNREFUSED', name: 'Error' });
+    mockSend.mockRejectedValue(failure);
+    const logger = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const service = createService();
+
+    await expect(service.onModuleInit()).rejects.toThrow('Object storage bucket is unavailable or misconfigured');
+
+    expect(logger).toHaveBeenCalledWith('storage.bootstrap.head_bucket_failed errorName=Error code=ECONNREFUSED httpStatus=unknown');
+    expect(JSON.stringify(logger.mock.calls)).not.toContain('secret-key');
+    logger.mockRestore();
   });
 
   it('does not require media bucket permissions during API startup', async () => {
