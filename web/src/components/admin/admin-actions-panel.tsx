@@ -39,14 +39,14 @@ function errorMessage(status: number, payload: unknown): string {
   const code = isSafeErrorPayload(payload) && typeof payload.code === "string" ? payload.code : null;
   if (code === "SESSION_INVALID" || status === 401) return "Phiên đăng nhập không còn hiệu lực.";
   if (code === "ADMIN_FORBIDDEN" || status === 403) return "Bạn không có quyền thực hiện thao tác này.";
-  if (code === "INVALID_REQUEST") return "Thông tin thao tác chưa đúng. Hãy kiểm tra lại mã đã nhập.";
+  if (code === "INVALID_REQUEST") return "Thông tin chưa đúng. Kiểm tra lại mã đã nhập.";
   if (code === "ADMIN_ACTION_CONFLICT" || status === 409) {
-    return "Thao tác hiện chưa thể thực hiện. Hãy kiểm tra điều kiện và thử lại.";
+    return "Chưa thể thực hiện. Kiểm tra điều kiện rồi thử lại.";
   }
   if (code === "ADMIN_BACKEND_UNAVAILABLE" || status >= 500) {
-    return "Dịch vụ quản trị đang tạm thời chưa sẵn sàng. Hãy thử lại sau.";
+    return "Dịch vụ quản trị chưa sẵn sàng. Thử lại sau.";
   }
-  return "Không thể thực hiện thao tác này. Hãy thử lại.";
+  return "Không thể thực hiện. Thử lại.";
 }
 
 async function readResponsePayload(response: Response): Promise<unknown> {
@@ -173,7 +173,7 @@ export function AdminActionsPanel({
       }
       setRoleChangeRequests(parsed.items);
     } catch {
-      setRequestsError("Không thể tải danh sách yêu cầu. Hãy thử lại sau.");
+      setRequestsError("Không thể tải danh sách yêu cầu. Thử lại sau.");
     } finally {
       setIsLoadingRequests(false);
     }
@@ -205,7 +205,7 @@ export function AdminActionsPanel({
         setFeedback({ tone: "error", message: "Chưa đủ điều kiện để gửi yêu cầu thay đổi quyền." });
         return;
       }
-      setFeedback({ tone: "error", message: "Hãy nhập mã tài khoản cần thay đổi vai trò." });
+      setFeedback({ tone: "error", message: "Nhập mã tài khoản cần đổi vai trò." });
       return;
     }
     setPendingAction(action);
@@ -263,7 +263,7 @@ export function AdminActionsPanel({
         setFeedback({
           tone: "success",
           message,
-          detail: "Các phiên đăng nhập hiện tại của tài khoản được thiết lập sẽ bị thu hồi. Hãy đăng nhập lại nếu cần.",
+          detail: "Các phiên đăng nhập hiện tại của tài khoản được thiết lập sẽ bị thu hồi. Đăng nhập lại nếu cần.",
         });
         notify(message, "success");
         await refreshSuperAdminStatus();
@@ -295,8 +295,8 @@ export function AdminActionsPanel({
       }
     } catch (error: unknown) {
       const message = isAbortError(error)
-        ? "Thao tác mất quá nhiều thời gian. Hãy thử lại sau."
-        : "Không thể kết nối đến dịch vụ quản trị. Hãy thử lại sau.";
+        ? "Thao tác mất quá nhiều thời gian. Thử lại sau."
+        : "Không thể kết nối dịch vụ quản trị. Thử lại sau.";
       setFeedback({ tone: "error", message });
       notify(message, "error");
     } finally {
@@ -348,7 +348,7 @@ export function AdminActionsPanel({
                 ) : null}
                 {currentMode === "QUORUM_RECOVERY" || currentMode === "LOCKOUT_RECOVERY" ? (
                   <p className="mt-3 text-xs leading-5 text-ink-500">
-                    Hãy liên hệ người phụ trách vận hành để xác minh và mở quy trình khôi phục. Trang này không thể tự bỏ qua bước kiểm tra đó.
+                    Liên hệ người phụ trách vận hành để xác minh và mở quy trình khôi phục. Trang này không thể tự bỏ qua bước kiểm tra đó.
                   </p>
                 ) : null}
               </div>
@@ -380,7 +380,7 @@ export function AdminActionsPanel({
       {!actorRole ? (
         <div className="mt-5 flex items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm leading-6 text-warning-700" role="alert">
           <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-          <p>Chưa xác định được quyền thao tác. Hãy tải lại trang trước khi thay đổi.</p>
+          <p>Chưa xác định được quyền thao tác. Tải lại trang trước khi thay đổi.</p>
         </div>
       ) : (
         <div className={`mt-6 grid gap-4 ${canBootstrap ? "xl:grid-cols-3" : "xl:grid-cols-1"}`}>
@@ -417,9 +417,9 @@ export function AdminActionsPanel({
                   <Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
                   <p>
                     {currentMode === "FIRST_BOOTSTRAP"
-                      ? "Hãy thiết lập quản trị cấp cao đầu tiên trước khi gửi yêu cầu thay đổi quyền."
+                      ? "Thiết lập quản trị cấp cao đầu tiên trước khi gửi yêu cầu đổi quyền."
                       : currentMode === "SEED_SECOND"
-                        ? "Hãy hoàn tất bước thiết lập nhóm quản trị bên ngoài trước khi gửi yêu cầu thay đổi quyền."
+                        ? "Hoàn tất thiết lập nhóm quản trị bên ngoài trước khi gửi yêu cầu đổi quyền."
                       : currentMode === "QUORUM_RECOVERY" || currentMode === "LOCKOUT_RECOVERY"
                         ? "Các yêu cầu thay đổi quyền sẽ mở lại sau khi quy trình khôi phục hoàn tất."
                         : "Chưa thể mở thao tác khi trạng thái quyền quản trị chưa rõ ràng."}

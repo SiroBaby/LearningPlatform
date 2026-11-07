@@ -244,7 +244,7 @@ function LibraryDocumentCard({
 }) {
   const isList = view === "list";
   const failurePresentation = document.status === "failed"
-    ? getDocumentFailurePresentation(document.errorCode, document.errorMessage)
+    ? getDocumentFailurePresentation(document.errorCode)
     : null;
 
   return (
@@ -430,7 +430,7 @@ export function LibraryBrowser() {
                 <option value="all">Mọi trạng thái</option>
                 <option value="READY">Sẵn sàng</option>
                 <option value="PROCESSING">Đang xử lý</option>
-                <option value="PROBING">Đang kiểm tra tệp</option>
+                <option value="PROBING">Đang kiểm tra file</option>
                 <option value="UPLOADED">Đã tải lên</option>
                 <option value="FAILED">Xử lý chưa thành công</option>
               </select>

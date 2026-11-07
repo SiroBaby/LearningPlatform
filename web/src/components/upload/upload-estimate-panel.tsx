@@ -43,7 +43,7 @@ export function UploadEstimatePanel({
       {isEstimating ? (
         <div className="flex items-center gap-3 rounded-2xl border border-ink-100 bg-white p-4 text-sm text-ink-700">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Đang tính ước tính cho tệp và cách xử lý bạn đã chọn…
+          Đang tính ước tính cho file và cách xử lý bạn đã chọn…
         </div>
       ) : null}
 

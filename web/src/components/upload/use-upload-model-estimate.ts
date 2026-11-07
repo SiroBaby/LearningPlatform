@@ -84,7 +84,7 @@ export function useUploadModelEstimate({
 
         setModelOptions([]);
         setModelOptionsError(
-          getClientErrorMessage(error, "Chưa tải được danh sách cách xử lý lúc này. Bạn hãy thử lại."),
+          getClientErrorMessage(error, "Chưa tải được danh sách cách xử lý. Thử lại."),
         );
       } finally {
         if (!cancelled) {
@@ -138,7 +138,7 @@ export function useUploadModelEstimate({
 
         setEstimate(null);
         setEstimateError(
-          getClientErrorMessage(error, "Chưa ước tính được chi phí cho lựa chọn này. Bạn hãy thử lại."),
+          getClientErrorMessage(error, "Chưa ước tính được chi phí. Thử lại."),
         );
       } finally {
         if (!cancelled && requestId === estimateRequestId) {
@@ -187,10 +187,10 @@ export function toUploadEstimateSummaryPresentation(
     summary: getEstimateSummary(estimate),
     detail: estimate.selectedModelKind === "PLAN"
       ? estimate.estimatedCredits === null
-        ? "Thời lượng tệp chưa biết nên chưa thể ước tính. Lượt dùng sẽ được tính theo thời lượng sau khi kiểm tra tệp."
-        : `Hiện đang hiển thị mức ước tính sơ bộ khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} lượt dùng, tính sơ bộ theo dung lượng tệp. Mức giữ thật được tính sau khi đọc nội dung chữ của tệp.`
-      : "Kết nối riêng không dùng lượt dùng trong gói. Nhà cung cấp bạn dùng có thể tính phí riêng ngoài hệ thống này.",
+        ? "Chưa ước tính được. Credit được tính sau khi kiểm tra file."
+        : `Ước tính khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} credit theo dung lượng file. Credit thật được tính sau khi đọc nội dung file.`
+      : "Không tính credit trong gói. Nhà cung cấp của bạn có thể tính phí riêng.",
     badgeTone: estimate.selectedModelKind === "PLAN" ? "brand" : "neutral",
-    badgeLabel: estimate.selectedModelKind === "PLAN" ? "Có trong gói của bạn" : "Kết nối riêng của bạn",
+    badgeLabel: estimate.selectedModelKind === "PLAN" ? "Có trong gói của bạn" : "Lựa chọn riêng của bạn",
   };
 }

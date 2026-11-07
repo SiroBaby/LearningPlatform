@@ -15,22 +15,22 @@ export function UploadPickerSection({ fileInputId, isMediaUploadEnabled, onFileC
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-600">
           <FileUp className="h-7 w-7" />
         </div>
-        <h3 className="mt-4 text-lg font-semibold text-ink-900">Chọn tệp {supportedTypes}</h3>
+        <h3 className="mt-4 text-lg font-semibold text-ink-900">Chọn file {supportedTypes}</h3>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-ink-600">
-          Chọn đúng tệp bạn muốn dùng. Sau khi tải lên xong, tài liệu sẽ được chuyển sang bước xử lý.
+          Tải lên xong, tài liệu sẽ chuyển sang bước xử lý.
         </p>
         <div className="mt-5 flex flex-wrap justify-center gap-3">
           <label htmlFor={fileInputId} className="cursor-pointer">
             <span className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-brand-700">
               <FileUp className="h-4 w-4" />
-              Chọn tệp
+              Chọn file
             </span>
           </label>
         </div>
         <input
           id={fileInputId}
           type="file"
-          aria-label={`Chọn tệp ${supportedTypes}`}
+          aria-label={`Chọn file ${supportedTypes}`}
           accept={isMediaUploadEnabled
             ? ".pdf,.txt,.mp3,.mp4,application/pdf,text/plain,audio/mpeg,video/mp4"
             : ".pdf,.txt,application/pdf,text/plain"}
@@ -41,17 +41,17 @@ export function UploadPickerSection({ fileInputId, isMediaUploadEnabled, onFileC
         <div className="mt-6 w-full max-w-2xl rounded-2xl border border-brand-100 bg-brand-50/70 p-4 text-left text-sm leading-6 text-ink-700" role="note">
           <p className="font-semibold text-ink-900">Giới hạn trước khi tải lên</p>
           <ul className="mt-2 grid gap-1 sm:grid-cols-2">
-            <li>PDF/TXT: tối đa 1 GiB</li>
-            {isMediaUploadEnabled ? <li>MP3: tối đa 300 MiB</li> : null}
-            {isMediaUploadEnabled ? <li>MP4: tối đa 500 MiB</li> : null}
-            {isMediaUploadEnabled ? <li>Media: thời lượng tối đa 2 giờ</li> : null}
+            <li>PDF/TXT: tối đa 1 GB</li>
+            {isMediaUploadEnabled ? <li>MP3: tối đa 300 MB</li> : null}
+            {isMediaUploadEnabled ? <li>MP4: tối đa 500 MB</li> : null}
+            {isMediaUploadEnabled ? <li>MP3/MP4: dài tối đa 2 giờ</li> : null}
           </ul>
           <p className="mt-3 text-warning-800">
-            Nếu mạng không ổn định, lần tải lại sẽ bắt đầu từ đầu; hiện chưa hỗ trợ tiếp tục từ phần đã tải.
+            Nếu mạng bị ngắt, file sẽ được tải lại từ đầu.
           </p>
           {isMediaUploadEnabled ? (
             <p className="mt-1 text-ink-600">
-              MP4 cần video H.264 và âm thanh AAC-LC; video 4K hoặc 60 fps chưa được hỗ trợ.
+              MP4 tối đa 1080p.
             </p>
           ) : null}
         </div>

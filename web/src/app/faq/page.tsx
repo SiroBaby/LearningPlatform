@@ -59,7 +59,7 @@ const faqGroups: readonly {
       {
         question: "Tài liệu tôi tải lên có riêng tư mặc định không?",
         answer:
-          "Có. Public-facing copy và UI của sản phẩm mặc định truyền đạt rằng uploaded documents là private by default. Người dùng cần có cách xóa tài liệu và generated outputs của mình khi cần.",
+          "Có. Public-facing copy và UI của sản phẩm mặc định truyền đạt rằng tài liệu đã tải lên là private by default. Người dùng cần có cách xóa tài liệu và generated outputs của mình khi cần.",
       },
       {
         question: "LearningPlatform có cho tôi biết file nào bị từ chối và vì sao không?",
@@ -81,7 +81,7 @@ const faqGroups: readonly {
       {
         question: "Vì sao có lúc processing mất vài phút?",
         answer:
-          "Vì pipeline không chỉ upload file mà còn cần trích xuất nội dung, chia chunk, sinh câu hỏi, kiểm tra chất lượng đầu ra rồi mới dựng quiz/flashcards/checkpoints. UI tốt phải cho bạn thấy bước nào đang chạy và bạn có thể rời trang trong lúc chờ.",
+          "Vì pipeline không chỉ tải file lên mà còn cần trích xuất nội dung, chia chunk, sinh câu hỏi, kiểm tra chất lượng đầu ra rồi mới dựng quiz/flashcards/checkpoints. UI tốt phải cho bạn thấy bước nào đang chạy và bạn có thể rời trang trong lúc chờ.",
       },
       {
         question: "Những giới hạn nào thường chặn người dùng?",
@@ -103,12 +103,12 @@ const faqGroups: readonly {
       {
         question: "Pricing page nên cho tôi biết những gì?",
         answer:
-          "Không chỉ là giá. Pricing cần nêu monthly/yearly toggle, AI credits, số uploads, page/minute limits, max file size, video support, Tutor availability, analytics depth, top-up policy và fair-use note của từng plan.",
+          "Không chỉ là giá. Pricing cần nêu monthly/yearly toggle, AI credits, số lượt tải lên, page/minute limits, max file size, video support, Tutor availability, analytics depth, top-up policy và fair-use note của từng plan.",
       },
       {
         question: "Free plan có đủ để hiểu sản phẩm không?",
         answer:
-          "Có — Free nên đủ để thử workflow PDF/text cơ bản và xem grounded quiz hoạt động ra sao. Nhưng nếu bạn muốn process lecture video, dùng Tutor nhiều hoặc chạy analytics sâu hơn, sản phẩm phải nói rõ bạn cần plan cao hơn trước khi upload.",
+          "Có — Free nên đủ để thử workflow PDF/text cơ bản và xem grounded quiz hoạt động ra sao. Nhưng nếu bạn muốn process lecture video, dùng Tutor nhiều hoặc chạy analytics sâu hơn, sản phẩm phải nói rõ bạn cần plan cao hơn trước khi tải lên.",
       },
       {
         question: "Top-up và upgrade khác nhau thế nào?",
@@ -141,13 +141,13 @@ export default function FaqPage() {
             />
             <FaqStat
               label="Privacy"
-              value="Uploaded documents are private by default"
+              value="Tài liệu đã tải lên mặc định ở chế độ riêng tư"
               detail="Người dùng cần thấy rõ delete control và data note, không bị buộc phải đoán."
             />
             <FaqStat
               label="Pricing"
               value="Quota rõ, limit state rõ"
-              detail="Credits, uploads, page quota và video limits phải được nêu trước khi xử lý."
+              detail="Credits, lượt tải lên, page quota và video limits phải được nêu trước khi xử lý."
             />
           </div>
         </div>
@@ -186,7 +186,7 @@ export default function FaqPage() {
               <CardBody className="space-y-3">
                 <p className="text-sm font-semibold text-warning-700">What it won’t claim</p>
                 <QuoteRow text="Không hứa AI luôn đúng hoặc biết mọi thứ ngoài tài liệu của bạn." />
-                <QuoteRow text="Không giấu limit state cho đến sau khi bạn đã upload xong tài liệu lớn." />
+                <QuoteRow text="Không giấu limit state cho đến sau khi bạn đã tải lên xong tài liệu lớn." />
                 <QuoteRow text="Không xem pricing chỉ là bảng giá; pricing phải là bản mô tả policy và quota thực tế." />
               </CardBody>
             </Card>

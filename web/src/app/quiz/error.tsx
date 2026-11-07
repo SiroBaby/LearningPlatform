@@ -7,7 +7,7 @@ export default function Error({ reset }: { error: Error & { digest?: string }; r
   return (
     <LearnerRouteError
       title="Quiz chưa thể mở"
-      description="Quiz có thể đang được chuẩn bị hoặc gặp lỗi tạm thời. Hãy thử lại sau ít phút."
+      description="Quiz đang được chuẩn bị hoặc gặp lỗi tạm thời. Thử lại sau ít phút."
       backHref={routes.library}
       backLabel="Về thư viện"
       reset={reset}

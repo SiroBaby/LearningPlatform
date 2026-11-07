@@ -18,7 +18,7 @@ export default async function ProcessingPage({ params }: ProcessingPageProps) {
   return (
     <LearnerShell
       title="Trạng thái tài liệu"
-      subtitle="Theo dõi tiến độ xử lý, xem lỗi nếu có và mở lại tài liệu khi đã sẵn sàng."
+      subtitle="Xem tài liệu đang ở bước nào và cần làm gì tiếp."
     >
       <ProcessingStatusScreen documentId={docId} />
     </LearnerShell>

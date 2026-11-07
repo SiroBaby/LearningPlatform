@@ -7,7 +7,7 @@ export default function Error({ reset }: { error: Error & { digest?: string }; r
   return (
     <LearnerRouteError
       title="Trạng thái tài liệu chưa thể mở"
-      description="Chưa thể tải tiến độ xử lý lúc này. Hãy thử lại hoặc quay về thư viện."
+      description="Chưa thể tải tiến độ. Thử lại hoặc về thư viện."
       backHref={routes.library}
       backLabel="Về thư viện"
       reset={reset}

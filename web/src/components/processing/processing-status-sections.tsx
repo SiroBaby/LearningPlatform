@@ -50,8 +50,8 @@ export function ProcessingHeader({ document, detailHref, libraryHref, error }: P
   const isFailed = document?.status === "FAILED";
   const title = document?.originalName ?? "Đang tải trạng thái tài liệu";
   const description = isFailed
-    ? "Tài liệu này chưa xử lý thành công. Bạn có thể xem lý do bên dưới và thử lại nếu hệ thống hỗ trợ."
-    : "Theo dõi tiến độ xử lý, cách xử lý đã chọn cùng mức ước tính và số lượt dùng cuối cùng khi có dữ liệu mới.";
+    ? "Chưa xử lý được. Xem lý do bên dưới."
+    : "Trang tự cập nhật tiến độ và credit.";
 
   return (
     <Card>
@@ -117,7 +117,7 @@ export function ProcessingStatusPanel({
   onRetryQuiz,
 }: ProcessingStatusPanelProps) {
   const failurePresentation = document?.status === "FAILED"
-    ? getDocumentFailurePresentation(document.errorCode, document.errorMessage)
+    ? getDocumentFailurePresentation(document.errorCode)
     : null;
   const canRetryFailure = document?.status === "FAILED"
     && isRetryableDocumentFailureCode(document.errorCode);
@@ -204,7 +204,7 @@ export function ProcessingStatusPanel({
             <div>
               <p className="font-semibold text-success-900">Tài liệu đã sẵn sàng</p>
               <p className="mt-1 text-sm leading-6 text-success-800">
-                Bạn có thể mở quiz ngay khi bộ câu hỏi đã sẵn sàng.
+                Mở quiz khi bộ câu hỏi sẵn sàng.
               </p>
             </div>
             {isQuizLoading ? (

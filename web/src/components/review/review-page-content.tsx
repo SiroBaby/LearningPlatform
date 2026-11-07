@@ -101,7 +101,7 @@ export function ReviewPageContent() {
               <EmptyState
                 icon={BookOpenCheck}
                 title="Không có thẻ cần ôn"
-                description="Bạn đã hoàn thành phần cần ôn. Hãy tiếp tục với một bài kiểm tra hoặc hỏi trợ giảng về phần khó."
+                description="Bạn đã hoàn thành phần cần ôn. Làm một bài kiểm tra hoặc hỏi trợ giảng về phần khó."
                 action={<LinkButton href={routes.home}>Về trang học</LinkButton>}
               />
             )}

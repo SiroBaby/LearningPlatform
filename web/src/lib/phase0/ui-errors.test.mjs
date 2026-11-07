@@ -10,7 +10,7 @@ test("maps known Phase 0 error codes to learner-facing copy", () => {
 
   assert.equal(
     getPhase0UiErrorMessage(error, "fallback"),
-    "Quiz đang được chuẩn bị. Hãy quay lại sau ít phút.",
+    "Quiz đang được chuẩn bị. Quay lại sau ít phút.",
   );
 });
 
@@ -31,17 +31,17 @@ function createCreditError(shortfallCredits) {
   return error;
 }
 
-test("maps INSUFFICIENT_CREDITS to Vietnamese copy with the shortfall", () => {
-  assert.equal(
-    getInsufficientCreditsMessage(createCreditError(250)),
-    "Bạn không đủ credit để xử lý tài liệu này. Cần thêm khoảng 250 credit. Hãy bổ sung credit hoặc dùng tệp nhỏ hơn.",
-  );
+test("maps INSUFFICIENT_CREDITS to short copy without credit numbers", () => {
+  const message = getInsufficientCreditsMessage(createCreditError(250));
+
+  assert.equal(message, "Không đủ credit. Nạp thêm hoặc thử lại với file nhẹ hơn.");
+  assert.doesNotMatch(message, /\d/u);
 });
 
 test("maps INSUFFICIENT_CREDITS without a shortfall and ignores other errors", () => {
   assert.equal(
     getInsufficientCreditsMessage(createCreditError()),
-    "Bạn không đủ credit để xử lý tài liệu này. Hãy bổ sung credit hoặc dùng tệp nhỏ hơn.",
+    "Không đủ credit. Nạp thêm hoặc thử lại với file nhẹ hơn.",
   );
   assert.equal(getInsufficientCreditsMessage(new Error("boom")), null);
 });

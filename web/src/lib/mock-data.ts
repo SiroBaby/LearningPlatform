@@ -28,7 +28,7 @@ export function buildSteps(
   failedAt?: number,
 ): ProcessingStep[] {
   const defs: { key: ProcessingStep["key"]; label: string }[] = [
-    { key: "verified", label: "Đã xác minh tệp" },
+    { key: "verified", label: "Đã xác minh file" },
     { key: "extract", label: "Trích xuất nội dung" },
     { key: "chunk", label: "Chia nhỏ nội dung" },
     { key: "generate", label: "Sinh câu hỏi" },
@@ -176,7 +176,7 @@ export const documents: LearningDocument[] = [
       percent: 40,
       steps: buildSteps(2, 2),
       failureReason:
-        "Không trích xuất được đủ nội dung có ý nghĩa từ tệp. Văn bản quá ngắn để sinh câu hỏi có chất lượng.",
+        "Không trích xuất được đủ nội dung có ý nghĩa từ file. Văn bản quá ngắn để sinh câu hỏi có chất lượng.",
       creditsRefunded: true,
     },
   },
@@ -630,7 +630,7 @@ export const notifications: AppNotification[] = [
     id: "n_3",
     type: "processing_failed",
     title: "Xử lý thất bại",
-    body: "“Ghi chú Giải tích — Tích phân từng phần” không xử lý được. Tín dụng đã được hoàn.",
+    body: "“Ghi chú Giải tích — Tích phân từng phần” không xử lý được. Credit đã được hoàn.",
     createdAt: "2026-07-07T16:25:00Z",
     read: true,
     href: "/library/doc_calc_notes",
@@ -638,8 +638,8 @@ export const notifications: AppNotification[] = [
   {
     id: "n_4",
     type: "credit_low",
-    title: "Tín dụng AI sắp hết",
-    body: "Bạn còn 18/100 tín dụng. Nâng cấp để tiếp tục xử lý tài liệu lớn.",
+    title: "Credit sắp hết",
+    body: "Còn 18/100 credit. Nâng cấp để tiếp tục xử lý tài liệu lớn.",
     createdAt: "2026-07-08T09:00:00Z",
     read: false,
     href: "/billing/upgrade",

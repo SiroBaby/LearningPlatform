@@ -17,8 +17,8 @@ export default async function NotFound() {
       title="Không tìm thấy trang bạn đang tìm"
       description={
         isAuthenticated
-          ? "Trang này không tồn tại hoặc đã bị xóa. Hãy về trang chủ hoặc mở Thư viện để tìm lại."
-          : "Trang này không tồn tại hoặc đã bị xóa. Hãy về trang chủ để tìm lại."
+          ? "Trang này không tồn tại hoặc đã bị xóa. Về trang chủ hoặc mở Thư viện."
+          : "Trang này không tồn tại hoặc đã bị xóa. Về trang chủ để tìm lại."
       }
       icon="warning"
       tone="warning"

@@ -157,7 +157,7 @@ export function DeckPageContent({
             <EmptyState
               icon={Sparkles}
               title="Không có thẻ nào khớp"
-              description="Hãy đổi filter hoặc quay lại toàn bộ deck để tiếp tục review."
+              description="Đổi filter hoặc quay lại toàn bộ deck để tiếp tục review."
               action={<LinkButton href={routes.deck(deck.id)}>Xem toàn bộ deck</LinkButton>}
             />
           )}

@@ -13,7 +13,7 @@ export default async function MaintenancePage(): Promise<React.JSX.Element> {
     <SystemStatePage
       badge="Bảo trì"
       title="Hệ thống đang bảo trì"
-      description="Bạn vui lòng quay lại sau ít phút."
+      description="Quay lại sau ít phút."
       icon="warning"
       tone="brand"
       primaryAction={<HomeActions isAuthenticated={isAuthenticated} />}

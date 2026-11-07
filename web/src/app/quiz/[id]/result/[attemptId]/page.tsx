@@ -121,7 +121,7 @@ export default async function QuizResultPage({ params }: QuizResultPageProps) {
               </CardHeader>
               <CardBody className="space-y-3 text-sm text-ink-600">
                 <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3">Bạn có thể xem lại từng câu ngay bên dưới.</div>
-                <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3">Hãy ghi chú lại những câu bạn còn nhầm để ôn lại sau.</div>
+                <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3">Ghi chú những câu còn nhầm để ôn lại sau.</div>
                 <div className="rounded-2xl border border-ink-100 bg-white px-4 py-3">Khi sẵn sàng, bạn có thể quay lại thư viện để mở tài liệu hoặc làm quiz khác.</div>
                 <LinkButton href={routes.quizStart(id)} variant="outline">Xem lịch sử làm bài</LinkButton>
               </CardBody>

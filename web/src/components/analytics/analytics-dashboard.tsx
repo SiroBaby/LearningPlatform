@@ -556,7 +556,7 @@ export function AnalyticsDashboard() {
               <ArrowRight className="h-4 w-4" />
             </LinkButton>
             <LinkButton href={routes.billing} variant="outline" className="justify-between">
-              Kiểm tra lượt dùng
+              Kiểm tra credit
               <Clock3 className="h-4 w-4" />
             </LinkButton>
           </CardBody>

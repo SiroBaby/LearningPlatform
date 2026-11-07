@@ -158,11 +158,11 @@ export function WeakTopicDetail({ id }: { readonly id: string }) {
               ))
             ) : (
               <div className="rounded-2xl border border-dashed border-ink-200 p-4 text-sm text-ink-500">
-                Chưa có attempt breakdown chi tiết cho chủ đề này. Hãy tạo thêm practice exam để có bằng chứng định lượng rõ hơn.
+                Chưa có attempt breakdown chi tiết cho chủ đề này. Tạo thêm practice exam để có bằng chứng định lượng rõ hơn.
               </div>
             )}
             <p className="text-sm leading-6 text-ink-600">
-              Dữ liệu hiện có cho thấy lỗi tập trung ở các câu hỏi cần suy luận cơ chế, không phải câu hỏi nhận biết nhanh. Hãy đọc lại phần nguồn liên quan trước khi mở một bài kiểm tra mới.
+              Dữ liệu hiện có cho thấy lỗi tập trung ở các câu hỏi cần suy luận cơ chế, không phải câu hỏi nhận biết nhanh. Đọc lại phần nguồn liên quan trước khi mở một bài kiểm tra mới.
             </p>
           </CardBody>
         </Card>

@@ -26,20 +26,20 @@ interface PaymentMethod {
 
 const limitStates: readonly LimitState[] = [
   {
-    title: "Lượt dùng còn thấp",
-    description: `Bạn còn ${usage.creditsRemaining}/${usage.creditsTotal} lượt dùng. Một video dài hoặc nhiều lần tạo lại có thể chạm trần ngay trong hôm nay.`,
+    title: "Sắp hết credit",
+    description: `Còn ${usage.creditsRemaining}/${usage.creditsTotal} credit. Video dài hoặc tạo lại nhiều lần có thể dùng hết trong hôm nay.`,
     actionLabel: "Nâng cấp gói",
     tone: "warning",
   },
   {
     title: "Xử lý video cần gói cao hơn",
-    description: "Gói hiện tại chỉ phù hợp để thử nghiệm tài liệu ngắn. Nếu muốn xử lý video dài ổn định, bạn nên chuyển sang Student Plus hoặc Pro Learner.",
+    description: "Gói hiện tại chỉ hợp với tài liệu ngắn. Chọn Student Plus hoặc Pro Learner để xử lý video dài.",
     actionLabel: "So sánh các gói",
     tone: "brand",
   },
   {
-    title: "Tệp lớn có thể bị chặn",
-    description: "Tài liệu nhiều trang hoặc audio dài sẽ bị giới hạn theo gói và số lượt dùng còn lại trước khi bắt đầu xử lý.",
+    title: "File lớn có thể bị chặn",
+    description: "Tài liệu nhiều trang hoặc MP3 dài bị giới hạn theo gói và credit còn lại.",
     actionLabel: "Xem ước tính tải lên",
     tone: "error",
   },
@@ -48,19 +48,19 @@ const limitStates: readonly LimitState[] = [
 const costRows: readonly CostRow[] = [
   {
     documentTitle: "Nhập môn Hệ điều hành — Chương 3: Quản lý tiến trình.pdf",
-    estimate: "12 lượt dùng",
+    estimate: "12 credit",
     output: "Bài kiểm tra · Thẻ ghi nhớ · Trợ giảng",
     status: "Sẵn sàng",
   },
   {
     documentTitle: "Machine Learning Foundations — Optimization.pdf",
-    estimate: "10 lượt dùng",
+    estimate: "10 credit",
     output: "Bài kiểm tra · Thẻ ghi nhớ · Trợ giảng",
     status: "Sẵn sàng",
   },
   {
     documentTitle: "Bài giảng Mạng máy tính — Giao thức TCP.mp4",
-    estimate: "38 lượt dùng",
+    estimate: "38 credit",
     output: "Điểm dừng · Trợ giảng · Bài kiểm tra",
     status: "Sẵn sàng",
   },
@@ -122,11 +122,11 @@ export function BillingOverview() {
           <CardBody className="space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-ink-500">
               <Gauge className="h-4 w-4 text-mastery-600" />
-              Lượt dùng còn lại
+              Credit còn lại
             </div>
             <div>
               <p className="text-3xl font-semibold tracking-tight text-ink-900">{usage.creditsRemaining}</p>
-              <p className="mt-1 text-sm text-ink-600">trên tổng {usage.creditsTotal} lượt dùng tháng này</p>
+              <p className="mt-1 text-sm text-ink-600">trên tổng {usage.creditsTotal} credit tháng này</p>
             </div>
           </CardBody>
         </Card>
@@ -150,10 +150,10 @@ export function BillingOverview() {
                 Hướng nâng cấp
               </div>
               <p className="text-sm leading-6 text-ink-600">
-                Chuyển sang gói cao hơn để mở xử lý video, tăng số lượt dùng và theo dõi tiến độ liên tục.
+                Chuyển sang gói cao hơn để xử lý video và có thêm credit.
               </p>
             </div>
-            <ProgressRing value={100 - creditsUsagePct} tone="brand" label="Lượt dùng còn lại" />
+            <ProgressRing value={100 - creditsUsagePct} tone="brand" label="Credit còn lại" />
           </CardBody>
         </Card>
       </section>
@@ -164,7 +164,7 @@ export function BillingOverview() {
             <div>
               <CardTitle>Tình trạng sử dụng</CardTitle>
               <p className="mt-1 text-sm text-ink-600">
-                Xem điều gì đang dùng nhiều lượt và giới hạn nào có thể ảnh hưởng đến phiên học tiếp theo.
+                Xem mục nào dùng nhiều credit và giới hạn nào có thể chặn việc học.
               </p>
             </div>
             <LinkButton href={routes.upgrade} size="sm">
@@ -174,12 +174,12 @@ export function BillingOverview() {
           <CardBody className="space-y-5">
             <div className="space-y-3 rounded-2xl border border-ink-100 p-4">
               <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="font-medium text-ink-700">Lượt dùng đã sử dụng</span>
+                <span className="font-medium text-ink-700">Credit đã dùng</span>
                 <span className="text-ink-900">{usage.creditsTotal - usage.creditsRemaining}/{usage.creditsTotal}</span>
               </div>
               <ProgressBar value={creditsUsagePct} tone={creditsUsagePct > 80 ? "warning" : "brand"} />
               <p className="text-sm leading-6 text-ink-600">
-                Video và tạo lại nội dung dùng lượt nhanh nhất. Số lượt hiện tại vẫn đủ cho vài lần luyện ngắn, nhưng có thể không đủ cho nhiều tài liệu mới.
+                Video và tạo lại nội dung tốn credit nhất.
               </p>
             </div>
             <div className="space-y-3 rounded-2xl border border-ink-100 p-4">
@@ -189,7 +189,7 @@ export function BillingOverview() {
               </div>
               <ProgressBar value={uploadsUsagePct} tone={uploadsUsagePct > 80 ? "warning" : "success"} />
               <p className="text-sm leading-6 text-ink-600">
-                Bạn đã dùng {uploadsUsagePct}% giới hạn tải lên. Nếu muốn thêm tài liệu ôn thi trong tuần này, hãy nâng gói trước để tránh bị gián đoạn.
+                Đã dùng {uploadsUsagePct}% giới hạn tải lên. Nâng gói nếu cần tải thêm.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
@@ -199,7 +199,7 @@ export function BillingOverview() {
                   Xử lý video
                 </div>
                 <p className="mt-2 text-sm leading-6 text-ink-600">
-                  Dành cho bài giảng dài, tạo điểm dừng và bản chép lời. Gói Miễn phí phù hợp với tài liệu ngắn.
+                  Dành cho bài giảng dài. Gói Miễn phí chỉ hợp với tài liệu ngắn.
                 </p>
               </div>
               <div className="rounded-2xl border border-ink-100 p-4">
@@ -208,7 +208,7 @@ export function BillingOverview() {
                   Trước khi xử lý
                 </div>
                 <p className="mt-2 text-sm leading-6 text-ink-600">
-                  Luồng tải lên luôn hiển thị ước tính lượt dùng, thời gian dự kiến và cảnh báo khi tệp vượt giới hạn gói.
+                  Trang tải lên hiện ước tính credit và cảnh báo khi file vượt giới hạn gói.
                 </p>
               </div>
             </div>
@@ -249,9 +249,9 @@ export function BillingOverview() {
       <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Lịch sử tạo nội dung và lượt dùng ước tính</CardTitle>
+            <CardTitle>Lịch sử tạo nội dung và credit ước tính</CardTitle>
             <p className="mt-1 text-sm text-ink-600">
-              Mỗi tài liệu cho biết nội dung đã tạo, số lượt dùng ước tính và trạng thái hiện tại.
+              Mỗi tài liệu hiện nội dung đã tạo, credit ước tính và trạng thái.
             </p>
           </CardHeader>
           <CardBody className="space-y-3">
@@ -271,7 +271,7 @@ export function BillingOverview() {
             ))}
             {processingJobs.length > 0 ? (
               <div className="rounded-2xl border border-brand-100 bg-brand-50/50 p-4 text-sm leading-6 text-brand-700">
-                Hiện có {processingJobs.length} tài liệu đang được xử lý. Bạn có thể rời trang này và quay lại sau.
+                {processingJobs.length} tài liệu đang xử lý. Có thể rời trang và quay lại sau.
               </div>
             ) : null}
           </CardBody>
@@ -338,7 +338,7 @@ export function BillingOverview() {
           <div>
             <h2 className="text-lg font-semibold text-ink-900">Việc nên làm tiếp theo</h2>
             <p className="mt-1 text-sm text-ink-600">
-              Vì bạn sắp hết lượt dùng và đang chuẩn bị thi, lựa chọn hợp lý nhất là nâng lên Student Plus để giữ việc học liên tục.
+              Sắp hết credit và đang chuẩn bị thi: nên nâng lên Student Plus.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

@@ -38,7 +38,7 @@ test("returns safe fallback presentation for null error code", () => {
   assert.equal(presentation.retryable, false);
   assert.match(presentation.title, /Chưa thể xử lý tài liệu/);
   assert.doesNotMatch(presentation.description, /thử lại/i);
-  assert.match(presentation.description, /tải lại/i);
+  assert.match(presentation.description, /tải lên lại/i);
 });
 
 test("never marks null error code as retryable", () => {
@@ -50,7 +50,7 @@ test("uses safe retryable Vietnamese copy for truncated generation", () => {
 
   assert.equal(presentation.retryable, true);
   assert.equal(presentation.title, "Chưa thể tạo bộ câu hỏi hoàn chỉnh");
-  assert.equal(presentation.description, "Hãy thử lại sau để tạo lại bộ câu hỏi.");
+  assert.equal(presentation.description, "Thử lại sau để tạo lại bộ câu hỏi.");
 });
 
 test("uses coherent failed copy for generic processing failure", () => {
@@ -59,64 +59,69 @@ test("uses coherent failed copy for generic processing failure", () => {
   assert.equal(presentation.retryable, false);
   assert.equal(presentation.title, "Chưa thể xử lý tài liệu");
   assert.doesNotMatch(presentation.description, /đang xử lý|xử lý xong/i);
-  assert.match(presentation.description, /kiểm tra lại file|tải lại/i);
+  assert.match(presentation.description, /Kiểm tra file|tải lên lại/u);
 });
 
-test("guides the learner to AAC-LC for unsupported media audio", () => {
+test("guides the learner to MP4 or MP3 for unsupported media audio", () => {
   const presentation = getDocumentFailurePresentation("MEDIA_UNSUPPORTED_AUDIO_CODEC");
 
   assert.equal(presentation.retryable, false);
-  assert.match(presentation.description, /AAC-LC/u);
+  assert.equal(presentation.title, "Âm thanh trong video chưa được hỗ trợ");
+  assert.equal(presentation.description, "Thử lại với MP4 khác hoặc MP3.");
 });
 
-test("states the probe video limits for unsupported media video", () => {
+test("keeps unsupported media video copy short without codec specs", () => {
   const presentation = getDocumentFailurePresentation("MEDIA_UNSUPPORTED_VIDEO_CODEC");
 
   assert.equal(presentation.retryable, false);
-  assert.match(presentation.description, /H\.264 8-bit/u);
-  assert.match(presentation.description, /1080p/u);
-  assert.match(presentation.description, /30 fps/u);
+  assert.equal(presentation.title, "Video chưa được hỗ trợ");
+  assert.equal(presentation.description, "Thử lại với MP4 tối đa 1080p.");
 });
 
-test("covers protected and extra-track causes for unsupported media container", () => {
+test("covers protected files for unsupported media container", () => {
   const presentation = getDocumentFailurePresentation("MEDIA_UNSUPPORTED_CONTAINER");
 
   assert.equal(presentation.retryable, false);
   assert.match(presentation.description, /khóa bản quyền/u);
-  assert.match(presentation.description, /phụ đề/u);
 });
 
 test("states the 2-hour duration limit when media probe fails", () => {
   assert.match(getDocumentFailurePresentation("MEDIA_PROBE_FAILED").description, /2 giờ/u);
 });
 
-test("explains in Vietnamese that custom connections cannot process media", () => {
+test("explains that MP3/MP4 only work with a plan choice, without the old technical wording", () => {
   const presentation = getDocumentFailurePresentation("MEDIA_REQUIRES_PLATFORM_MODEL");
 
   assert.equal(presentation.retryable, false);
-  assert.match(presentation.description, /kết nối riêng/u);
-  assert.match(presentation.description, /mô hình có trong gói/u);
+  assert.equal(presentation.description, "MP3/MP4 chỉ dùng được với lựa chọn có trong gói. Chọn lại rồi tải lên.");
+  assert.doesNotMatch(presentation.description, /kết nối riêng|mô hình/u);
 });
 
-test("shows the backend credit sentence for insufficient credits after extraction", () => {
-  const message =
-    "Tài liệu cần khoảng 3.800 credit để tạo câu hỏi nhưng bạn chỉ còn 100 credit. Hãy bổ sung credit rồi thử lại.";
-
-  const presentation = getDocumentFailurePresentation("INSUFFICIENT_CREDITS_AFTER_EXTRACT", message);
+test("shows short credit copy without numbers for insufficient credits after extraction", () => {
+  const presentation = getDocumentFailurePresentation("INSUFFICIENT_CREDITS_AFTER_EXTRACT");
 
   assert.equal(presentation.retryable, true);
   assert.equal(presentation.title, "Chưa đủ credit để tạo câu hỏi");
-  assert.equal(presentation.description, message);
+  assert.equal(presentation.description, "Không đủ credit. Nạp thêm rồi thử lại.");
+  assert.doesNotMatch(presentation.description, /\d/u);
 });
 
-test("falls back to a generic credit sentence when the backend message is missing", () => {
-  const presentation = getDocumentFailurePresentation("INSUFFICIENT_CREDITS_AFTER_EXTRACT", "  ");
+test("keeps the speech-to-text service wording for incompatible provider", () => {
+  const presentation = getDocumentFailurePresentation("PROVIDER_INCOMPATIBLE");
 
-  assert.match(presentation.description, /bổ sung credit/u);
+  assert.equal(presentation.title, "Dịch vụ chuyển giọng nói chưa nhận file này");
+  assert.equal(presentation.description, "Thử lại với file MP3 hoặc MP4 khác.");
+});
+
+test("never shows technical specs or old credit unit in any failure copy", () => {
+  for (const errorCode of phase0DocumentProcessingFailureCodes) {
+    const { title, description } = getDocumentFailurePresentation(errorCode);
+    assert.doesNotMatch(`${title} ${description}`, /H\.264|yuv420p|AAC|MiB|GiB|fps|OCR|lượt dùng|kết nối riêng/u);
+  }
 });
 
 test("explains the decoded duration rejections without retry", () => {
   assert.match(getDocumentFailurePresentation("MEDIA_DURATION_EXCEEDED").description, /2 giờ/u);
-  assert.match(getDocumentFailurePresentation("MEDIA_DURATION_MISMATCH").description, /xuất lại/u);
+  assert.match(getDocumentFailurePresentation("MEDIA_DURATION_MISMATCH").description, /xuất lại/iu);
   assert.equal(isRetryableDocumentFailureCode("MEDIA_DURATION_MISMATCH"), false);
 });

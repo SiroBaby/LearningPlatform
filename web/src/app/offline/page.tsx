@@ -13,7 +13,7 @@ export default async function OfflinePage(): Promise<React.JSX.Element> {
     <SystemStatePage
       badge="Mất kết nối"
       title="Bạn đang mất kết nối"
-      description="Hãy kiểm tra mạng. Khi có mạng lại, bạn có thể tiếp tục học và tải tài liệu."
+      description="Kiểm tra mạng rồi thử lại."
       icon="offline"
       tone="neutral"
       primaryAction={<HomeActions isAuthenticated={isAuthenticated} />}

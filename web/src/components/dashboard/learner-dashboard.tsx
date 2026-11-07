@@ -170,7 +170,7 @@ function PrimaryActionCard({
                 Tiếp tục ôn nhớ chủ động hôm nay
               </h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-600 sm:text-base">
-                Tải tài liệu mới hoặc quay lại phần ôn tập ưu tiên. Hãy hoàn thành phần cần ôn trước khi mở bài kiểm tra mới.
+                Tải tài liệu mới hoặc quay lại phần ôn tập ưu tiên. Hoàn thành phần cần ôn trước khi mở bài kiểm tra mới.
               </p>
             </div>
           </div>
@@ -255,7 +255,7 @@ function RecommendedNextActionCard({ weakTopic }: { weakTopic?: WeakTopic }) {
       </CardHeader>
       <CardBody className="space-y-4">
         <div className="rounded-2xl border border-warning-100 bg-warning-50/70 p-4 text-sm leading-6 text-ink-700">
-          Bạn đã sai <span className="font-semibold text-ink-900">{weakTopic.missedQuestions} câu</span> thuộc chủ đề này. Hãy xem lại tài liệu rồi làm lại ngay khi kiến thức còn mới.
+          Sai <span className="font-semibold text-ink-900">{weakTopic.missedQuestions} câu</span> thuộc chủ đề này. Xem lại tài liệu rồi làm lại.
         </div>
 
         <CitationSnippet citation={weakTopic.citations[0]} />
@@ -488,7 +488,7 @@ function ProcessingJobsCard({
                 <StatusPill status={queuedDocument.status} />
               </div>
               <p className="mt-3 text-sm leading-6 text-ink-600">
-                Tệp đã tải lên xong và đang chờ xác minh trước khi bắt đầu xử lý.
+                File đã tải lên, đang chờ xử lý.
               </p>
             </div>
           ) : null}
@@ -506,14 +506,14 @@ function ProcessingJobsCard({
                 {failedDocument.processing.failureReason}
               </p>
               <p className="mt-2 text-xs text-ink-500">
-                Đã hoàn lượt dùng: {failedDocument.processing.creditsRefunded ? "Có" : "Không"}
+                Đã hoàn credit: {failedDocument.processing.creditsRefunded ? "Có" : "Không"}
               </p>
             </div>
           ) : null}
         </div>
 
         <div className="rounded-2xl border border-brand-100 bg-white px-4 py-3 text-sm text-ink-700">
-          Việc xử lý có thể mất vài phút. Bạn có thể rời trang này; hệ thống sẽ giữ trạng thái và báo khi tài liệu sẵn sàng.
+          Xử lý có thể mất vài phút. Có thể rời trang này, tài liệu xong sẽ có thông báo.
         </div>
       </CardBody>
     </Card>
@@ -693,7 +693,7 @@ function UsageWarningCard({
             <div>
               <p className="text-sm font-semibold text-warning-700">Mức sử dụng</p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight text-ink-900">
-                Lượt dùng sắp chạm ngưỡng, nên ưu tiên PDF hoặc văn bản trước video dài
+                Sắp hết credit, ưu tiên PDF hoặc văn bản trước video dài
               </h2>
             </div>
             <Badge tone="warning">{usage.planLabel}</Badge>
@@ -701,8 +701,8 @@ function UsageWarningCard({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <UsageMeter
-              label="Lượt dùng còn lại"
-              helper={`${usage.creditsRemaining}/${usage.creditsTotal} lượt · đặt lại ${formatDate(usage.resetDate)}`}
+              label="Credit còn lại"
+              helper={`${usage.creditsRemaining}/${usage.creditsTotal} credit · đặt lại ${formatDate(usage.resetDate)}`}
               value={creditRemainingPct}
             />
             <UsageMeter
@@ -713,7 +713,7 @@ function UsageWarningCard({
           </div>
 
           <div className="rounded-2xl border border-warning-100 bg-white/80 p-4 text-sm leading-6 text-ink-700">
-            Với số dư hiện tại, bạn vẫn đủ để xử lý thêm một PDF trung bình hoặc tiếp tục ôn tập hôm nay. Video hoặc audio dài nên để sau khi có thêm lượt dùng hoặc nâng cấp gói.
+            Credit hiện tại đủ cho thêm một PDF trung bình. Để video hoặc MP3 dài sau khi có thêm credit.
           </div>
         </div>
 
@@ -722,10 +722,10 @@ function UsageWarningCard({
             <CircleAlert className="mt-0.5 h-5 w-5 text-warning-700" />
             <div className="space-y-2 text-sm text-ink-700">
               <p className="font-semibold text-ink-900">Điều nên làm ngay</p>
-              <p>Hoàn thành {reviewCompletionPct}% kế hoạch ôn tập hiện tại trước khi dùng thêm lượt dùng cho nội dung mới.</p>
+              <p>Hoàn thành {reviewCompletionPct}% kế hoạch ôn tập trước khi dùng credit cho nội dung mới.</p>
               <div className="flex flex-wrap gap-3 pt-1">
                 <LinkButton href={routes.upload} variant="outline">
-                  Tải tệp nhẹ hơn
+                  Tải file nhẹ hơn
                 </LinkButton>
                 <Button type="button">Xem chi tiết mức sử dụng</Button>
               </div>

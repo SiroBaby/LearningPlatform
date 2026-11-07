@@ -181,7 +181,7 @@ export default function ExamplesPage() {
                   Nếu các ví dụ này đúng kiểu output bạn cần, hãy bắt đầu với tài liệu thật của bạn.
                 </h2>
                 <p className="max-w-2xl text-sm leading-6 text-ink-600 sm:text-base">
-                  Bạn có thể bắt đầu miễn phí với PDF/text, hoặc xem trang pricing để hiểu credits, video limits và policy top-up trước khi upload nội dung dài hơn.
+                  Bạn có thể bắt đầu miễn phí với PDF/text, hoặc xem trang pricing để hiểu credits, video limits và policy top-up trước khi tải lên nội dung dài hơn.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">

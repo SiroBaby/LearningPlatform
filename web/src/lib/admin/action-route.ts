@@ -57,7 +57,7 @@ export async function safeAdminBackendError(response: Response): Promise<Respons
     : response.status === 403
       ? "Bạn không có quyền thực hiện thao tác này"
       : response.status === 409
-        ? "Thao tác hiện chưa thể thực hiện. Hãy kiểm tra lại điều kiện và thử lại."
+        ? "Chưa thể thực hiện. Kiểm tra điều kiện rồi thử lại."
         : response.status >= 500
           ? "Dịch vụ quản trị đang tạm thời chưa sẵn sàng"
           : "Không thể thực hiện thao tác này";

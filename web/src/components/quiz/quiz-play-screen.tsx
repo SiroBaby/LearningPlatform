@@ -194,7 +194,7 @@ export function QuizPlayScreen({ quiz, mode, resume }: QuizPlayScreenProps) {
           </div>
           <h2 className="text-xl font-semibold text-ink-900">Quiz chưa có câu hỏi</h2>
           <p className="text-sm leading-6 text-ink-600">
-            Bộ câu hỏi chưa sẵn sàng để làm. Bạn hãy quay lại trang quiz sau ít phút.
+            Bộ câu hỏi chưa sẵn sàng để làm. Quay lại trang quiz sau ít phút.
           </p>
           <LinkButton href={routes.quizStart(quiz.id)} variant="outline">Về trang quiz</LinkButton>
         </CardBody>

@@ -52,7 +52,7 @@ export function UploadStatusPanel({
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-semibold text-ink-900">Tiến trình tải lên</p>
-                <Badge tone={statusTone}>{step === "idle" ? "Đang chờ tệp" : getUploadStepLabel(step)}</Badge>
+                <Badge tone={statusTone}>{step === "idle" ? "Đang chờ file" : getUploadStepLabel(step)}</Badge>
               </div>
               <p className="text-sm leading-6 text-ink-700">
                 Tại đây bạn sẽ thấy tài liệu đang ở bước nào và có cần thử lại hay không.
@@ -63,13 +63,13 @@ export function UploadStatusPanel({
 
         <dl className="space-y-3 text-sm">
           <UploadSpecRow label="Bắt đầu lúc" value={createdAt ? formatDateTime(createdAt) : "Chưa bắt đầu"} />
-          <UploadSpecRow label="Đã tải tệp lên" value={step === "uploaded" || step === "confirming" || step === "confirmed" ? "Đã xong" : "Chưa"} />
+          <UploadSpecRow label="Đã tải file lên" value={step === "uploaded" || step === "confirming" || step === "confirmed" ? "Đã xong" : "Chưa"} />
           <UploadSpecRow label="Bước xử lý" value={confirmStatus ?? (confirmError ? "Chưa thể tiếp tục" : "Chưa có")} />
           <UploadSpecRow label="Cách xử lý đã chọn" value={selectedModelLabel ?? "Chưa chọn"} />
           <UploadSpecRow label="Nguồn xử lý" value={selectedModelKind ? getModelSourceLabel(selectedModelKind) : "Chưa chọn"} />
           <UploadSpecRow
             label="Ước tính ban đầu"
-            value={estimate ? (estimate.selectedModelKind === "PLAN" ? (estimate.estimatedCredits === null ? "Tính sau khi kiểm tra tệp" : `${formatCredits(estimate.estimatedCredits)} lượt dùng`) : "Không dùng lượt dùng trong gói") : isEstimating ? "Đang tính" : "Chưa có"}
+            value={estimate ? (estimate.selectedModelKind === "PLAN" ? (estimate.estimatedCredits === null ? "Tính sau khi kiểm tra file" : `${formatCredits(estimate.estimatedCredits)} credit`) : "Không tính credit trong gói") : isEstimating ? "Đang tính" : "Chưa có"}
           />
         </dl>
 
@@ -87,7 +87,7 @@ export function UploadStatusPanel({
             <div className="flex items-start gap-3">
               <CircleAlert className="mt-0.5 h-5 w-5 shrink-0" />
               <div>
-                <p className="font-semibold">Tệp đã tải lên nhưng chưa chuyển sang xử lý</p>
+                <p className="font-semibold">File đã tải lên nhưng chưa chuyển sang xử lý</p>
                 <p className="mt-1">{confirmError}</p>
               </div>
             </div>
@@ -103,8 +103,8 @@ export function UploadStatusPanel({
 
         <div className="rounded-2xl border border-ink-100 bg-white p-4 text-sm leading-6 text-ink-700">
           {isMediaUploadEnabled
-            ? "Hỗ trợ tệp PDF, TXT, MP3 và MP4. MP3 tối đa 300 MiB, MP4 tối đa 500 MiB và media dài tối đa 2 giờ. Nếu upload lỗi, bạn cần tải lại từ đầu."
-            : "Hỗ trợ tệp PDF và TXT, tối đa 1 GiB mỗi tệp. Nếu upload lỗi, bạn cần tải lại từ đầu."}
+            ? "Hỗ trợ PDF, TXT, MP3, MP4. MP3 tối đa 300 MB, MP4 tối đa 500 MB, dài tối đa 2 giờ."
+            : "Hỗ trợ PDF, TXT. Mỗi file tối đa 1 GB."}
         </div>
       </CardBody>
     </Card>

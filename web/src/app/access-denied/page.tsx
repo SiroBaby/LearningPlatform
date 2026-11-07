@@ -13,7 +13,7 @@ export default async function AccessDeniedPage(): Promise<React.JSX.Element> {
     <SystemStatePage
       badge="Chưa có quyền"
       title="Bạn chưa có quyền vào trang này"
-      description="Tài khoản của bạn chưa được cấp quyền vào trang này. Nếu bạn nghĩ đây là nhầm lẫn, hãy liên hệ quản trị viên."
+      description="Tài khoản chưa có quyền vào trang này. Liên hệ quản trị viên nếu cần."
       icon="access"
       tone="warning"
       primaryAction={<HomeActions isAuthenticated={isAuthenticated} canRetry={false} />}

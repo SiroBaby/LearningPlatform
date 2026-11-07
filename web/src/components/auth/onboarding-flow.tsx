@@ -176,7 +176,7 @@ const firstActionOptions: readonly {
   {
     value: "upload",
     title: "Dùng tài liệu của tôi",
-    description: "Bắt đầu với PDF, ghi chú hoặc tệp học tập bạn đang có.",
+    description: "Bắt đầu với PDF, ghi chú hoặc file học tập bạn đang có.",
     detail: "Phù hợp khi bạn đã có tài liệu và muốn học ngay từ nội dung đó.",
   },
   {
@@ -463,7 +463,7 @@ export function OnboardingFlow(): ReactNode {
       {hasCompleted ? (
         <AuthStatusMessage
           title="Bạn đã sẵn sàng"
-          description="Các lựa chọn của bạn đã được lưu. Hãy bắt đầu bằng cách phù hợp nhất với bạn."
+          description="Đã lưu lựa chọn của bạn. Chọn cách bắt đầu phù hợp nhất."
           tone="success"
         >
           <div className="space-y-4">

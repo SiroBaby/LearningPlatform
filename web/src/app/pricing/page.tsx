@@ -18,7 +18,7 @@ import {
 export const metadata: Metadata = {
   title: "Bảng giá",
   description:
-    "So sánh các plan của LearningPlatform theo credits, uploads, page limits, video minutes, analytics, Tutor access và đường nâng cấp khi chạm giới hạn.",
+    "So sánh các plan của LearningPlatform theo credits, lượt tải lên, page limits, video minutes, analytics, Tutor access và đường nâng cấp khi chạm giới hạn.",
 };
 
 type BillingMode = "monthly" | "yearly";
@@ -56,7 +56,7 @@ const planDefinitions: readonly PlanDefinition[] = [
     yearlyMonthlyPrice: "0₫",
     yearlyBilled: "0₫",
     credits: "100 credits / tháng",
-    uploads: "10 uploads / tháng",
+    uploads: "10 lượt tải lên / tháng",
     pages: "150 trang hoặc tương đương",
     minutes: "0 phút video",
     maxFileSize: "25 MB",
@@ -77,7 +77,7 @@ const planDefinitions: readonly PlanDefinition[] = [
     yearlyMonthlyPrice: "99.000₫",
     yearlyBilled: "1.188.000₫",
     credits: "500 credits / tháng",
-    uploads: "40 uploads / tháng",
+    uploads: "40 lượt tải lên / tháng",
     pages: "1.000 trang hoặc tương đương",
     minutes: "90 phút video",
     maxFileSize: "150 MB",
@@ -99,7 +99,7 @@ const planDefinitions: readonly PlanDefinition[] = [
     yearlyMonthlyPrice: "199.000₫",
     yearlyBilled: "2.388.000₫",
     credits: "1.400 credits / tháng",
-    uploads: "120 uploads / tháng",
+    uploads: "120 lượt tải lên / tháng",
     pages: "3.000 trang hoặc tương đương",
     minutes: "360 phút video",
     maxFileSize: "500 MB",
@@ -157,7 +157,7 @@ const planDefinitions: readonly PlanDefinition[] = [
 
 const comparisonRows = [
   { label: "AI credits", key: "credits" },
-  { label: "Uploads", key: "uploads" },
+  { label: "Lượt tải lên", key: "uploads" },
   { label: "PDF / text pages", key: "pages" },
   { label: "Video minutes", key: "minutes" },
   { label: "Max file size", key: "maxFileSize" },
@@ -179,7 +179,7 @@ const limitStates = [
   },
   {
     title: "File too large for current plan",
-    reason: "Tệp 420 MB vượt quá max file size của Free và Student Plus — upload vẫn bị chặn trước khi trừ credits.",
+    reason: "File 420 MB vượt quá dung lượng tối đa của Free và Student Plus — việc tải lên vẫn bị chặn trước khi trừ credits.",
     ctaLabel: "Compare higher tiers",
     ctaHref: `${routes.pricing}?billing=yearly`,
     alternative: "Hoặc tách file theo chương / lecture để xử lý rẻ hơn.",
@@ -228,7 +228,7 @@ export default async function PricingPage({
               Chọn plan theo workload học tập, không theo những lời hứa mơ hồ về AI.
             </h1>
             <p className="mt-5 text-lg leading-8 text-ink-600">
-              Mỗi plan nêu rõ credits, số uploads, page quota, video minutes, max file size, Tutor availability và luật top-up để bạn biết chính xác điều gì sẽ xảy ra trước khi xử lý tài liệu.
+              Mỗi plan nêu rõ credits, số lượt tải lên, page quota, video minutes, max file size, Tutor availability và luật top-up để bạn biết chính xác điều gì sẽ xảy ra trước khi xử lý tài liệu.
             </p>
           </div>
 
@@ -267,8 +267,8 @@ export default async function PricingPage({
                   progress={creditsUsedPct}
                 />
                 <UsageMeter
-                  label="Uploads used"
-                  value={`${usage.uploadsUsed}/${usage.uploadsLimit} uploads`}
+                  label="Lượt tải lên đã dùng"
+                  value={`${usage.uploadsUsed}/${usage.uploadsLimit} lượt tải lên`}
                   helper="Free plan hiện tại phù hợp để thử flow, không phù hợp video hoặc bộ tài liệu dài."
                   progress={uploadsUsedPct}
                 />
@@ -293,9 +293,9 @@ export default async function PricingPage({
                 </p>
               </CardHeader>
               <CardBody className="space-y-4 text-sm leading-6 text-ink-700">
-                <TrustBullet>Không trừ credits cho upload bị chặn vì sai định dạng hoặc vượt file-size policy.</TrustBullet>
+                <TrustBullet>Không trừ credits cho việc tải lên bị chặn vì sai định dạng hoặc vượt file-size policy.</TrustBullet>
                 <TrustBullet>Processing thất bại do output không đủ chất lượng có thể đi kèm hoàn credits, và UI phải nói rõ điều này.</TrustBullet>
-                <TrustBullet>Video processing, Tutor quota và analytics depth thay đổi theo plan — không nên giấu sau khi người dùng đã upload xong.</TrustBullet>
+                <TrustBullet>Video processing, Tutor quota và analytics depth thay đổi theo plan — không nên giấu sau khi người dùng đã tải lên xong.</TrustBullet>
                 <TrustBullet>Top-up chỉ là lựa chọn bổ sung; nếu plan không hỗ trợ thì CTA phải dẫn sang upgrade flow chứ không hứa hẹn mập mờ.</TrustBullet>
               </CardBody>
             </Card>
@@ -321,7 +321,7 @@ export default async function PricingPage({
           <SectionHeading
             eyebrow="Comparison"
             title="So sánh quota, giới hạn và độ sâu sản phẩm theo từng tier"
-            description="Bảng này tránh marketing copy quá mức bằng cách đặt cùng một tập tiêu chí cho mọi plan: AI credits, uploads, PDF pages, video minutes, file size, Tutor, analytics và overage rules."
+            description="Bảng này tránh marketing copy quá mức bằng cách đặt cùng một tập tiêu chí cho mọi plan: AI credits, lượt tải lên, PDF pages, video minutes, file size, Tutor, analytics và overage rules."
           />
           <div className="mt-8 overflow-x-auto rounded-3xl border border-ink-200 bg-white card-shadow">
             <table className="min-w-[960px] w-full border-collapse text-left">
@@ -394,7 +394,7 @@ export default async function PricingPage({
                 <PolicyRow
                   icon={Sparkles}
                   title="You see the estimate first"
-                  description="Mọi upload đắt tiền đều hiện estimate về pages/minutes, thời gian xử lý và credits trước khi bắt đầu."
+                  description="Mọi lần tải lên tốn nhiều đều hiện estimate về pages/minutes, thời gian xử lý và credits trước khi bắt đầu."
                 />
                 <PolicyRow
                   icon={Infinity}

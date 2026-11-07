@@ -115,7 +115,7 @@ export function FlashcardReviewExperience({
       <EmptyState
         icon={Sparkles}
         title="Không có thẻ cần review"
-        description="Deck này hiện không còn thẻ đến hạn. Hãy quay lại review queue hoặc mở deck để xem thẻ đã mastered."
+        description="Deck này không còn thẻ đến hạn. Quay lại review queue hoặc mở deck để xem thẻ đã mastered."
         action={<LinkButton href={routes.review}>Back to review queue</LinkButton>}
         secondaryAction={<LinkButton href={routes.deck(deck.id)} variant="outline">Open deck</LinkButton>}
       />
@@ -133,7 +133,7 @@ export function FlashcardReviewExperience({
             <div className="space-y-2">
               <h2 className="text-2xl font-semibold tracking-tight text-ink-900">Hoàn thành phiên review</h2>
               <p className="mx-auto max-w-2xl text-sm leading-6 text-ink-600 sm:text-base">
-                Bạn đã xử lý xong {reviewCards.length} thẻ trong deck này. Hãy dùng breakdown bên dưới để xem card nào cần lặp lại thêm.
+                Bạn đã xử lý xong {reviewCards.length} thẻ trong deck này. Xem breakdown bên dưới để biết card nào cần lặp lại.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-4">

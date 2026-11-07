@@ -39,7 +39,7 @@ test("system pages use Vietnamese titles, context-correct actions and no interna
 
 test("access denied page points to administrators, not a FAQ link", () => {
   const source = read("app/access-denied/page.tsx");
-  assert.match(source, /liên hệ quản trị viên/u);
+  assert.match(source, /liên hệ quản trị viên/iu);
   assert.doesNotMatch(source, /routes\.faq|Câu hỏi thường gặp/u);
 });
 
