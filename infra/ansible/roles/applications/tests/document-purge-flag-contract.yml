@@ -64,10 +64,38 @@
           - media_orphan_scanner_enabled is boolean
           - media_orphan_scanner_delete_enabled is boolean
           - not media_orphan_scanner_delete_enabled
+          - not media_orphan_scanner_enabled or document_purge_enabled
         fail_msg: >-
           vars/dev.yml must declare the purge and orphan scanner flags as booleans
           and keep media_orphan_scanner_delete_enabled false until the owner has
-          reviewed a dry-run report (RUNBOOK-document-purge-dev.md section 10).
+          reviewed a dry-run report (RUNBOOK-document-purge-dev.md section 10);
+          the scanner runs inside the purge worker, so it requires document_purge_enabled.
+
+    - name: Render the real dev manifest without any flag override
+      ansible.builtin.set_fact:
+        applications_real_dev_purge_containers: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2')
+             | from_yaml_all | list
+             | selectattr('kind', 'equalto', 'Deployment')
+             | selectattr('metadata.name', 'equalto', 'document-purge-worker')
+             | map(attribute='spec.template.spec.containers') | flatten | list }}
+
+    - name: Require the real dev purge worker to match the dev flags
+      ansible.builtin.assert:
+        that:
+          - >-
+            (applications_real_dev_purge_containers | length > 0)
+            == (document_purge_enabled | bool)
+          - >-
+            not (document_purge_enabled | bool)
+            or (applications_real_dev_purge_containers[0].env
+                | selectattr('name', 'in', ['MEDIA_ORPHAN_SCANNER_ENABLED', 'MEDIA_ORPHAN_SCANNER_DELETE_ENABLED'])
+                | map(attribute='value') | list)
+               == [media_orphan_scanner_enabled | bool | lower | string, 'false']
+        fail_msg: >-
+          Rendering the real vars/dev.yml must produce the document-purge-worker exactly
+          when document_purge_enabled is true, with the scanner flag from the dev vars
+          and orphan deletion off.
 
     # Pin both gates off; the enabled purge and scanner variants below set them
     # explicitly, so the literal-env contract does not depend on the dev values.
