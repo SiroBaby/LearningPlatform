@@ -159,6 +159,24 @@ describe('AssessmentMappingProfile', () => {
     expect(JSON.stringify(actual)).not.toContain('correctOptionContent');
   });
 
+  it('keeps a time locator in practice feedback citations', () => {
+    const feedback = Object.assign(new PracticeFeedbackResult(), {
+      citation: {
+        chunkId: 'ed9bf39e-8898-42f1-91b4-d45f6f7589de',
+        locator: { kind: 'time', startSec: 65.5, endSec: 130 },
+        snippet: 'Transcript cue',
+      },
+      explanation: 'Explanation',
+      isCorrect: true,
+      questionId: 'f387b115-f93f-4e21-8c8e-6433b155d55d',
+      selectedOptionId: '5a8bc836-a508-4b2f-8bea-a0ee2518bbb6',
+    });
+
+    const actual = mapper.map(feedback, PracticeFeedbackResult, PracticeFeedbackResponseDto);
+
+    expect(actual.citation.locator).toEqual({ kind: 'time', startSec: 65.5, endSec: 130 });
+  });
+
   it('maps a persisted Attempt result with its Quiz and UTC submission time', () => {
     const result = Object.assign(new PersistedAttemptQuestionResult(), {
       citation: {

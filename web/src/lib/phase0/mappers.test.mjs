@@ -8,6 +8,7 @@ import {
   mapDocumentResponse,
   mapDocumentsResponse,
   mapEstimateResponse,
+  mapPracticeFeedbackResponse,
 } from "./mappers.ts";
 
 const budgetStatuses = [
@@ -201,4 +202,35 @@ test("maps the MEDIA_REQUIRES_PLATFORM_MODEL failure code", () => {
   }));
 
   assert.equal(document.errorCode, "MEDIA_REQUIRES_PLATFORM_MODEL");
+});
+
+function buildPracticeFeedback(locator) {
+  return {
+    questionId: "q1",
+    selectedOptionId: "o1",
+    isCorrect: true,
+    explanation: "Giải thích.",
+    citation: { chunkId: "c1", locator, snippet: "Câu trích." },
+  };
+}
+
+test("maps a time citation locator with start and end seconds", () => {
+  const mapped = mapPracticeFeedbackResponse(
+    buildPracticeFeedback({ kind: "time", startSec: 65.5, endSec: 130 }),
+  );
+  assert.deepEqual(mapped.citation.locator, { kind: "time", startSec: 65.5, endSec: 130 });
+});
+
+test("maps a time citation locator without end as a single point", () => {
+  const mapped = mapPracticeFeedbackResponse(buildPracticeFeedback({ kind: "time", startSec: 65 }));
+  assert.deepEqual(mapped.citation.locator, { kind: "time", startSec: 65, endSec: 65 });
+});
+
+test("rejects a time citation locator without a valid start", () => {
+  assert.throws(() => mapPracticeFeedbackResponse(buildPracticeFeedback({ kind: "time", endSec: 5 })), TypeError);
+});
+
+test("keeps page citation locators unchanged", () => {
+  const mapped = mapPracticeFeedbackResponse(buildPracticeFeedback({ kind: "page", page: 3 }));
+  assert.deepEqual(mapped.citation.locator, { kind: "page", page: 3 });
 });

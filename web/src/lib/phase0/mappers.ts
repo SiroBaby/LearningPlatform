@@ -45,6 +45,14 @@ function readNumber(value: unknown, field: string): number {
   return value;
 }
 
+/** A missing or invalid end is read as the start so the UI shows a single point in time. */
+function readOptionalEndSec(value: unknown, startSec: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return readNumber(startSec, "result.citation.locator.startSec");
+}
+
 function readNullableString(value: unknown, field: string): string | null {
   return value === null ? null : readString(value, field);
 }
@@ -243,7 +251,7 @@ function mapCitationLocator(value: unknown): Phase0CitationLocator {
       return {
         kind: "time",
         startSec: readNumber(source.startSec, "result.citation.locator.startSec"),
-        endSec: readNumber(source.endSec, "result.citation.locator.endSec"),
+        endSec: readOptionalEndSec(source.endSec, source.startSec),
       };
     default:
       throw new TypeError("Expected result.citation.locator.kind to be page, text-range, or time.");
