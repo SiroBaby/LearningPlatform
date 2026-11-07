@@ -16,10 +16,14 @@ type ModelUsage struct {
 // Usage is the actual-usage block of the DocumentProcessingResult payload (additive; version stays 1).
 // UncertainDispatches counts provider calls whose spend is unknown: they were sent but no answer or token count
 // came back (timeout, connection loss, or a 2xx body without usage). Node holds the matching credits (ADR-0022).
-// Speech-to-text seconds are intentionally absent until the STT pipeline reports them.
+// STTBilledSeconds and STTUncertainSeconds are present only for media Documents that dispatched speech-to-text: whole
+// seconds of audio sent with a known (2xx) outcome, and sent without a known outcome (Node holds those credits).
+// A pointer keeps a legitimate zero on the wire while non-media payloads omit the fields.
 type Usage struct {
 	LLM                 []ModelUsage `json:"llm"`
 	UncertainDispatches int          `json:"uncertainDispatches"`
+	STTBilledSeconds    *int64       `json:"sttBilledSeconds,omitempty"`
+	STTUncertainSeconds *int64       `json:"sttUncertainSeconds,omitempty"`
 }
 
 // UsageTracker accumulates provider usage of one claimed attempt. It is safe for concurrent use.
@@ -28,6 +32,7 @@ type UsageTracker struct {
 	byModel   map[string]ModelUsage
 	dispatch  int
 	completed int
+	unsaved   []STTOutcome
 }
 
 func NewUsageTracker() *UsageTracker {
@@ -69,6 +74,37 @@ func (tracker *UsageTracker) Reported(model string, inputTokens, outputTokens in
 	tracker.byModel[model] = entry
 }
 
+// AddUnsavedSTT keeps a speech-to-text outcome whose checkpoint write kept failing. The next transaction that holds the
+// job lock (retry schedule or terminal result) writes it, so paid or uncertain spend is never lost.
+func (tracker *UsageTracker) AddUnsavedSTT(outcome STTOutcome) {
+	if tracker == nil {
+		return
+	}
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	tracker.unsaved = append(tracker.unsaved, outcome)
+}
+
+// UnsavedSTT returns a copy of the outcomes still waiting for a durable write.
+func (tracker *UsageTracker) UnsavedSTT() []STTOutcome {
+	if tracker == nil {
+		return nil
+	}
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	return append([]STTOutcome(nil), tracker.unsaved...)
+}
+
+// ClearUnsavedSTT drops the outcomes after their transaction committed.
+func (tracker *UsageTracker) ClearUnsavedSTT() {
+	if tracker == nil {
+		return
+	}
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	tracker.unsaved = nil
+}
+
 // Snapshot returns a stable (model-sorted) copy of the usage so far.
 func (tracker *UsageTracker) Snapshot() Usage {
 	if tracker == nil {
@@ -96,13 +132,4 @@ func WithUsageTracker(ctx context.Context, tracker *UsageTracker) context.Contex
 func UsageTrackerFrom(ctx context.Context) *UsageTracker {
 	tracker, _ := ctx.Value(usageTrackerKey{}).(*UsageTracker)
 	return tracker
-}
-
-// usagePayload returns the payload block, or nil when no tracker is attached (nothing to report).
-func usagePayload(ctx context.Context) any {
-	tracker := UsageTrackerFrom(ctx)
-	if tracker == nil {
-		return nil
-	}
-	return tracker.Snapshot()
 }

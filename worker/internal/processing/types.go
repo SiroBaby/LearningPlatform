@@ -155,6 +155,12 @@ const (
 	ProcessingFailed     FailureCode = "PROCESSING_FAILED"
 	// MediaRequiresPlatformModel: audio/video must not run on a Custom AI endpoint (D5 of #160).
 	MediaRequiresPlatformModel FailureCode = "MEDIA_REQUIRES_PLATFORM_MODEL"
+	// MediaAudioNotPrepared: the probe left no derived-audio manifest for the Document (#160 D9); raised before any STT call.
+	MediaAudioNotPrepared FailureCode = "MEDIA_AUDIO_NOT_PREPARED"
+	// MediaTranscriptEmpty: speech-to-text produced no usable text; retrying the same audio would not help.
+	MediaTranscriptEmpty FailureCode = "MEDIA_TRANSCRIPT_EMPTY"
+	// TranscriptionOutputInvalid: the STT provider answered 2xx with a body that cannot be mapped to the media timeline.
+	TranscriptionOutputInvalid FailureCode = "TRANSCRIPTION_OUTPUT_INVALID"
 )
 
 const (

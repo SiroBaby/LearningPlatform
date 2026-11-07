@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -128,11 +129,11 @@ func TestMarshalResultAddsUsageBlockOnlyWhenTracked(t *testing.T) {
 	tracker.Dispatched()
 	base := func() map[string]any { return map[string]any{"version": 1, "settledCredits": nil} }
 
-	tracked, err := marshalResult(WithUsageTracker(context.Background(), tracker), base())
+	tracked, err := marshalResult(WithUsageTracker(context.Background(), tracker), nil, base())
 	if err != nil {
 		t.Fatal(err)
 	}
-	untracked, err := marshalResult(context.Background(), base())
+	untracked, err := marshalResult(context.Background(), nil, base())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,5 +154,34 @@ func TestMarshalResultAddsUsageBlockOnlyWhenTracked(t *testing.T) {
 	}
 	if _, present := untrackedPayload["settledCredits"]; !present {
 		t.Fatalf("existing keys must stay on the wire: %#v", untrackedPayload)
+	}
+}
+
+func TestMarshalResultKeepsZeroSTTSecondsOnTheWire(t *testing.T) {
+	tracker := NewUsageTracker()
+	zero := &sttTotals{}
+	raw, err := marshalResult(WithUsageTracker(context.Background(), tracker), zero, map[string]any{"version": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Usage map[string]any `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if billed, ok := payload.Usage["sttBilledSeconds"]; !ok || billed != float64(0) {
+		t.Fatalf("sttBilledSeconds = %#v (present=%t), want explicit 0", billed, ok)
+	}
+	if uncertain, ok := payload.Usage["sttUncertainSeconds"]; !ok || uncertain != float64(0) {
+		t.Fatalf("sttUncertainSeconds = %#v (present=%t), want explicit 0", uncertain, ok)
+	}
+
+	untracked, err := marshalResult(context.Background(), &sttTotals{billedSeconds: 7, uncertainSeconds: 3}, map[string]any{"version": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(untracked) || !bytes.Contains(untracked, []byte(`"sttBilledSeconds":7`)) || !bytes.Contains(untracked, []byte(`"sttUncertainSeconds":3`)) || !bytes.Contains(untracked, []byte(`"llm":[]`)) {
+		t.Fatalf("STT usage without a tracker must still be reported with an empty llm list: %s", untracked)
 	}
 }

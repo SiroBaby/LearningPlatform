@@ -1,0 +1,127 @@
+---
+# Real speech-to-text for MP3/MP4 (#160 PR5, ADR-0032 D1/D6) runs only in the
+# full-pipeline go-worker. This contract pins what must NOT change: the feature
+# is OFF by default, STT settings and secret references exist only when it is
+# on, every STT secretKeyRef resolves to a key the ExternalSecret provides, the
+# media-probe pod never receives STT settings, and no new egress policy or
+# open egress appears silently.
+- name: Verify the media STT contract on the rendered manifests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+    stt_secret_keys: [STT_BASE_URL, STT_API_KEY]
+    stt_literal_keys: [STT_MODEL, STT_LANGUAGE, STT_REQUEST_TIMEOUT_MS, STT_CONCURRENCY, AI_MEDIA_GENERATION_CONCURRENCY]
+  tasks:
+    - name: Require the production dev vars to keep media STT off
+      ansible.builtin.assert:
+        that:
+          - go_worker_media_stt_enabled is boolean
+          - not go_worker_media_stt_enabled
+        fail_msg: >-
+          vars/dev.yml must keep go_worker_media_stt_enabled false until the owner has enabled derived
+          audio and confirmed the worker's egress path to STT_BASE_URL (#160).
+
+    - name: Render the worker rollout with the flag off and on, plus the matching ExternalSecrets
+      ansible.builtin.set_fact:
+        stt_off_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['worker']})
+             | from_yaml_all | list }}
+        stt_on_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['worker'], 'media_probe_audio_prep_enabled': true,
+                            'go_worker_media_stt_enabled': true})
+             | from_yaml_all | list }}
+        stt_off_secrets: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../ansible/roles/external_secrets/templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['worker']})
+             | from_yaml_all | list }}
+        stt_on_secrets: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../ansible/roles/external_secrets/templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['worker'], 'go_worker_media_stt_enabled': true})
+             | from_yaml_all | list }}
+      no_log: true
+
+    - name: Select the go-worker container, the probe container and the runtime ExternalSecrets
+      ansible.builtin.set_fact:
+        stt_off_env: >-
+          {{ dict((stt_off_manifests | selectattr('kind', 'equalto', 'Deployment') | map(attribute='spec.template.spec.containers')
+             | flatten | selectattr('name', 'equalto', 'go-worker') | first).env | map(attribute='name')
+             | zip((stt_off_manifests | selectattr('kind', 'equalto', 'Deployment') | map(attribute='spec.template.spec.containers')
+             | flatten | selectattr('name', 'equalto', 'go-worker') | first).env)) }}
+        stt_on_env: >-
+          {{ dict((stt_on_manifests | selectattr('kind', 'equalto', 'Deployment') | map(attribute='spec.template.spec.containers')
+             | flatten | selectattr('name', 'equalto', 'go-worker') | first).env | map(attribute='name')
+             | zip((stt_on_manifests | selectattr('kind', 'equalto', 'Deployment') | map(attribute='spec.template.spec.containers')
+             | flatten | selectattr('name', 'equalto', 'go-worker') | first).env)) }}
+        stt_on_probe_env_names: >-
+          {{ ((stt_on_manifests | selectattr('kind', 'equalto', 'Deployment') | selectattr('metadata.name', 'equalto', 'media-probe-worker')
+             | list | first).spec.template.spec.containers[0].env | map(attribute='name') | list) }}
+        stt_off_secret_keys: >-
+          {{ (stt_off_secrets | selectattr('metadata.name', 'equalto', 'learning-platform-go-worker-runtime') | first).spec.data
+             | map(attribute='secretKey') | list }}
+        stt_on_secret_data: >-
+          {{ (stt_on_secrets | selectattr('metadata.name', 'equalto', 'learning-platform-go-worker-runtime') | first).spec.data }}
+
+    - name: Require the flag to render false by default and carry no STT settings
+      ansible.builtin.assert:
+        that:
+          - stt_off_env.AI_MEDIA_STT_ENABLED.value == 'false'
+          - stt_off_env.keys() | select('match', '^(STT_|AI_MEDIA_GENERATION_)') | list | length == 0
+          - stt_off_secret_keys | select('match', '^STT_') | list | length == 0
+        fail_msg: AI_MEDIA_STT_ENABLED must render 'false' with no STT_* env or secret key when the flag is off.
+
+    - name: Require the flag to turn STT on with literal constants and secret references only for URL and key
+      ansible.builtin.assert:
+        that:
+          - stt_on_env.AI_MEDIA_STT_ENABLED.value == 'true'
+          - stt_on_env.STT_MODEL.value == 'groq/whisper-large-v3'
+          - stt_on_env.STT_LANGUAGE.value == 'vi'
+          - stt_on_env.STT_REQUEST_TIMEOUT_MS.value == '120000'
+          - stt_on_env.STT_REQUEST_TIMEOUT_MS.value | int < stt_on_env.AI_WORKER_JOB_TIMEOUT_MS.value | int
+          - stt_on_env.STT_CONCURRENCY.value == '3'
+          - stt_on_env.AI_MEDIA_GENERATION_CONCURRENCY.value == '4'
+          - stt_on_env.STT_BASE_URL.valueFrom.secretKeyRef.name == 'learning-platform-go-worker-runtime'
+          - stt_on_env.STT_API_KEY.valueFrom.secretKeyRef.name == 'learning-platform-go-worker-runtime'
+          - stt_on_env.STT_BASE_URL.valueFrom.secretKeyRef.key == 'STT_BASE_URL'
+          - stt_on_env.STT_API_KEY.valueFrom.secretKeyRef.key == 'STT_API_KEY'
+          - stt_literal_keys | map('extract', stt_on_env) | selectattr('value', 'defined') | list | length == (stt_literal_keys | length)
+        fail_msg: >-
+          Non-secret STT constants must be explicit manifest literals (not ExternalSecret or SSM) and only
+          STT_BASE_URL and STT_API_KEY may come from the go-worker runtime Secret.
+
+    - name: Require every STT secretKeyRef to resolve to an ExternalSecret key reusing the existing router parameters
+      ansible.builtin.assert:
+        that:
+          - stt_on_secret_data | selectattr('secretKey', 'in', stt_secret_keys) | list | length == 2
+          - (stt_on_secret_data | selectattr('secretKey', 'equalto', 'STT_BASE_URL') | first).remoteRef.key == ssm_parameter_keys.openai_base_url
+          - (stt_on_secret_data | selectattr('secretKey', 'equalto', 'STT_API_KEY') | first).remoteRef.key == ssm_parameter_keys.openai_api_key
+        fail_msg: >-
+          STT_BASE_URL and STT_API_KEY must default to the existing 9router SSM parameters until the owner
+          creates dedicated stt-* parameters (PR7).
+
+    - name: Require the media probe pod to stay free of STT settings
+      ansible.builtin.assert:
+        that:
+          - stt_on_probe_env_names | select('match', '^(STT_|AI_MEDIA_)') | list | length == 0
+        fail_msg: The media-probe-worker must never receive STT settings or credentials.
+
+    - name: Require no new egress policy for the STT path
+      vars:
+        stt_on_policies: "{{ stt_on_manifests | selectattr('kind', 'equalto', 'NetworkPolicy') | map(attribute='metadata.name') | sort | list }}"
+        stt_off_policies: "{{ stt_off_manifests | selectattr('kind', 'equalto', 'NetworkPolicy') | map(attribute='metadata.name') | sort | list }}"
+      ansible.builtin.assert:
+        that:
+          - stt_on_policies == stt_off_policies
+        fail_msg: >-
+          Turning STT on must not add or change a NetworkPolicy; the owner decides an STT_BASE_URL egress
+          allowlist explicitly (docs/deployment/RUNBOOK-media-stt-dev.md).

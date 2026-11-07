@@ -964,6 +964,8 @@ check_ansible_when_installed() {
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-audio-prep-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/media-stt-flag-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-probe-db-egress-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-probe-apply-order-contract.yml"

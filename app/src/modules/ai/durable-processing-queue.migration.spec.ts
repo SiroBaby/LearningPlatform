@@ -232,6 +232,7 @@ describe('durable processing queue migration', () => {
       // later migrations own objects that depend on ai.media_probe_jobs, so
       // their downs must run before this migration's down can drop the table.
       for (const name of [
+        '1787803982000_add_media_stt_chunk_results',
         '1787803980000_add_media_audio_chunks',
         '1787803963000_add_media_probe_queue_contract',
       ]) {
@@ -379,6 +380,28 @@ describe('durable processing queue migration', () => {
     } finally {
       await rollbackDb.stop();
     }
+  });
+
+  it('stores media STT checkpoints that cascade with the probe result and stay unique per provider identity', async () => {
+    const columns = await db.client.query<{ readonly columnName: string }>(
+      `SELECT "column_name" AS "columnName" FROM "information_schema"."columns"
+       WHERE "table_schema" = 'ai' AND "table_name" = 'media_stt_chunk_results'`,
+    );
+    expect(columns.rows.map((row) => row.columnName)).toEqual(expect.arrayContaining([
+      'probe_result_id', 'chunk_index', 'stt_provider_identity', 'segments', 'billed_ms', 'uncertain_ms',
+    ]));
+    const cascade = await db.client.query<{ readonly deleteAction: string }>(
+      `SELECT confdeltype AS "deleteAction" FROM pg_constraint
+       WHERE conname = 'fk_media_stt_chunk_results_probe_result'`,
+    );
+    expect(cascade.rows).toEqual([{ deleteAction: 'c' }]);
+    const unique = await db.client.query<{ readonly indexName: string }>(
+      `SELECT indexname AS "indexName" FROM pg_indexes
+       WHERE schemaname = 'ai' AND tablename = 'media_stt_chunk_results'
+         AND indexdef LIKE 'CREATE UNIQUE%'
+         AND indexdef LIKE '%(probe_result_id, chunk_index, stt_provider_identity)%'`,
+    );
+    expect(unique.rows).toHaveLength(1);
   });
 
   async function columnNames(): Promise<string[]> {

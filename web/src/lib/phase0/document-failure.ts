@@ -101,6 +101,18 @@ export function getDocumentFailurePresentation(
         description: "MP4 tối đa 500 MiB, MP3 tối đa 300 MiB. Hãy cắt ngắn hoặc nén file rồi tải lại.",
         retryable: false,
       };
+    case "MEDIA_AUDIO_NOT_PREPARED":
+      return {
+        title: "Chưa chuẩn bị xong âm thanh",
+        description: "Hệ thống chưa chuẩn bị được âm thanh từ file này. Hãy tải lại file để bắt đầu lại.",
+        retryable: false,
+      };
+    case "MEDIA_TRANSCRIPT_EMPTY":
+      return {
+        title: "Không nhận ra lời nói trong file",
+        description: "File chưa có đủ lời nói rõ để tạo câu hỏi. Hãy dùng file có giọng nói rõ hơn rồi tải lại.",
+        retryable: false,
+      };
     case "MEDIA_PROBE_FAILED":
       return {
         title: "Không đọc được file video hoặc âm thanh",
@@ -178,6 +190,18 @@ export function getDocumentFailurePresentation(
         title: "Xử lý mất lâu hơn dự kiến",
         description: "Hãy thử lại sau. Nếu vẫn chậm, bạn có thể rút gọn tài liệu rồi tải lại.",
         retryable: true,
+      };
+    case "PROVIDER_INCOMPATIBLE":
+      return {
+        title: "Dịch vụ chuyển giọng nói chưa nhận file này",
+        description: "Hãy kiểm tra file rồi tải lại. Nếu lỗi lặp lại, hãy liên hệ hỗ trợ.",
+        retryable: false,
+      };
+    case "TRANSCRIPTION_OUTPUT_INVALID":
+      return {
+        title: "Chưa thể chuyển giọng nói thành văn bản",
+        description: "Dịch vụ trả về kết quả không hợp lệ. Hãy tải lại file; nếu lỗi lặp lại, hãy liên hệ hỗ trợ.",
+        retryable: false,
       };
     case "PROVIDER_UNAVAILABLE":
       return {

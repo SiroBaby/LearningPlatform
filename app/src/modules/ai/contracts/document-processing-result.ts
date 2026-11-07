@@ -13,6 +13,10 @@ export enum DocumentProcessingFailureCode {
   BUDGET_EXHAUSTED = 'BUDGET_EXHAUSTED',
   MEDIA_PRICING_UNAVAILABLE = 'MEDIA_PRICING_UNAVAILABLE',
   MEDIA_REQUIRES_PLATFORM_MODEL = 'MEDIA_REQUIRES_PLATFORM_MODEL',
+  MEDIA_AUDIO_NOT_PREPARED = 'MEDIA_AUDIO_NOT_PREPARED',
+  MEDIA_TRANSCRIPT_EMPTY = 'MEDIA_TRANSCRIPT_EMPTY',
+  TRANSCRIPTION_OUTPUT_INVALID = 'TRANSCRIPTION_OUTPUT_INVALID',
+  PROVIDER_INCOMPATIBLE = 'PROVIDER_INCOMPATIBLE',
   MEDIA_PROBE_FAILED = 'MEDIA_PROBE_FAILED',
   MEDIA_PROBE_STORAGE_TEMPORARY = 'MEDIA_PROBE_STORAGE_TEMPORARY',
   MEDIA_PROBE_TIMEOUT = 'MEDIA_PROBE_TIMEOUT',
@@ -59,6 +63,7 @@ const PRE_DISPATCH_FAILURE_CODES: ReadonlySet<DocumentProcessingFailureCode> = n
   DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND,
   DocumentProcessingFailureCode.EXTRACTION_OBJECT_TOO_LARGE,
   DocumentProcessingFailureCode.MEDIA_REQUIRES_PLATFORM_MODEL,
+  DocumentProcessingFailureCode.MEDIA_AUDIO_NOT_PREPARED,
   DocumentProcessingFailureCode.PDF_INVALID,
   DocumentProcessingFailureCode.PDF_TEXT_NOT_FOUND,
 ]);
@@ -82,9 +87,9 @@ export interface DocumentProcessingUsage {
   readonly llm: readonly DocumentProcessingLlmUsage[];
   /** Provider calls sent without receiving any answer or token count: the spend is unknown (ADR-0022 HELD). */
   readonly uncertainDispatches: number;
-  /** Speech-to-text seconds with a complete transcript. Absent until the STT pipeline (PR5) reports it. */
+  /** Speech-to-text seconds with a complete transcript. Absent for documents without speech-to-text. */
   readonly sttBilledSeconds: number | null;
-  /** Speech-to-text seconds sent without a known outcome. Absent until PR5. */
+  /** Speech-to-text seconds sent without a known outcome. Absent for documents without speech-to-text. */
   readonly sttUncertainSeconds: number | null;
 }
 

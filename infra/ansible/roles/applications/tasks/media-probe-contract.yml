@@ -18,6 +18,17 @@
       media_probe_audio_prep_enabled must be a boolean and requires
       media_probe_worker_enabled, because ffmpeg runs only inside the probe worker.
 
+- name: Require a boolean media STT flag that never runs without derived audio
+  ansible.builtin.assert:
+    that:
+      - go_worker_media_stt_enabled | default(false) is boolean
+      - not (go_worker_media_stt_enabled | default(false) | bool) or (media_probe_worker_enabled | default(false) | bool)
+      - not (go_worker_media_stt_enabled | default(false) | bool) or (media_probe_audio_prep_enabled | default(false) | bool)
+    fail_msg: >-
+      go_worker_media_stt_enabled must be a boolean and requires media_probe_worker_enabled and
+      media_probe_audio_prep_enabled: without the probe's derived-audio manifest every media Document would
+      fail with MEDIA_AUDIO_NOT_PREPARED.
+
 - name: Validate enabled media probe worker contract
   ansible.builtin.assert:
     that:

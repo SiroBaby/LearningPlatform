@@ -40,22 +40,35 @@ type Options struct {
 	// FenceCheckInterval bounds how long provider generation keeps running
 	// after a deletion or lease fence is committed.
 	FenceCheckInterval time.Duration
+	// Media transcribes AUDIO/VIDEO Documents into time-cited chunks. Nil keeps the existing behaviour for media
+	// (the feature flag is off); PDF/TEXT never use it.
+	Media MediaTranscriber
+	// MediaGenerationConcurrency bounds question generation calls for a media Document (D6 of #160).
+	MediaGenerationConcurrency int
+}
+
+// MediaTranscriber produces the chunks of a media Document. Implementations own STT checkpointing and must return
+// processing.ErrJobFenceLost or a processing.Failure for expected failures.
+type MediaTranscriber interface {
+	Chunks(context.Context, processing.Job) ([]processing.Chunk, error)
 }
 
 const (
-	defaultConcurrency        = 2
-	maxConcurrency            = 32
-	defaultJobTimeout         = 10 * time.Minute
-	minJobTimeout             = time.Millisecond
-	maxJobTimeout             = 14 * time.Minute
-	defaultPollInterval       = time.Second
-	minPollInterval           = 100 * time.Millisecond
-	maxPollInterval           = time.Minute
-	defaultPersistTimeout     = 30 * time.Second
-	defaultShutdownTimeout    = 30 * time.Second
-	minShutdownTimeout        = time.Second
-	maxShutdownTimeout        = 2 * time.Minute
-	defaultFenceCheckInterval = 5 * time.Second
+	defaultConcurrency                = 2
+	maxConcurrency                    = 32
+	defaultJobTimeout                 = 10 * time.Minute
+	minJobTimeout                     = time.Millisecond
+	maxJobTimeout                     = 14 * time.Minute
+	defaultPollInterval               = time.Second
+	minPollInterval                   = 100 * time.Millisecond
+	maxPollInterval                   = time.Minute
+	defaultPersistTimeout             = 30 * time.Second
+	defaultShutdownTimeout            = 30 * time.Second
+	minShutdownTimeout                = time.Second
+	maxShutdownTimeout                = 2 * time.Minute
+	defaultFenceCheckInterval         = 5 * time.Second
+	maxMediaGenerationConcurrency     = 8
+	defaultMediaGenerationConcurrency = 4
 )
 
 type processOutcome uint8
@@ -88,9 +101,9 @@ func failureComponentFor(component failureComponent, code processing.FailureCode
 	switch code {
 	case processing.ObjectNotFound, processing.ObjectTooLarge:
 		return failureComponentStorage
-	case processing.PDFInvalid, processing.PDFTextNotFound, processing.ChunkLimit:
+	case processing.PDFInvalid, processing.PDFTextNotFound, processing.ChunkLimit, processing.MediaAudioNotPrepared, processing.MediaTranscriptEmpty:
 		return failureComponentExtraction
-	case processing.OutputInvalid, processing.OutputTruncated, processing.ProviderIncompatible, processing.ProviderUnavailable:
+	case processing.OutputInvalid, processing.OutputTruncated, processing.ProviderIncompatible, processing.ProviderUnavailable, processing.TranscriptionOutputInvalid:
 		return failureComponentProvider
 	default:
 		return failureComponentUnknown
@@ -273,38 +286,45 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
-	bytes, err := readSource(ctx, bootstrap.objects, source, 20*1024*1024)
-	if err != nil {
-		return bootstrap.finish(ctx, job, err, failureComponentStorage)
-	}
-	segments, err := processing.Extract(source, bytes)
-	if err != nil {
-		return bootstrap.finish(ctx, job, err, failureComponentExtraction)
-	}
-	chunks, err := processing.ChunkText(job.DocumentID, job.OwnerID, segments)
-	if err != nil {
-		return bootstrap.finish(ctx, job, err, failureComponentExtraction)
+	isMedia := bootstrap.options.Media != nil && (source.Type == "AUDIO" || source.Type == "VIDEO")
+	var chunks []processing.Chunk
+	if isMedia {
+		// Real STT (#160 PR5): the transcript is checkpointed per chunk, and the fence monitor stops paid provider
+		// calls as soon as the Document is deleted or the lease is lost.
+		err = bootstrap.withActiveFence(ctx, job, func(transcriptionCtx context.Context) error {
+			var chunkErr error
+			chunks, chunkErr = bootstrap.options.Media.Chunks(transcriptionCtx, job)
+			return chunkErr
+		})
+		if err != nil {
+			return bootstrap.finish(ctx, job, err, failureComponentUnknown)
+		}
+	} else {
+		bytes, err := readSource(ctx, bootstrap.objects, source, 20*1024*1024)
+		if err != nil {
+			return bootstrap.finish(ctx, job, err, failureComponentStorage)
+		}
+		segments, err := processing.Extract(source, bytes)
+		if err != nil {
+			return bootstrap.finish(ctx, job, err, failureComponentExtraction)
+		}
+		chunks, err = processing.ChunkText(job.DocumentID, job.OwnerID, segments)
+		if err != nil {
+			return bootstrap.finish(ctx, job, err, failureComponentExtraction)
+		}
 	}
 	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
-	questions := make([]processing.Question, 0, len(chunks))
+	selected := allChunkIndexes(len(chunks))
+	concurrency := 1
+	if isMedia {
+		selected = processing.SelectQuestionChunks(len(chunks), processing.MaxMediaQuestions)
+		concurrency = bootstrap.options.MediaGenerationConcurrency
+	}
+	questions := make([]processing.Question, len(selected))
 	err = bootstrap.withActiveFence(ctx, job, func(generationCtx context.Context) error {
-		for index, chunk := range chunks {
-			if err := generationCtx.Err(); err != nil {
-				return err
-			}
-			question, err := bootstrap.generator.Generate(generationCtx, chunk.Text)
-			if err != nil {
-				return err
-			}
-			question.ChunkID = chunk.ID
-			question.ChunkIndex = chunk.Index
-			question.Ordinal = index
-			question.Citation = processing.Citation{ChunkID: chunk.ID, Locator: chunk.Locator, Snippet: chunk.Text}
-			questions = append(questions, question)
-		}
-		return nil
+		return bootstrap.generateQuestions(generationCtx, chunks, selected, concurrency, questions)
 	})
 	if err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentProvider)
@@ -322,6 +342,79 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 		return processOutcomeUnknown, err, failureComponentPersistence
 	}
 	return bootstrap.finish(ctx, job, err, failureComponentPersistence)
+}
+
+func allChunkIndexes(count int) []int {
+	indexes := make([]int, count)
+	for index := range indexes {
+		indexes[index] = index
+	}
+	return indexes
+}
+
+// generateQuestions fills questions[position] from chunks[selected[position]]. With one worker it is the original
+// sequential loop; with more, calls are bounded by concurrency and the first failure stops new calls. Results keep
+// their position so the output order never depends on scheduling.
+func (bootstrap *Bootstrap) generateQuestions(ctx context.Context, chunks []processing.Chunk, selected []int, concurrency int, questions []processing.Question) error {
+	generate := func(callCtx context.Context, position int) error {
+		chunk := chunks[selected[position]]
+		question, err := bootstrap.generator.Generate(callCtx, chunk.Text)
+		if err != nil {
+			return err
+		}
+		question.ChunkID = chunk.ID
+		question.ChunkIndex = chunk.Index
+		question.Ordinal = position
+		question.Citation = processing.Citation{ChunkID: chunk.ID, Locator: chunk.Locator, Snippet: chunk.Text}
+		questions[position] = question
+		return nil
+	}
+	if concurrency <= 1 {
+		for position := range selected {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := generate(ctx, position); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	groupCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var (
+		waiter   sync.WaitGroup
+		mutex    sync.Mutex
+		firstErr error
+		slots    = make(chan struct{}, concurrency)
+	)
+	for position := range selected {
+		select {
+		case slots <- struct{}{}:
+		case <-groupCtx.Done():
+		}
+		if groupCtx.Err() != nil {
+			break
+		}
+		waiter.Add(1)
+		go func(position int) {
+			defer waiter.Done()
+			defer func() { <-slots }()
+			if err := generate(groupCtx, position); err != nil {
+				mutex.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mutex.Unlock()
+				cancel()
+			}
+		}(position)
+	}
+	waiter.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	return ctx.Err()
 }
 
 // withActiveFence polls the job fence on a fixed interval while provider
@@ -509,6 +602,11 @@ func normalizeOptions(options Options) Options {
 		options.PollInterval = minPollInterval
 	} else if options.PollInterval > maxPollInterval {
 		options.PollInterval = maxPollInterval
+	}
+	if options.MediaGenerationConcurrency <= 0 {
+		options.MediaGenerationConcurrency = defaultMediaGenerationConcurrency
+	} else if options.MediaGenerationConcurrency > maxMediaGenerationConcurrency {
+		options.MediaGenerationConcurrency = maxMediaGenerationConcurrency
 	}
 	if options.FenceCheckInterval <= 0 {
 		options.FenceCheckInterval = defaultFenceCheckInterval

@@ -98,6 +98,9 @@ media_probe_worker_proxy_url: http://media-egress-proxy:3128
 # the owner has granted s3:PutObject on derived-audio/* to the probe identity and
 # created the 2-day lifecycle rule (docs/deployment/RUNBOOK-media-audio-prep-dev.md).
 media_probe_audio_prep_enabled: false
+# Real speech-to-text in the full-pipeline worker for MP3/MP4 (#160 PR5). Keep false until derived audio is on
+# and the owner has confirmed the worker can reach STT_BASE_URL (docs/deployment/RUNBOOK-media-stt-dev.md).
+go_worker_media_stt_enabled: false
 media_probe_worker_dns_ip: 10.43.0.10
 media_probe_worker_egress_proxy_port: 3128
 # The probe reaches PostgreSQL only through the media-probe-db-egress
