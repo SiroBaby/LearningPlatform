@@ -5,6 +5,7 @@ import {
   AiIngestion,
   EnqueueCommand,
   MEDIA_PROBE_JOB_TYPE,
+  TEXT_EXTRACT_JOB_TYPE,
   type DocumentCancellationCommand,
 } from './contracts/ai-ingestion.port';
 import { normalizeStorageVersionId } from '../../storage/storage-version-id';
@@ -54,10 +55,19 @@ export class AiIngestionService implements AiIngestion {
       return;
     }
 
-    await this.processingJobs.enqueue(cmd, this.buildFullPipelineKey(cmd));
+    if (cmd.jobType === TEXT_EXTRACT_JOB_TYPE) {
+      if (!cmd.fullPipelineJobId || !Number.isSafeInteger(cmd.processingAttempt) || cmd.processingAttempt < 1) {
+        throw new Error('TEXT_EXTRACT requires fullPipelineJobId and processingAttempt');
+      }
+      await this.processingJobs.enqueueTextExtract(cmd, this.buildDocumentJobKey(cmd));
+      return;
+    }
+
+    await this.processingJobs.enqueue(cmd, this.buildDocumentJobKey(cmd));
   }
 
-  private buildFullPipelineKey(cmd: Extract<EnqueueCommand, { jobType: 'FULL_PIPELINE' }>): string {
+  /** Document-scoped idempotency key (ADR-0005): hash(document_id + job_type), one job row per type. */
+  private buildDocumentJobKey(cmd: Extract<EnqueueCommand, { jobType: 'FULL_PIPELINE' | typeof TEXT_EXTRACT_JOB_TYPE }>): string {
     return createHash('sha256')
       .update(`${cmd.documentId}:${cmd.jobType}`)
       .digest('hex')

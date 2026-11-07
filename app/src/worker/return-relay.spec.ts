@@ -963,6 +963,7 @@ describe('ReturnRelay', () => {
     const event = await seedResult(document, DocumentStatus.FAILED);
     const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
     const failingProjection: DocumentStatusProjection = {
+      completeExtraction: async () => 'IGNORED',
       completeProbe: async () => 'IGNORED',
       failProbe: async () => 'IGNORED',
       project: async (_command: DocumentStatusProjectionCommand) => {
@@ -1029,6 +1030,10 @@ describe('ReturnRelay', () => {
       },
     }));
 
+    await ds.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 1000) ON CONFLICT DO NOTHING',
+      [document.ownerId],
+    );
     await new ContentRepository(ds).retryProcessing(document.ownerId, document.id, {
       customModelConfigId: null,
       kind: 'PLAN',
@@ -1099,6 +1104,10 @@ describe('ReturnRelay', () => {
       },
     }));
 
+    await ds.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 1000) ON CONFLICT DO NOTHING',
+      [document.ownerId],
+    );
     await new ContentRepository(ds).retryProcessing(document.ownerId, document.id, {
       customModelConfigId: null,
       kind: 'PLAN',
@@ -1405,6 +1414,10 @@ describe('ReturnRelay', () => {
       },
     );
 
+    await ds.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 1000) ON CONFLICT DO NOTHING',
+      [document.ownerId],
+    );
     await new ContentRepository(ds).confirmProcessing(document.ownerId, document.id, {
       customModelConfigId: null,
       kind: 'PLAN',

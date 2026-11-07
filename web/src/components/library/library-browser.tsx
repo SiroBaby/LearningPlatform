@@ -39,6 +39,7 @@ type Phase0DocumentPresentation = {
   pageCount: number | null;
   durationSec: number | null;
   errorCode: Phase0DocumentProcessingFailureCode | null;
+  errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -100,6 +101,7 @@ function toPresentationDocument(document: Phase0Document): Phase0DocumentPresent
     pageCount: document.pageCount,
     durationSec: document.durationSec,
     errorCode: document.errorCode,
+    errorMessage: document.errorMessage,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
   };
@@ -242,7 +244,7 @@ function LibraryDocumentCard({
 }) {
   const isList = view === "list";
   const failurePresentation = document.status === "failed"
-    ? getDocumentFailurePresentation(document.errorCode)
+    ? getDocumentFailurePresentation(document.errorCode, document.errorMessage)
     : null;
 
   return (

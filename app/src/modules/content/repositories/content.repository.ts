@@ -22,11 +22,14 @@ import {
 import { DocumentStatus } from '../enums/document-status.enum';
 import { DocumentType } from '../enums/document-type.enum';
 import { OutboxEvent } from '../entities/outbox-event.entity';
+import { TEXT_EXTRACT_JOB_TYPE } from '../../ai/contracts/ai-ingestion.port';
 import { JobType } from '../../ai/enums/job-type.enum';
 import type { DocumentModelSelection } from '../../ai/contracts/model-selection.contracts';
 import { BudgetExhaustedError } from '../../ai/budget-exhausted.error';
 import { DocumentProcessingFailureCode } from '../../ai/contracts/document-processing-result';
 import type {
+  DocumentExtractionCompletionOutcome,
+  DocumentExtractionCompletionPersistenceCommand,
   DocumentProbeCompletionCommand,
   DocumentProbeCompletionPersistenceCommand,
   DocumentProbeCompletionOutcome,
@@ -277,7 +280,7 @@ export class ContentRepository extends BaseRepository<Document> {
     }
 
     const cancellationMarkerId = randomUUID();
-    const cancelledJobs: Array<{ readonly id: string }> = await manager.query(
+    await manager.query(
       `UPDATE "ai"."processing_jobs"
        SET "status" = 'CANCELLED',
            "cancellation_marker_id" = COALESCE("cancellation_marker_id", $3::uuid),
@@ -288,33 +291,47 @@ export class ContentRepository extends BaseRepository<Document> {
            "updated_at" = now()
        WHERE "document_id" = $1
          AND "owner_id" = $2
-         AND "job_type" = 'FULL_PIPELINE'
-         AND "status" NOT IN ('COMPLETED', 'CANCELLED')
-       RETURNING "id"`,
+         AND "job_type" IN ('FULL_PIPELINE', 'TEXT_EXTRACT')
+         AND "status" NOT IN ('COMPLETED', 'CANCELLED')`,
       [documentId, ownerId, cancellationMarkerId],
     );
 
-    if (cancelledJobs.length === 0) {
-      // A placeholder occupies the document-scoped unique slot when the
-      // forward relay has not created FULL_PIPELINE yet.
-      await manager.query(
-        `INSERT INTO "ai"."processing_jobs"
-           ("document_id", "owner_id", "job_type", "status", "idempotency_key",
-            "correlation_id", "deletion_fence", "cancellation_marker_id",
-            "cancellation_reason", "cancelled_at")
-         VALUES ($1, $2, 'FULL_PIPELINE', 'CANCELLED', $3, $4, $5, $6,
-                 'DOCUMENT_DELETED', now())
-         ON CONFLICT ("document_id") WHERE "job_type" = 'FULL_PIPELINE' DO NOTHING`,
-        [
-          documentId,
-          ownerId,
-          `document-cancel:${documentId}:FULL_PIPELINE`,
-          randomUUID(),
-          deletionFence,
-          cancellationMarkerId,
-        ],
-      );
+    // A placeholder occupies each job type's document-scoped unique slot when the forward relay has not created
+    // that job yet (or it already finished), so a late enqueue cannot re-arm work after deletion. An existing row
+    // of the type makes the insert a no-op.
+    for (const jobType of [JobType.FULL_PIPELINE, TEXT_EXTRACT_JOB_TYPE]) {
+      await this.insertCancellationPlaceholder(manager, { cancellationMarkerId, deletionFence, documentId, jobType, ownerId });
     }
+  }
+
+  private async insertCancellationPlaceholder(
+    manager: EntityManager,
+    input: {
+      readonly cancellationMarkerId: string;
+      readonly deletionFence: number;
+      readonly documentId: string;
+      readonly jobType: JobType.FULL_PIPELINE | typeof TEXT_EXTRACT_JOB_TYPE;
+      readonly ownerId: string;
+    },
+  ): Promise<void> {
+    // jobType is a closed constant union, never user input, and partial-index inference needs a literal predicate.
+    await manager.query(
+      `INSERT INTO "ai"."processing_jobs"
+         ("document_id", "owner_id", "job_type", "status", "idempotency_key",
+          "correlation_id", "deletion_fence", "cancellation_marker_id",
+          "cancellation_reason", "cancelled_at")
+       VALUES ($1, $2, '${input.jobType}', 'CANCELLED', $3, $4, $5, $6,
+               'DOCUMENT_DELETED', now())
+       ON CONFLICT ("document_id") WHERE "job_type" = '${input.jobType}' DO NOTHING`,
+      [
+        input.documentId,
+        input.ownerId,
+        `document-cancel:${input.documentId}:${input.jobType}`,
+        randomUUID(),
+        input.deletionFence,
+        input.cancellationMarkerId,
+      ],
+    );
   }
 
   private async lockMediaProbe(manager: EntityManager, documentId: string, ownerId: string): Promise<void> {
@@ -523,7 +540,6 @@ export class ContentRepository extends BaseRepository<Document> {
     ownerId: string,
     id: string,
     selection: DocumentModelSelection,
-    reservation?: ProcessingReservation,
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       const started = await this.startProcessing(manager, ownerId, id, [
@@ -533,16 +549,7 @@ export class ContentRepository extends BaseRepository<Document> {
 
       if (started) {
         const document = await manager.findOneByOrFail(Document, { id, ownerId });
-        await this.reserveProcessingCredits(manager, document, reservation);
-        await this.enqueueProcessing(
-          manager,
-          ownerId,
-          id,
-          selection,
-          Number(document.deletionFence),
-          document.fullPipelineJobId,
-          Number(document.processingAttempt),
-        );
+        await this.enqueueTextProcessingStart(manager, document, selection);
       }
 
       return manager.findOne(Document, { where: { id, ownerId } });
@@ -1020,7 +1027,6 @@ export class ContentRepository extends BaseRepository<Document> {
     ownerId: string,
     id: string,
     selection: DocumentModelSelection,
-    reservation?: ProcessingReservation,
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       const started = await this.startProcessing(manager, ownerId, id, [DocumentStatus.FAILED]);
@@ -1029,16 +1035,7 @@ export class ContentRepository extends BaseRepository<Document> {
       }
 
       const document = await manager.findOneByOrFail(Document, { id, ownerId });
-      await this.reserveProcessingCredits(manager, document, reservation);
-      await this.enqueueProcessing(
-        manager,
-        ownerId,
-        id,
-        selection,
-        Number(document.deletionFence),
-        document.fullPipelineJobId,
-        Number(document.processingAttempt),
-      );
+      await this.enqueueTextProcessingStart(manager, document, selection);
       return manager.findOne(Document, { where: { id, ownerId } });
     });
   }
@@ -1236,33 +1233,161 @@ export class ContentRepository extends BaseRepository<Document> {
   }
 
   /**
-   * Reserve the coarse estimate for a PDF/TXT Platform Model start. Runs after the Document CAS (row lock held) and
-   * before the outbox write, in the same transaction, so a short balance rolls back the whole start and a replay
-   * cannot reserve twice. Lock order is Document -> wallet, as in settlement.
+   * PDF/TXT start (ADR-0033). A Platform Model reserves NOTHING here: it only needs a wallet at the floor, then a
+   * TEXT_EXTRACT request is queued so Go can measure the real text; the reservation happens in
+   * {@link completeExtraction}. Custom AI has no platform cost and goes straight to the full pipeline.
+   * Runs after the Document CAS (row lock held), so lock order stays Document -> wallet.
    */
-  private async reserveProcessingCredits(
+  private async enqueueTextProcessingStart(
     manager: EntityManager,
     document: Document,
-    reservation: ProcessingReservation | undefined,
+    selection: DocumentModelSelection,
   ): Promise<void> {
-    if (!reservation || reservation.estimatedCredits <= 0) return;
-    const processingAttempt = Number(document.processingAttempt);
-    if (!document.fullPipelineJobId?.trim() || !Number.isSafeInteger(processingAttempt) || processingAttempt < 1) {
-      throw new Error('Document processing identity is unavailable');
+    const jobType = selection.kind === 'PLAN' ? TEXT_EXTRACT_JOB_TYPE : JobType.FULL_PIPELINE;
+    if (jobType === TEXT_EXTRACT_JOB_TYPE) await this.assertWalletAtFloor(manager, document.ownerId);
+    await this.enqueueProcessing(
+      manager,
+      document.ownerId,
+      document.id,
+      selection,
+      Number(document.deletionFence),
+      document.fullPipelineJobId,
+      Number(document.processingAttempt),
+      jobType,
+    );
+  }
+
+  private async assertWalletAtFloor(manager: EntityManager, ownerId: string): Promise<void> {
+    const wallet = await manager.query<readonly { readonly availableCredits: string }[]>(
+      'SELECT "available_credits" AS "availableCredits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1',
+      [ownerId],
+    );
+    const availableCredits = Number(wallet[0]?.availableCredits ?? 0);
+    if (availableCredits < MINIMUM_AVAILABLE_CREDITS_TO_START) {
+      throw new InsufficientCreditsError(availableCredits, MINIMUM_AVAILABLE_CREDITS_TO_START);
     }
-    const outcome = await reserveCredits(manager, {
-      estimatedCredits: reservation.estimatedCredits,
-      jobId: document.fullPipelineJobId,
-      ownerId: document.ownerId,
-      processingAttempt,
+  }
+
+  /**
+   * Reserve credits from the REAL extracted text of a TEXT_EXTRACT job and hand the Document to the full pipeline
+   * (ADR-0033). One transaction, Document row first and wallet second, like {@link completeProbe}:
+   *  - an identity mismatch (deletion fence, attempt, job id) or a Document that is no longer PROCESSING is IGNORED,
+   *    so deletion and newer attempts win and nothing is reserved for them;
+   *  - the reserve key is `reserve:{fullPipelineJobId}:{processingAttempt}`, so a replay finds the RESERVE row and
+   *    writes nothing (an already queued FULL_PIPELINE request is detected by its own outbox row);
+   *  - a short wallet fails the Document with INSUFFICIENT_CREDITS_AFTER_EXTRACT: no FULL_PIPELINE request is
+   *    written, so no provider call happens and the ledger stays untouched.
+   */
+  async completeExtraction(
+    command: DocumentExtractionCompletionPersistenceCommand,
+  ): Promise<DocumentExtractionCompletionOutcome> {
+    return this.dataSource.transaction(async (manager) => {
+      const document = await manager.findOne(Document, {
+        where: { id: command.documentId, ownerId: command.ownerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (
+        !document ||
+        Number(document.deletionFence) !== command.deletionFence ||
+        Number(document.processingAttempt) !== command.processingAttempt ||
+        document.fullPipelineJobId !== command.fullPipelineJobId
+      ) {
+        return 'IGNORED';
+      }
+      if (await this.hasFullPipelineRequest(manager, command)) return 'ALREADY_APPLIED';
+      if (document.status !== DocumentStatus.PROCESSING) return 'IGNORED';
+
+      const selection: DocumentModelSelection = {
+        customModelConfigId: document.customModelConfigId,
+        kind: document.modelSelectionKind,
+        platformModelId: document.platformModelId,
+      };
+      const { creditEstimate } = command;
+      if (creditEstimate.kind === 'UNAVAILABLE') {
+        await this.failProcessingDocument(manager, document, {
+          errorCode: DocumentProcessingFailureCode.PROCESSING_FAILED,
+          errorMessage: 'Processing credits could not be estimated',
+        });
+        return 'APPLIED';
+      }
+      if (selection.kind === 'PLAN' && document.platformModelId !== creditEstimate.platformModelId) return 'IGNORED';
+      const estimatedCredits = selection.kind === 'PLAN' ? creditEstimate.estimatedCredits : 0;
+      if (!Number.isSafeInteger(estimatedCredits) || estimatedCredits < 0) {
+        throw new Error('Invalid extracted text credit estimate');
+      }
+      if (estimatedCredits > 0) {
+        const outcome = await reserveCredits(manager, {
+          estimatedCredits,
+          jobId: command.fullPipelineJobId,
+          ownerId: command.ownerId,
+          processingAttempt: command.processingAttempt,
+        });
+        if (outcome.kind === 'INSUFFICIENT') {
+          await this.failProcessingDocument(manager, document, {
+            errorCode: DocumentProcessingFailureCode.INSUFFICIENT_CREDITS_AFTER_EXTRACT,
+            errorMessage: `Tài liệu cần khoảng ${formatCredits(estimatedCredits)} credit để tạo câu hỏi nhưng bạn chỉ còn ${formatCredits(outcome.availableCredits)} credit. Hãy bổ sung credit rồi thử lại.`,
+            estimatedCredits,
+          });
+          return 'APPLIED';
+        }
+        await manager.update(
+          Document,
+          { id: document.id, ownerId: document.ownerId },
+          { budgetStatus: 'RESERVED', estimatedCredits, estimateStatus: 'COARSE' },
+        );
+      }
+      await this.enqueueProcessing(
+        manager,
+        document.ownerId,
+        document.id,
+        selection,
+        command.deletionFence,
+        command.fullPipelineJobId,
+        command.processingAttempt,
+        JobType.FULL_PIPELINE,
+      );
+      return 'APPLIED';
     });
-    if (outcome.kind === 'INSUFFICIENT') {
-      throw new InsufficientCreditsError(outcome.availableCredits, reservation.estimatedCredits);
-    }
+  }
+
+  private async hasFullPipelineRequest(
+    manager: EntityManager,
+    command: DocumentExtractionCompletionPersistenceCommand,
+  ): Promise<boolean> {
+    const rows = await manager.query<readonly { readonly id: string }[]>(
+      `SELECT "id" FROM "course"."outbox"
+       WHERE "aggregate_id" = $1
+         AND "event_type" = 'DocumentReadyForProcessing'
+         AND "payload"->>'jobType' = 'FULL_PIPELINE'
+         AND "payload"->>'fullPipelineJobId' = $2
+         AND "payload"->>'processingAttempt' = $3
+       LIMIT 1`,
+      [command.documentId, command.fullPipelineJobId, String(command.processingAttempt)],
+    );
+    return rows.length > 0;
+  }
+
+  private async failProcessingDocument(
+    manager: EntityManager,
+    document: Document,
+    failure: {
+      readonly errorCode: DocumentProcessingFailureCode;
+      readonly errorMessage: string;
+      readonly estimatedCredits?: number;
+    },
+  ): Promise<void> {
     await manager.update(
       Document,
-      { id: document.id, ownerId: document.ownerId },
-      { budgetStatus: 'RESERVED', estimatedCredits: reservation.estimatedCredits, estimateStatus: 'COARSE' },
+      { id: document.id, ownerId: document.ownerId, status: DocumentStatus.PROCESSING },
+      {
+        budgetStatus: 'NOT_RESERVED',
+        errorCode: failure.errorCode,
+        errorMessage: failure.errorMessage,
+        status: DocumentStatus.FAILED,
+        ...(failure.estimatedCredits === undefined
+          ? {}
+          : { estimatedCredits: failure.estimatedCredits, estimateStatus: 'COARSE' }),
+      },
     );
   }
 
@@ -1299,6 +1424,7 @@ export class ContentRepository extends BaseRepository<Document> {
     deletionFence: number,
     fullPipelineJobId: string,
     processingAttempt: number,
+    jobType: JobType.FULL_PIPELINE | typeof TEXT_EXTRACT_JOB_TYPE = JobType.FULL_PIPELINE,
   ): Promise<void> {
     const outbox = new OutboxEvent();
     outbox.aggregateId = id;
@@ -1307,7 +1433,7 @@ export class ContentRepository extends BaseRepository<Document> {
       documentId: id,
       deletionFence,
       ownerId,
-      jobType: 'FULL_PIPELINE',
+      jobType,
       fullPipelineJobId,
       processingAttempt,
       ...selection,
@@ -1316,9 +1442,13 @@ export class ContentRepository extends BaseRepository<Document> {
   }
 }
 
-/** Coarse credit estimate to reserve when a PDF/TXT Document starts processing with a Platform Model. */
-export interface ProcessingReservation {
-  readonly estimatedCredits: number;
+/** A wallet needs at least this many available credits before PDF/TXT extraction starts (ADR-0033). */
+export const MINIMUM_AVAILABLE_CREDITS_TO_START = 1;
+
+const CREDIT_FORMATTER = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 });
+
+function formatCredits(credits: number): string {
+  return CREDIT_FORMATTER.format(credits);
 }
 
 interface ProjectionStateRow {

@@ -4,6 +4,7 @@ import {
   AI_INGESTION,
   AiIngestion,
   MEDIA_PROBE_JOB_TYPE,
+  TEXT_EXTRACT_JOB_TYPE,
 } from '../ai/contracts/ai-ingestion.port';
 import { JobType } from '../ai/enums/job-type.enum';
 import type { DocumentModelSelection } from '../ai/contracts/model-selection.contracts';
@@ -125,6 +126,23 @@ export class ForwardRelay {
           sourceVersionId: payload.sourceVersionId,
           sourceEtag: payload.sourceEtag,
           sourceContentLength: payload.sourceContentLength,
+        });
+      } else if (payload.jobType === TEXT_EXTRACT_JOB_TYPE) {
+        if (
+          !payload.fullPipelineJobId ||
+          payload.deletionFence === undefined ||
+          payload.processingAttempt === undefined
+        ) {
+          throw new Error('Invalid text extraction request payload');
+        }
+        await this.ingestion.enqueue({
+          correlationId: row.aggregateId,
+          deletionFence: payload.deletionFence,
+          documentId: payload.documentId,
+          fullPipelineJobId: payload.fullPipelineJobId,
+          jobType: TEXT_EXTRACT_JOB_TYPE,
+          ownerId: payload.ownerId,
+          processingAttempt: payload.processingAttempt,
         });
       } else {
         if (payload.jobType !== JobType.FULL_PIPELINE) {

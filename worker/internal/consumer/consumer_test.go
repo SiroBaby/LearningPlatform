@@ -897,6 +897,8 @@ type storeMock struct {
 	failErr                              error
 	failResult                           *bool
 	replaced, completed, failed, retried bool
+	extractionSummary                    *processing.ExtractionSummary
+	extractionErr                        error
 }
 
 func (store *storeMock) Claim(context.Context) (*processing.Job, error)    { return store.job, nil }
@@ -912,6 +914,10 @@ func (store *storeMock) PersistAndComplete(_ context.Context, _ processing.Job, 
 	}
 	store.completed = persisted && store.persistErr == nil
 	return persisted, store.persistErr
+}
+func (store *storeMock) CompleteExtraction(_ context.Context, _ processing.Job, summary processing.ExtractionSummary) (bool, error) {
+	store.extractionSummary = &summary
+	return store.extractionErr == nil, store.extractionErr
 }
 func (store *storeMock) Fail(context.Context, processing.Job, processing.Failure) (bool, error) {
 	store.failed = true
@@ -975,6 +981,10 @@ func (store *poolStore) Source(context.Context, processing.Job) (processing.Sour
 
 func (store *poolStore) PersistAndComplete(context.Context, processing.Job, []processing.Chunk, []processing.Question) (bool, error) {
 	store.persists.Add(1)
+	return true, nil
+}
+
+func (store *poolStore) CompleteExtraction(context.Context, processing.Job, processing.ExtractionSummary) (bool, error) {
 	return true, nil
 }
 

@@ -178,8 +178,9 @@ describe('ContentRepository.deleteOwnedDocument', () => {
       leaseUntil: null,
     });
     const processingRows = await processingJobs.findBy({ documentId: document.id });
-    expect(processingRows).toHaveLength(1);
-    expect(processingRows[0].status).toBe(JobStatus.CANCELLED);
+    // One placeholder per job type: FULL_PIPELINE and TEXT_EXTRACT (ADR-0033).
+    expect(processingRows.map((row) => row.jobType).sort()).toEqual(['FULL_PIPELINE', 'TEXT_EXTRACT']);
+    expect(processingRows.every((row) => row.status === JobStatus.CANCELLED)).toBe(true);
   });
 
   it('adds derived audio chunk versions to the purge manifest', async () => {

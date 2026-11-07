@@ -13,6 +13,7 @@ const RETRYABLE_FAILURE_CODES: readonly Phase0DocumentProcessingFailureCode[] = 
   "BUDGET_EXHAUSTED",
   "GENERATION_OUTPUT_INVALID",
   "GENERATION_OUTPUT_TRUNCATED",
+  "INSUFFICIENT_CREDITS_AFTER_EXTRACT",
   "MEDIA_PROBE_STORAGE_TEMPORARY",
   "MEDIA_PROBE_TIMEOUT",
   "PROCESSING_TIMED_OUT",
@@ -25,8 +26,16 @@ export function isRetryableDocumentFailureCode(
   return errorCode !== null && RETRYABLE_FAILURE_CODES.includes(errorCode);
 }
 
+const INSUFFICIENT_CREDITS_AFTER_EXTRACT_FALLBACK =
+  "Tài liệu cần thêm credit để tạo câu hỏi. Hãy bổ sung credit rồi thử lại.";
+
+/**
+ * `errorMessage` is only used for INSUFFICIENT_CREDITS_AFTER_EXTRACT: the backend writes the exact Vietnamese
+ * sentence with the credit amounts (the Document needs N, the wallet has M), which a static string cannot carry.
+ */
 export function getDocumentFailurePresentation(
   errorCode: Phase0DocumentProcessingFailureCode | null,
+  errorMessage: string | null = null,
 ): Phase0DocumentFailurePresentation {
   switch (errorCode) {
     case "BUDGET_EXHAUSTED":
@@ -63,6 +72,12 @@ export function getDocumentFailurePresentation(
       return {
         title: "Chưa thể tạo bộ câu hỏi hoàn chỉnh",
         description: "Hãy thử lại sau để tạo lại bộ câu hỏi.",
+        retryable: true,
+      };
+    case "INSUFFICIENT_CREDITS_AFTER_EXTRACT":
+      return {
+        title: "Chưa đủ credit để tạo câu hỏi",
+        description: errorMessage?.trim() || INSUFFICIENT_CREDITS_AFTER_EXTRACT_FALLBACK,
         retryable: true,
       };
     case "INSUFFICIENT_VALID_QUESTIONS":

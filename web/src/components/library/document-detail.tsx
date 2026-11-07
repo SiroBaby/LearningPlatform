@@ -77,8 +77,8 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
   const type = useMemo(() => mapType(document.type), [document.type]);
   const status = useMemo(() => mapStatus(document.status), [document.status]);
   const failurePresentation = useMemo(
-    () => document.status === "FAILED" ? getDocumentFailurePresentation(document.errorCode) : null,
-    [document.errorCode, document.status],
+    () => document.status === "FAILED" ? getDocumentFailurePresentation(document.errorCode, document.errorMessage) : null,
+    [document.errorCode, document.errorMessage, document.status],
   );
   const canRetryFailure = useMemo(
     () => document.status === "FAILED" && isRetryableDocumentFailureCode(document.errorCode),
