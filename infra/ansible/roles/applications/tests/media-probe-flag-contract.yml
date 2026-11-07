@@ -61,6 +61,7 @@
         media_probe_worker_enabled: false
         api_media_enabled: false
         media_probe_audio_prep_enabled: false
+        go_worker_media_stt_enabled: false
 
     - name: Run the media probe contract with the flags disabled
       ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml

@@ -71,7 +71,8 @@ Mặc định ExternalSecret dùng lại hai tham số SSM sẵn có của 9rout
 (base URL phải gồm `/v1`; adapter nối thêm `/audio/transcriptions`). Nếu muốn tách
 key riêng, tạo `stt-base-url` / `stt-api-key` trong SSM rồi thêm `stt_base_url` /
 `stt_api_key` vào `ssm_parameter_keys` của `vars/dev.yml`; template tự ưu tiên khóa mới.
-Việc tách là quyết định của PR7.
+**PR7 chốt (2026-11-08):** dev dùng lại `openai-base-url`/`openai-api-key` (cùng 9router), chưa tách
+khóa riêng. Tách khi đổi sang provider STT khác host hoặc cần xoay vòng key độc lập.
 
 ### 2.3. Egress tới STT (cần owner xác nhận, repo không đổi chính sách)
 

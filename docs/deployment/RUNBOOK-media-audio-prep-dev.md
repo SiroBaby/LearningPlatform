@@ -115,6 +115,10 @@ thay thế làm mất rule khác. Không đặt rule nào cho `media/`.
    + cắt phải nhỏ hơn `AI_WORKER_JOB_TIMEOUT_MS` (10 phút mặc định) và
    `MEDIA_PROBE_AUDIO_PREP_TIMEOUT_MS` (3 phút cho từng lần chạy ffmpeg). Ghi kết
    quả vào ticket #160; nếu gần ngưỡng, tăng giới hạn CPU trước khi bật.
+   **Kết quả đo trên dev (2026-11-08, CPU limit `500m`):** MP3 7.190 giây (43 MB) mất 5 phút
+   48 giây cho cả job; tải nguồn + ffprobe + giải mã đo thời lượng khoảng 135 giây (dưới
+   180 giây của một lần chạy ffmpeg), 12 chunk mỗi chunk khoảng 17 giây; không retry.
+   `decoded_duration_ms = 7190000`. Giữ nguyên CPU; theo dõi lại nếu dùng MP4 500 MiB.
 
 ## 5. Bật, kiểm tra và rollback
 

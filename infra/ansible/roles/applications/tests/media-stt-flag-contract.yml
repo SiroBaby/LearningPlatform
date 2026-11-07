@@ -21,20 +21,21 @@
     stt_secret_keys: [STT_BASE_URL, STT_API_KEY]
     stt_literal_keys: [STT_MODEL, STT_LANGUAGE, STT_REQUEST_TIMEOUT_MS, STT_CONCURRENCY, AI_MEDIA_GENERATION_CONCURRENCY]
   tasks:
-    - name: Require the production dev vars to keep media STT off
+    - name: Require the production dev vars to keep media STT on together with derived audio
       ansible.builtin.assert:
         that:
           - go_worker_media_stt_enabled is boolean
-          - not go_worker_media_stt_enabled
+          - go_worker_media_stt_enabled
+          - media_probe_audio_prep_enabled
         fail_msg: >-
-          vars/dev.yml must keep go_worker_media_stt_enabled false until the owner has enabled derived
-          audio and confirmed the worker's egress path to STT_BASE_URL (#160).
+          vars/dev.yml enables go_worker_media_stt_enabled with derived audio on (#160 PR7);
+          roll back by setting go_worker_media_stt_enabled to false.
 
     - name: Render the worker rollout with the flag off and on, plus the matching ExternalSecrets
       ansible.builtin.set_fact:
         stt_off_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
-             template_vars={'deployment_targets': ['worker']})
+             template_vars={'deployment_targets': ['worker'], 'go_worker_media_stt_enabled': false})
              | from_yaml_all | list }}
         stt_on_manifests: >-
           {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
@@ -43,7 +44,7 @@
              | from_yaml_all | list }}
         stt_off_secrets: >-
           {{ lookup('template', playbook_dir ~ '/../../../../ansible/roles/external_secrets/templates/external-secrets.yaml.j2',
-             template_vars={'deployment_targets': ['worker']})
+             template_vars={'deployment_targets': ['worker'], 'go_worker_media_stt_enabled': false})
              | from_yaml_all | list }}
         stt_on_secrets: >-
           {{ lookup('template', playbook_dir ~ '/../../../../ansible/roles/external_secrets/templates/external-secrets.yaml.j2',
