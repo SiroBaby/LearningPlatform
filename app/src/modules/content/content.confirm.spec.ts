@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 
 import { startTestDb, TestDb } from '../../test-support/test-db';
 import { createTestDataSource } from '../../test-support/test-data-source';
+import { FakeModelCatalog } from '../../test-support/fake-model-catalog';
 import { FakeStorageVerifier } from '../../test-support/fake-storage-verifier';
 import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
 import { MediaProbeJob } from '../ai/entities/media-probe-job.entity';
@@ -57,6 +58,7 @@ describe('ContentService.confirm', () => {
       storage as never,
       verifier,
       null as never,
+      new FakeModelCatalog(),
     );
     await db.client.query(
       'TRUNCATE "ai"."media_probe_results", "ai"."media_probe_jobs", "ai"."processing_jobs", "course"."document_probe_receipts", "course"."documents", "course"."outbox" CASCADE',
@@ -73,6 +75,13 @@ describe('ContentService.confirm', () => {
         sizeBytes: 1024,
         status: DocumentStatus.UPLOADED,
       }),
+    );
+  }
+
+  async function seedWallet(ownerId: string, availableCredits = 10_000): Promise<void> {
+    await db.client.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, $2)',
+      [ownerId, availableCredits],
     );
   }
 
@@ -107,6 +116,7 @@ describe('ContentService.confirm', () => {
   it('chuyển UPLOADED -> PROCESSING và ghi đúng 1 outbox row', async () => {
     const owner = randomUUID();
     const doc = await seedUploaded(owner);
+    await seedWallet(owner);
 
     await service.confirm(owner, doc.id);
 
@@ -123,6 +133,7 @@ describe('ContentService.confirm', () => {
   it('idempotent: confirm 2 lần chỉ tạo 1 outbox row (CAS, ADR-0005)', async () => {
     const owner = randomUUID();
     const doc = await seedUploaded(owner);
+    await seedWallet(owner);
 
     await service.confirm(owner, doc.id);
     await service.confirm(owner, doc.id);

@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto';
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -28,6 +30,7 @@ import { calculatePurgeNotBefore } from './contracts/document-purge-policy';
 import { DocumentQuizResult } from './contracts/document-quiz.result';
 import { COARSE_INPUT_TOKEN_BYTES, COARSE_OUTPUT_TOKEN_CAP } from './credit-estimation/credit-estimation.constants';
 import { DocumentEstimateResult } from './contracts/document-estimate.result';
+import { InsufficientCreditsError } from './contracts/insufficient-credits.error';
 import {
   assertDocumentUploadSize,
   getDocumentUploadPolicy,
@@ -470,9 +473,7 @@ export class ContentService {
         MEDIA_PROBE_POLICY_VERSION,
         mediaBucket!,
       )
-      : mode === 'RETRY'
-        ? await this.contentRepository.retryProcessing(ownerId, id, selection)
-        : await this.contentRepository.confirmProcessing(ownerId, id, selection);
+      : await this.startTextProcessing(ownerId, id, document, selection, mode);
     if (!confirmed) {
       if (mode === 'CONFIRM') {
         throw new NotFoundException(`Document ${id} not found`);
@@ -485,6 +486,45 @@ export class ContentService {
     }
 
     return confirmed;
+  }
+
+  /**
+   * PDF/TXT start (ADR-0022): a Platform Model reserves its coarse estimate in the same transaction as the
+   * Document CAS and outbox write. A short balance maps to 402 INSUFFICIENT_CREDITS and leaves the Document as is.
+   * Custom AI reserves nothing.
+   */
+  private async startTextProcessing(
+    ownerId: string,
+    id: string,
+    document: Document,
+    selection: DocumentModelSelection,
+    mode: ProcessingStartMode,
+  ): Promise<Document | null> {
+    const reservation = selection.kind === 'PLAN'
+      ? {
+        estimatedCredits: (await this.estimateModelSelection(
+          ownerId,
+          Number(document.sizeBytes),
+          selection,
+          document.type,
+        )).estimatedCredits ?? 0,
+      }
+      : undefined;
+    try {
+      return mode === 'RETRY'
+        ? await this.contentRepository.retryProcessing(ownerId, id, selection, reservation)
+        : await this.contentRepository.confirmProcessing(ownerId, id, selection, reservation);
+    } catch (error) {
+      if (!(error instanceof InsufficientCreditsError)) throw error;
+      throw new HttpException({
+        availableCredits: error.availableCredits,
+        code: 'INSUFFICIENT_CREDITS',
+        message: 'Not enough credits to process this Document with the selected platform model.',
+        requiredCredits: error.requiredCredits,
+        retryable: true,
+        shortfallCredits: error.shortfallCredits,
+      }, HttpStatus.PAYMENT_REQUIRED);
+    }
   }
 
   /** D5 of #160: speech-to-text runs only on the platform model, never on an Owner-supplied endpoint. */

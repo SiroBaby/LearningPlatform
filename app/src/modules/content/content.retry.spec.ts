@@ -2,6 +2,7 @@ import { ConflictException, HttpException } from '@nestjs/common';
 import { describe, expect, it } from '@jest/globals';
 
 import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
+import { FakeModelCatalog } from '../../test-support/fake-model-catalog';
 import { ContentService } from './content.service';
 import { Document } from './entities/document.entity';
 import { DocumentStatus } from './enums/document-status.enum';
@@ -38,7 +39,7 @@ describe('ContentService.retry', () => {
         sizeBytes: 1024,
       }),
     };
-    const service = new ContentService(repository as never, null as never, verifier, null as never);
+    const service = new ContentService(repository as never, null as never, verifier, null as never, new FakeModelCatalog());
 
     await expect(service.retry('owner-1', 'document-1')).resolves.toBe(processing);
     expect(calls.find).toEqual(['owner-1:document-1']);
@@ -64,7 +65,7 @@ describe('ContentService.retry', () => {
         sizeBytes: 1024,
       }),
     };
-    const service = new ContentService(repository as never, null as never, verifier, null as never);
+    const service = new ContentService(repository as never, null as never, verifier, null as never, new FakeModelCatalog());
 
     await expectHttpException(
       service.retry('owner-1', 'document-1'),

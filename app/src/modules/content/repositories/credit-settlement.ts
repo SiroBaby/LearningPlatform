@@ -69,3 +69,41 @@ export async function settleReservation(manager: EntityManager, input: SettleRes
   );
   return { isHeld: held > 0, kind: 'SETTLED', settledCredits: input.knownActualCredits };
 }
+
+export interface ReserveCreditsInput {
+  readonly estimatedCredits: number;
+  readonly jobId: string;
+  readonly ownerId: string;
+  readonly processingAttempt: number;
+}
+
+export type ReserveCreditsOutcome =
+  | { readonly kind: 'RESERVED' | 'ALREADY_RESERVED' }
+  | { readonly kind: 'INSUFFICIENT'; readonly availableCredits: number };
+
+/**
+ * Reserve credits for `reserve:{job}:{processingAttempt}` inside the caller's transaction. The caller must already
+ * hold the Document row lock (Document -> wallet order). A repeated call finds the RESERVE row and writes nothing.
+ * Never throws for a short balance: the caller decides whether that rolls back or is recorded.
+ */
+export async function reserveCredits(manager: EntityManager, input: ReserveCreditsInput): Promise<ReserveCreditsOutcome> {
+  const { estimatedCredits, jobId, ownerId, processingAttempt } = input;
+  const reserveKey = `reserve:${jobId}:${processingAttempt}`;
+  const existing = await manager.query<readonly { readonly id: string }[]>(
+    'SELECT "id" FROM "course"."credit_ledger_entries" WHERE "business_key" = $1',
+    [reserveKey],
+  );
+  if (existing.length > 0) return { kind: 'ALREADY_RESERVED' };
+  const wallet = await manager.query<readonly { readonly availableCredits: string }[]>(
+    'SELECT "available_credits" AS "availableCredits" FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1 FOR UPDATE',
+    [ownerId],
+  );
+  const availableCredits = Number(wallet[0]?.availableCredits ?? 0);
+  if (availableCredits < estimatedCredits) return { availableCredits, kind: 'INSUFFICIENT' };
+  await manager.query(
+    'UPDATE "course"."owner_credit_wallets" SET "available_credits" = "available_credits" - $2, "reserved_credits" = "reserved_credits" + $2, "updated_at" = now() WHERE "owner_id" = $1',
+    [ownerId, estimatedCredits],
+  );
+  await manager.query(INSERT_LEDGER_ENTRY, [ownerId, jobId, processingAttempt, reserveKey, 'RESERVE', estimatedCredits]);
+  return { kind: 'RESERVED' };
+}
