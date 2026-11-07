@@ -188,7 +188,7 @@ export function toUploadEstimateSummaryPresentation(
     detail: estimate.selectedModelKind === "PLAN"
       ? estimate.estimatedCredits === null
         ? "Thời lượng tệp chưa biết nên chưa thể ước tính. Lượt dùng sẽ được tính theo thời lượng sau khi kiểm tra tệp."
-        : `Hiện đang hiển thị mức ước tính khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} lượt dùng. Đây chưa phải mức chốt cuối cùng.`
+        : `Hiện đang hiển thị mức ước tính sơ bộ khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} lượt dùng, tính sơ bộ theo dung lượng tệp. Mức giữ thật được tính sau khi đọc nội dung chữ của tệp.`
       : "Kết nối riêng không dùng lượt dùng trong gói. Nhà cung cấp bạn dùng có thể tính phí riêng ngoài hệ thống này.",
     badgeTone: estimate.selectedModelKind === "PLAN" ? "brand" : "neutral",
     badgeLabel: estimate.selectedModelKind === "PLAN" ? "Có trong gói của bạn" : "Kết nối riêng của bạn",

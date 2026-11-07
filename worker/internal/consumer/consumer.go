@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/SiroBaby/LearningPlatform/worker/internal/processing"
 )
@@ -316,6 +317,9 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
+	if job.IsTextExtract() {
+		return bootstrap.completeExtraction(ctx, job, chunks)
+	}
 	selected := allChunkIndexes(len(chunks))
 	concurrency := 1
 	if isMedia {
@@ -415,6 +419,28 @@ func (bootstrap *Bootstrap) generateQuestions(ctx context.Context, chunks []proc
 		return firstErr
 	}
 	return ctx.Err()
+}
+
+// completeExtraction ends a TEXT_EXTRACT job: no provider is called and nothing is stored except the measured size,
+// which Node uses to reserve credits before the full pipeline is queued (ADR-0033).
+func (bootstrap *Bootstrap) completeExtraction(ctx context.Context, job processing.Job, chunks []processing.Chunk) (processOutcome, error, failureComponent) {
+	chars := 0
+	for _, chunk := range chunks {
+		chars += utf8.RuneCountInString(chunk.Text)
+	}
+	persisted, err := bootstrap.store.CompleteExtraction(ctx, job, processing.ExtractionSummary{Chars: chars, Chunks: len(chunks)})
+	if err == nil {
+		if !persisted {
+			return processOutcomeFenced, processing.ErrJobFenceLost, failureComponentUnknown
+		}
+		return processOutcomeCompleted, nil, failureComponentUnknown
+	}
+	if persisted {
+		// A commit error leaves the final state uncertain; retrying could publish the measurement twice.
+		bootstrap.logFailure("worker.processing.persistence_ambiguous", "persist", job, processing.Failure{Code: processing.ProcessingFailed, Technical: true, Operation: processing.FailureOperationOf(err)}, failureComponentPersistence)
+		return processOutcomeUnknown, err, failureComponentPersistence
+	}
+	return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 }
 
 // withActiveFence polls the job fence on a fixed interval while provider

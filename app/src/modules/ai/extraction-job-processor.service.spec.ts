@@ -187,6 +187,8 @@ function createJob(): ProcessingJob {
     policyVersion: null,
     deletionFence: 0,
     probeResultId: null,
+    fullPipelineJobId: null,
+    processingAttempt: null,
     cancellationMarkerId: null,
     cancellationReason: null,
     cancelledAt: null,

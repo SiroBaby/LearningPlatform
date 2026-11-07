@@ -5,6 +5,7 @@ import {
   AiIngestion,
   EnqueueCommand,
   MEDIA_PROBE_JOB_TYPE,
+  TEXT_EXTRACT_JOB_TYPE,
   type DocumentCancellationCommand,
 } from './contracts/ai-ingestion.port';
 import { normalizeStorageVersionId } from '../../storage/storage-version-id';
@@ -54,7 +55,22 @@ export class AiIngestionService implements AiIngestion {
       return;
     }
 
+    if (cmd.jobType === TEXT_EXTRACT_JOB_TYPE) {
+      if (!cmd.fullPipelineJobId || !Number.isSafeInteger(cmd.processingAttempt) || cmd.processingAttempt < 1) {
+        throw new Error('TEXT_EXTRACT requires fullPipelineJobId and processingAttempt');
+      }
+      await this.processingJobs.enqueueTextExtract(cmd, this.buildTextExtractKey(cmd));
+      return;
+    }
+
     await this.processingJobs.enqueue(cmd, this.buildFullPipelineKey(cmd));
+  }
+
+  private buildTextExtractKey(cmd: Extract<EnqueueCommand, { jobType: typeof TEXT_EXTRACT_JOB_TYPE }>): string {
+    return createHash('sha256')
+      .update(`${cmd.documentId}:${cmd.jobType}`)
+      .digest('hex')
+      .slice(0, 64);
   }
 
   private buildFullPipelineKey(cmd: Extract<EnqueueCommand, { jobType: 'FULL_PIPELINE' }>): string {

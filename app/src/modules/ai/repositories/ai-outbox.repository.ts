@@ -3,7 +3,7 @@ import { DataSource, In, IsNull } from 'typeorm';
 
 import { DateTimeUtil } from '../../../common/datetime.util';
 import { BaseRepository } from '../../../database/base.repository';
-import { DOCUMENT_PROCESSING_RESULT_EVENT } from '../contracts/document-processing-result';
+import { DOCUMENT_EXTRACTION_COMPLETED_EVENT, DOCUMENT_PROCESSING_RESULT_EVENT } from '../contracts/document-processing-result';
 import { AiOutboxEvent } from '../entities/ai-outbox-event.entity';
 
 @Injectable()
@@ -19,6 +19,7 @@ export class AiOutboxRepository extends BaseRepository<AiOutboxEvent> {
           DOCUMENT_PROCESSING_RESULT_EVENT,
           'DocumentProbeCompleted',
           'DocumentProbeFailed',
+          DOCUMENT_EXTRACTION_COMPLETED_EVENT,
         ]),
         publishedAt: IsNull(),
       },

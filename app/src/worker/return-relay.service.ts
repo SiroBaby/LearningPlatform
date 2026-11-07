@@ -3,6 +3,7 @@ import { validate as isUuid } from 'uuid';
 
 import { createApplicationLogger } from '../common/logging/application-logger.factory';
 import {
+  DOCUMENT_EXTRACTION_COMPLETED_EVENT,
   DocumentProcessingFailureCode,
   DocumentProcessingResult,
   DocumentProcessingResultStatus,
@@ -65,6 +66,38 @@ export class ReturnRelay {
       try {
         const startedAt = performance.now();
         const queueWaitMs = Math.max(0, Date.now() - row.createdAt.getTime());
+
+        if (row.eventType === DOCUMENT_EXTRACTION_COMPLETED_EVENT) {
+          stage = 'extraction-project';
+          const extraction = this.parseExtractionCompletion(row.payload);
+          const projectionStartedAt = performance.now();
+          const projectionOutcome = await this.projection.completeExtraction({
+            chunkCount: extraction.chunkCount,
+            deletionFence: extraction.deletionFence,
+            documentId: extraction.documentId,
+            eventCreatedAt: row.createdAt,
+            extractedChars: extraction.extractedChars,
+            fullPipelineJobId: extraction.fullPipelineJobId,
+            ownerId: extraction.ownerId,
+            processingAttempt: extraction.processingAttempt,
+          });
+          const projectionDurationMs = elapsedMilliseconds(projectionStartedAt);
+          const publishStartedAt = performance.now();
+          stage = 'outbox-publish';
+          await this.outbox.markPublished(row.id);
+          this.logger.log({
+            documentId: extraction.documentId,
+            durationMs: elapsedMilliseconds(startedAt),
+            event: 'ai.job.return.extraction_projected',
+            jobId: row.aggregateId,
+            outcome: projectionOutcome,
+            publishDurationMs: elapsedMilliseconds(publishStartedAt),
+            projectionDurationMs,
+            queueWaitMs,
+            runtime: 'worker',
+          });
+          continue;
+        }
 
         if (row.eventType === 'DocumentProbeCompleted') {
           stage = 'probe-project';
@@ -370,6 +403,33 @@ export class ReturnRelay {
     return { llm, sttBilledSeconds, sttUncertainSeconds, uncertainDispatches };
   }
 
+  private parseExtractionCompletion(payload: Record<string, unknown>): ExtractionCompletionPayload {
+    if (
+      payload.version !== 1 ||
+      typeof payload.documentId !== 'string' ||
+      !isUuid(payload.documentId) ||
+      typeof payload.ownerId !== 'string' ||
+      !isUuid(payload.ownerId) ||
+      typeof payload.fullPipelineJobId !== 'string' ||
+      !isUuid(payload.fullPipelineJobId) ||
+      !isPositiveSafeInteger(payload.processingAttempt) ||
+      !isNonNegativeSafeInteger(payload.deletionFence) ||
+      !isPositiveSafeInteger(payload.chunkCount) ||
+      !isPositiveSafeInteger(payload.extractedChars)
+    ) {
+      throw new Error('Invalid document extraction completion outbox payload');
+    }
+    return {
+      chunkCount: payload.chunkCount,
+      deletionFence: payload.deletionFence,
+      documentId: payload.documentId,
+      extractedChars: payload.extractedChars,
+      fullPipelineJobId: payload.fullPipelineJobId,
+      ownerId: payload.ownerId,
+      processingAttempt: payload.processingAttempt,
+    };
+  }
+
   private parseProbeCompletion(payload: Record<string, unknown>): ProbeCompletionPayload {
     const locator = this.parseProbeLocator(payload.locator);
     if (
@@ -550,10 +610,21 @@ type ReturnRelayFailureStage =
   | 'outbox-read'
   | 'parse'
   | 'probe-project'
+  | 'extraction-project'
   | 'probe-failure-project'
   | 'quiz-persist'
   | 'document-project'
   | 'outbox-publish';
+
+interface ExtractionCompletionPayload {
+  readonly chunkCount: number;
+  readonly deletionFence: number;
+  readonly documentId: string;
+  readonly extractedChars: number;
+  readonly fullPipelineJobId: string;
+  readonly ownerId: string;
+  readonly processingAttempt: number;
+}
 
 interface ProbeCompletionPayload {
   readonly deletionFence: number;
@@ -581,6 +652,10 @@ interface ProbeLocatorPayload {
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
 }
 
 function elapsedMilliseconds(startedAt: number): number {

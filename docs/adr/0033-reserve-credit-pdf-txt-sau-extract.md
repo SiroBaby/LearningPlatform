@@ -2,10 +2,10 @@
 
 ## Trạng thái
 
-**Đề xuất, chờ Owner quyết định** (Issue #281). Tài liệu này sửa đổi phần
+**Owner đã duyệt (b1) trên #281; đã triển khai trong nhánh này.** Tài liệu này sửa đổi phần
 "reserve trong `confirmProcessing`/`retryProcessing`" của
 [ADR-0022](0022-credit-preflight-processing-retry-and-quiz-state.md) chỉ cho
-PDF/TXT dùng Platform Model. Chưa có code nào được viết theo ADR này.
+PDF/TXT dùng Platform Model. Xem mục "Khác biệt so với đề xuất ban đầu" cho những điểm triển khai khác bản đề xuất.
 
 ## Bối cảnh
 
@@ -124,3 +124,29 @@ envelope mới cần version hoặc job type mới để Go cũ không claim nh�
 - **Return seam** (đường trả kết quả từ Go về Node qua `ai.outbox`); **fence** (cờ
   chặn: attempt hoặc Document đã đổi thì không ghi kết quả); **CAS** (cập nhật có
   điều kiện trạng thái).
+
+## Quyết định của Owner (#281)
+
+1. Dùng job type mới `TEXT_EXTRACT` (b1). 2. Cho phép một migration expand-only, idempotent.
+3. Sàn lúc confirm: `available > 0`. 4. Mã `INSUFFICIENT_CREDITS_AFTER_EXTRACT`, copy: "Tài liệu cần khoảng N credit
+để tạo câu hỏi nhưng bạn chỉ còn M credit. Hãy bổ sung credit rồi thử lại." 5. Hiệu chỉnh hằng số sau bằng 3-5 file thật.
+
+## Khác biệt so với đề xuất ban đầu
+
+- Hàng `TEXT_EXTRACT` nằm trong `ai.processing_jobs` (job_type không có CHECK), không tạo bảng mới. Migration
+  `1787803982000_add_text_extract_job` chỉ thêm cột `full_pipeline_job_id`, `processing_attempt` (nullable) và unique index
+  một hàng `TEXT_EXTRACT` mỗi Document. Go và Node cũ không đọc cột mới và không claim hàng `TEXT_EXTRACT`.
+- `TEXT_EXTRACT` không lưu chunk: nó chỉ báo `extractedChars` (số ký tự, không phải byte) và `chunkCount`. `FULL_PIPELINE`
+  extract lại, nên không cần cờ "chunk còn mới" và job cũ đã xếp hàng chạy y như trước (reserve cũ nếu có, settle no-op nếu không).
+- Sàn lúc confirm là hằng số `MINIMUM_AVAILABLE_CREDITS_TO_START = 1`, chưa có biến cấu hình.
+- Công thức (hằng số trong `credit-estimation.constants.ts`, chờ hiệu chỉnh): `chunkCount * 200 + ceil(chars / 3)` token
+  input và `chunkCount * 600` token output. Đây là heuristic, không phải số đo.
+- Preflight trước upload: code hiện không có `canProcess`/`availableCredits` trong estimate (ADR-0022 chưa triển khai phần này), nên
+  không có gì chặn ví Free ở bước upload; chỉ đổi nhãn sang "ước tính sơ bộ, chưa phải mức giữ".
+
+## Rollout
+
+Migration chạy khi API/worker khởi động. Triển khai Go trước hoặc cùng Node: Node mới ghi hàng `TEXT_EXTRACT`; nếu Go cũ còn chạy,
+hàng đó chờ tới khi Go mới claim (Document ở `PROCESSING`, chưa reserve). Event `DocumentExtractionCompleted` bị Node cũ bỏ qua
+(không nằm trong danh sách event của return relay cũ). Xác nhận sau rollout: upload PDF với ví Free, thấy ledger `RESERVE` chỉ xuất hiện
+sau `DocumentExtractionCompleted`, rồi `SETTLE`/`RELEASE` như #273.

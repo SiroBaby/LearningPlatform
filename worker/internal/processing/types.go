@@ -11,10 +11,28 @@ import (
 // durable state. Callers must discard the result and must not retry it.
 var ErrJobFenceLost = errors.New("job fence lost")
 
+// Job types stored in ai.processing_jobs and claimed by this worker.
+const (
+	JobTypeFullPipeline = "FULL_PIPELINE"
+	// JobTypeTextExtract extracts and chunks only, so Node can reserve credits from the real text size (ADR-0033).
+	JobTypeTextExtract = "TEXT_EXTRACT"
+)
+
 type Job struct {
 	ID, DocumentID, OwnerID, CorrelationID, LeaseID string
 	Attempt                                         int
 	CreatedAt                                       time.Time
+	// Type is JobTypeFullPipeline or JobTypeTextExtract; the zero value means a full pipeline job.
+	Type string
+}
+
+// IsTextExtract reports a job that must stop after extraction and chunking.
+func (job Job) IsTextExtract() bool { return job.Type == JobTypeTextExtract }
+
+// ExtractionSummary is the measured size of the extracted text that Node prices (characters, not bytes).
+type ExtractionSummary struct {
+	Chars  int
+	Chunks int
 }
 type Source struct {
 	StorageRef string
@@ -251,6 +269,7 @@ type Store interface {
 	CheckActive(context.Context, Job) error
 	Source(context.Context, Job) (Source, error)
 	PersistAndComplete(context.Context, Job, []Chunk, []Question) (bool, error)
+	CompleteExtraction(context.Context, Job, ExtractionSummary) (bool, error)
 	Fail(context.Context, Job, Failure) (bool, error)
 	Retry(context.Context, Job, FailureCode) (RetryResult, error)
 }

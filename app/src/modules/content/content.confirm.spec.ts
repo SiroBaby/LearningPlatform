@@ -152,6 +152,11 @@ describe('ContentService.confirm', () => {
       platformModelId: 'platform-default',
     };
 
+    await dataSource.query(
+      'INSERT INTO "course"."owner_credit_wallets" ("owner_id", "available_credits") VALUES ($1, 1000) ON CONFLICT DO NOTHING',
+      [owner],
+    );
+
     const results = await Promise.all([
       repository.retryProcessing(owner, doc.id, selection),
       repository.retryProcessing(owner, doc.id, selection),

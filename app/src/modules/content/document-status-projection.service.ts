@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 
 import { ApplicationConfigService } from '../../config/application-config.service';
 import {
+  DocumentExtractionCompletionCommand,
+  DocumentExtractionCompletionOutcome,
+  DocumentExtractionCreditEstimate,
   DocumentProbeCompletionCommand,
   DocumentProbeCreditEstimate,
   DocumentProbeCompletionOutcome,
@@ -21,6 +24,7 @@ import {
 import { MAX_MEDIA_DURATION_SEC } from './contracts/media-probe-policy';
 import { ModelPriceTableError } from './credit-estimation/model-price-table';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
+import { estimateTextCredits } from './credit-estimation/text-credit-estimator';
 import { ContentRepository } from './repositories/content.repository';
 
 interface SettlementPlanning {
@@ -37,6 +41,51 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
     private readonly config: ApplicationConfigService,
     private readonly mediaCreditEstimator: MediaCreditEstimator,
   ) {}
+
+  async completeExtraction(command: DocumentExtractionCompletionCommand): Promise<DocumentExtractionCompletionOutcome> {
+    const creditEstimate = await this.estimateExtractedTextCredits(command);
+    return this.contentRepository.completeExtraction({ ...command, creditEstimate });
+  }
+
+  /** Never throws for config problems: a poisoned return event would block the relay, so it fails the Document. */
+  private async estimateExtractedTextCredits(
+    command: DocumentExtractionCompletionCommand,
+  ): Promise<DocumentExtractionCreditEstimate> {
+    const document = await this.contentRepository.findByOwnerId(command.ownerId, command.documentId);
+    if (!document || document.modelSelectionKind !== 'PLAN') {
+      return { kind: 'ESTIMATED', estimatedCredits: 0, platformModelId: null };
+    }
+    const model = this.config.ai.platformModels.find((candidate) => candidate.id === document.platformModelId);
+    if (!model) {
+      this.logger.error({
+        documentId: command.documentId,
+        event: 'content.extraction.credit_estimate_unavailable',
+        reason: 'platform_model_not_configured',
+        runtime: 'worker',
+      });
+      return { kind: 'UNAVAILABLE' };
+    }
+    try {
+      return {
+        kind: 'ESTIMATED',
+        estimatedCredits: estimateTextCredits({
+          chunkCount: command.chunkCount,
+          extractedChars: command.extractedChars,
+          model,
+        }),
+        platformModelId: document.platformModelId,
+      };
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      this.logger.error({
+        documentId: command.documentId,
+        event: 'content.extraction.credit_estimate_unavailable',
+        reason: 'invalid_measurement',
+        runtime: 'worker',
+      });
+      return { kind: 'UNAVAILABLE' };
+    }
+  }
 
   async completeProbe(command: DocumentProbeCompletionCommand): Promise<DocumentProbeCompletionOutcome> {
     const creditEstimate = await this.estimateCredits(command);

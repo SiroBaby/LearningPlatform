@@ -11,6 +11,7 @@ const retryableCodes = new Set([
   "BUDGET_EXHAUSTED",
   "GENERATION_OUTPUT_INVALID",
   "GENERATION_OUTPUT_TRUNCATED",
+  "INSUFFICIENT_CREDITS_AFTER_EXTRACT",
   "MEDIA_PROBE_STORAGE_TEMPORARY",
   "MEDIA_PROBE_TIMEOUT",
   "PROCESSING_TIMED_OUT",
@@ -95,6 +96,23 @@ test("explains in Vietnamese that custom connections cannot process media", () =
   assert.equal(presentation.retryable, false);
   assert.match(presentation.description, /kết nối riêng/u);
   assert.match(presentation.description, /mô hình có trong gói/u);
+});
+
+test("shows the backend credit sentence for insufficient credits after extraction", () => {
+  const message =
+    "Tài liệu cần khoảng 3.800 credit để tạo câu hỏi nhưng bạn chỉ còn 100 credit. Hãy bổ sung credit rồi thử lại.";
+
+  const presentation = getDocumentFailurePresentation("INSUFFICIENT_CREDITS_AFTER_EXTRACT", message);
+
+  assert.equal(presentation.retryable, true);
+  assert.equal(presentation.title, "Chưa đủ credit để tạo câu hỏi");
+  assert.equal(presentation.description, message);
+});
+
+test("falls back to a generic credit sentence when the backend message is missing", () => {
+  const presentation = getDocumentFailurePresentation("INSUFFICIENT_CREDITS_AFTER_EXTRACT", "  ");
+
+  assert.match(presentation.description, /bổ sung credit/u);
 });
 
 test("explains the decoded duration rejections without retry", () => {

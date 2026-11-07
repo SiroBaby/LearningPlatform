@@ -68,7 +68,7 @@ const UPLOAD_FILE_POLICIES: readonly UploadFilePolicy[] = [
   },
 ];
 
-export const ESTIMATE_HELPER_TEXT = "Đây là ước tính ban đầu để bạn cân nhắc trước khi tải lên. Chi phí thực tế có thể thay đổi sau khi xử lý xong.";
+export const ESTIMATE_HELPER_TEXT = "Đây là ước tính sơ bộ dựa trên dung lượng tệp, chưa phải mức giữ. Hệ thống chỉ giữ lượt dùng sau khi đọc nội dung chữ thật của tệp.";
 
 export function formatBytes(sizeBytes: number): string {
   if (sizeBytes < 1024) {
@@ -250,7 +250,7 @@ export function getEstimateSummary(estimate: Phase0EstimateResponse): string {
     return "Lượt dùng sẽ được tính sau khi hệ thống kiểm tra tệp âm thanh hoặc video.";
   }
 
-  return `Ước tính khoảng ${formatCredits(estimate.estimatedCredits)} lượt dùng cho lần này.`;
+  return `Ước tính sơ bộ khoảng ${formatCredits(estimate.estimatedCredits)} lượt dùng. Đây chưa phải mức hệ thống giữ; mức thật được tính sau khi đọc nội dung tệp.`;
 }
 
 export function getUploadStepLabel(step: UploadStep): string {

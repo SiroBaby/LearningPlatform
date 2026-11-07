@@ -17,6 +17,10 @@ import type { ModelSelectionKind } from '../contracts/model-selection.contracts'
   unique: true,
   where: '"job_type" = \'FULL_PIPELINE\'',
 })
+@Index('uq_processing_jobs_text_extract_document', ['documentId'], {
+  unique: true,
+  where: '"job_type" = \'TEXT_EXTRACT\'',
+})
 export class ProcessingJob {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -85,6 +89,14 @@ export class ProcessingJob {
 
   @Column({ name: 'probe_result_id', type: 'uuid', nullable: true })
   probeResultId!: string | null;
+
+  /** TEXT_EXTRACT only: the FULL_PIPELINE job id the reservation key `reserve:{id}:{attempt}` will use (ADR-0033). */
+  @Column({ name: 'full_pipeline_job_id', type: 'uuid', nullable: true })
+  fullPipelineJobId!: string | null;
+
+  /** TEXT_EXTRACT only: the Document's logical processing attempt this extraction belongs to. */
+  @Column({ name: 'processing_attempt', type: 'int', nullable: true })
+  processingAttempt!: number | null;
 
   @Column({ name: 'cancellation_marker_id', type: 'uuid', nullable: true })
   cancellationMarkerId!: string | null;

@@ -117,7 +117,7 @@ export function ProcessingStatusPanel({
   onRetryQuiz,
 }: ProcessingStatusPanelProps) {
   const failurePresentation = document?.status === "FAILED"
-    ? getDocumentFailurePresentation(document.errorCode)
+    ? getDocumentFailurePresentation(document.errorCode, document.errorMessage)
     : null;
   const canRetryFailure = document?.status === "FAILED"
     && isRetryableDocumentFailureCode(document.errorCode);

@@ -393,6 +393,77 @@ func TestPostgresStoreIntegration(t *testing.T) {
 			t.Fatal("a result without a tracker must keep the legacy payload shape (no usage block)")
 		}
 	})
+
+	t.Run("completes a TEXT_EXTRACT job and publishes the measured size under the fence", func(t *testing.T) {
+		documentID, ownerID := database.insertDocumentAndJob(t, ctx)
+		fullPipelineJobID := database.convertToTextExtract(t, ctx, documentID, 3)
+		job := database.claim(t, ctx)
+		if job.Type != JobTypeTextExtract || job.DocumentID != documentID {
+			t.Fatalf("claimed job = %#v, want the TEXT_EXTRACT job", job)
+		}
+		source, err := database.store.Source(ctx, *job)
+		if err != nil || source.StorageRef != "owners/source.txt" {
+			t.Fatalf("source for the extract job = (%#v, %v)", source, err)
+		}
+		if err := database.store.CheckActive(ctx, *job); err != nil {
+			t.Fatalf("check active extract job: %v", err)
+		}
+
+		stale := *job
+		stale.LeaseID = "00000000-0000-0000-0000-000000000000"
+		if completed, err := database.store.CompleteExtraction(ctx, stale, ExtractionSummary{Chars: 10, Chunks: 1}); completed || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("stale extraction = (%t, %v), want (false, ErrJobFenceLost)", completed, err)
+		}
+		if got := countRows(t, ctx, database.admin, `SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1`, job.ID); got != 0 {
+			t.Fatalf("a stale extraction wrote %d outbox rows", got)
+		}
+
+		if completed, err := database.store.CompleteExtraction(ctx, *job, ExtractionSummary{Chars: 4321, Chunks: 7}); err != nil || !completed {
+			t.Fatalf("complete extraction = (%t, %v), want (true, nil)", completed, err)
+		}
+		var status string
+		if err := database.admin.QueryRow(ctx, `SELECT status FROM ai.processing_jobs WHERE id=$1`, job.ID).Scan(&status); err != nil || status != "COMPLETED" {
+			t.Fatalf("job status = (%q, %v), want COMPLETED", status, err)
+		}
+		var encoded []byte
+		if err := database.admin.QueryRow(ctx, `SELECT payload FROM ai.outbox WHERE aggregate_id=$1 AND event_type='DocumentExtractionCompleted'`, job.ID).Scan(&encoded); err != nil {
+			t.Fatalf("read extraction outbox payload: %v", err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(encoded, &payload); err != nil {
+			t.Fatalf("decode extraction payload: %v", err)
+		}
+		want := map[string]any{"version": float64(1), "documentId": documentID, "ownerId": ownerID, "fullPipelineJobId": fullPipelineJobID, "processingAttempt": float64(3), "deletionFence": float64(0), "chunkCount": float64(7), "extractedChars": float64(4321)}
+		for key, value := range want {
+			if payload[key] != value {
+				t.Fatalf("payload[%s] = %v, want %v (payload %v)", key, payload[key], value, payload)
+			}
+		}
+		if completed, err := database.store.CompleteExtraction(ctx, *job, ExtractionSummary{Chars: 4321, Chunks: 7}); completed || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("replayed extraction = (%t, %v), want (false, ErrJobFenceLost)", completed, err)
+		}
+		if got := countRows(t, ctx, database.admin, `SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1 AND event_type='DocumentExtractionCompleted'`, job.ID); got != 1 {
+			t.Fatalf("extraction outbox rows = %d, want exactly one", got)
+		}
+	})
+
+	t.Run("a cancelled TEXT_EXTRACT job fails its fence and cannot complete", func(t *testing.T) {
+		documentID, _ := database.insertDocumentAndJob(t, ctx)
+		database.convertToTextExtract(t, ctx, documentID, 1)
+		job := database.claim(t, ctx)
+		if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET status='CANCELLED', cancellation_marker_id=gen_random_uuid(), lease_id=NULL, lease_until=NULL WHERE id=$1`, job.ID); err != nil {
+			t.Fatalf("cancel extract job: %v", err)
+		}
+		if err := database.store.CheckActive(ctx, *job); !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("check active after cancellation = %v, want ErrJobFenceLost", err)
+		}
+		if completed, err := database.store.CompleteExtraction(ctx, *job, ExtractionSummary{Chars: 1, Chunks: 1}); completed || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("extraction after cancellation = (%t, %v), want (false, ErrJobFenceLost)", completed, err)
+		}
+		if got := countRows(t, ctx, database.admin, `SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1`, job.ID); got != 0 {
+			t.Fatalf("a cancelled extraction wrote %d outbox rows", got)
+		}
+	})
 }
 
 func startPostgresIntegration(t *testing.T, ctx context.Context) *postgresIntegration {
@@ -540,4 +611,17 @@ func countRows(t *testing.T, ctx context.Context, database *pgxpool.Pool, query 
 		t.Fatalf("count rows: %v", err)
 	}
 	return count
+}
+
+// convertToTextExtract turns the document's job into the TEXT_EXTRACT job Node queues for a Platform Model.
+func (database *postgresIntegration) convertToTextExtract(t *testing.T, ctx context.Context, documentID string, processingAttempt int) string {
+	t.Helper()
+	var fullPipelineJobID string
+	if err := database.admin.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&fullPipelineJobID); err != nil {
+		t.Fatalf("create full pipeline job id: %v", err)
+	}
+	if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET job_type='TEXT_EXTRACT', full_pipeline_job_id=$2, processing_attempt=$3, attempts=$3-1, idempotency_key=idempotency_key||':extract' WHERE document_id=$1`, documentID, fullPipelineJobID, processingAttempt); err != nil {
+		t.Fatalf("convert job to TEXT_EXTRACT: %v", err)
+	}
+	return fullPipelineJobID
 }

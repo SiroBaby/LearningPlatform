@@ -19,7 +19,32 @@ export type DocumentProbeCompletionOutcome =
 
 export type DocumentProbeFailureOutcome = DocumentProbeCompletionOutcome;
 
+export type DocumentExtractionCompletionOutcome = DocumentProbeCompletionOutcome;
+
+/** What Go measured in a TEXT_EXTRACT job (ADR-0033); the Node projection prices it and reserves. */
+export interface DocumentExtractionCompletionCommand {
+  readonly chunkCount: number;
+  readonly deletionFence: number;
+  readonly documentId: string;
+  readonly eventCreatedAt: Date;
+  readonly extractedChars: number;
+  readonly fullPipelineJobId: string;
+  readonly ownerId: string;
+  readonly processingAttempt: number;
+}
+
+/** Priced from the real text by the projection service; the repository only reserves and persists it. */
+export type DocumentExtractionCreditEstimate =
+  | { readonly kind: 'ESTIMATED'; readonly estimatedCredits: number; readonly platformModelId: string | null }
+  /** The model is not configured or the measurement is unusable: fail terminally, reserve nothing. */
+  | { readonly kind: 'UNAVAILABLE' };
+
+export interface DocumentExtractionCompletionPersistenceCommand extends DocumentExtractionCompletionCommand {
+  readonly creditEstimate: DocumentExtractionCreditEstimate;
+}
+
 export interface DocumentStatusProjection {
+  completeExtraction(command: DocumentExtractionCompletionCommand): Promise<DocumentExtractionCompletionOutcome>;
   completeProbe(command: DocumentProbeCompletionCommand): Promise<DocumentProbeCompletionOutcome>;
   failProbe(command: DocumentProbeFailureCommand): Promise<DocumentProbeFailureOutcome>;
   project(command: DocumentStatusProjectionCommand): Promise<DocumentStatusProjectionOutcome>;

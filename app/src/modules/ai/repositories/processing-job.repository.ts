@@ -1,11 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import type { EntityManager } from 'typeorm';
 
 import { BaseRepository } from '../../../database/base.repository';
 import type { AccountAccessRevocation } from '../contracts/account-access-revocation.port';
+import { TEXT_EXTRACT_JOB_TYPE } from '../contracts/ai-ingestion.port';
 import type {
   DocumentCancellationCommand,
   FullPipelineEnqueueCommand,
+  TextExtractEnqueueCommand,
 } from '../contracts/ai-ingestion.port';
 import {
   DOCUMENT_PROCESSING_RESULT_EVENT,
@@ -123,6 +126,61 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     });
   }
 
+  /**
+   * Create (or re-arm for a newer Document attempt) the single TEXT_EXTRACT row of a Document. `attempts` starts at
+   * `processingAttempt - 1` so the first Go claim lands on the Document's attempt, like FULL_PIPELINE. A replayed
+   * forward event never re-arms: a finished or running row already has `attempts >= processingAttempt`.
+   */
+  async enqueueTextExtract(command: TextExtractEnqueueCommand, idempotencyKey: string): Promise<void> {
+    if (!Number.isSafeInteger(command.processingAttempt) || command.processingAttempt < 1) {
+      throw new Error('Invalid processing attempt');
+    }
+    await this.dataSource.query(
+      `
+      INSERT INTO "ai"."processing_jobs"
+        ("document_id", "owner_id", "job_type", "status", "idempotency_key", "correlation_id", "attempts",
+         "deletion_fence", "full_pipeline_job_id", "processing_attempt")
+      SELECT $1, $2, 'TEXT_EXTRACT', 'PENDING', $3, $4, $5::integer - 1, $6, $7, $5::integer
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "ai"."account_access_revocations" AS "revocation" WHERE "revocation"."user_id" = $2
+      )
+      ON CONFLICT ("document_id") WHERE "job_type" = 'TEXT_EXTRACT' DO UPDATE
+        SET "status" = 'PENDING',
+            "attempts" = $5::integer - 1,
+            "technical_retry_count" = 0,
+            "correlation_id" = EXCLUDED."correlation_id",
+            "full_pipeline_job_id" = EXCLUDED."full_pipeline_job_id",
+            "processing_attempt" = EXCLUDED."processing_attempt",
+            "failure_code" = NULL,
+            "error_message" = NULL,
+            "completed_at" = NULL,
+            "lease_id" = NULL,
+            "lease_until" = NULL,
+            "next_visible_at" = now(),
+            "updated_at" = now()
+        WHERE "processing_jobs"."idempotency_key" = EXCLUDED."idempotency_key"
+          AND "processing_jobs"."owner_id" = $2
+          AND "processing_jobs"."deletion_fence" = $6
+          AND "processing_jobs"."status" IN ('COMPLETED', 'FAILED')
+          AND COALESCE("processing_jobs"."processing_attempt", 0) < $5::integer
+          AND "processing_jobs"."cancellation_marker_id" IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM "ai"."account_access_revocations" AS "revocation"
+            WHERE "revocation"."user_id" = "processing_jobs"."owner_id"
+          )
+      `,
+      [
+        command.documentId,
+        command.ownerId,
+        idempotencyKey,
+        command.correlationId,
+        command.processingAttempt,
+        command.deletionFence,
+        command.fullPipelineJobId,
+      ],
+    );
+  }
+
   async apply(input: Parameters<AccountAccessRevocation['apply']>[0]): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       const inserted: Array<{
@@ -181,7 +239,7 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
 
   async cancelDocument(command: DocumentCancellationCommand): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      const cancellationResult: [Array<{ readonly id: string }>, number] = await manager.query(
+      await manager.query(
         `UPDATE "ai"."processing_jobs"
          SET "status" = 'CANCELLED',
              "cancellation_marker_id" = COALESCE("cancellation_marker_id", gen_random_uuid()),
@@ -192,34 +250,39 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
              "updated_at" = now()
          WHERE "document_id" = $1
            AND "owner_id" = $2
-           AND "job_type" = 'FULL_PIPELINE'
-           AND "status" NOT IN ('COMPLETED', 'CANCELLED')
-         RETURNING "id"`,
+           AND "job_type" IN ('FULL_PIPELINE', 'TEXT_EXTRACT')
+           AND "status" NOT IN ('COMPLETED', 'CANCELLED')`,
         [command.documentId, command.ownerId, command.reason],
       );
-      const [cancelled] = cancellationResult;
-      if (cancelled.length > 0) return;
-
-      // Keep an AI-owned tombstone when cancellation arrives before the
-      // forward relay creates the queue row. A later stale enqueue conflicts
-      // with this row and cannot re-arm work after the document fence wins.
-      await manager.query(
-        `INSERT INTO "ai"."processing_jobs"
-           ("document_id", "owner_id", "job_type", "status", "idempotency_key",
-            "correlation_id", "deletion_fence", "cancellation_marker_id",
-            "cancellation_reason", "cancelled_at")
-         VALUES ($1, $2, 'FULL_PIPELINE', 'CANCELLED', $3, gen_random_uuid(),
-                 $4, gen_random_uuid(), $5, now())
-         ON CONFLICT ("document_id") WHERE "job_type" = 'FULL_PIPELINE' DO NOTHING`,
-        [
-          command.documentId,
-          command.ownerId,
-          `document-cancel:${command.documentId}:FULL_PIPELINE`,
-          command.deletionFence,
-          command.reason,
-        ],
-      );
+      // Keep an AI-owned tombstone per job type when cancellation arrives before the forward relay creates the
+      // queue row. A later stale enqueue conflicts with it and cannot re-arm work after the document fence wins.
+      // An existing row of the type (any status) already occupies the unique slot, so this is then a no-op.
+      await this.insertCancellationTombstone(manager, command, JobType.FULL_PIPELINE);
+      await this.insertCancellationTombstone(manager, command, TEXT_EXTRACT_JOB_TYPE);
     });
+  }
+
+  private async insertCancellationTombstone(
+    manager: EntityManager,
+    command: DocumentCancellationCommand,
+    jobType: JobType.FULL_PIPELINE | typeof TEXT_EXTRACT_JOB_TYPE,
+  ): Promise<void> {
+    await manager.query(
+      `INSERT INTO "ai"."processing_jobs"
+         ("document_id", "owner_id", "job_type", "status", "idempotency_key",
+          "correlation_id", "deletion_fence", "cancellation_marker_id",
+          "cancellation_reason", "cancelled_at")
+       VALUES ($1, $2, '${jobType}', 'CANCELLED', $3, gen_random_uuid(),
+               $4, gen_random_uuid(), $5, now())
+       ON CONFLICT ("document_id") WHERE "job_type" = '${jobType}' DO NOTHING`,
+      [
+        command.documentId,
+        command.ownerId,
+        `document-cancel:${command.documentId}:${jobType}`,
+        command.deletionFence,
+        command.reason,
+      ],
+    );
   }
 
   async claimPending(jobType: JobType = JobType.FULL_PIPELINE): Promise<ProcessingJob | null> {

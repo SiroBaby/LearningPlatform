@@ -3,6 +3,9 @@ import type { CitationLocator } from '../../assessment/contracts/quiz-generation
 export const DOCUMENT_PROCESSING_RESULT_EVENT = 'DocumentProcessingResult' as const;
 export const DOCUMENT_PROCESSING_RESULT_VERSION = 1 as const;
 
+/** ai.outbox event: Go measured the extracted text of a TEXT_EXTRACT job and the Node reservation may proceed (ADR-0033). */
+export const DOCUMENT_EXTRACTION_COMPLETED_EVENT = 'DocumentExtractionCompleted' as const;
+
 export enum DocumentProcessingResultStatus {
   READY = 'READY',
   FAILED = 'FAILED',
@@ -11,6 +14,7 @@ export enum DocumentProcessingResultStatus {
 export enum DocumentProcessingFailureCode {
   CHUNK_RESOURCE_LIMIT_EXCEEDED = 'CHUNK_RESOURCE_LIMIT_EXCEEDED',
   BUDGET_EXHAUSTED = 'BUDGET_EXHAUSTED',
+  INSUFFICIENT_CREDITS_AFTER_EXTRACT = 'INSUFFICIENT_CREDITS_AFTER_EXTRACT',
   MEDIA_PRICING_UNAVAILABLE = 'MEDIA_PRICING_UNAVAILABLE',
   MEDIA_REQUIRES_PLATFORM_MODEL = 'MEDIA_REQUIRES_PLATFORM_MODEL',
   MEDIA_AUDIO_NOT_PREPARED = 'MEDIA_AUDIO_NOT_PREPARED',
@@ -45,6 +49,7 @@ export function isDocumentProcessingFailureRetryable(
   errorCode: DocumentProcessingFailureCode | null,
 ): boolean {
   return errorCode === DocumentProcessingFailureCode.BUDGET_EXHAUSTED ||
+    errorCode === DocumentProcessingFailureCode.INSUFFICIENT_CREDITS_AFTER_EXTRACT ||
     errorCode === DocumentProcessingFailureCode.GENERATION_OUTPUT_INVALID ||
     errorCode === DocumentProcessingFailureCode.GENERATION_OUTPUT_TRUNCATED ||
     errorCode === DocumentProcessingFailureCode.MEDIA_PROBE_STORAGE_TEMPORARY ||
