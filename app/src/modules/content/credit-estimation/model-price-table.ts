@@ -28,8 +28,8 @@ export interface ModelPriceTable {
   readonly version: string;
 }
 
-/** Name of the STT model whose price converts media duration into credits (D1: `whisper-1`). */
-export const DEFAULT_STT_MODEL = 'whisper-1';
+/** Name of the STT model whose price converts media duration into credits (owner decision 2026-11-07: Groq via the owner's 9router). */
+export const DEFAULT_STT_MODEL = 'groq/whisper-large-v3';
 
 export const DEFAULT_MODEL_PRICE_TABLE: ModelPriceTable = {
   version: MODEL_PRICE_TABLE_VERSION,
@@ -40,8 +40,9 @@ export const DEFAULT_MODEL_PRICE_TABLE: ModelPriceTable = {
     'gpt-4.1-mini': { inputMicroUsdPerMillionTokens: 400_000, outputMicroUsdPerMillionTokens: 1_600_000 },
   },
   stt: {
-    // $0.006 per minute (OpenAI list price for whisper-1).
-    'whisper-1': { microUsdPerMinute: 6_000 },
+    // UNVERIFIED: ~$0.111 per hour = 1,850 micro-USD per minute. Source: third-party pricing aggregators,
+    // not Groq's own page. Groq may bill a 10 s minimum per request; this table ignores that. Verify before rollout.
+    'groq/whisper-large-v3': { microUsdPerMinute: 1_850 },
   },
 };
 

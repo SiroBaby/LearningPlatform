@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import { MediaCreditEstimator } from './media-credit-estimator';
 import {
   assertPlatformModelsPriced,
+  DEFAULT_STT_MODEL,
   DEFAULT_MODEL_PRICE_TABLE,
   ModelPriceTableError,
   validateModelPriceTable,
@@ -25,8 +26,8 @@ describe('MediaCreditEstimator', () => {
 
     const actualEstimate = estimator.estimate({ durationSeconds: inputDurationSeconds, defaultModel: inputModel, model: inputModel });
 
-    // STT: ceil(355 * 6000 * 1e6 / (60 * 750000)) = 47_334; generation: ceil(355 * 400 / 60) + 256 * 2 = 2_879.
-    const expectedEstimate = { generationCredits: 2_879, sttCredits: 47_334, totalCredits: 50_213 };
+    // STT: ceil(355 * 1850 * 1e6 / (60 * 750000)) = 14_595; generation: ceil(355 * 400 / 60) + 256 * 2 = 2_879.
+    const expectedEstimate = { generationCredits: 2_879, sttCredits: 14_595, totalCredits: 17_474 };
     expect(actualEstimate).toEqual(expectedEstimate);
     expect(actualEstimate.totalCredits).toBeLessThan(OLD_SIZE_BASED_ESTIMATE / 100);
   });
@@ -37,8 +38,8 @@ describe('MediaCreditEstimator', () => {
     const actualShort = estimator.estimate({ durationSeconds: 60, defaultModel: inputModel, model: inputModel });
     const actualLong = estimator.estimate({ durationSeconds: 600, defaultModel: inputModel, model: inputModel });
 
-    expect(actualShort.sttCredits).toBe(8_000);
-    expect(actualLong.sttCredits).toBe(80_000);
+    expect(actualShort.sttCredits).toBe(2_467);
+    expect(actualLong.sttCredits).toBe(24_667);
     expect(actualLong.totalCredits).toBeGreaterThan(actualShort.totalCredits);
   });
 
@@ -49,7 +50,7 @@ describe('MediaCreditEstimator', () => {
     const actualEstimate = estimator.estimate({ durationSeconds: 60, defaultModel: inputModel, model: inputDoubleModel });
 
     // STT stays anchored to the default model (1 credit per token); only generation uses the selected model's multiplier.
-    expect(actualEstimate.sttCredits).toBe(8_000);
+    expect(actualEstimate.sttCredits).toBe(2_467);
     expect(actualEstimate.generationCredits).toBe(400 * 2 + 256 * 2);
   });
 
@@ -59,8 +60,8 @@ describe('MediaCreditEstimator', () => {
 
     const actualEstimate = estimator.estimate({ durationSeconds: 355, defaultModel: inputModel, model: inputCheaperSelectedModel });
 
-    // Dividing by the selected model's price ($0.40/M) would give 88,750; the default anchor ($0.75/M) gives 47,334.
-    expect(actualEstimate.sttCredits).toBe(47_334);
+    // Dividing by the selected model's price ($0.40/M) would give 27,365; the default anchor ($0.75/M) gives 14,595.
+    expect(actualEstimate.sttCredits).toBe(14_595);
     expect(actualEstimate.generationCredits).toBe(2_879);
   });
 
@@ -90,7 +91,7 @@ describe('validateModelPriceTable', () => {
     ['no stt prices', { ...DEFAULT_MODEL_PRICE_TABLE, stt: {} }],
     ['zero llm input price', { ...DEFAULT_MODEL_PRICE_TABLE, llm: { m: { inputMicroUsdPerMillionTokens: 0, outputMicroUsdPerMillionTokens: 1 } } }],
     ['fractional llm output price', { ...DEFAULT_MODEL_PRICE_TABLE, llm: { m: { inputMicroUsdPerMillionTokens: 1, outputMicroUsdPerMillionTokens: 1.5 } } }],
-    ['negative stt price', { ...DEFAULT_MODEL_PRICE_TABLE, stt: { 'whisper-1': { microUsdPerMinute: -1 } } }],
+    ['negative stt price', { ...DEFAULT_MODEL_PRICE_TABLE, stt: { [DEFAULT_STT_MODEL]: { microUsdPerMinute: -1 } } }],
   ])('rejects %s', (_label, inputTable) => {
     expect(() => validateModelPriceTable(inputTable)).toThrow(ModelPriceTableError);
   });

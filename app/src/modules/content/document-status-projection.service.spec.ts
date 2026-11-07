@@ -36,7 +36,7 @@ describe('DocumentStatusProjectionService.completeProbe', () => {
 
     expect(actualOutcome).toBe('APPLIED');
     expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
-      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 50_213, platformModelId: 'plan-model' },
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 17_474, platformModelId: 'plan-model' },
       durationSec: 355,
     }));
   });
@@ -104,7 +104,7 @@ describe('DocumentStatusProjectionService.completeProbe', () => {
     await service.completeProbe(inputCommand(355));
 
     expect(repository.completeProbe).toHaveBeenCalledWith(expect.objectContaining({
-      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 50_213, platformModelId: 'cheap-model' },
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 17_474, platformModelId: 'cheap-model' },
     }));
   });
 });
