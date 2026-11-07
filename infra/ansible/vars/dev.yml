@@ -85,7 +85,8 @@ media_egress_proxy_enabled: true
 # storage call (document bucket included) through media-egress-proxy (#158).
 # The API runs HeadBucket through the proxy at startup and uses Recreate, so a
 # broken proxy path leaves the API not Ready. Roll back by setting this flag,
-# api_media_enabled and media_probe_worker_enabled all to false together.
+# api_media_enabled, media_probe_worker_enabled and media_probe_audio_prep_enabled
+# all to false together.
 object_storage_egress_proxy_enabled: true
 # Owner enabled media on dev after #199 merged (#158). Uploads create
 # MEDIA_PROBE jobs, so api_media_enabled requires media_probe_worker_enabled.
@@ -94,10 +95,11 @@ api_media_enabled: true
 # Shared in-cluster proxy route for the API, ai-worker and media-probe-worker.
 media_probe_worker_proxy_url: http://media-egress-proxy:3128
 # Derived audio for media STT (#160): the probe decodes with ffmpeg, cuts chunks
-# and PutObjects them under derived-audio/ in the media bucket. Keep false until
-# the owner has granted s3:PutObject on derived-audio/* to the probe identity and
-# created the 2-day lifecycle rule (docs/deployment/RUNBOOK-media-audio-prep-dev.md).
-media_probe_audio_prep_enabled: false
+# and PutObjects them under derived-audio/ in the media bucket. Enabled on dev
+# (#160 PR7) after the owner granted s3:PutObject on derived-audio/* to the probe
+# identity, widened purge DeleteObjectVersion to derived-audio/* and created the
+# 2-day lifecycle rule (docs/deployment/RUNBOOK-media-audio-prep-dev.md).
+media_probe_audio_prep_enabled: true
 # Real speech-to-text in the full-pipeline worker for MP3/MP4 (#160 PR5). Keep false until derived audio is on
 # and the owner has confirmed the worker can reach STT_BASE_URL (docs/deployment/RUNBOOK-media-stt-dev.md).
 go_worker_media_stt_enabled: false

@@ -50,7 +50,8 @@
         fail_msg: >-
           vars/dev.yml must enable the media probe worker, API media uploads,
           and the API object-storage proxy route together (#158); roll back by
-          setting media_probe_worker_enabled and api_media_enabled to false.
+          setting media_probe_worker_enabled, api_media_enabled and
+          media_probe_audio_prep_enabled to false.
 
     - name: Run the production media probe contract with the production flags
       ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
@@ -59,6 +60,7 @@
       ansible.builtin.set_fact:
         media_probe_worker_enabled: false
         api_media_enabled: false
+        media_probe_audio_prep_enabled: false
 
     - name: Run the media probe contract with the flags disabled
       ansible.builtin.include_tasks: ../tasks/media-probe-contract.yml
