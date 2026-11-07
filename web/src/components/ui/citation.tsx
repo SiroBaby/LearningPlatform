@@ -2,7 +2,7 @@
 
 import { FileText, Clock, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { formatSec } from "@/lib/mock-data";
+import { formatTimeCitationLabel } from "@/lib/media-time-citation";
 import type { Citation, Locator } from "@/lib/types";
 
 export function locatorLabel(locator: Locator): string {
@@ -12,7 +12,7 @@ export function locatorLabel(locator: Locator): string {
     case "text-range":
       return `Ký tự ${locator.start}-${locator.end}`;
     case "time":
-      return `${formatSec(locator.startSec)}–${formatSec(locator.endSec)}`;
+      return formatTimeCitationLabel(locator.startSec, locator.endSec);
   }
 }
 

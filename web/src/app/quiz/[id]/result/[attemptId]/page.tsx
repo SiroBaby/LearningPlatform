@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { LearnerShell } from "@/components/layout";
 import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, LinkButton, ProgressBar } from "@/components/ui";
 import { formatVietnameseDateTime } from "@/lib/date-time";
+import { formatTimeCitationLabel } from "@/lib/media-time-citation";
 import type { Phase0CitationLocator } from "@/lib/phase0/contracts";
 import { getPhase0AttemptResultServer } from "@/lib/phase0/server-data";
 import {
@@ -37,7 +38,7 @@ function formatCitationLocator(locator: Phase0CitationLocator): string {
     case "text-range":
       return "Đoạn văn liên quan";
     case "time":
-      return `Giây ${locator.startSec}-${locator.endSec}`;
+      return formatTimeCitationLabel(locator.startSec, locator.endSec);
   }
 }
 
