@@ -47,6 +47,38 @@ func TestProcessOnePersistsChunksGeneratesAndCompletes(t *testing.T) {
 	}
 }
 
+func TestProcessOneFailsCustomModelMediaWithoutRetryOrGeneration(t *testing.T) {
+	t.Parallel()
+	for _, mediaType := range []string{"AUDIO", "VIDEO"} {
+		t.Run(mediaType, func(t *testing.T) {
+			t.Parallel()
+			store := &storeMock{
+				job:    &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1},
+				source: processing.Source{StorageRef: "media/lecture", Type: mediaType, SelectionKind: "CUSTOM"},
+			}
+			worker := New(store, objectMock{bytes: []byte("never read")}, generatorMock{err: errors.New("generator must not run")})
+			if err := worker.processOne(context.Background()); err != nil {
+				t.Fatalf("processOne() error = %v", err)
+			}
+			if !store.failed || store.retried || store.replaced || store.completed {
+				t.Fatalf("store state = %#v, want terminal failure without retry", store)
+			}
+		})
+	}
+}
+
+func TestProcessOneStillProcessesCustomModelTextDocuments(t *testing.T) {
+	t.Parallel()
+	store := &storeMock{job: &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: 1}, source: processing.Source{StorageRef: "document.txt", Type: "TEXT", SelectionKind: "CUSTOM"}}
+	worker := New(store, objectMock{bytes: []byte("document text")}, generatorMock{})
+	if err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	if !store.completed || store.failed {
+		t.Fatalf("store state = %#v", store)
+	}
+}
+
 func TestProcessOneDoesNotRetryWhenJobFenceIsLost(t *testing.T) {
 	t.Parallel()
 	store := &storeMock{

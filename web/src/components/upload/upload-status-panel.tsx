@@ -69,7 +69,7 @@ export function UploadStatusPanel({
           <UploadSpecRow label="Nguồn xử lý" value={selectedModelKind ? getModelSourceLabel(selectedModelKind) : "Chưa chọn"} />
           <UploadSpecRow
             label="Ước tính ban đầu"
-            value={estimate ? (estimate.selectedModelKind === "PLAN" ? `${formatCredits(estimate.estimatedCredits)} lượt dùng` : "Không dùng lượt dùng trong gói") : isEstimating ? "Đang tính" : "Chưa có"}
+            value={estimate ? (estimate.selectedModelKind === "PLAN" ? (estimate.estimatedCredits === null ? "Tính sau khi kiểm tra tệp" : `${formatCredits(estimate.estimatedCredits)} lượt dùng`) : "Không dùng lượt dùng trong gói") : isEstimating ? "Đang tính" : "Chưa có"}
           />
         </dl>
 

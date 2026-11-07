@@ -6,6 +6,7 @@ import type {
   Phase0ModelOptionGroup,
   Phase0UploadModelSelection,
 } from "@/lib/phase0/contracts";
+import { MEDIA_REQUIRES_PLATFORM_MODEL_MESSAGE } from "@/lib/phase0/document-failure";
 import {
   findModelOption,
   getModelSourceLabel,
@@ -110,6 +111,15 @@ export function useUploadModelEstimate({
     const requestId = estimateRequestId;
 
     async function requestEstimate(): Promise<void> {
+      const isMediaFile = currentFile.normalizedType === "AUDIO" || currentFile.normalizedType === "VIDEO";
+      if (isMediaFile && currentSelection.modelSelectionKind === "CUSTOM") {
+        // Backend rejects this combination (MEDIA_REQUIRES_PLATFORM_MODEL); explain it without a round trip.
+        setEstimate(null);
+        setEstimateError(MEDIA_REQUIRES_PLATFORM_MODEL_MESSAGE);
+        setIsEstimating(false);
+        return;
+      }
+
       try {
         const nextEstimate = await estimatePhase0DocumentUpload({
           type: currentFile.normalizedType,
@@ -176,7 +186,9 @@ export function toUploadEstimateSummaryPresentation(
     modelSourceLabel: getModelSourceLabel(estimate.selectedModelKind),
     summary: getEstimateSummary(estimate),
     detail: estimate.selectedModelKind === "PLAN"
-      ? `Hiện đang hiển thị mức ước tính khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} lượt dùng. Đây chưa phải mức chốt cuối cùng.`
+      ? estimate.estimatedCredits === null
+        ? "Thời lượng tệp chưa biết nên chưa thể ước tính. Lượt dùng sẽ được tính theo thời lượng sau khi kiểm tra tệp."
+        : `Hiện đang hiển thị mức ước tính khoảng ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(estimate.estimatedCredits)} lượt dùng. Đây chưa phải mức chốt cuối cùng.`
       : "Kết nối riêng không dùng lượt dùng trong gói. Nhà cung cấp bạn dùng có thể tính phí riêng ngoài hệ thống này.",
     badgeTone: estimate.selectedModelKind === "PLAN" ? "brand" : "neutral",
     badgeLabel: estimate.selectedModelKind === "PLAN" ? "Có trong gói của bạn" : "Kết nối riêng của bạn",

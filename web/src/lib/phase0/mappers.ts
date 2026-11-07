@@ -11,6 +11,7 @@ import type {
   Phase0DocumentStatus,
   Phase0DocumentType,
   Phase0EstimatePrecision,
+  Phase0EstimateResponsePrecision,
   Phase0EstimateResponse,
   Phase0ModelOption,
   Phase0ModelSelectionKind,
@@ -119,6 +120,10 @@ function readEstimatePrecision(value: unknown, field: string): Phase0EstimatePre
   }
 }
 
+function readEstimateResponsePrecision(value: unknown, field: string): Phase0EstimateResponsePrecision {
+  return value === "AFTER_MEDIA_CHECK" ? "AFTER_MEDIA_CHECK" : readEstimatePrecision(value, field);
+}
+
 function readNullableEstimatePrecision(value: unknown, field: string): Phase0EstimatePrecision | null {
   return value === null ? null : readEstimatePrecision(value, field);
 }
@@ -182,6 +187,10 @@ function readNullableDocumentProcessingFailureCode(
       return "MEDIA_PROBE_STORAGE_TEMPORARY";
     case "MEDIA_PROBE_TIMEOUT":
       return "MEDIA_PROBE_TIMEOUT";
+    case "MEDIA_PRICING_UNAVAILABLE":
+      return "MEDIA_PRICING_UNAVAILABLE";
+    case "MEDIA_REQUIRES_PLATFORM_MODEL":
+      return "MEDIA_REQUIRES_PLATFORM_MODEL";
     case "MEDIA_UNSUPPORTED_AUDIO_CODEC":
       return "MEDIA_UNSUPPORTED_AUDIO_CODEC";
     case "MEDIA_UNSUPPORTED_CONTAINER":
@@ -349,8 +358,8 @@ export function mapModelOptionsResponse(value: unknown): readonly Phase0ModelOpt
 export function mapEstimateResponse(value: unknown): Phase0EstimateResponse {
   const source = readObject(value);
   return {
-    estimatedCredits: readNumber(source.estimatedCredits, "estimatedCredits"),
-    precision: readEstimatePrecision(source.precision, "precision"),
+    estimatedCredits: readNullableNumber(source.estimatedCredits, "estimatedCredits"),
+    precision: readEstimateResponsePrecision(source.precision, "precision"),
     selectedModelKind: readModelSelectionKind(source.selectedModelKind, "selectedModelKind"),
     selectedModelLabel: readString(source.selectedModelLabel, "selectedModelLabel"),
   };

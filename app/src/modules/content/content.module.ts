@@ -9,6 +9,7 @@ import { AiModule } from '../ai/ai.module';
 import { AssessmentModule } from '../assessment/assessment.module';
 import { DOCUMENT_SOURCE_READER } from '../ai/contracts/extraction.contracts';
 import { ContentDocumentSourceReader } from './document-source-reader.service';
+import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
 import { ContentMappingProfile } from './mappings/content-mapping.profile';
 import { ContentRepository } from './repositories/content.repository';
 import { CourseOutboxRepository } from './repositories/course-outbox.repository';
@@ -24,6 +25,7 @@ import { AuthModule } from '../auth/auth.module';
   providers: [
     ContentService,
     DocumentStatusProjectionService,
+    MediaCreditEstimator,
     ContentRepository,
     CourseOutboxRepository,
     BudgetReservationRepository,

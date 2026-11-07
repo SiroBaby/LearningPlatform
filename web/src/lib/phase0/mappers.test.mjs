@@ -7,6 +7,7 @@ import {
   mapConfirmDocumentResponse,
   mapDocumentResponse,
   mapDocumentsResponse,
+  mapEstimateResponse,
 } from "./mappers.ts";
 
 const budgetStatuses = [
@@ -58,6 +59,18 @@ test("maps a document with AUTHORITATIVE estimate status", () => {
   }));
 
   assert.equal(document.estimateStatus, "AUTHORITATIVE");
+});
+
+test("maps an AFTER_MEDIA_CHECK estimate with no credit number", () => {
+  const estimate = mapEstimateResponse({
+    estimatedCredits: null,
+    precision: "AFTER_MEDIA_CHECK",
+    selectedModelKind: "PLAN",
+    selectedModelLabel: "Fast platform model",
+  });
+
+  assert.equal(estimate.estimatedCredits, null);
+  assert.equal(estimate.precision, "AFTER_MEDIA_CHECK");
 });
 
 test("maps a document with null errorCode", () => {
@@ -179,4 +192,13 @@ test("maps attempt history returned as a top-level array", () => {
       questionCount: 5,
     },
   ]);
+});
+
+test("maps the MEDIA_REQUIRES_PLATFORM_MODEL failure code", () => {
+  const document = mapDocumentResponse(buildDocumentOverrides({
+    errorCode: "MEDIA_REQUIRES_PLATFORM_MODEL",
+    status: "FAILED",
+  }));
+
+  assert.equal(document.errorCode, "MEDIA_REQUIRES_PLATFORM_MODEL");
 });

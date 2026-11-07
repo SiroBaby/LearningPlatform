@@ -43,6 +43,14 @@ import { startTestDb, TestDb } from '../test-support/test-db';
 import { clearDocumentFlowData } from '../../test/support/test-database-cleanup';
 import { LegacyUnfencedResultError, ReturnRelay } from './return-relay.service';
 
+const PROBE_TEST_RESERVED_CREDITS = 80;
+const PROBE_TEST_MODEL = { creditPerInputToken: 1, creditPerOutputToken: 1, id: 'test', model: 'test', planIds: ['free'] };
+// Credit pricing has its own unit spec; here the probe flow only needs a deterministic reservation amount.
+const createProjectionService = (dataSource: DataSource): DocumentStatusProjectionService => new DocumentStatusProjectionService(
+  new ContentRepository(dataSource),
+  { ai: { platformModels: Object.assign([PROBE_TEST_MODEL], { find: () => PROBE_TEST_MODEL }) } } as never,
+  { estimate: () => ({ generationCredits: 0, sttCredits: 0, totalCredits: PROBE_TEST_RESERVED_CREDITS }) } as never,
+);
 const quizHandoff = { persist: async () => ({ optionCount: 0, questionCount: 0, questionIds: [], quizId: randomUUID() }) };
 
 describe('ReturnRelay', () => {
@@ -72,7 +80,7 @@ describe('ReturnRelay', () => {
     quizzes = ds.getRepository(QuizEntity);
     relay = new ReturnRelay(
       new AiOutboxRepository(ds),
-      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      createProjectionService(ds),
       quizHandoff,
     );
     await clearDocumentFlowData(db.client);
@@ -1136,7 +1144,7 @@ describe('ReturnRelay', () => {
     const realHandoff = new QuizGenerationHandoffService(new QuizRepository(ds));
     const realRelay = new ReturnRelay(
       new AiOutboxRepository(ds),
-      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      createProjectionService(ds),
       realHandoff,
     );
 
@@ -1173,7 +1181,7 @@ describe('ReturnRelay', () => {
     }));
     const failingRelay = new ReturnRelay(
       new AiOutboxRepository(ds),
-      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      createProjectionService(ds),
       { persist: async () => { throw new Error('simulated crash after projection'); } },
     );
 
@@ -1183,7 +1191,7 @@ describe('ReturnRelay', () => {
 
     const replayRelay = new ReturnRelay(
       new AiOutboxRepository(ds),
-      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      createProjectionService(ds),
       new QuizGenerationHandoffService(new QuizRepository(ds)),
     );
     await replayRelay.pump(10);
@@ -1256,7 +1264,7 @@ describe('ReturnRelay', () => {
     };
     const failingRelay = new ReturnRelay(
       new AiOutboxRepository(ds),
-      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      createProjectionService(ds),
       failingQuizHandoff,
     );
 
@@ -1305,7 +1313,7 @@ describe('ReturnRelay', () => {
     const logger = jest.spyOn(ConsoleLogger.prototype, 'error').mockImplementation(() => undefined);
     const terminalRelay = new ReturnRelay(
       new AiOutboxRepository(ds),
-      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      createProjectionService(ds),
       {
         persist: async () => {
           throw new AssessmentError(AssessmentErrorCode.INSUFFICIENT_VALID_QUESTIONS, 0, 1);
@@ -1341,7 +1349,7 @@ describe('ReturnRelay', () => {
     } as unknown as AiOutboxRepository;
     const failingRelay = new ReturnRelay(
       failingOutbox,
-      new DocumentStatusProjectionService(new ContentRepository(ds)),
+      createProjectionService(ds),
       quizHandoff,
     );
 

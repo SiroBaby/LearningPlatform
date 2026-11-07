@@ -26,6 +26,7 @@ import {
 import { CreateUploadUrlCommand } from './contracts/create-upload-url.command';
 import { calculatePurgeNotBefore } from './contracts/document-purge-policy';
 import { DocumentQuizResult } from './contracts/document-quiz.result';
+import { COARSE_INPUT_TOKEN_BYTES, COARSE_OUTPUT_TOKEN_CAP } from './credit-estimation/credit-estimation.constants';
 import { DocumentEstimateResult } from './contracts/document-estimate.result';
 import {
   assertDocumentUploadSize,
@@ -50,8 +51,7 @@ import {
   type PlanModelCatalogItem,
 } from '../ai/contracts/model-selection.contracts';
 
-const COARSE_INPUT_TOKEN_BYTES = 4;
-const COARSE_OUTPUT_TOKEN_CAP = 256;
+const isMediaDocumentType = (type: DocumentType): boolean => type === DocumentType.AUDIO || type === DocumentType.VIDEO;
 type ProcessingStartMode = 'CONFIRM' | 'RETRY';
 
 @Injectable()
@@ -79,7 +79,7 @@ export class ContentService {
     const policy = resolveDocumentUploadPolicy(command.type, command.originalName);
     this.assertMediaUploadsEnabled(policy.bucket);
     assertDocumentUploadSize(policy, command.sizeBytes);
-    const estimate = await this.estimateModelSelection(ownerId, command.sizeBytes, command.selection);
+    const estimate = await this.estimateModelSelection(ownerId, command.sizeBytes, command.selection, command.type);
     const objectKey = policy.bucket === 'media'
       ? `media/${ownerId}/${randomUUID()}${policy.extension}`
       : `${ownerId}/${randomUUID()}${policy.extension}`;
@@ -108,8 +108,10 @@ export class ContentService {
     ownerId: string,
     sizeBytes: number,
     selection: DocumentModelSelection,
-  ): Promise<{ readonly estimatedCredits: number; readonly selectedModelLabel: string }> {
+    type: DocumentType,
+  ): Promise<{ readonly estimatedCredits: number | null; readonly selectedModelLabel: string }> {
     if (!this.models) throw new Error('Model catalog is unavailable');
+    if (isMediaDocumentType(type) && selection.kind === 'CUSTOM') throw this.mediaRequiresPlatformModel();
     let plan: PlanModelCatalogItem | null = null;
     if (selection.kind === 'PLAN') {
       plan = selection.platformModelId
@@ -128,11 +130,21 @@ export class ContentService {
       throw new BadRequestException('Selected custom model is unavailable');
     }
     return {
-      estimatedCredits: plan
-        ? this.estimatePlatformCredits(sizeBytes, plan)
-        : 0,
+      // Media duration is unknown until the probe (ADR-0031); never derive credits from video/audio bytes.
+      estimatedCredits: this.estimateCreditsBeforeUpload(sizeBytes, type, plan),
       selectedModelLabel: selected.label,
     };
+  }
+
+  /** CUSTOM models cost nothing; media is unknown until the probe; everything else is size-based. */
+  private estimateCreditsBeforeUpload(
+    sizeBytes: number,
+    type: DocumentType,
+    plan: PlanModelCatalogItem | null,
+  ): number | null {
+    if (!plan) return 0;
+    if (isMediaDocumentType(type)) return null;
+    return this.estimatePlatformCredits(sizeBytes, plan);
   }
 
   private estimatePlatformCredits(
@@ -288,10 +300,10 @@ export class ContentService {
     const policy = getDocumentUploadPolicy(input.type);
     this.assertMediaUploadsEnabled(policy.bucket);
     assertDocumentUploadSize(policy, input.sizeBytes);
-    const estimate = await this.estimateModelSelection(ownerId, input.sizeBytes, input.selection);
+    const estimate = await this.estimateModelSelection(ownerId, input.sizeBytes, input.selection, input.type);
     return Object.assign(new DocumentEstimateResult(), {
       estimatedCredits: estimate.estimatedCredits,
-      precision: 'COARSE',
+      precision: estimate.estimatedCredits === null ? 'AFTER_MEDIA_CHECK' : 'COARSE',
       selectedModelKind: input.selection.kind,
       selectedModelLabel: estimate.selectedModelLabel,
     });
@@ -410,6 +422,9 @@ export class ContentService {
       });
     }
     const policy = resolveDocumentUploadPolicy(document.type, document.originalName);
+    if (policy.bucket === 'media' && document.modelSelectionKind === 'CUSTOM') {
+      throw this.mediaRequiresPlatformModel();
+    }
     const declaredSizeBytes = Number(document.sizeBytes);
     assertDocumentUploadSize(policy, declaredSizeBytes);
     if (
@@ -470,6 +485,15 @@ export class ContentService {
     }
 
     return confirmed;
+  }
+
+  /** D5 of #160: speech-to-text runs only on the platform model, never on an Owner-supplied endpoint. */
+  private mediaRequiresPlatformModel(): BadRequestException {
+    return new BadRequestException({
+      code: 'MEDIA_REQUIRES_PLATFORM_MODEL',
+      message: 'Audio and video Documents can only be processed with a platform model, not a custom model.',
+      retryable: false,
+    });
   }
 
   private assertMediaUploadsEnabled(bucketKind: 'documents' | 'media'): void {

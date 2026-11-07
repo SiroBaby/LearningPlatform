@@ -17,9 +17,17 @@ type Job struct {
 	CreatedAt                                       time.Time
 }
 type Source struct {
-	StorageRef   string
-	Type         string
-	MediaLocator *ObjectLocator
+	StorageRef string
+	Type       string
+	// SelectionKind is the Document's persisted model selection (PLAN or CUSTOM).
+	SelectionKind string
+	MediaLocator  *ObjectLocator
+}
+
+// IsCustomModelMedia reports a Document that must not be processed: audio/video
+// with a Custom AI selection.
+func IsCustomModelMedia(source Source) bool {
+	return (source.Type == "AUDIO" || source.Type == "VIDEO") && source.SelectionKind == "CUSTOM"
 }
 
 // ObjectLocator identifies the exact version of a media object selected by
@@ -145,6 +153,8 @@ const (
 	ProviderIncompatible FailureCode = "PROVIDER_INCOMPATIBLE"
 	ProviderUnavailable  FailureCode = "PROVIDER_UNAVAILABLE"
 	ProcessingFailed     FailureCode = "PROCESSING_FAILED"
+	// MediaRequiresPlatformModel: audio/video must not run on a Custom AI endpoint (D5 of #160).
+	MediaRequiresPlatformModel FailureCode = "MEDIA_REQUIRES_PLATFORM_MODEL"
 )
 
 const (

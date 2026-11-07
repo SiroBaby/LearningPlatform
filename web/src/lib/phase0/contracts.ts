@@ -14,6 +14,9 @@ export const phase0EstimatePrecisionLevels = ["COARSE", "AUTHORITATIVE"] as cons
 
 export type Phase0EstimatePrecision = (typeof phase0EstimatePrecisionLevels)[number];
 
+/** Pre-upload estimate precision; audio/video report AFTER_MEDIA_CHECK with no credit number. */
+export type Phase0EstimateResponsePrecision = Phase0EstimatePrecision | "AFTER_MEDIA_CHECK";
+
 export const phase0BudgetStatuses = [
   "NOT_RESERVED",
   "CUSTOM_ZERO_COST",
@@ -38,6 +41,8 @@ export const phase0DocumentProcessingFailureCodes = [
   "MEDIA_PROBE_OUTPUT_CAP_EXCEEDED",
   "MEDIA_PROBE_STORAGE_TEMPORARY",
   "MEDIA_PROBE_TIMEOUT",
+  "MEDIA_PRICING_UNAVAILABLE",
+  "MEDIA_REQUIRES_PLATFORM_MODEL",
   "MEDIA_UNSUPPORTED_AUDIO_CODEC",
   "MEDIA_UNSUPPORTED_CONTAINER",
   "MEDIA_UNSUPPORTED_VIDEO_CODEC",
@@ -110,8 +115,8 @@ export type Phase0EstimateRequest = {
 } & Phase0UploadModelSelection;
 
 export interface Phase0EstimateResponse {
-  readonly estimatedCredits: number;
-  readonly precision: Phase0EstimatePrecision;
+  readonly estimatedCredits: number | null;
+  readonly precision: Phase0EstimateResponsePrecision;
   readonly selectedModelKind: Phase0ModelSelectionKind;
   readonly selectedModelLabel: string;
 }

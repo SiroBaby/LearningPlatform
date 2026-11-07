@@ -263,6 +263,10 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	if err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
+	if processing.IsCustomModelMedia(source) {
+		// Defence in depth for D5 of #160: Node already rejects this; never spend platform STT on a Custom AI Document.
+		return bootstrap.finish(ctx, job, processing.Failure{Code: processing.MediaRequiresPlatformModel}, failureComponentProvider)
+	}
 	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}

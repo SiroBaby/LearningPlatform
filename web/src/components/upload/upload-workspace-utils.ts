@@ -246,6 +246,10 @@ export function getEstimateSummary(estimate: Phase0EstimateResponse): string {
     return "Tài liệu này không dùng lượt dùng trong gói. Nhà cung cấp kết nối riêng của bạn có thể tính phí riêng.";
   }
 
+  if (estimate.estimatedCredits === null) {
+    return "Lượt dùng sẽ được tính sau khi hệ thống kiểm tra tệp âm thanh hoặc video.";
+  }
+
   return `Ước tính khoảng ${formatCredits(estimate.estimatedCredits)} lượt dùng cho lần này.`;
 }
 
