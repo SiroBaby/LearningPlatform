@@ -404,6 +404,84 @@ describe('durable processing queue migration', () => {
     expect(unique.rows).toHaveLength(1);
   });
 
+  describe('media probe database role least privilege (#164)', () => {
+    const MEDIA_PROBE_ROLE = 'learning_platform_media_probe';
+    const FORBIDDEN_TABLES = [
+      'course.documents',
+      'course.owner_credit_wallets',
+      'course.credit_ledger_entries',
+      'ai.processing_jobs',
+    ] as const;
+    // Column-level allowlist: the Go media probe worker may only touch these ai.* columns.
+    const EXPECTED_COLUMN_GRANTS: readonly string[] = [
+      'ai.media_audio_chunks|INSERT|body_end_ms,body_start_ms,bucket,chunk_index,content_length,deletion_fence,document_id,etag,file_end_ms,file_start_ms,media_probe_job_id,object_key,owner_id,probe_generation,sha256,version_id',
+      'ai.media_audio_chunks|SELECT|body_end_ms,body_start_ms,bucket,chunk_index,content_length,created_at,deletion_fence,document_id,etag,file_end_ms,file_start_ms,id,media_probe_job_id,object_key,owner_id,probe_generation,sha256,version_id',
+      'ai.media_probe_cancellation_tombstones|SELECT|deletion_fence,document_id,owner_id',
+      'ai.media_probe_jobs|SELECT|attempts,completed_at,correlation_id,created_at,deletion_fence,document_id,error_message,failure_code,full_pipeline_job_id,id,lease_id,lease_until,next_visible_at,owner_id,policy_version,probe_generation,probe_result_id,source_bucket,source_content_length,source_etag,source_key,source_version_id,status,technical_retry_count,updated_at',
+      'ai.media_probe_jobs|UPDATE|attempts,completed_at,error_message,failure_code,lease_id,lease_until,next_visible_at,probe_result_id,source_content_length,source_etag,source_version_id,status,technical_retry_count,updated_at',
+      'ai.media_probe_results|INSERT|bucket,content_length,decoded_duration_ms,deletion_fence,document_id,duration_sec,etag,full_pipeline_job_id,media_probe_job_id,object_key,owner_id,policy_version,probe_generation,version_id',
+      'ai.media_probe_results|SELECT|bucket,content_length,created_at,decoded_duration_ms,deletion_fence,document_id,duration_sec,etag,full_pipeline_job_id,id,media_probe_job_id,object_key,owner_id,policy_version,probe_generation,version_id',
+      'ai.outbox|INSERT|aggregate_id,event_type,payload',
+      'ai.outbox|SELECT|aggregate_id,event_type',
+    ];
+
+    async function expectPermissionDenied(statement: string): Promise<void> {
+      await db.client.query(`SET ROLE ${MEDIA_PROBE_ROLE}`);
+      try {
+        await expect(db.client.query(statement)).rejects.toThrow(/permission denied/);
+      } finally {
+        await db.client.query('RESET ROLE');
+      }
+    }
+
+    it.each(FORBIDDEN_TABLES)('denies SELECT and UPDATE on %s to the media probe role', async (table) => {
+      await expectPermissionDenied(`SELECT 1 FROM ${table} LIMIT 1`);
+      await expectPermissionDenied(`UPDATE ${table} SET updated_at = now()`);
+    });
+
+    it.each(FORBIDDEN_TABLES)('has no table or column privilege on %s for the media probe role', async (table) => {
+      const privileges = await db.client.query<{ readonly hasPrivilege: boolean }>(
+        `SELECT bool_or(has_table_privilege($1, $2, privilege)) OR
+                bool_or(privilege <> 'DELETE' AND has_any_column_privilege($1, $2, privilege)) AS "hasPrivilege"
+         FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'REFERENCES']) AS privilege`,
+        [MEDIA_PROBE_ROLE, table],
+      );
+      expect(privileges.rows[0]?.hasPrivilege).toBe(false);
+    });
+
+    it('grants the media probe role no table-level privilege and only the allowlisted column privileges', async () => {
+      const tableGrants = await db.client.query<{ readonly grant: string }>(
+        `SELECT table_schema || '.' || table_name || '|' || privilege_type AS "grant"
+         FROM information_schema.role_table_grants
+         WHERE grantee = $1 ORDER BY 1`,
+        [MEDIA_PROBE_ROLE],
+      );
+      expect(tableGrants.rows).toEqual([]);
+      const aclGrants = await db.client.query<{ readonly relation: string }>(
+        `SELECT n.nspname || '.' || c.relname || '|' || c.relkind::text AS "relation"
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL aclexplode(c.relacl) AS acl
+         WHERE acl.grantee = $1::regrole::oid
+         ORDER BY 1`,
+        [MEDIA_PROBE_ROLE],
+      );
+      // Only the outbox id sequence (relkind S) may carry a relation-level ACL entry for this role.
+      expect(aclGrants.rows.map((row) => row.relation)).toEqual(['ai.outbox_id_seq|S']);
+
+      const columnGrants = await db.client.query<{ readonly grant: string }>(
+        `SELECT table_schema || '.' || table_name || '|' || privilege_type || '|' ||
+                string_agg(column_name, ',' ORDER BY column_name) AS "grant"
+         FROM information_schema.column_privileges
+         WHERE grantee = $1 AND table_schema NOT IN ('information_schema', 'pg_catalog')
+         GROUP BY table_schema, table_name, privilege_type
+         ORDER BY 1`,
+        [MEDIA_PROBE_ROLE],
+      );
+      expect(columnGrants.rows.map((row) => row.grant)).toEqual([...EXPECTED_COLUMN_GRANTS].sort());
+    });
+  });
+
   async function columnNames(): Promise<string[]> {
     const result = await db.client.query<{ readonly column_name: string }>(
       `SELECT "column_name" FROM "information_schema"."columns"
