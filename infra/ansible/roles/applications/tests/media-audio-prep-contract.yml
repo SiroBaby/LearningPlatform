@@ -125,3 +125,13 @@
         fail_msg: >-
           PutObject must reuse the existing media-egress-proxy route; no new egress rule
           or direct S3 CIDR is allowed.
+
+    - name: Require the readiness probe and the CPU and memory limits of the probe container
+      ansible.builtin.assert:
+        that:
+          - applications_audio_on_pod.containers[0].readinessProbe.httpGet.path == '/readyz'
+          - applications_audio_on_pod.containers[0].resources.limits.cpu == media_probe_worker_resources.limits.cpu
+          - applications_audio_on_pod.containers[0].resources.limits.memory == media_probe_worker_resources.limits.memory
+        fail_msg: >-
+          The probe container must gate traffic on /readyz and render the CPU and memory
+          limits configured in media_probe_worker_resources (vars/dev.yml).

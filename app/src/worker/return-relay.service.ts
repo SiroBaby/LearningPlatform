@@ -26,6 +26,7 @@ import type {
   DocumentProbeFailureCommand,
   DocumentStatusProjection,
 } from '../modules/content/contracts/document-status-projection.port';
+import { MAX_MEDIA_DURATION_SEC } from '../modules/content/contracts/media-probe-policy';
 import { DocumentStatus } from '../modules/content/enums/document-status.enum';
 import { normalizeStorageVersionId } from '../storage/storage-version-id';
 
@@ -458,7 +459,7 @@ export class ReturnRelay {
       locator === undefined ||
       locator.policyVersion !== payload.policyVersion ||
       locator.deletionFence !== payload.deletionFence ||
-      payload.durationSec > 7200
+      payload.durationSec > MAX_MEDIA_DURATION_SEC
     ) {
       throw new Error('Invalid media probe completion outbox payload');
     }

@@ -5,23 +5,24 @@ on:
     paths:
       - .github/workflows/**
       - deploy/dev/**
-      - infra/ansible/playbooks/site.yml
-      - infra/ansible/roles/k3s/templates/nginx-learning-platform.conf.j2
-      - infra/k8s/apps.yaml.j2
+      - infra/**
       - worker/Dockerfile
       - worker/scripts/install-media-tools.sh
   push:
     paths:
       - .github/workflows/**
       - deploy/dev/**
-      - infra/ansible/playbooks/site.yml
-      - infra/ansible/roles/k3s/templates/nginx-learning-platform.conf.j2
-      - infra/k8s/apps.yaml.j2
+      - infra/**
       - worker/Dockerfile
       - worker/scripts/install-media-tools.sh
 
 permissions:
   contents: read
+
+# A newer push to the same pull request or branch supersedes the running check.
+concurrency:
+  group: deploy-workflow-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   contract:
@@ -58,3 +59,27 @@ jobs:
             bash "$test_script"
           done
           python3 deploy/dev/tests/test-ghcr-cleanup-execution.py
+
+  infra-contract:
+    name: Infrastructure source contract
+    # A task-branch push with an open pull request would run this twice; the pull_request run is the gate.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # Same pinned toolchain as the deploy job: validate.sh only runs its Ansible playbook contracts when
+      # ansible-playbook is on PATH, so without this step the gate would silently skip them.
+      - name: Install pinned Ansible tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ansible-venv"
+          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir 'ansible-core==2.21.2'
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-galaxy" collection install -r infra/ansible/requirements.yml
+          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
+      - name: Validate infrastructure source contract
+        run: |
+          set -o pipefail
+          command -v ansible-playbook
+          bash infra/scripts/validate.sh | tee "$RUNNER_TEMP/validate.log"
+          # validate.sh prints SKIP: when a contract tool is missing; the gate must never pass with skipped contracts.
+          ! grep -q '^SKIP:' "$RUNNER_TEMP/validate.log"

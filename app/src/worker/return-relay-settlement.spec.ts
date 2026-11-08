@@ -16,6 +16,7 @@ import { DocumentStatus } from '../modules/content/enums/document-status.enum';
 import { DocumentType } from '../modules/content/enums/document-type.enum';
 import { ContentRepository } from '../modules/content/repositories/content.repository';
 import { createTestDataSource } from '../test-support/test-data-source';
+import { runWithBlockedDocumentRow } from '../test-support/block-document-row';
 import { startTestDb, TestDb } from '../test-support/test-db';
 import { clearDocumentFlowData } from '../../test/support/test-database-cleanup';
 import { ReturnRelay } from './return-relay.service';
@@ -387,6 +388,123 @@ describe('ReturnRelay credit settlement (#160 D7)', () => {
       [key('reserve', run.jobId)]: '1000',
       [key('settle', run.jobId)]: '400',
       [key('release', run.jobId)]: '600',
+    });
+  });
+
+  describe('Document deleted after RESERVE (#164)', () => {
+    const DELETION_BUCKETS = { documents: 'documents', media: 'media' } as const;
+
+    async function deleteReservedRun(run: SeededRun): Promise<void> {
+      await new ContentRepository(ds).deleteOwnedDocument(run.document.ownerId, run.document.id, DELETION_BUCKETS);
+    }
+
+    it('settles actual usage and releases the remainder when a READY result arrives after deletion', async () => {
+      const run = await seedReservedRun();
+      await deleteReservedRun(run);
+      await seedResult(run, {
+        usage: { llm: [{ inputTokens: 300, model: 'gpt-5.4-mini', outputTokens: 50 }], uncertainDispatches: 0 },
+      });
+
+      await relay.pump(10);
+
+      expect(await readLedger(run.jobId)).toEqual({
+        [key('reserve', run.jobId)]: '1000',
+        [key('settle', run.jobId)]: '400',
+        [key('release', run.jobId)]: '600',
+      });
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '4600', reserved_credits: '0' });
+      const deleted = await documents.findOneByOrFail({ id: run.document.id });
+      expect(deleted.status).toBe(DocumentStatus.DELETING);
+      expect(deleted.budgetStatus).toBe('SETTLED');
+    });
+
+    it('releases the whole reservation when a pre-provider FAILED result arrives after deletion', async () => {
+      const run = await seedReservedRun();
+      await deleteReservedRun(run);
+      await seedResult(run, {
+        ...failedPayload(DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND),
+        usage: { llm: [], uncertainDispatches: 0 },
+      });
+
+      await relay.pump(10);
+
+      expect(await readLedger(run.jobId)).toEqual({
+        [key('reserve', run.jobId)]: '1000',
+        [key('settle', run.jobId)]: '0',
+        [key('release', run.jobId)]: '1000',
+      });
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '5000', reserved_credits: '0' });
+      expect((await documents.findOneByOrFail({ id: run.document.id })).status).toBe(DocumentStatus.DELETING);
+    });
+
+    it('holds the unverified remainder (ADR-0022) when a dispatch was uncertain before deletion, once even if replayed', async () => {
+      const run = await seedReservedRun();
+      await deleteReservedRun(run);
+      const payload = {
+        ...failedPayload(DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE),
+        attempt: GO_QUEUE_ATTEMPT,
+        leaseId: randomUUID(),
+        usage: { llm: [{ inputTokens: 100, model: 'gpt-5.4-mini', outputTokens: 0 }], uncertainDispatches: 1 },
+      };
+      await seedResult(run, payload);
+      await seedResult(run, payload);
+
+      await relay.pump(10);
+      await relay.pump(10);
+
+      expect(await readLedger(run.jobId)).toEqual({
+        [key('reserve', run.jobId)]: '1000',
+        [key('settle', run.jobId)]: '100',
+        [key('release', run.jobId)]: '0',
+        [key('hold', run.jobId)]: '900',
+      });
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '4000', reserved_credits: '0' });
+      expect((await documents.findOneByOrFail({ id: run.document.id })).budgetStatus).toBe('HELD');
+    });
+
+    // BUG (#164, tracked by #275): Go finalize/retry SQL requires `cancellation_marker_id IS NULL`
+    // (worker/internal/processing/postgres.go:248,355,395). deleteOwnedDocument sets that marker, so a job running
+    // during deletion is FENCED and emits NO ai.outbox result. No Node path settles the RESERVE row in that case
+    // (cancelAiWork only cancels jobs; the return seam only settles when a result arrives), so `reserved_credits`
+    // stays locked. The same orphan applies more broadly: (a) the job is PENDING and was never claimed, (b) RESERVE
+    // happened at completeProbe/completeExtraction but FULL_PIPELINE was not yet forwarded (cancellation placeholder
+    // occupies the slot), and possibly (c) account revocation, which fences the job the same way.
+    // Enable once #275's reconciler exists and assert reserved_credits === 0 with one RELEASE (or HELD).
+    it.todo('releases or holds the reservation of a deleted Document whose Go job never emits a result: running-fenced, PENDING-never-claimed, or RESERVE-before-forward placeholder (and possibly account revocation) (#275)');
+  });
+
+  describe('concurrent relays (#164)', () => {
+    it('settles one result delivered to two relays at once exactly once without failing either pump', async () => {
+      const run = await seedReservedRun();
+      const payload = {
+        attempt: GO_QUEUE_ATTEMPT,
+        leaseId: randomUUID(),
+        usage: { llm: [{ inputTokens: 300, model: 'gpt-5.4-mini', outputTokens: 50 }], uncertainDispatches: 0 },
+      };
+      const events = [await seedResult(run, payload), await seedResult(run, payload)];
+      const otherRelay = createRelay();
+
+      const results = await runWithBlockedDocumentRow({
+        db,
+        documentId: run.document.id,
+        minimumWaiters: 2,
+        start: () => [relay.pump(10), otherRelay.pump(10)],
+      });
+
+      expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+
+      expect(await readLedger(run.jobId)).toEqual({
+        [key('reserve', run.jobId)]: '1000',
+        [key('settle', run.jobId)]: '400',
+        [key('release', run.jobId)]: '600',
+      });
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '4600', reserved_credits: '0' });
+      const projected = await documents.findOneByOrFail({ id: run.document.id });
+      expect(projected.status).toBe(DocumentStatus.READY);
+      expect(projected.settledCredits).toBe('400');
+      for (const event of events) {
+        expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+      }
     });
   });
 });
