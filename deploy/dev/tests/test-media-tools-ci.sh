@@ -159,7 +159,14 @@ check.call(!suite.nil? && suite['run'].lines.map(&:strip).include?('deploy/dev/t
 end
 infra_steps = deploy_ci.dig('jobs', 'infra-contract', 'steps') || []
 infra_commands = infra_steps.map { |step| step['run'].to_s }
-check.call(infra_commands.last.strip == 'bash infra/scripts/validate.sh', 'deploy-workflow-ci.yml infra-contract must run infra/scripts/validate.sh')
+validate_step = infra_steps.find { |step| step['name'] == 'Validate infrastructure source contract' }
+validate_lines = validate_step ? validate_step['run'].lines.map(&:strip) : []
+check.call(validate_lines.include?('bash infra/scripts/validate.sh | tee "$RUNNER_TEMP/validate.log"') && validate_lines.include?('set -o pipefail'),
+           'deploy-workflow-ci.yml infra-contract must run infra/scripts/validate.sh with pipefail and capture its log')
+check.call(validate_lines.include?('command -v ansible-playbook') && validate_lines.include?("! grep -q '^SKIP:' \"$RUNNER_TEMP/validate.log\""),
+           'deploy-workflow-ci.yml infra-contract must fail when ansible-playbook is missing or validate.sh skipped a contract')
+check.call(deploy_ci.dig('jobs', 'infra-contract', 'if').to_s.include?('pull_request') && deploy_ci.dig('concurrency', 'cancel-in-progress') == true,
+           'deploy-workflow-ci.yml must cancel superseded runs and avoid duplicate infra-contract runs on branch pushes')
 install = infra_steps.find { |step| step['name'] == 'Install pinned Ansible tooling' }
 check.call(!install.nil? && install['run'].include?("ansible-core==2.21.2") && install['run'].include?('>> "$GITHUB_PATH"'),
            'deploy-workflow-ci.yml infra-contract must install pinned ansible-core and put it on PATH before validate.sh')

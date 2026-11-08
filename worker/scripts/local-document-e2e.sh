@@ -687,6 +687,8 @@ async function main() {
   );
   requireMarker(typeof upload.uploadUrl === 'string' && upload.uploadUrl.length > 0, 'upload-contract');
   process.stdout.write('HTTP upload-url 201\n');
+  // Emitted early so failure diagnostics can scope their queries to this Document.
+  process.stdout.write(`DOCUMENT_ID ${upload.documentId}\n`);
 
   const form = new FormData();
   for (const [key, value] of Object.entries(upload.uploadFields)) form.set(key, String(value));
@@ -733,7 +735,6 @@ async function main() {
 
   if (!processing) throw new FlowFailure('document-timeout');
   // Stops once probing handed over to the full pipeline; STT, quiz and grading run in run_grade_flow.
-  process.stdout.write(`DOCUMENT_ID ${upload.documentId}\n`);
 }
 
 void main().catch((error) => {
@@ -1200,11 +1201,12 @@ NODE
 
 classify_pipeline_stage() {
   local stage
-  if ! stage=$(docker exec "$postgres_container" psql \
+  # Scoped to the current $document_id so a READY Document of an earlier case cannot mask a failed one.
+  if ! stage=$(docker exec -i "$postgres_container" psql \
     --no-psqlrc --tuples-only --no-align --quiet \
     --set=ON_ERROR_STOP=1 \
-    --username=learning --dbname=learning \
-    --command '
+    --set=document_id="$document_id" \
+    --username=learning --dbname=learning <<'SQL' 2>/dev/null
 WITH stages AS (
   SELECT CASE
     WHEN document.status = $stage$READY$stage$ THEN $marker$document-ready$marker$
@@ -1223,7 +1225,8 @@ WITH stages AS (
   LEFT JOIN course.outbox AS course_outbox ON course_outbox.aggregate_id = document.id
   LEFT JOIN ai.processing_jobs AS job ON job.document_id = document.id
   LEFT JOIN ai.outbox AS ai_outbox ON ai_outbox.aggregate_id = job.id
-  WHERE document.status IN ($stage$PROCESSING$stage$, $stage$READY$stage$, $stage$FAILED$stage$)
+  WHERE document.id = :'document_id'
+    AND document.status IN ($stage$PROCESSING$stage$, $stage$READY$stage$, $stage$FAILED$stage$)
   GROUP BY document.id, document.status
 ), ranked AS (
   SELECT marker, CASE marker
@@ -1244,7 +1247,8 @@ SELECT marker
 FROM ranked
 ORDER BY rank DESC, marker ASC
 LIMIT 1;
-' 2>/dev/null); then
+SQL
+  ); then
     printf 'unknown\n'
     return 0
   fi
@@ -1332,7 +1336,8 @@ verify_ledger_and_persistence() {
 SELECT concat_ws(E'\n',
   'LEDGER_ENTRIES reserve=' || COUNT(*) FILTER (WHERE ledger.entry_type = 'RESERVE')
     || ' settle=' || COUNT(*) FILTER (WHERE ledger.entry_type = 'SETTLE')
-    || ' release=' || COUNT(*) FILTER (WHERE ledger.entry_type = 'RELEASE'),
+    || ' release=' || COUNT(*) FILTER (WHERE ledger.entry_type = 'RELEASE')
+    || ' hold=' || COUNT(*) FILTER (WHERE ledger.entry_type = 'HOLD'),
   'QUIZ_COUNT ' || (SELECT COUNT(*) FROM quiz.quizzes WHERE document_id = :'document_id'),
   'MEDIA_PROBE_RESULT_COUNT ' || (SELECT COUNT(*) FROM ai.media_probe_results WHERE document_id = :'document_id')
 )
@@ -1352,7 +1357,7 @@ WHERE ledger.job_id = (
     return 1
   fi
   printf '%s\n' "$row"
-  [[ "$(printf '%s\n' "$row" | sed -n 1p)" == 'LEDGER_ENTRIES reserve=1 settle=1 release=1' ]] || return 1
+  [[ "$(printf '%s\n' "$row" | sed -n 1p)" == 'LEDGER_ENTRIES reserve=1 settle=1 release=1 hold=0' ]] || return 1
   [[ "$(printf '%s\n' "$row" | sed -n 2p)" == 'QUIZ_COUNT 1' ]] || return 1
   [[ "$(printf '%s\n' "$row" | sed -n 3p)" == 'MEDIA_PROBE_RESULT_COUNT 1' ]] || return 1
 }
@@ -1483,10 +1488,12 @@ fi
 # Uploads one media fixture and waits until the media probe handed the Document over to the full pipeline.
 # $1 is a short case label; the caller exports the LOCAL_DOCUMENT_E2E_* fixture variables.
 run_document_case() {
+  document_id=""
   document_flow_result="$temp_dir/document-flow-result-$1"
   document_flow_error="$temp_dir/document-flow-error-$1"
   if ! run_document_flow >"$document_flow_result" 2>"$document_flow_error"; then
     PHASE=document-flow-marker
+    document_id=$(awk '$1 == "DOCUMENT_ID" { print $2; exit }' "$document_flow_result")
     minio_state=$(docker inspect --format '{{.State.Status}}' "$minio_container" 2>/dev/null || printf 'unknown')
     printf 'MINIO_STATE %s\n' "$minio_state"
     docker logs "$minio_container" 2>&1 \
