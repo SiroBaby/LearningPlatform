@@ -425,6 +425,9 @@ describe('durable processing queue migration', () => {
       'ai.outbox|SELECT|aggregate_id,event_type',
     ];
 
+    // No application SECURITY DEFINER function exists today; any new one reachable by this role must be reviewed and listed here.
+    const EXPECTED_EXECUTABLE_SECURITY_DEFINER_FUNCTIONS: readonly string[] = [];
+
     async function expectPermissionDenied(statement: string): Promise<void> {
       await db.client.query(`SET ROLE ${MEDIA_PROBE_ROLE}`);
       try {
@@ -447,6 +450,36 @@ describe('durable processing queue migration', () => {
         [MEDIA_PROBE_ROLE, table],
       );
       expect(privileges.rows[0]?.hasPrivilege).toBe(false);
+    });
+
+    it('keeps the media probe role unprivileged: no memberships, no role attributes, no SECURITY DEFINER execute', async () => {
+      const memberships = await db.client.query<{ readonly roleName: string }>(
+        `SELECT granted.rolname AS "roleName"
+         FROM pg_auth_members membership
+         JOIN pg_roles granted ON granted.oid = membership.roleid
+         JOIN pg_roles member ON member.oid = membership.member
+         WHERE member.rolname = $1`,
+        [MEDIA_PROBE_ROLE],
+      );
+      expect(memberships.rows).toEqual([]);
+      const attributes = await db.client.query<Record<string, boolean>>(
+        `SELECT rolsuper, rolcreaterole, rolcreatedb, rolbypassrls FROM pg_roles WHERE rolname = $1`,
+        [MEDIA_PROBE_ROLE],
+      );
+      expect(attributes.rows).toEqual([
+        { rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolbypassrls: false },
+      ]);
+      const executable = await db.client.query<{ readonly signature: string }>(
+        `SELECT n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS "signature"
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE p.prosecdef
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND has_function_privilege($1, p.oid, 'EXECUTE')
+         ORDER BY 1`,
+        [MEDIA_PROBE_ROLE],
+      );
+      expect(executable.rows.map((row) => row.signature)).toEqual(EXPECTED_EXECUTABLE_SECURITY_DEFINER_FUNCTIONS);
     });
 
     it('grants the media probe role no table-level privilege and only the allowlisted column privileges', async () => {
