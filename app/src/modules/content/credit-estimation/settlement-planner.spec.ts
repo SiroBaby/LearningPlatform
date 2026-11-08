@@ -57,7 +57,11 @@ describe('planReservationSettlement', () => {
     const usage = { llm: [{ inputTokens: 1, model: 'unknown-model', outputTokens: 1 }], sttBilledSeconds: null, sttUncertainSeconds: null, uncertainDispatches: 0 };
 
     const notConfigured = planReservationSettlement({ ...baseInput, platformModelId: 'removed', usage });
-    const notPriced = planReservationSettlement({ ...baseInput, platformModels: [{ ...PLATFORM_MODEL, model: 'unknown-model' }], usage });
+    const notPriced = planReservationSettlement({
+      ...baseInput,
+      platformModels: [{ ...PLATFORM_MODEL, model: 'unknown-model' }],
+      usage: { ...usage, sttBilledSeconds: 5 },
+    });
 
     expect(notConfigured).toMatchObject({ settlement: { hasUncertainDispatch: true, knownActualCredits: 0 }, unpricedReason: 'platform_model_not_configured' });
     expect(notPriced).toMatchObject({ settlement: { hasUncertainDispatch: true, knownActualCredits: 0 }, unpricedReason: 'price_missing' });
