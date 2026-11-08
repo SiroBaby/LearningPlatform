@@ -142,6 +142,9 @@ printf '%s' '`+validFFProbeJSON+`'
 	if !strings.Contains(string(arguments), "-format_whitelist\n"+allowedFFProbeDemuxers+"\n") {
 		t.Fatalf("ffprobe arguments do not restrict demuxers:\n%s", arguments)
 	}
+	if !strings.Contains(string(arguments), "-protocol_whitelist\nfile\n") {
+		t.Fatalf("ffprobe arguments do not restrict protocols to file:\n%s", arguments)
+	}
 }
 
 // Uses a real ffprobe because the reference-following behaviour lives in its demuxers.

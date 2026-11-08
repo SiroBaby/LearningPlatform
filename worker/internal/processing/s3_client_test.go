@@ -2,9 +2,11 @@ package processing
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -65,4 +67,55 @@ func TestNewS3ReaderRejectsAmazonEndpointWithoutRegion(t *testing.T) {
 			t.Fatalf("NewS3Reader(%q) error = %v", endpoint, err)
 		}
 	}
+}
+
+// TestS3MediaReaderRejectsLocatorMismatch ensures ReadVersion trusts only the
+// exact object the probe recorded: a different VersionId, ETag or size is
+// refused before any byte is returned.
+func TestS3MediaReaderRejectsLocatorMismatch(t *testing.T) {
+	tests := []struct {
+		name          string
+		versionID     string
+		etag          string
+		contentLength string
+	}{
+		{name: "version id", versionID: "version-other", etag: `"etag-1"`, contentLength: "4"},
+		{name: "etag", versionID: "version-1", etag: `"etag-other"`, contentLength: "4"},
+		{name: "content length", versionID: "version-1", etag: `"etag-1"`, contentLength: "5"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("ETag", test.etag)
+				writer.Header().Set("Last-Modified", "Sun, 11 Oct 2026 00:00:00 GMT")
+				writer.Header().Set("X-Amz-Version-Id", test.versionID)
+				writer.Header().Set("Content-Length", test.contentLength)
+				_, _ = io.WriteString(writer, strings.Repeat("d", 5)[:mustAtoi(test.contentLength)])
+			}))
+			defer server.Close()
+			reader, err := NewS3ReaderWithMedia("http://s3.ap-southeast-1.amazonaws.com", "access", "secret", "document-bucket", "media-access", "media-secret", "media-bucket", server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			locator := ObjectLocator{Bucket: "media-bucket", Key: "uploads/a.mp4", VersionID: "version-1", ETag: "etag-1", ContentLength: 4}
+
+			data, err := reader.ReadVersion(context.Background(), locator, 16)
+
+			var failure Failure
+			if !errors.As(err, &failure) || failure.Code != ObjectNotFound {
+				t.Fatalf("ReadVersion() error = %v, want %s", err, ObjectNotFound)
+			}
+			if data != nil {
+				t.Fatalf("ReadVersion() data = %q, want none", data)
+			}
+		})
+	}
+}
+
+func mustAtoi(value string) int {
+	number, err := strconv.Atoi(value)
+	if err != nil {
+		panic(err)
+	}
+	return number
 }

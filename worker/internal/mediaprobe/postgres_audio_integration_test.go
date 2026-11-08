@@ -92,6 +92,49 @@ func TestPostgresStoreAudioChunksIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("a job reclaimed after lease expiry fences the old lease and completes once under the new one", func(t *testing.T) {
+		probe := database.seedProbe(t, ctx)
+		oldJob := database.claim(t, ctx, probe)
+		locator := probe.locator()
+		if persisted, err := database.store.PersistLocator(ctx, oldJob, locator); err != nil || !persisted {
+			t.Fatalf("PersistLocator() = (%t, %v)", persisted, err)
+		}
+		chunk := probe.audioChunk(oldJob, 0)
+		if _, err := database.store.SaveAudioChunk(ctx, oldJob, chunk); err != nil {
+			t.Fatalf("SaveAudioChunk() under the first lease error = %v", err)
+		}
+		database.exec(t, ctx, `UPDATE ai.media_probe_jobs SET lease_until = now() - interval '1 second' WHERE id = $1`, probe.jobID)
+
+		newJob := database.claim(t, ctx, probe)
+
+		if newJob.LeaseID == oldJob.LeaseID || newJob.Attempt != oldJob.Attempt+1 {
+			t.Fatalf("reclaimed lease/attempt = (%s, %d), want a new lease and attempt %d", newJob.LeaseID, newJob.Attempt, oldJob.Attempt+1)
+		}
+		if _, err := database.store.SaveAudioChunk(ctx, oldJob, probe.audioChunk(oldJob, 1)); !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("SaveAudioChunk() with the old lease error = %v, want ErrJobFenceLost", err)
+		}
+		result := ProbeResult{DurationSec: 600, Locator: locator, DecodedDurationMs: 600000, AudioChunkCount: 1}
+		if completed, err := database.store.Complete(ctx, oldJob, result); completed || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("Complete() with the old lease = (%t, %v), want (false, ErrJobFenceLost)", completed, err)
+		}
+		if count := database.count(t, ctx, `SELECT count(*) FROM ai.media_probe_results WHERE media_probe_job_id=$1`, probe.jobID); count != 0 {
+			t.Fatalf("media_probe_results rows = %d, want 0 after the fenced Complete", count)
+		}
+		loaded, err := database.store.LoadAudioChunks(ctx, newJob)
+		if err != nil || len(loaded) != 1 || loaded[0] != chunk {
+			t.Fatalf("LoadAudioChunks() under the new lease = (%#v, %v), want chunk 0 only", loaded, err)
+		}
+		if completed, err := database.store.Complete(ctx, newJob, result); !completed || err != nil {
+			t.Fatalf("Complete() with the new lease = (%t, %v), want (true, nil)", completed, err)
+		}
+		if completed, err := database.store.Complete(ctx, newJob, result); completed || !errors.Is(err, ErrJobFenceLost) {
+			t.Fatalf("second Complete() = (%t, %v), want (false, ErrJobFenceLost)", completed, err)
+		}
+		if count := database.count(t, ctx, `SELECT count(*) FROM ai.outbox WHERE aggregate_id=$1 AND event_type='DocumentProbeCompleted'`, probe.jobID); count != 1 {
+			t.Fatalf("DocumentProbeCompleted outbox rows = %d, want exactly 1", count)
+		}
+	})
+
 	t.Run("Complete records the decoded duration and publishes the manifest size", func(t *testing.T) {
 		probe := database.seedProbe(t, ctx)
 		job := database.claim(t, ctx, probe)
