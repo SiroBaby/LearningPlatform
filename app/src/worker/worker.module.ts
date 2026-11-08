@@ -6,6 +6,7 @@ import { TypeOrmConfigService } from '../database/typeorm-config.service';
 import { AiIngestionService } from '../modules/ai/ai-ingestion.service';
 import { ACCOUNT_ACCESS_REVOCATION } from '../modules/ai/contracts/account-access-revocation.port';
 import { AI_INGESTION } from '../modules/ai/contracts/ai-ingestion.port';
+import { PROCESSING_SETTLEMENT_FACTS } from '../modules/ai/contracts/processing-settlement-facts.port';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
 import { MediaProbeJobRepository } from '../modules/ai/repositories/media-probe-job.repository';
 import { ProcessingJobRepository } from '../modules/ai/repositories/processing-job.repository';
@@ -17,10 +18,13 @@ import { QuizGenerationHandoffService } from '../modules/assessment/quiz-generat
 import { QuizRepository } from '../modules/assessment/repositories/quiz.repository';
 import { DOCUMENT_STATUS_PROJECTION } from '../modules/content/contracts/document-status-projection.port';
 import { MediaCreditEstimator } from '../modules/content/credit-estimation/media-credit-estimator';
+import { CreditReconcilerService } from '../modules/content/credit-reconciler.service';
 import { DocumentStatusProjectionService } from '../modules/content/document-status-projection.service';
 import { ForwardRelay } from '../modules/content/forward-relay.service';
+import { CreditReconciliationRepository } from '../modules/content/repositories/credit-reconciliation.repository';
 import { ContentRepository } from '../modules/content/repositories/content.repository';
 import { CourseOutboxRepository } from '../modules/content/repositories/course-outbox.repository';
+import { CreditReconcilerRunner } from './credit-reconciler-runner.service';
 import { WorkerHealthServer } from './worker-health-server.service';
 import { WorkerRunner } from './worker-runner.service';
 import { ReturnRelay } from './return-relay.service';
@@ -43,6 +47,9 @@ import { AuthOutboxRepository } from '../modules/auth/repositories/auth-outbox.r
     MediaProbeJobRepository,
     ContentRepository,
     CourseOutboxRepository,
+    CreditReconcilerRunner,
+    CreditReconcilerService,
+    CreditReconciliationRepository,
     DocumentStatusProjectionService,
     ForwardRelay,
     MediaCreditEstimator,
@@ -54,6 +61,7 @@ import { AuthOutboxRepository } from '../modules/auth/repositories/auth-outbox.r
     WorkerRunner,
     { provide: ACCOUNT_ACCESS_REVOCATION, useExisting: ProcessingJobRepository },
     { provide: AI_INGESTION, useExisting: AiIngestionService },
+    { provide: PROCESSING_SETTLEMENT_FACTS, useExisting: ProcessingJobRepository },
     { provide: DOCUMENT_STATUS_PROJECTION, useExisting: DocumentStatusProjectionService },
     { provide: QUIZ_GENERATION_HANDOFF, useExisting: QuizGenerationHandoffService },
     { provide: QUIZ_PERSISTENCE, useExisting: QuizRepository },
