@@ -94,6 +94,10 @@ func TestPostgresStoreAudioChunksIntegration(t *testing.T) {
 
 	t.Run("a job reclaimed after lease expiry fences the old lease and completes once under the new one", func(t *testing.T) {
 		probe := database.seedProbe(t, ctx)
+		// A failure before Complete would leave a claimable RUNNING job; retire it so later subtests claim their own.
+		t.Cleanup(func() {
+			database.exec(t, ctx, `UPDATE ai.media_probe_jobs SET status = 'CANCELLED', lease_id = NULL, lease_until = NULL WHERE id = $1 AND status = 'RUNNING'`, probe.jobID)
+		})
 		oldJob := database.claim(t, ctx, probe)
 		locator := probe.locator()
 		if persisted, err := database.store.PersistLocator(ctx, oldJob, locator); err != nil || !persisted {

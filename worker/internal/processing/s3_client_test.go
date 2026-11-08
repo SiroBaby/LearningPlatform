@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -74,23 +73,27 @@ func TestNewS3ReaderRejectsAmazonEndpointWithoutRegion(t *testing.T) {
 // refused before any byte is returned.
 func TestS3MediaReaderRejectsLocatorMismatch(t *testing.T) {
 	tests := []struct {
-		name          string
-		versionID     string
-		etag          string
-		contentLength string
+		name      string
+		versionID string
+		etag      string
+		body      string
 	}{
-		{name: "version id", versionID: "version-other", etag: `"etag-1"`, contentLength: "4"},
-		{name: "etag", versionID: "version-1", etag: `"etag-other"`, contentLength: "4"},
-		{name: "content length", versionID: "version-1", etag: `"etag-1"`, contentLength: "5"},
+		{name: "version id", versionID: "version-other", etag: `"etag-1"`, body: "dddd"},
+		{name: "etag", versionID: "version-1", etag: `"etag-other"`, body: "dddd"},
+		{name: "content length", versionID: "version-1", etag: `"etag-1"`, body: "ddddd"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			var requests int
+			var requestsMutex sync.Mutex
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				requestsMutex.Lock()
+				requests++
+				requestsMutex.Unlock()
 				writer.Header().Set("ETag", test.etag)
 				writer.Header().Set("Last-Modified", "Sun, 11 Oct 2026 00:00:00 GMT")
 				writer.Header().Set("X-Amz-Version-Id", test.versionID)
-				writer.Header().Set("Content-Length", test.contentLength)
-				_, _ = io.WriteString(writer, strings.Repeat("d", 5)[:mustAtoi(test.contentLength)])
+				_, _ = io.WriteString(writer, test.body)
 			}))
 			defer server.Close()
 			reader, err := NewS3ReaderWithMedia("http://s3.ap-southeast-1.amazonaws.com", "access", "secret", "document-bucket", "media-access", "media-secret", "media-bucket", server.URL)
@@ -108,14 +111,11 @@ func TestS3MediaReaderRejectsLocatorMismatch(t *testing.T) {
 			if data != nil {
 				t.Fatalf("ReadVersion() data = %q, want none", data)
 			}
+			requestsMutex.Lock()
+			defer requestsMutex.Unlock()
+			if requests == 0 {
+				t.Fatal("ReadVersion() never reached S3; the mismatch was not exercised")
+			}
 		})
 	}
-}
-
-func mustAtoi(value string) int {
-	number, err := strconv.Atoi(value)
-	if err != nil {
-		panic(err)
-	}
-	return number
 }
