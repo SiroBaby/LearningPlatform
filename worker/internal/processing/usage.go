@@ -3,6 +3,7 @@ package processing
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -211,7 +212,10 @@ func (dispatch *llmDispatch) resolve(ctx context.Context, inputTokens, outputTok
 	}
 	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageOutcomeTimeout)
 	defer cancel()
-	_ = dispatch.session.recorder.RecordOutcome(outcomeCtx, dispatch.key, inputTokens, outputTokens, UsageAvailable)
+	if err := dispatch.session.recorder.RecordOutcome(outcomeCtx, dispatch.key, inputTokens, outputTokens, UsageAvailable); err != nil {
+		// No request key or error text: the row stays UNAVAILABLE and Node holds it; this only makes the gap visible.
+		slog.Warn("worker.usage.outcome_record_failed", "event", "worker.usage.outcome_record_failed", "job_id", dispatch.session.job.ID)
+	}
 }
 
 func (usage Usage) isEmpty() bool { return len(usage.LLM) == 0 && usage.UncertainDispatches == 0 }

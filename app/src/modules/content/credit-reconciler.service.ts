@@ -58,7 +58,6 @@ type MutableCounters = { -readonly [Key in keyof CreditReconcileReport]: CreditR
 const MAX_PAGES_PER_RUN = 20;
 const MILLISECONDS_PER_SECOND = 1000;
 const ACTIVE_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([JobStatus.PENDING, JobStatus.RUNNING]);
-const FINISHED_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([JobStatus.COMPLETED, JobStatus.FAILED]);
 
 /**
  * Settles reservations that no return result will ever settle (#275): a Document deleted or an account revoked
@@ -78,12 +77,15 @@ export class CreditReconcilerService {
 
   /** Runs one bounded reconciliation. Never throws: failures are logged and reported as `FAILED`. */
   async reconcileOnce(signal?: AbortSignal): Promise<CreditReconcileReport> {
-    const settings = this.config.creditReconciler;
-    const mode = settings.dryRun ? 'dry-run' : 'apply';
-    const counters = createCounters(mode);
     const startedAt = Date.now();
+    let mode: CreditReconcileReport['mode'] = 'dry-run';
+    let counters = createCounters(mode);
     let lock: Awaited<ReturnType<CreditReconciliationRepository['tryAcquireLock']>> = null;
     try {
+      // Read inside the try: invalid settings must be reported as FAILED, never thrown.
+      const settings = this.config.creditReconciler;
+      mode = settings.dryRun ? 'dry-run' : 'apply';
+      counters = createCounters(mode);
       lock = await this.repository.tryAcquireLock();
       if (!lock) {
         this.logger.log({ event: 'credit.reconcile.skipped', reason: 'LOCK_HELD', runtime: 'worker' });
@@ -188,7 +190,7 @@ export class CreditReconcilerService {
     if (facts.hasUnpublishedResult) return { kind: 'SKIP', reason: 'IN_FLIGHT' };
     const category = classifyReservation(document, facts, candidate.processingAttempt);
     if (!category) return { kind: 'SKIP', reason: 'LIVE' };
-    if (isJobLiveForAttempt(facts.job, category)) return { kind: 'SKIP', reason: 'LIVE' };
+    if (isJobLiveForAttempt(facts.job, category, candidate.processingAttempt)) return { kind: 'SKIP', reason: 'LIVE' };
     const referenceAt = resolveReferenceTime(context, facts, category);
     if (context.now.getTime() - referenceAt.getTime() < settings.orphanGraceMs) return { kind: 'SKIP', reason: 'LIVE' };
     const decision = this.decideSettlement(candidate, document, facts);
@@ -202,10 +204,18 @@ export class CreditReconcilerService {
   ): { readonly evidence: ReservationEvidence; readonly plan: DocumentSettlementPlan } {
     const platformModelId = document?.platformModelId ?? facts.job?.platformModelId ?? null;
     if (facts.latestPublishedResult) {
-      return { evidence: 'RESULT_PAYLOAD', plan: this.planFromResult(facts.latestPublishedResult.payload, platformModelId) };
+      // The payload carries only the Go queue attempt. With a newer Document attempt and no reserve boundary the
+      // result may belong to that newer attempt, so the spend of this one is unknown.
+      const isResultAttemptAmbiguous = (document?.processingAttempt ?? 0) > candidate.processingAttempt
+        && candidate.nextAttemptReservedAt === null;
+      return {
+        evidence: 'RESULT_PAYLOAD',
+        plan: isResultAttemptAmbiguous ? unknownSpendPlan() : this.planFromResult(facts.latestPublishedResult.payload, platformModelId),
+      };
     }
     const { job } = facts;
-    if (!job) return { evidence: 'NO_JOB', plan: noSpendPlan() };
+    // No job and no Document (legacy budget/quiz path) leaves nothing to prove zero spend: hold, auto-release follows.
+    if (!job) return { evidence: 'NO_JOB', plan: document ? noSpendPlan() : unknownSpendPlan() };
     if (job.processingAttempt === candidate.processingAttempt && job.attempts < candidate.processingAttempt) {
       return { evidence: 'NEVER_CLAIMED', plan: noSpendPlan() };
     }
@@ -231,7 +241,11 @@ export class CreditReconcilerService {
     job: SettlementJobFacts,
     platformModelId: string | null,
   ): DocumentSettlementPlan {
-    const { llmRecords, stt } = facts;
+    const { llmRecords } = facts;
+    const isAttemptKnown = job.processingAttempt === candidate.processingAttempt;
+    // Speech-to-text rows hang off the CURRENT job row's probe result, which after a re-arm belongs to a newer
+    // attempt: they only count when the row still describes this attempt.
+    const stt = isAttemptKnown ? facts.stt : { billedMs: 0, uncertainMs: 0 };
     const usage: DocumentProcessingUsage = {
       llm: llmRecords.usage,
       sttBilledSeconds: stt.billedMs > 0 ? Math.ceil(stt.billedMs / MILLISECONDS_PER_SECOND) : null,
@@ -239,12 +253,13 @@ export class CreditReconcilerService {
       uncertainDispatches: llmRecords.unavailableCount,
     };
     const hasAnyEvidence = llmRecords.usage.length > 0 || llmRecords.unavailableCount > 0 || stt.billedMs > 0 || stt.uncertainMs > 0;
-    const isAttemptUnknown = job.processingAttempt !== candidate.processingAttempt;
-    const isSttPossiblyInFlight = job.probeResultId !== null && !isAttemptUnknown && job.attempts >= candidate.processingAttempt
-      && job.status === JobStatus.CANCELLED;
+    const isClaimed = isAttemptKnown && job.attempts >= candidate.processingAttempt;
+    const isSttPossiblyInFlight = job.probeResultId !== null
+      && (!isAttemptKnown || (isClaimed && job.status === JobStatus.CANCELLED));
+    // A claimed job with no record at all may still have dispatched (cancelled or finished without a result).
     const isSpendUnknown = job.processingAttempt === null
-      || (isAttemptUnknown && !hasAnyEvidence)
-      || (!hasAnyEvidence && FINISHED_JOB_STATUSES.has(job.status))
+      || (!isAttemptKnown && !hasAnyEvidence)
+      || (isClaimed && !hasAnyEvidence)
       || isSttPossiblyInFlight;
     const planned = this.plan({ errorCode: null, platformModelId, status: DocumentStatus.READY, usage });
     return { ...planned, hasUncertainDispatch: planned.hasUncertainDispatch || isSpendUnknown };
@@ -378,6 +393,10 @@ function createCounters(mode: CreditReconcileReport['mode']): MutableCounters {
   };
 }
 
+function unknownSpendPlan(): DocumentSettlementPlan {
+  return { hasUncertainDispatch: true, knownActualCredits: 0 };
+}
+
 function noSpendPlan(): DocumentSettlementPlan {
   return { hasUncertainDispatch: false, knownActualCredits: 0 };
 }
@@ -402,8 +421,14 @@ function classifyReservation(
 }
 
 /** The queue row describes the newest attempt, so for a superseded attempt its status says nothing about this one. */
-function isJobLiveForAttempt(job: SettlementJobFacts | null, category: ReservationResolutionCategory): boolean {
-  return job !== null && category !== 'SUPERSEDED' && ACTIVE_JOB_STATUSES.has(job.status);
+function isJobLiveForAttempt(
+  job: SettlementJobFacts | null,
+  category: ReservationResolutionCategory,
+  processingAttempt: number,
+): boolean {
+  if (job === null || !ACTIVE_JOB_STATUSES.has(job.status)) return false;
+  // Defensive: an active row that is not provably a newer attempt may still be running this one.
+  return category !== 'SUPERSEDED' || job.processingAttempt === null || job.processingAttempt === processingAttempt;
 }
 
 function resolveReferenceTime(

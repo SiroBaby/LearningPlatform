@@ -17,7 +17,7 @@ import { createTestDataSource } from '../../test-support/test-data-source';
 import { startTestDb, TestDb } from '../../test-support/test-db';
 import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
-import type { CreditReconcilerService } from './credit-reconciler.service';
+import { CreditReconcilerService } from './credit-reconciler.service';
 import { DocumentStatus } from './enums/document-status.enum';
 import { DocumentType } from './enums/document-type.enum';
 import { ProcessingJobRepository } from '../ai/repositories/processing-job.repository';
@@ -351,9 +351,88 @@ describe('CreditReconcilerService', () => {
 
       await reconcilerWith().reconcileOnce();
 
-      // Claimed but no provider record exists, so nothing was spent: released, and the Document stays PROCESSING.
-      await expectLedger(run, { release: 1000, reserve: 1000, settle: 0 });
-      expect(await fixture.readDocument(run.document.id)).toMatchObject({ budget_status: 'SETTLED', status: 'PROCESSING' });
+      // Claimed with no provider record: a dispatch may have been in flight, so it is held, and the Document stays PROCESSING.
+      await expectLedger(run, { hold: 1000, release: 0, reserve: 1000, settle: 0 });
+      expect(await fixture.readDocument(run.document.id)).toMatchObject({ budget_status: 'HELD', status: 'PROCESSING' });
+    });
+
+    it('holds a text job cancelled after it was claimed when no usage record exists', async () => {
+      const run = await fixture.seedRun();
+      await markDeleting(run);
+      await fixture.seedJob(run, { attempts: 2, cancelled: true });
+      await fixture.age(run, 60);
+
+      await reconcilerWith().reconcileOnce();
+
+      await expectLedger(run, { hold: 1000, release: 0, reserve: 1000, settle: 0 });
+    });
+
+    it('ignores the speech-to-text of a re-armed job row and holds the older attempt of a media Document', async () => {
+      const run = await fixture.seedRun({ type: DocumentType.VIDEO });
+      await fixture.seedResult(run, { isPublished: true, payload: { status: 'FAILED', errorCode: DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE } });
+      await db.client.query('DELETE FROM "ai"."outbox" WHERE "aggregate_id" = $1', [run.jobId]);
+      const probeResultId = await fixture.seedSttCheckpoint(run, { billedMs: 10_000, uncertainMs: 0 });
+      await fixture.seedJob(run, { probeResultId, status: 'FAILED' });
+      await fixture.age(run, 120);
+      // Retry: attempt 3 reserved, the row re-armed and finished; its checkpoints belong to attempt 3.
+      await fixture.seedReserve(run.ownerId, run.jobId, 3);
+      await db.client.query('UPDATE "course"."documents" SET "processing_attempt" = 3 WHERE "id" = $1', [run.document.id]);
+      await db.client.query('UPDATE "ai"."processing_jobs" SET "processing_attempt" = 3, "attempts" = 3 WHERE "id" = $1', [run.jobId]);
+
+      await reconcilerWith().reconcileOnce();
+
+      const actualLedger = await fixture.readLedger(run.jobId);
+      expect(actualLedger[`settle:${run.jobId}:2`]).toBe('0');
+      expect(actualLedger[`hold:${run.jobId}:2`]).toBe('1000');
+      expect(actualLedger[`release:${run.jobId}:2`]).toBe('0');
+    });
+
+    it('holds when a result exists but a newer Document attempt has no reserve boundary', async () => {
+      const run = await fixture.seedRun({ documentStatus: DocumentStatus.READY });
+      await fixture.seedJob(run, { status: 'COMPLETED' });
+      await fixture.seedResult(run, {
+        isPublished: true,
+        payload: { usage: { llm: [{ inputTokens: 300, model: 'gpt-5.4-mini', outputTokens: 50 }], uncertainDispatches: 0 } },
+      });
+      await fixture.age(run, 60);
+      await db.client.query('UPDATE "course"."documents" SET "processing_attempt" = 3 WHERE "id" = $1', [run.document.id]);
+
+      await reconcilerWith().reconcileOnce();
+
+      await expectLedger(run, { hold: 1000, release: 0, reserve: 1000, settle: 0 });
+    });
+
+    it('treats an active job that may still be running the attempt as live even when the Document moved on', async () => {
+      const run = await fixture.seedRun();
+      await fixture.seedJob(run, { status: 'RUNNING' });
+      await fixture.age(run, 120);
+      await fixture.seedReserve(run.ownerId, run.jobId, 3);
+      await db.client.query('UPDATE "course"."documents" SET "processing_attempt" = 3 WHERE "id" = $1', [run.document.id]);
+
+      const actualReport = await reconcilerWith().reconcileOnce();
+
+      expect(actualReport).toMatchObject({ settledCount: 0 });
+      expect(await fixture.readLedger(run.jobId)).not.toHaveProperty(`settle:${run.jobId}:2`);
+    });
+
+    it('holds a legacy reservation that has neither a Document nor a job', async () => {
+      const run = await fixture.seedRun();
+      await fixture.age(run, 60);
+      await db.client.query('DELETE FROM "course"."documents" WHERE "id" = $1', [run.document.id]);
+
+      await reconcilerWith().reconcileOnce();
+
+      await expectLedger(run, { hold: 1000, release: 0, reserve: 1000, settle: 0 });
+    });
+
+    it('reports FAILED instead of throwing when the settings are invalid', async () => {
+      const service = new CreditReconcilerService(
+        new CreditReconciliationRepository(ds, new ProcessingJobRepository(ds)),
+        { get creditReconciler(): never { throw new Error('invalid settings'); } } as never,
+        new MediaCreditEstimator(),
+      );
+
+      await expect(service.reconcileOnce()).resolves.toMatchObject({ outcome: 'FAILED' });
     });
 
     it('computes and logs the decision but writes nothing on a dry run', async () => {

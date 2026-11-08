@@ -186,8 +186,11 @@ alert đọc trực tiếp log `credit.reconcile.completed`.
 
 - Khoản giữ chỗ mồ côi nhưng Go ghi kết quả muộn: ledger giữ quyết định của
   reconciler; relay chỉ ghi warn `content.settlement.after_reconcile`.
-- Purge có thể xóa bằng chứng STT trước khi reconciler đọc: khi đó khoản giữ chỗ bị
-  HOLD (an toàn), rồi tự trả sau 24 giờ.
+- Purge Document không xóa hàng `ai.*` nào (khóa ngoại RESTRICT từ `processing_jobs`),
+  nên bằng chứng STT và usage vẫn còn khi reconciler đọc.
+- Bằng chứng STT gắn với `probe_result_id` của hàng job hiện tại; sau retry nó thuộc
+  attempt mới, nên với attempt cũ reconciler bỏ STT và luôn HOLD cho job media.
+- Khoản mồ côi không có Document lẫn job (đường budget/quiz cũ) được HOLD, rồi tự trả sau 24 giờ.
 - Dòng `ai.provider_usage_records` với `request_key LIKE 'go-llm:%'` chỉ có khi Go
   worker mới (ghi bản ghi trước mỗi lần gọi LLM) đã chạy attempt đó. Job cũ chưa
   có `processing_attempt` luôn bị HOLD.

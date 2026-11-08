@@ -173,7 +173,7 @@ CREDIT_RECONCILER_ALERT_RULES = {
   },
   'CreditOrphanReservationsAbnormal' => {
     'severity' => 'warning',
-    'expr' => '(sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json releasedCount="message.releasedCount" | __error__="" | unwrap releasedCount [1h])) + sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json heldCount="message.heldCount" | __error__="" | unwrap heldCount [1h]))) > 10'
+    'expr' => '(sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json releasedCount="message.releasedCount", mode="message.mode" | __error__="" | mode="apply" | unwrap releasedCount [1h])) + sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json heldCount="message.heldCount", mode="message.mode" | __error__="" | mode="apply" | unwrap heldCount [1h]))) > 10'
   },
   'CreditReconcileStale' => {
     'severity' => 'warning',
