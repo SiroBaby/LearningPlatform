@@ -590,9 +590,9 @@ const inputPath = process.env.LOCAL_DOCUMENT_E2E_INPUT_PATH;
 const input = inputPath
   ? fs.readFileSync(inputPath)
   : Buffer.alloc(0);
-const inputType = 'AUDIO';
-const originalName = 'document-e2e.mp3';
-const contentType = 'audio/mpeg';
+const inputType = process.env.LOCAL_DOCUMENT_E2E_INPUT_TYPE || 'AUDIO';
+const originalName = process.env.LOCAL_DOCUMENT_E2E_ORIGINAL_NAME || 'document-e2e.mp3';
+const contentType = process.env.LOCAL_DOCUMENT_E2E_CONTENT_TYPE || 'audio/mpeg';
 const requestTimeoutMs = 10_000;
 const pollDeadlineMs = 120_000;
 const pollIntervalMs = 1_000;
@@ -1322,6 +1322,53 @@ LIMIT 1;
   return 1
 }
 
+# Asserts the credit ledger and persistence invariants of one finished Document (#164): exactly one RESERVE, one
+# SETTLE and one RELEASE row for the Document's FULL_PIPELINE job, one quiz and one media probe result. SQL goes through
+# stdin so psql expands :'var' references. The wallet is shared by every Document of the owner, so reserved credits are
+# asserted once by verify_wallet_has_no_reserved_credits after all Documents finished.
+verify_ledger_and_persistence() {
+  local row
+  if ! row=$(printf '%s\n' "
+SELECT concat_ws(E'\n',
+  'LEDGER_ENTRIES reserve=' || COUNT(*) FILTER (WHERE ledger.entry_type = 'RESERVE')
+    || ' settle=' || COUNT(*) FILTER (WHERE ledger.entry_type = 'SETTLE')
+    || ' release=' || COUNT(*) FILTER (WHERE ledger.entry_type = 'RELEASE'),
+  'QUIZ_COUNT ' || (SELECT COUNT(*) FROM quiz.quizzes WHERE document_id = :'document_id'),
+  'MEDIA_PROBE_RESULT_COUNT ' || (SELECT COUNT(*) FROM ai.media_probe_results WHERE document_id = :'document_id')
+)
+FROM course.credit_ledger_entries AS ledger
+WHERE ledger.job_id = (
+  SELECT id FROM ai.processing_jobs
+  WHERE document_id = :'document_id' AND job_type = 'FULL_PIPELINE'
+  ORDER BY created_at DESC LIMIT 1
+);
+" | docker exec -i "$postgres_container" psql \
+      --no-psqlrc --tuples-only --no-align --quiet \
+      --pset=footer=off \
+      --set=ON_ERROR_STOP=1 \
+      --set=document_id="$document_id" \
+      --username=learning --dbname=learning 2>/dev/null); then
+    printf 'LEDGER_EVIDENCE unavailable\n'
+    return 1
+  fi
+  printf '%s\n' "$row"
+  [[ "$(printf '%s\n' "$row" | sed -n 1p)" == 'LEDGER_ENTRIES reserve=1 settle=1 release=1' ]] || return 1
+  [[ "$(printf '%s\n' "$row" | sed -n 2p)" == 'QUIZ_COUNT 1' ]] || return 1
+  [[ "$(printf '%s\n' "$row" | sed -n 3p)" == 'MEDIA_PROBE_RESULT_COUNT 1' ]] || return 1
+}
+
+verify_wallet_has_no_reserved_credits() {
+  local reserved
+  reserved=$(printf '%s\n' "SELECT COALESCE((SELECT reserved_credits FROM course.owner_credit_wallets WHERE owner_id = :'owner_id'), -1);" \
+    | docker exec -i "$postgres_container" psql \
+      --no-psqlrc --tuples-only --no-align --quiet \
+      --set=ON_ERROR_STOP=1 \
+      --set=owner_id="$auth_owner_id" \
+      --username=learning --dbname=learning 2>/dev/null) || reserved=unavailable
+  printf 'RESERVED_CREDITS %s\n' "$reserved"
+  [[ "$reserved" == 0 ]]
+}
+
 emit_phase build-app
 npm --prefix "$root/app" run build >/dev/null 2>&1
 emit_phase build-go
@@ -1389,6 +1436,14 @@ ffmpeg -hide_banner -loglevel error \
   -f lavfi -i sine=frequency=1000:duration=30 \
   -c:a libmp3lame -q:a 9 \
   "$temp_dir/document-e2e.mp3" >/dev/null 2>&1
+# H.264 Main 8-bit yuv420p + AAC-LC in MP4 (#164), the encodings the media policy accepts for VIDEO input. Keep a preset
+# above ultrafast: ultrafast silently drops to "Constrained Baseline", which the policy rejects.
+ffmpeg -hide_banner -loglevel error \
+  -f lavfi -i testsrc=size=320x240:rate=15:duration=30 \
+  -f lavfi -i sine=frequency=1000:duration=30 \
+  -c:v libx264 -profile:v main -pix_fmt yuv420p -preset veryfast -g 30 \
+  -c:a aac -profile:a aac_low -b:a 64k -ac 1 -shortest -movflags +faststart \
+  "$temp_dir/document-e2e.mp4" >/dev/null 2>&1
 export LOCAL_DOCUMENT_E2E_INPUT_PATH="$temp_dir/document-e2e.mp3"
 
 emit_phase storage-round-trip
@@ -1425,54 +1480,120 @@ else
   wait_for_process_http wait-media-probe-ready "http://127.0.0.1:${media_probe_health_port}/readyz" "$media_probe_pid"
 fi
 
-emit_phase document-flow
-document_flow_result="$temp_dir/document-flow-result"
-document_flow_error="$temp_dir/document-flow-error"
-if ! run_document_flow >"$document_flow_result" 2>"$document_flow_error"; then
-  PHASE=document-flow-marker
-  minio_state=$(docker inspect --format '{{.State.Status}}' "$minio_container" 2>/dev/null || printf 'unknown')
-  printf 'MINIO_STATE %s\n' "$minio_state"
-  docker logs "$minio_container" 2>&1 \
-    | rg -o 'SignatureDoesNotMatch|AccessDenied|InvalidRequest|IncompleteBody|EntityTooLarge|InvalidBucketName|ConnectionClosed|write tcp' \
-    | sort | uniq -c | awk '{ print "MINIO_SIGNAL " $2 " count=" $1 }' || true
-  rg '^NETWORK_ERROR phase=(presigned-upload|upload-url|uploaded-status|confirm|document-status) category=[a-z-]+ error=[A-Za-z]+ code=[A-Z0-9_]+ causeCode=[A-Z0-9_]+' "$document_flow_result" || true
-  document_flow_marker=$(tail -n 1 "$document_flow_result")
-  case "$document_flow_marker" in
-    upload-url|presigned-upload|uploaded-status|confirm|document-failed|document-timeout|document-status|document-quiz|quiz-endpoint|attempt-submit|attempt-result|grade-contract|grade-persisted|citation-locator|network|upload-contract|confirm-missing|confirm-uploaded|confirm-probing|confirm-ready|confirm-failed|confirm-processing-unexpected|confirm-unknown|ready-status|processing-status|document-quiz-contract|question-count|quiz-contract|quiz-learner-projection|unknown)
-      printf 'DOCUMENT_FLOW_MARKER %s\n' "$document_flow_marker"
-      ;;
-    *)
-      printf 'DOCUMENT_FLOW_MARKER unknown\n'
-      ;;
-  esac
-  pipeline_stage=$(classify_pipeline_stage)
-  printf 'PIPELINE_STAGE %s\n' "$pipeline_stage"
-  document_failure_code=$(read_document_failure_code)
-  case "$document_failure_code" in
-    [A-Z_]*|NONE|UNKNOWN)
-      printf 'DOCUMENT_FAILURE_CODE %s\n' "$document_failure_code"
-      ;;
-    *)
-      printf 'DOCUMENT_FAILURE_CODE UNKNOWN\n'
-      ;;
-  esac
-  if [[ "$pipeline_stage" == return-pending ]]; then
-    return_relay_stage=$(read_return_relay_stage "$relay_log")
-    case "$return_relay_stage" in
-      outbox-read|parse|quiz-persist|document-project|outbox-publish)
-        printf 'RETURN_RELAY_STAGE %s\n' "$return_relay_stage"
+# Uploads one media fixture and waits until the media probe handed the Document over to the full pipeline.
+# $1 is a short case label; the caller exports the LOCAL_DOCUMENT_E2E_* fixture variables.
+run_document_case() {
+  document_flow_result="$temp_dir/document-flow-result-$1"
+  document_flow_error="$temp_dir/document-flow-error-$1"
+  if ! run_document_flow >"$document_flow_result" 2>"$document_flow_error"; then
+    PHASE=document-flow-marker
+    minio_state=$(docker inspect --format '{{.State.Status}}' "$minio_container" 2>/dev/null || printf 'unknown')
+    printf 'MINIO_STATE %s\n' "$minio_state"
+    docker logs "$minio_container" 2>&1 \
+      | rg -o 'SignatureDoesNotMatch|AccessDenied|InvalidRequest|IncompleteBody|EntityTooLarge|InvalidBucketName|ConnectionClosed|write tcp' \
+      | sort | uniq -c | awk '{ print "MINIO_SIGNAL " $2 " count=" $1 }' || true
+    rg '^NETWORK_ERROR phase=(presigned-upload|upload-url|uploaded-status|confirm|document-status) category=[a-z-]+ error=[A-Za-z]+ code=[A-Z0-9_]+ causeCode=[A-Z0-9_]+' "$document_flow_result" || true
+    document_flow_marker=$(tail -n 1 "$document_flow_result")
+    case "$document_flow_marker" in
+      upload-url|presigned-upload|uploaded-status|confirm|document-failed|document-timeout|document-status|document-quiz|quiz-endpoint|attempt-submit|attempt-result|grade-contract|grade-persisted|citation-locator|network|upload-contract|confirm-missing|confirm-uploaded|confirm-probing|confirm-ready|confirm-failed|confirm-processing-unexpected|confirm-unknown|ready-status|processing-status|document-quiz-contract|question-count|quiz-contract|quiz-learner-projection|unknown)
+        printf 'DOCUMENT_FLOW_MARKER %s\n' "$document_flow_marker"
         ;;
       *)
-        printf 'RETURN_RELAY_STAGE unknown\n'
+        printf 'DOCUMENT_FLOW_MARKER unknown\n'
         ;;
     esac
+    pipeline_stage=$(classify_pipeline_stage)
+    printf 'PIPELINE_STAGE %s\n' "$pipeline_stage"
+    document_failure_code=$(read_document_failure_code)
+    case "$document_failure_code" in
+      [A-Z_]*|NONE|UNKNOWN)
+        printf 'DOCUMENT_FAILURE_CODE %s\n' "$document_failure_code"
+        ;;
+      *)
+        printf 'DOCUMENT_FAILURE_CODE UNKNOWN\n'
+        ;;
+    esac
+    if [[ "$pipeline_stage" == return-pending ]]; then
+      return_relay_stage=$(read_return_relay_stage "$relay_log")
+      case "$return_relay_stage" in
+        outbox-read|parse|quiz-persist|document-project|outbox-publish)
+          printf 'RETURN_RELAY_STAGE %s\n' "$return_relay_stage"
+          ;;
+        *)
+          printf 'RETURN_RELAY_STAGE unknown\n'
+          ;;
+      esac
+    fi
+    false
   fi
-  false
-fi
-document_id=$(awk '$1 == "DOCUMENT_ID" { print $2; exit }' "$document_flow_result")
-[[ "$document_id" =~ ^[0-9a-fA-F-]{36}$ ]] || exit 1
-emit_phase verify-media-probe-flow
-verify_media_probe_flow
+  document_id=$(awk '$1 == "DOCUMENT_ID" { print $2; exit }' "$document_flow_result")
+  [[ "$document_id" =~ ^[0-9a-fA-F-]{36}$ ]] || exit 1
+}
+
+# Runs STT-backed quiz, attempt and grade checks for the current $document_id, then the ledger invariants.
+run_grade_case() {
+  grade_flow_result="$temp_dir/grade-flow-result-$1"
+  if ! run_grade_flow >"$grade_flow_result" 2>/dev/null; then
+    PHASE=grade-flow-marker
+    grade_flow_marker=$(tail -n 1 "$grade_flow_result")
+    case "$grade_flow_marker" in
+      document-failed|document-timeout|document-status|document-quiz|document-quiz-contract|quiz-endpoint|quiz-contract|attempt-submit|attempt-result|grade-contract|grade-persisted|citation-locator|network|unknown)
+        printf 'GRADE_FLOW_MARKER %s\n' "$grade_flow_marker"
+        ;;
+      *)
+        printf 'GRADE_FLOW_MARKER unknown\n'
+        ;;
+    esac
+    stt_reject_reason=$(tr -d '[:space:]' <"$stt_reject_file" 2>/dev/null || true)
+    case "$stt_reject_reason" in
+      method|path|auth|multipart|model|format|language|file|size)
+        printf 'FAKE_STT_REJECT %s\n' "$stt_reject_reason"
+        ;;
+      *)
+        printf 'FAKE_STT_REJECT none\n'
+        ;;
+    esac
+    printf 'PIPELINE_STAGE %s\n' "$(classify_pipeline_stage)"
+    document_failure_code=$(read_document_failure_code)
+    case "$document_failure_code" in
+      [A-Z_]*|NONE|UNKNOWN)
+        printf 'DOCUMENT_FAILURE_CODE %s\n' "$document_failure_code"
+        ;;
+      *)
+        printf 'DOCUMENT_FAILURE_CODE UNKNOWN\n'
+        ;;
+    esac
+    false
+  fi
+  cat "$grade_flow_result"
+  emit_phase verify-ledger
+  verify_ledger_and_persistence
+}
+
+emit_phase document-flow
+media_case_labels=(audio video)
+media_case_document_ids=()
+for media_case in "${media_case_labels[@]}"; do
+  case "$media_case" in
+    audio)
+      export LOCAL_DOCUMENT_E2E_INPUT_PATH="$temp_dir/document-e2e.mp3"
+      export LOCAL_DOCUMENT_E2E_INPUT_TYPE=AUDIO
+      export LOCAL_DOCUMENT_E2E_ORIGINAL_NAME=document-e2e.mp3
+      export LOCAL_DOCUMENT_E2E_CONTENT_TYPE=audio/mpeg
+      ;;
+    video)
+      export LOCAL_DOCUMENT_E2E_INPUT_PATH="$temp_dir/document-e2e.mp4"
+      export LOCAL_DOCUMENT_E2E_INPUT_TYPE=VIDEO
+      export LOCAL_DOCUMENT_E2E_ORIGINAL_NAME=document-e2e.mp4
+      export LOCAL_DOCUMENT_E2E_CONTENT_TYPE=video/mp4
+      ;;
+  esac
+  emit_phase "document-flow-$media_case"
+  run_document_case "$media_case"
+  emit_phase "verify-media-probe-flow-$media_case"
+  verify_media_probe_flow
+  media_case_document_ids+=("$document_id")
+done
 
 emit_phase start-fake-stt
 start_fake_stt_server
@@ -1494,43 +1615,18 @@ start_go_worker
 emit_phase wait-go-ready
 wait_for_process_http wait-go-ready "http://127.0.0.1:${go_health_port}/readyz" "$go_pid"
 emit_phase grade-flow
-grade_flow_result="$temp_dir/grade-flow-result"
-if ! run_grade_flow >"$grade_flow_result" 2>/dev/null; then
-  PHASE=grade-flow-marker
-  grade_flow_marker=$(tail -n 1 "$grade_flow_result")
-  case "$grade_flow_marker" in
-    document-failed|document-timeout|document-status|document-quiz|document-quiz-contract|quiz-endpoint|quiz-contract|attempt-submit|attempt-result|grade-contract|grade-persisted|citation-locator|network|unknown)
-      printf 'GRADE_FLOW_MARKER %s\n' "$grade_flow_marker"
-      ;;
-    *)
-      printf 'GRADE_FLOW_MARKER unknown\n'
-      ;;
-  esac
-  stt_reject_reason=$(tr -d '[:space:]' <"$stt_reject_file" 2>/dev/null || true)
-  case "$stt_reject_reason" in
-    method|path|auth|multipart|model|format|language|file|size)
-      printf 'FAKE_STT_REJECT %s\n' "$stt_reject_reason"
-      ;;
-    *)
-      printf 'FAKE_STT_REJECT none\n'
-      ;;
-  esac
-  printf 'PIPELINE_STAGE %s\n' "$(classify_pipeline_stage)"
-  document_failure_code=$(read_document_failure_code)
-  case "$document_failure_code" in
-    [A-Z_]*|NONE|UNKNOWN)
-      printf 'DOCUMENT_FAILURE_CODE %s\n' "$document_failure_code"
-      ;;
-    *)
-      printf 'DOCUMENT_FAILURE_CODE UNKNOWN\n'
-      ;;
-  esac
-  false
-fi
-cat "$grade_flow_result"
+for index in "${!media_case_labels[@]}"; do
+  media_case=${media_case_labels[$index]}
+  document_id=${media_case_document_ids[$index]}
+  emit_phase "grade-flow-$media_case"
+  printf 'MEDIA_CASE %s\n' "$media_case"
+  run_grade_case "$media_case"
+done
+emit_phase verify-wallet
+verify_wallet_has_no_reserved_credits
 emit_phase verify-fake-stt-requests
 stt_request_count=$(tr -d '[:space:]' <"$stt_request_count_file")
-if [[ ! "$stt_request_count" =~ ^[0-9]+$ ]] || (( stt_request_count < 1 )); then
+if [[ ! "$stt_request_count" =~ ^[0-9]+$ ]] || (( stt_request_count < ${#media_case_labels[@]} )); then
   false
 fi
 printf 'STT_REQUEST_COUNT %s\n' "$stt_request_count"

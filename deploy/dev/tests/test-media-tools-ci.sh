@@ -152,6 +152,19 @@ end
 suite = deploy_ci.dig('jobs', 'contract', 'steps').find { |step| step['name'] == 'Run remaining deploy/dev regression tests' }
 check.call(!suite.nil? && suite['run'].lines.map(&:strip).include?('deploy/dev/tests/test-media-tools-ci.sh \\'),
            'deploy-workflow-ci.yml must run this media tools contract')
+# Infra contracts (validate.sh, including the media-probe contract playbook) must gate pull requests, not only the
+# post-merge infra-quality job, and must run with ansible-playbook on PATH so the playbook contracts are not skipped.
+%w[pull_request push].each do |event|
+  check.call(deploy_triggers.dig(event, 'paths').include?('infra/**'), "deploy-workflow-ci.yml must run on #{event} changing infra/**")
+end
+infra_steps = deploy_ci.dig('jobs', 'infra-contract', 'steps') || []
+infra_commands = infra_steps.map { |step| step['run'].to_s }
+check.call(infra_commands.last.strip == 'bash infra/scripts/validate.sh', 'deploy-workflow-ci.yml infra-contract must run infra/scripts/validate.sh')
+install = infra_steps.find { |step| step['name'] == 'Install pinned Ansible tooling' }
+check.call(!install.nil? && install['run'].include?("ansible-core==2.21.2") && install['run'].include?('>> "$GITHUB_PATH"'),
+           'deploy-workflow-ci.yml infra-contract must install pinned ansible-core and put it on PATH before validate.sh')
+check.call(infra_steps.index(install) < infra_steps.index { |step| step['run'].to_s.include?('validate.sh') },
+           'deploy-workflow-ci.yml infra-contract must install Ansible before validate.sh')
 %w[web-quality.yml deploy-workflow-ci.yml].each do |name|
   uses = load.call(name).fetch('jobs').values.flat_map { |job| job.fetch('steps', []) }.map { |step| step['uses'] }.compact
   check.call(uses.all? { |ref| ref.match?(/@[0-9a-f]{40}\z/) }, "#{name} actions must be pinned to immutable SHAs")
