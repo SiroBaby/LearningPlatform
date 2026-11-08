@@ -5,18 +5,14 @@ on:
     paths:
       - .github/workflows/**
       - deploy/dev/**
-      - infra/ansible/playbooks/site.yml
-      - infra/ansible/roles/k3s/templates/nginx-learning-platform.conf.j2
-      - infra/k8s/apps.yaml.j2
+      - infra/**
       - worker/Dockerfile
       - worker/scripts/install-media-tools.sh
   push:
     paths:
       - .github/workflows/**
       - deploy/dev/**
-      - infra/ansible/playbooks/site.yml
-      - infra/ansible/roles/k3s/templates/nginx-learning-platform.conf.j2
-      - infra/k8s/apps.yaml.j2
+      - infra/**
       - worker/Dockerfile
       - worker/scripts/install-media-tools.sh
 
@@ -58,3 +54,20 @@ jobs:
             bash "$test_script"
           done
           python3 deploy/dev/tests/test-ghcr-cleanup-execution.py
+
+  infra-contract:
+    name: Infrastructure source contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      # Same pinned toolchain as the deploy job: validate.sh only runs its Ansible playbook contracts when
+      # ansible-playbook is on PATH, so without this step the gate would silently skip them.
+      - name: Install pinned Ansible tooling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ansible-venv"
+          "$RUNNER_TEMP/ansible-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir 'ansible-core==2.21.2'
+          "$RUNNER_TEMP/ansible-venv/bin/ansible-galaxy" collection install -r infra/ansible/requirements.yml
+          echo "$RUNNER_TEMP/ansible-venv/bin" >> "$GITHUB_PATH"
+      - name: Validate infrastructure source contract
+        run: bash infra/scripts/validate.sh
