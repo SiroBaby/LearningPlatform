@@ -16,6 +16,7 @@ import { DocumentStatus } from '../modules/content/enums/document-status.enum';
 import { DocumentType } from '../modules/content/enums/document-type.enum';
 import { ContentRepository } from '../modules/content/repositories/content.repository';
 import { createTestDataSource } from '../test-support/test-data-source';
+import { runWithBlockedDocumentRow } from '../test-support/block-document-row';
 import { startTestDb, TestDb } from '../test-support/test-db';
 import { clearDocumentFlowData } from '../../test/support/test-database-cleanup';
 import { ReturnRelay } from './return-relay.service';
@@ -465,8 +466,11 @@ describe('ReturnRelay credit settlement (#160 D7)', () => {
     // (worker/internal/processing/postgres.go:248,355,395). deleteOwnedDocument sets that marker, so a job running
     // during deletion is FENCED and emits NO ai.outbox result. No Node path settles the RESERVE row in that case
     // (cancelAiWork only cancels jobs; the return seam only settles when a result arrives), so `reserved_credits`
-    // stays locked. Enable once #275's reconciler exists and assert reserved_credits === 0 with one RELEASE (or HELD).
-    it.todo('releases or holds the reservation when the Document is deleted and the fenced Go job never emits a result (#275)');
+    // stays locked. The same orphan applies more broadly: (a) the job is PENDING and was never claimed, (b) RESERVE
+    // happened at completeProbe/completeExtraction but FULL_PIPELINE was not yet forwarded (cancellation placeholder
+    // occupies the slot), and possibly (c) account revocation, which fences the job the same way.
+    // Enable once #275's reconciler exists and assert reserved_credits === 0 with one RELEASE (or HELD).
+    it.todo('releases or holds the reservation of a deleted Document whose Go job never emits a result: running-fenced, PENDING-never-claimed, or RESERVE-before-forward placeholder (and possibly account revocation) (#275)');
   });
 
   describe('concurrent relays (#164)', () => {
@@ -480,7 +484,14 @@ describe('ReturnRelay credit settlement (#160 D7)', () => {
       const events = [await seedResult(run, payload), await seedResult(run, payload)];
       const otherRelay = createRelay();
 
-      await expect(Promise.all([relay.pump(10), otherRelay.pump(10)])).resolves.toBeDefined();
+      const results = await runWithBlockedDocumentRow({
+        db,
+        documentId: run.document.id,
+        minimumWaiters: 2,
+        start: () => [relay.pump(10), otherRelay.pump(10)],
+      });
+
+      expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
 
       expect(await readLedger(run.jobId)).toEqual({
         [key('reserve', run.jobId)]: '1000',

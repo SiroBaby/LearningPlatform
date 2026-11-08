@@ -39,6 +39,7 @@ import { QuestionEntity } from '../modules/assessment/entities/question.entity';
 import { QuizEntity } from '../modules/assessment/entities/quiz.entity';
 import { QuizRepository } from '../modules/assessment/repositories/quiz.repository';
 import { createTestDataSource } from '../test-support/test-data-source';
+import { runWithBlockedDocumentRow } from '../test-support/block-document-row';
 import { startTestDb, TestDb } from '../test-support/test-db';
 import { clearDocumentFlowData } from '../../test/support/test-database-cleanup';
 import { LegacyUnfencedResultError, ReturnRelay } from './return-relay.service';
@@ -496,14 +497,17 @@ describe('ReturnRelay', () => {
       const expectedDocument = await documents.findOneByOrFail({ id: document.id });
       const logger = jest.spyOn(ConsoleLogger.prototype, 'log').mockImplementation(() => undefined);
 
-      await relay.pump(10);
+      try {
+        await relay.pump(10);
 
-      expect(logger).toHaveBeenCalledWith(expect.objectContaining({
-        event: eventType === 'DocumentProbeCompleted' ? 'ai.job.return.probe_projected' : 'ai.job.return.probe_failed',
-        jobId: event.aggregateId,
-        outcome: 'IGNORED',
-      }));
-      logger.mockRestore();
+        expect(logger).toHaveBeenCalledWith(expect.objectContaining({
+          event: eventType === 'DocumentProbeCompleted' ? 'ai.job.return.probe_projected' : 'ai.job.return.probe_failed',
+          jobId: event.aggregateId,
+          outcome: 'IGNORED',
+        }));
+      } finally {
+        logger.mockRestore();
+      }
       expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
       const actualDocument = await documents.findOneByOrFail({ id: document.id });
       expect(actualDocument).toEqual(expectedDocument);
@@ -603,7 +607,14 @@ describe('ReturnRelay', () => {
     ];
     const otherRelay = new ReturnRelay(new AiOutboxRepository(ds), createProjectionService(ds), quizHandoff);
 
-    await expect(Promise.all([relay.pump(10), otherRelay.pump(10)])).resolves.toBeDefined();
+    const results = await runWithBlockedDocumentRow({
+      db,
+      documentId: document.id,
+      minimumWaiters: 2,
+      start: () => [relay.pump(10), otherRelay.pump(10)],
+    });
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
 
     expect((await documents.findOneByOrFail({ id: document.id })).status).toBe(DocumentStatus.PROCESSING);
     expect(await courseOutbox.count({ where: { aggregateId: document.id, eventType: 'DocumentReadyForProcessing' } })).toBe(1);
