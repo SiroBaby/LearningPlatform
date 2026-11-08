@@ -90,6 +90,23 @@ khóa riêng. Tách khi đổi sang provider STT khác host hoặc cần xoay v�
 - Worker không có preflight STT lúc khởi động (cần clip audio và tốn tiền mỗi lần
   khởi động). Kiểm tra thật bằng mục 3.
 
+### 2.4. Giới hạn kích thước request ở reverse proxy trước STT
+
+- Mỗi chunk audio gửi STT nặng khoảng 2,4 MB cho 10 phút, tối đa 25 MiB. Trên dev, 9router
+  đứng sau nginx của VPS dùng chung (`/etc/nginx/sites-available/9router`). Nếu site đó
+  không khai báo `client_max_body_size`, nginx dùng mặc định 1 MB.
+- Hệ quả khi giới hạn quá nhỏ: request của chunk lớn nhận **413 Request Entity Too Large**.
+  Worker xếp lỗi này vào nhóm 4xx nên Document kết thúc `FAILED` với `PROVIDER_INCOMPATIBLE`
+  ("Dịch vụ chuyển giọng nói chưa nhận file này"). Thông báo này dễ khiến người dùng tưởng
+  lỗi do file. Dấu hiệu: file ngắn (chunk dưới 1 MB, tức dưới khoảng 4 phút) vẫn chạy, còn
+  file dài hơn thì lỗi.
+- Ngày 2026-11-08, owner duyệt thêm `client_max_body_size 30m;` vào server block 443 của
+  9router, rồi chạy `nginx -t` và `systemctl reload nginx`. Bản backup ở
+  `/etc/nginx/9router.bak-20261108`. Sau khi sửa, MP3 20,6 phút sang `READY` (17 chunk, 13 câu
+  hỏi có Citation thời gian).
+- Khi đổi provider hoặc proxy, kiểm tra giới hạn body của mọi lớp (nginx, Cloudflare, router)
+  ít nhất 30 MB.
+
 ## 3. Điều kiện trước khi bật cờ
 
 1. `media_probe_audio_prep_enabled: true` đã chạy ổn (RUNBOOK-media-audio-prep-dev.md);
