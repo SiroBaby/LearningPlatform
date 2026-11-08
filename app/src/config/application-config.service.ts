@@ -13,6 +13,7 @@ import {
   LlmCapabilityVersion,
   LlmStructuredOutputMode,
   LlmTransport,
+  CreditReconcilerSettings,
   MediaOrphanScannerSettings,
   OpenAiGeneralSettings,
   StorageSettings,
@@ -30,6 +31,21 @@ const MIN_PURGE_LEASE_REQUEST_TIMEOUTS = 5;
 const MIN_ORPHAN_SCANNER_AGE_MS = 21_600_000;
 /** S3 returns at most 1000 keys per ListObjectVersions page. */
 const MAX_ORPHAN_SCANNER_PAGE_SIZE = 1_000;
+
+/** Credit reconciler never treats a reservation younger than this (15 minutes) as orphaned. */
+const MIN_CREDIT_RECONCILER_ORPHAN_GRACE_MS = 900_000;
+/** HOLD auto-release never fires earlier than this (1 hour). */
+const MIN_CREDIT_RECONCILER_HELD_RELEASE_AFTER_MS = 3_600_000;
+
+/** Returned while the reconciler is off; the runner reads only `enabled`. */
+const INERT_CREDIT_RECONCILER_SETTINGS: CreditReconcilerSettings = {
+  batchSize: 0,
+  dryRun: true,
+  enabled: false,
+  heldReleaseAfterMs: 0,
+  intervalMs: 0,
+  orphanGraceMs: 0,
+};
 
 /** Returned while the scanner is off; the runner reads only `enabled`. */
 const INERT_ORPHAN_SCANNER_SETTINGS: MediaOrphanScannerSettings = {
@@ -376,6 +392,34 @@ export class ApplicationConfigService {
     }
     if (settings.maxObjectsPerRun < settings.pageSize) {
       throw new Error('MEDIA_ORPHAN_SCANNER_MAX_OBJECTS_PER_RUN must be at least MEDIA_ORPHAN_SCANNER_PAGE_SIZE');
+    }
+    return settings;
+  }
+
+  /**
+   * Credit reconciler settings. A disabled reconciler must never crash the worker over its tuning; when enabled the
+   * grace floors keep a typo from racing a result that is still in flight.
+   */
+  get creditReconciler(): CreditReconcilerSettings {
+    const enabled = this.required<boolean>(CONFIG_PATH.creditReconciler.enabled);
+    const dryRun = this.required<boolean>(CONFIG_PATH.creditReconciler.dryRun);
+    if (typeof enabled !== 'boolean' || typeof dryRun !== 'boolean') {
+      throw new Error('CREDIT_RECONCILER_ENABLED and CREDIT_RECONCILER_DRY_RUN must be booleans');
+    }
+    if (!enabled) return INERT_CREDIT_RECONCILER_SETTINGS;
+    const settings: CreditReconcilerSettings = {
+      batchSize: this.positiveInteger(CONFIG_PATH.creditReconciler.batchSize),
+      dryRun,
+      enabled,
+      heldReleaseAfterMs: this.positiveInteger(CONFIG_PATH.creditReconciler.heldReleaseAfterMs),
+      intervalMs: this.positiveInteger(CONFIG_PATH.creditReconciler.intervalMs),
+      orphanGraceMs: this.positiveInteger(CONFIG_PATH.creditReconciler.orphanGraceMs),
+    };
+    if (settings.orphanGraceMs < MIN_CREDIT_RECONCILER_ORPHAN_GRACE_MS) {
+      throw new Error(`CREDIT_RECONCILER_ORPHAN_GRACE_MS must be at least ${MIN_CREDIT_RECONCILER_ORPHAN_GRACE_MS}`);
+    }
+    if (settings.heldReleaseAfterMs < MIN_CREDIT_RECONCILER_HELD_RELEASE_AFTER_MS) {
+      throw new Error(`CREDIT_RECONCILER_HELD_RELEASE_AFTER_MS must be at least ${MIN_CREDIT_RECONCILER_HELD_RELEASE_AFTER_MS}`);
     }
     return settings;
   }

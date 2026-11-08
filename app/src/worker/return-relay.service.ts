@@ -9,6 +9,7 @@ import {
   DocumentProcessingResultStatus,
   DocumentProcessingUsage,
 } from '../modules/ai/contracts/document-processing-result';
+import { parseDocumentProcessingUsageBlock } from '../modules/ai/contracts/document-processing-usage.parser';
 import { MEDIA_PROBE_JOB_TYPE, TEXT_EXTRACT_JOB_TYPE } from '../modules/ai/contracts/ai-ingestion.port';
 import { AiOutboxRepository } from '../modules/ai/repositories/ai-outbox.repository';
 import {
@@ -374,37 +375,11 @@ export class ReturnRelay {
    */
   private parseUsage(value: unknown, documentId: string | null, jobId: string): DocumentProcessingUsage | null {
     if (value === undefined || value === null) return null;
-    const usage = this.parseUsageBlock(value);
+    const usage = parseDocumentProcessingUsageBlock(value);
     if (usage === null) {
       this.logger.warn({ documentId, event: 'ai.job.return.usage_malformed', jobId, runtime: 'worker' });
     }
     return usage;
-  }
-
-  private parseUsageBlock(value: unknown): DocumentProcessingUsage | null {
-    if (typeof value !== 'object') return null;
-    const usage = value as Record<string, unknown>;
-    if (!Array.isArray(usage.llm)) return null;
-    const llm: DocumentProcessingUsage['llm'][number][] = [];
-    for (const entry of usage.llm as unknown[]) {
-      if (typeof entry !== 'object' || entry === null) return null;
-      const { inputTokens, model, outputTokens } = entry as Record<string, unknown>;
-      if (typeof model !== 'string' || model.trim() === '' || !isNonNegativeSafeInteger(inputTokens) || !isNonNegativeSafeInteger(outputTokens)) {
-        return null;
-      }
-      llm.push({ inputTokens, model, outputTokens });
-    }
-    const uncertainDispatches = usage.uncertainDispatches ?? 0;
-    const sttBilledSeconds = usage.sttBilledSeconds ?? null;
-    const sttUncertainSeconds = usage.sttUncertainSeconds ?? null;
-    if (
-      !isNonNegativeSafeInteger(uncertainDispatches) ||
-      (sttBilledSeconds !== null && !isNonNegativeSafeInteger(sttBilledSeconds)) ||
-      (sttUncertainSeconds !== null && !isNonNegativeSafeInteger(sttUncertainSeconds))
-    ) {
-      return null;
-    }
-    return { llm, sttBilledSeconds, sttUncertainSeconds, uncertainDispatches };
   }
 
   private parseExtractionCompletion(payload: Record<string, unknown>): ExtractionCompletionPayload {

@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import appConfig from './app.config';
 import aiConfig from './ai.config';
 import { ApplicationConfigService } from './application-config.service';
+import creditReconcilerConfig from './credit-reconciler.config';
 import databaseConfig from './database.config';
 import documentPurgeConfig from './document-purge.config';
 import mediaOrphanScannerConfig from './media-orphan-scanner.config';
@@ -15,7 +16,7 @@ import workerConfig from './worker.config';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [aiConfig, appConfig, databaseConfig, documentPurgeConfig, mediaOrphanScannerConfig, storageConfig, workerConfig],
+      load: [aiConfig, appConfig, creditReconcilerConfig, databaseConfig, documentPurgeConfig, mediaOrphanScannerConfig, storageConfig, workerConfig],
     }),
   ],
   providers: [ApplicationConfigService],
