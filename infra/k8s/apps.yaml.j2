@@ -305,6 +305,20 @@ spec:
               value: relay-only
             - name: WORKER_QUIZ_GENERATION_CONCURRENCY
               value: '8'
+            # Credit reconciler (#275). Off and report-only by default; dev enables it
+            # in vars/dev.yml (RUNBOOK-credit-reconciler-dev.md). Non-secret literals.
+            - name: CREDIT_RECONCILER_ENABLED
+              value: '{{ credit_reconciler_enabled | default(false) | bool | lower }}'
+            - name: CREDIT_RECONCILER_DRY_RUN
+              value: '{{ credit_reconciler_dry_run | default(true) | bool | lower }}'
+            - name: CREDIT_RECONCILER_INTERVAL_MS
+              value: '300000'
+            - name: CREDIT_RECONCILER_ORPHAN_GRACE_MS
+              value: '1800000'
+            - name: CREDIT_RECONCILER_HELD_RELEASE_AFTER_MS
+              value: '86400000'
+            - name: CREDIT_RECONCILER_BATCH_SIZE
+              value: '50'
 {% for key in ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_SSL_MODE', 'DB_SSL_CA', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_PORT', 'OBJECT_STORAGE_REGION', 'OBJECT_STORAGE_USE_SSL', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY', 'OBJECT_STORAGE_BUCKET', 'AI_CREDENTIAL_ENCRYPTION_KEY'] %}
             - name: {{ key }}
               valueFrom:

@@ -119,6 +119,11 @@ document_purge_enabled: false
 # the dry-run report was reviewed (RUNBOOK-document-purge-dev.md section 10).
 media_orphan_scanner_enabled: false
 media_orphan_scanner_delete_enabled: false
+# Credit reconciler inside the relay-only worker (#275). Template defaults are
+# disabled and report-only; apply mode is an explicit owner decision.
+# See docs/deployment/RUNBOOK-credit-reconciler-dev.md.
+credit_reconciler_enabled: false
+credit_reconciler_dry_run: true
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}
