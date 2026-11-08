@@ -657,3 +657,51 @@ func (database *postgresIntegration) convertToTextExtract(t *testing.T, ctx cont
 	}
 	return fullPipelineJobID
 }
+
+// TestPostgresStoreSourceIgnoresProbeResultOfAnotherPolicy checks the
+// IS NOT DISTINCT FROM join: a FULL_PIPELINE job whose policy_version differs
+// from the probe result's must not receive the media locator.
+func TestPostgresStoreSourceIgnoresProbeResultOfAnotherPolicy(t *testing.T) {
+	ctx := context.Background()
+	database := startPostgresIntegration(t, ctx)
+	t.Cleanup(func() {
+		database.store.Close()
+		database.admin.Close()
+		if err := database.container.Terminate(ctx); err != nil {
+			t.Errorf("terminate PostgreSQL container: %v", err)
+		}
+	})
+	for _, test := range []struct {
+		name      string
+		policy    any
+		wantMedia bool
+	}{
+		{name: "same policy version binds the probe result", policy: "policy-v1", wantMedia: true},
+		{name: "different policy version", policy: "policy-v2"},
+		{name: "missing policy version", policy: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			media := database.seedMedia(t, ctx, 1_500_000)
+			if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET policy_version=$2 WHERE id=$1`, media.pipelineID, test.policy); err != nil {
+				t.Fatalf("set job policy_version: %v", err)
+			}
+			job := database.claim(t, ctx)
+			if job.ID != media.pipelineID {
+				t.Fatalf("claimed job %s, want %s", job.ID, media.pipelineID)
+			}
+
+			source, err := database.store.Source(ctx, *job)
+
+			if test.wantMedia {
+				if err != nil || source.MediaLocator == nil || source.MediaLocator.VersionID != "source-version" {
+					t.Fatalf("Source() = (%#v, %v), want the probe locator", source, err)
+				}
+				return
+			}
+			assertFailure(t, err, ObjectNotFound, false)
+			if source.MediaLocator != nil {
+				t.Fatalf("Source() media locator = %#v, want none", source.MediaLocator)
+			}
+		})
+	}
+}
