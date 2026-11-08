@@ -80,7 +80,7 @@ Thứ tự bằng chứng (`evidence`):
 1. `RESULT_PAYLOAD`: kết quả đã publish trong `ai.outbox`. Có `usage` thì tính như
    relay; không có `usage` (trước #273) thì chỉ release hết khi FAILED trước mọi
    lần gọi provider, còn lại HOLD hết.
-2. `NO_JOB`: không có hàng job `FULL_PIPELINE` với id đó, chưa gọi ai, release hết.
+2. `NO_JOB`: không có hàng job `FULL_PIPELINE` với id đó, chưa gọi AI, release hết.
 3. `NEVER_CLAIMED`: `attempts` nhỏ hơn `processing_attempt`, chưa từng claim, release hết.
 4. `USAGE_RECORDS`: cộng token trong `ai.provider_usage_records` (`request_key LIKE
    'go-llm:%'`) và giây STT trong `ai.media_stt_chunk_results`. HOLD phần còn lại
