@@ -3,8 +3,13 @@ package consumer
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/SiroBaby/LearningPlatform/worker/internal/processing"
 )
@@ -89,5 +94,73 @@ func TestProcessOneReportsNoSpendWhenFailingBeforeAnyProviderCall(t *testing.T) 
 	expected := &processing.Usage{LLM: []processing.ModelUsage{}}
 	if !store.failed || !reflect.DeepEqual(store.failedUsage, expected) {
 		t.Fatalf("failed = %t, usage = %#v, want terminal failure with empty usage", store.failed, store.failedUsage)
+	}
+}
+
+// recordingUsageStore is a store that also implements processing.UsageRecorder, like PostgresStore.
+type recordingUsageStore struct {
+	*storeMock
+	mutex sync.Mutex
+	keys  []string
+}
+
+func (store *recordingUsageStore) RecordDispatch(_ context.Context, _ processing.Job, key, _ string) error {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	store.keys = append(store.keys, key)
+	return nil
+}
+
+func (store *recordingUsageStore) RecordOutcome(context.Context, string, int64, int64, processing.UsageStatus) error {
+	return nil
+}
+
+func runRecordedClaim(t *testing.T, processingAttempt *int, claimAttempt int) []string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	store := &recordingUsageStore{storeMock: &storeMock{
+		job:         &processing.Job{ID: "job", DocumentID: "doc", OwnerID: "owner", LeaseID: "lease", Attempt: claimAttempt, ProcessingAttempt: processingAttempt},
+		source:      processing.Source{StorageRef: "document.txt", Type: "TEXT"},
+		retryResult: processing.RetryResult{Scheduled: true},
+	}}
+	profile := processing.ProviderProfile{CapabilityVersion: processing.ChatCompletionsJSONV1, StructuredOutputMode: processing.JSONObject, Transport: processing.ChatCompletions}
+	provider := processing.NewOpenAI("key", server.URL, "model", profile, time.Second)
+	worker := New(store, objectMock{bytes: []byte(strings.Repeat("document text. ", 200))}, provider)
+
+	if err := worker.processOne(context.Background()); err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	return store.keys
+}
+
+func TestProcessOneRecordsEveryLLMDispatchUnderAUniqueKeyPerClaim(t *testing.T) {
+	t.Parallel()
+	attempt := 2
+
+	first := runRecordedClaim(t, &attempt, 1)
+	second := runRecordedClaim(t, &attempt, 2)
+
+	if len(first) == 0 || first[0] != "go-llm:job:2:1:1" || second[0] != "go-llm:job:2:2:1" {
+		t.Fatalf("keys = %v then %v, want go-llm:{job}:{processingAttempt}:{claim}:{seq}", first, second)
+	}
+	seen := map[string]bool{}
+	for _, key := range append(append([]string{}, first...), second...) {
+		if seen[key] {
+			t.Fatalf("duplicate request key %q across claims", key)
+		}
+		seen[key] = true
+	}
+}
+
+func TestProcessOneRecordsNoDispatchWithoutAProcessingAttempt(t *testing.T) {
+	t.Parallel()
+
+	keys := runRecordedClaim(t, nil, 1)
+
+	if len(keys) != 0 {
+		t.Fatalf("keys = %v, want none for a job without processing attempt", keys)
 	}
 }

@@ -2,9 +2,17 @@ package processing
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -141,4 +149,131 @@ func syntheticPDFPages(streams ...[]byte) []byte {
 	}
 	fmt.Fprintf(&document, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets), xrefOffset)
 	return document.Bytes()
+}
+
+type recordedOutcome struct {
+	inputTokens, outputTokens int64
+	status                    UsageStatus
+}
+
+// memoryRecorder is an in-memory UsageRecorder that keeps what the adapter wrote and when.
+type memoryRecorder struct {
+	mutex       sync.Mutex
+	dispatchErr error
+	keys        []string
+	models      []string
+	outcomes    map[string]recordedOutcome
+}
+
+func (recorder *memoryRecorder) RecordDispatch(_ context.Context, _ Job, key, model string) error {
+	recorder.mutex.Lock()
+	defer recorder.mutex.Unlock()
+	if recorder.dispatchErr != nil {
+		return recorder.dispatchErr
+	}
+	recorder.keys = append(recorder.keys, key)
+	recorder.models = append(recorder.models, model)
+	return nil
+}
+
+func (recorder *memoryRecorder) RecordOutcome(_ context.Context, key string, input, output int64, status UsageStatus) error {
+	recorder.mutex.Lock()
+	defer recorder.mutex.Unlock()
+	if recorder.outcomes == nil {
+		recorder.outcomes = map[string]recordedOutcome{}
+	}
+	recorder.outcomes[key] = recordedOutcome{inputTokens: input, outputTokens: output, status: status}
+	return nil
+}
+
+func usageContext(recorder UsageRecorder) context.Context {
+	attempt := 2
+	job := Job{ID: "job-1", Attempt: 3, ProcessingAttempt: &attempt}
+	return WithUsageRecorder(context.Background(), recorder, job)
+}
+
+func TestOpenAIDoesNotDispatchWhenTheDispatchRecordCannotBeStored(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
+	defer server.Close()
+	recorder := &memoryRecorder{dispatchErr: errors.New("database down")}
+
+	_, err := NewOpenAI("key", server.URL, "model", chatCompletionsJSONProfile(), time.Second).Generate(usageContext(recorder), "source")
+
+	assertFailure(t, err, ProviderUnavailable, true)
+	if calls.Load() != 0 {
+		t.Fatalf("provider calls = %d, want none without a dispatch record", calls.Load())
+	}
+}
+
+func TestOpenAIResolvesOrKeepsUncertainTheDispatchRecord(t *testing.T) {
+	const quiz = `{"choices":[{"finish_reason":"stop","message":{"content":"{\"questions\":[]}"}}],"usage":{"prompt_tokens":11,"completion_tokens":7}}`
+	cases := []struct {
+		name            string
+		status          int
+		body            string
+		sleep           time.Duration
+		expectedOutcome *recordedOutcome
+	}{
+		{name: "usage reported", status: 200, body: quiz, expectedOutcome: &recordedOutcome{11, 7, UsageAvailable}},
+		{name: "2xx without usage", status: 200, body: `{"choices":[]}`},
+		{name: "definitive 400", status: 400, body: `{}`, expectedOutcome: &recordedOutcome{0, 0, UsageAvailable}},
+		{name: "definitive 429", status: 429, body: `{}`, expectedOutcome: &recordedOutcome{0, 0, UsageAvailable}},
+		{name: "408 stays uncertain", status: 408, body: `{}`},
+		{name: "500 stays uncertain", status: 500, body: `{}`},
+		{name: "timeout stays uncertain", status: 200, body: quiz, sleep: 300 * time.Millisecond},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				time.Sleep(testCase.sleep)
+				writer.WriteHeader(testCase.status)
+				_, _ = writer.Write([]byte(testCase.body))
+			}))
+			defer server.Close()
+			recorder := &memoryRecorder{}
+
+			_, _ = NewOpenAI("key", server.URL, "model-x", chatCompletionsJSONProfile(), 100*time.Millisecond).Generate(usageContext(recorder), "source")
+
+			if len(recorder.keys) != 1 || recorder.keys[0] != "go-llm:job-1:2:3:1" || recorder.models[0] != "model-x" {
+				t.Fatalf("dispatch records = %v models %v", recorder.keys, recorder.models)
+			}
+			actual, resolved := recorder.outcomes[recorder.keys[0]]
+			if testCase.expectedOutcome == nil && resolved {
+				t.Fatalf("outcome = %#v, want the record to stay UNAVAILABLE", actual)
+			}
+			if testCase.expectedOutcome != nil && actual != *testCase.expectedOutcome {
+				t.Fatalf("outcome = %#v (resolved=%t), want %#v", actual, resolved, *testCase.expectedOutcome)
+			}
+		})
+	}
+}
+
+func TestUsageRecorderIsOffWithoutAProcessingAttempt(t *testing.T) {
+	recorder := &memoryRecorder{}
+	ctx := WithUsageRecorder(context.Background(), recorder, Job{ID: "job-1", Attempt: 1})
+
+	dispatch, err := beginLLMDispatch(ctx, "model")
+
+	if dispatch != nil || err != nil || len(recorder.keys) != 0 {
+		t.Fatalf("dispatch = %#v, err = %v, keys = %v, want no durable record", dispatch, err, recorder.keys)
+	}
+}
+
+func TestLLMRequestKeysAreUniquePerClaimAndSequence(t *testing.T) {
+	recorder := &memoryRecorder{}
+	attempt := 4
+	for claim := 1; claim <= 2; claim++ {
+		ctx := WithUsageRecorder(context.Background(), recorder, Job{ID: "job-1", Attempt: claim, ProcessingAttempt: &attempt})
+		for range 2 {
+			if _, err := beginLLMDispatch(ctx, "model"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	expected := []string{"go-llm:job-1:4:1:1", "go-llm:job-1:4:1:2", "go-llm:job-1:4:2:1", "go-llm:job-1:4:2:2"}
+	if !reflect.DeepEqual(recorder.keys, expected) {
+		t.Fatalf("keys = %v, want %v", recorder.keys, expected)
+	}
 }

@@ -24,6 +24,9 @@ type Job struct {
 	CreatedAt                                       time.Time
 	// Type is JobTypeFullPipeline or JobTypeTextExtract; the zero value means a full pipeline job.
 	Type string
+	// ProcessingAttempt is the Document processing attempt Node stamped on the job (#275). It is nil for jobs enqueued
+	// by an older Node runtime; those keep the in-memory UsageTracker behaviour.
+	ProcessingAttempt *int
 }
 
 // IsTextExtract reports a job that must stop after extraction and chunking.

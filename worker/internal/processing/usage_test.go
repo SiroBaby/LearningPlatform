@@ -129,11 +129,11 @@ func TestMarshalResultAddsUsageBlockOnlyWhenTracked(t *testing.T) {
 	tracker.Dispatched()
 	base := func() map[string]any { return map[string]any{"version": 1, "settledCredits": nil} }
 
-	tracked, err := marshalResult(WithUsageTracker(context.Background(), tracker), nil, base())
+	tracked, err := marshalResult(WithUsageTracker(context.Background(), tracker), nil, Job{}, nil, base())
 	if err != nil {
 		t.Fatal(err)
 	}
-	untracked, err := marshalResult(context.Background(), nil, base())
+	untracked, err := marshalResult(context.Background(), nil, Job{}, nil, base())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestMarshalResultAddsUsageBlockOnlyWhenTracked(t *testing.T) {
 func TestMarshalResultKeepsZeroSTTSecondsOnTheWire(t *testing.T) {
 	tracker := NewUsageTracker()
 	zero := &sttTotals{}
-	raw, err := marshalResult(WithUsageTracker(context.Background(), tracker), zero, map[string]any{"version": 1})
+	raw, err := marshalResult(WithUsageTracker(context.Background(), tracker), nil, Job{}, zero, map[string]any{"version": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestMarshalResultKeepsZeroSTTSecondsOnTheWire(t *testing.T) {
 		t.Fatalf("sttUncertainSeconds = %#v (present=%t), want explicit 0", uncertain, ok)
 	}
 
-	untracked, err := marshalResult(context.Background(), &sttTotals{billedSeconds: 7, uncertainSeconds: 3}, map[string]any{"version": 1})
+	untracked, err := marshalResult(context.Background(), nil, Job{}, &sttTotals{billedSeconds: 7, uncertainSeconds: 3}, map[string]any{"version": 1})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,8 +2,11 @@ package processing
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // ModelUsage is the token usage the provider reported for one model.
@@ -133,3 +136,82 @@ func UsageTrackerFrom(ctx context.Context) *UsageTracker {
 	tracker, _ := ctx.Value(usageTrackerKey{}).(*UsageTracker)
 	return tracker
 }
+
+// UsageStatus is the provider_usage_records.usage_status of one LLM dispatch.
+type UsageStatus string
+
+const (
+	// UsageUnavailable: the call was (or may have been) sent and its spend is unknown.
+	UsageUnavailable UsageStatus = "UNAVAILABLE"
+	// UsageAvailable: the spend is known (tokens reported, or a definitive rejection with zero tokens).
+	UsageAvailable UsageStatus = "AVAILABLE"
+)
+
+// UsageRecorder persists every LLM dispatch durably (#275), so the spend survives technical retries and lease
+// reclaim that drop the in-memory UsageTracker. PostgresStore implements it.
+type UsageRecorder interface {
+	// RecordDispatch writes an UNAVAILABLE row before the provider request leaves, guarded by the job fence.
+	RecordDispatch(ctx context.Context, job Job, requestKey, model string) error
+	// RecordOutcome resolves the row by request key; it carries no fence because the money is spent either way.
+	RecordOutcome(ctx context.Context, requestKey string, inputTokens, outputTokens int64, status UsageStatus) error
+}
+
+// LLMRequestKeyPrefix marks the request_key of every Go LLM dispatch record; the Node reconciler filters on it.
+const LLMRequestKeyPrefix = "go-llm:"
+
+// llmRequestKey is unique per job, Document processing attempt, claim and dispatch sequence.
+func llmRequestKey(job Job, sequence int64) string {
+	return fmt.Sprintf("%s%s:%d:%d:%d", LLMRequestKeyPrefix, job.ID, *job.ProcessingAttempt, job.Attempt, sequence)
+}
+
+// usageSession is the per-claim recorder, job and dispatch counter carried in the context.
+type usageSession struct {
+	recorder UsageRecorder
+	job      Job
+	sequence atomic.Int64
+}
+
+type usageSessionKey struct{}
+
+// WithUsageRecorder attaches the durable recorder for one claimed attempt. Jobs without a ProcessingAttempt (older
+// Node runtime) record nothing and rely on the UsageTracker.
+func WithUsageRecorder(ctx context.Context, recorder UsageRecorder, job Job) context.Context {
+	if recorder == nil || job.ProcessingAttempt == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, usageSessionKey{}, &usageSession{recorder: recorder, job: job})
+}
+
+// llmDispatch is one durable dispatch record being resolved.
+type llmDispatch struct {
+	session *usageSession
+	key     string
+}
+
+// beginLLMDispatch records the dispatch before the request is sent. A nil dispatch means durable recording is off.
+func beginLLMDispatch(ctx context.Context, model string) (*llmDispatch, error) {
+	session, _ := ctx.Value(usageSessionKey{}).(*usageSession)
+	if session == nil {
+		return nil, nil
+	}
+	key := llmRequestKey(session.job, session.sequence.Add(1))
+	if err := session.recorder.RecordDispatch(ctx, session.job, key, model); err != nil {
+		return nil, err
+	}
+	return &llmDispatch{session: session, key: key}, nil
+}
+
+const usageOutcomeTimeout = 5 * time.Second
+
+// resolve stores the known outcome. It runs detached from request cancellation (a timed-out request context must not
+// lose a reported usage) and a failed write is safe: the row stays UNAVAILABLE, which Node holds.
+func (dispatch *llmDispatch) resolve(ctx context.Context, inputTokens, outputTokens int64) {
+	if dispatch == nil {
+		return
+	}
+	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageOutcomeTimeout)
+	defer cancel()
+	_ = dispatch.session.recorder.RecordOutcome(outcomeCtx, dispatch.key, inputTokens, outputTokens, UsageAvailable)
+}
+
+func (usage Usage) isEmpty() bool { return len(usage.LLM) == 0 && usage.UncertainDispatches == 0 }

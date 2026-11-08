@@ -22,6 +22,8 @@
 
 - Mỗi attempt đã claim mang một `UsageTracker` trong context; provider adapter ghi `Dispatched` trước khi gửi, rồi `Reported` (có token) hoặc `Rejected` (non-2xx) khi có phản hồi. Lời gọi không có phản hồi hoặc 2xx không có `usage` là `uncertainDispatches` để Node giữ `HELD`; không đoán token. Store đính khối `usage` vào mọi payload `DocumentProcessingResult` và context persist mới (sau deadline) phải gắn lại cùng tracker.
 
+- Khi `ai.processing_jobs.processing_attempt` có giá trị (#275), mọi lời gọi LLM ghi một dòng `ai.provider_usage_records` UNAVAILABLE (`request_key` `go-llm:{jobId}:{processingAttempt}:{claim}:{seq}`) TRƯỚC khi gửi, có fence active-job; ghi lỗi thì không gửi (`PROVIDER_UNAVAILABLE` technical). Có usage thì AVAILABLE + token, non-2xx dứt khoát (trừ 408) thì AVAILABLE 0/0, timeout/5xx/408/transport giữ UNAVAILABLE. Payload terminal tổng hợp `usage.llm`/`uncertainDispatches` từ các dòng này (mọi retry và lease reclaim) trong transaction terminal, không xoá dòng; `processing_attempt` NULL (Node cũ) dùng `UsageTracker` trong bộ nhớ.
+
 ## Media STT
 
 - Real speech-to-text for AUDIO/VIDEO (#160 PR5) runs only in the full-pipeline worker behind `AI_MEDIA_STT_ENABLED` (strict `true`/`false`, default off; the `STT_*` settings are read only when on and never reach `media-probe-worker`). With the flag off, media keeps the pre-existing behaviour. `STT_BASE_URL`, `STT_API_KEY` and `STT_MODEL` stay separate from `OPENAI_*`.

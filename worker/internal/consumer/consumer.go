@@ -273,6 +273,10 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	// One tracker per claimed attempt: the provider adapter feeds it and the store reads it when it writes the
 	// return payload, so Node can settle the credits reserved for this run.
 	ctx = processing.WithUsageTracker(ctx, processing.NewUsageTracker())
+	// Durable per-dispatch records keep LLM spend across technical retries and lease reclaim (#275).
+	if recorder, ok := bootstrap.store.(processing.UsageRecorder); ok {
+		ctx = processing.WithUsageRecorder(ctx, recorder, job)
+	}
 	if err := bootstrap.store.CheckActive(ctx, job); err != nil {
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}

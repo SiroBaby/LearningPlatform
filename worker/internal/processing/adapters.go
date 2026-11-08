@@ -291,6 +291,12 @@ func (provider *OpenAI) request(ctx context.Context, instructions, input string,
 	request.Header.Set("Content-Type", "application/json")
 	// A call that never gets an answer stays "dispatched" in the tracker: its spend is unknown (ADR-0022 HELD).
 	tracker := UsageTrackerFrom(ctx)
+	// The durable dispatch record is written first: if it cannot be stored the call is not sent, because a paid call
+	// with no record could be lost across a retry or lease reclaim.
+	dispatch, recordErr := beginLLMDispatch(ctx, provider.model)
+	if recordErr != nil {
+		return "", Failure{Code: ProviderUnavailable, Technical: true}
+	}
 	tracker.Dispatched()
 	response, err := provider.client.Do(request)
 	if err != nil {
@@ -302,6 +308,7 @@ func (provider *OpenAI) request(ctx context.Context, instructions, input string,
 		// unknown and the call stays uncertain. Other 4xx (including 429) are definitive rejections: unspent.
 		if response.StatusCode != http.StatusRequestTimeout && response.StatusCode < 500 {
 			tracker.Rejected()
+			dispatch.resolve(ctx, 0, 0)
 		}
 		return "", Failure{Code: ProviderUnavailable, Technical: true}
 	}
@@ -314,6 +321,7 @@ func (provider *OpenAI) request(ctx context.Context, instructions, input string,
 	}
 	if inputTokens, outputTokens, ok := extractTokenUsage(raw, provider.profile.Transport); ok {
 		tracker.Reported(provider.model, inputTokens, outputTokens)
+		dispatch.resolve(ctx, inputTokens, outputTokens)
 	}
 	output, err := provider.decodeResponse(bytes.NewReader(raw))
 	if err != nil && requestContext.Err() != nil {
