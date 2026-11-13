@@ -7,6 +7,7 @@ import type {
   QuizAttemptStore,
   ServedQuiz,
 } from '../contracts/quiz-attempt-store.port';
+import type { CitationLocator } from '../contracts/quiz-generation-handoff.contract';
 import type { QuizPersistence } from '../contracts/quiz-persistence.port';
 import type { QuizDiscovery, QuizDiscoverySummary } from '../contracts/quiz-discovery.port';
 import type { PersistedQuiz } from '../contracts/quiz-generation-handoff.contract';
@@ -18,6 +19,13 @@ import { AttemptEntity } from '../entities/attempt.entity';
 import { QuestionEntity } from '../entities/question.entity';
 import { QuestionOptionEntity } from '../entities/question-option.entity';
 import { QuizEntity } from '../entities/quiz.entity';
+
+interface ServedQuestionRow {
+  readonly citationLocator: CitationLocator;
+  readonly id: string;
+  readonly ordinal: number;
+  readonly stem: string;
+}
 
 interface QuizSummaryRow {
   readonly documentId: string;
@@ -97,11 +105,17 @@ export class QuizRepository
       return null;
     }
 
-    const questions = await this.dataSource.getRepository(QuestionEntity).find({
-      order: { ordinal: 'ASC', id: 'ASC' },
-      select: { citation: true, id: true, ordinal: true, stem: true },
-      where: { ownerId, quizId },
-    });
+    // Only the locator is read from the citation so the snippet never leaves the database here.
+    const questions = await this.dataSource.getRepository(QuestionEntity)
+      .createQueryBuilder('question')
+      .select('question.id', 'id')
+      .addSelect('question.ordinal', 'ordinal')
+      .addSelect('question.stem', 'stem')
+      .addSelect("question.citation_ref -> 'locator'", 'citationLocator')
+      .where('question.owner_id = :ownerId AND question.quiz_id = :quizId', { ownerId, quizId })
+      .orderBy('question.ordinal', 'ASC')
+      .addOrderBy('question.id', 'ASC')
+      .getRawMany<ServedQuestionRow>();
     const options = questions.length === 0
       ? []
       : await this.dataSource.getRepository(QuestionOptionEntity).find({
@@ -122,7 +136,7 @@ export class QuizRepository
       documentId: quiz.documentId,
       id: quiz.id,
       questions: questions.map((question) => ({
-        citationLocator: question.citation.locator,
+        citationLocator: question.citationLocator,
         id: question.id,
         ordinal: question.ordinal,
         options: options

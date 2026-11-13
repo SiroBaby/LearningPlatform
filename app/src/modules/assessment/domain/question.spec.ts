@@ -76,6 +76,11 @@ describe('toServedTimeRange', () => {
     { name: 'non-finite end', locator: { endSec: Number.POSITIVE_INFINITY, kind: 'time', startSec: 1 } },
   ];
 
+  it('returns null instead of throwing for a missing locator', () => {
+    expect(toServedTimeRange(undefined)).toBeNull();
+    expect(toServedTimeRange(null)).toBeNull();
+  });
+
   it.each(nullLocators)('returns null for $name', ({ locator }) => {
     expect(toServedTimeRange(locator)).toBeNull();
   });

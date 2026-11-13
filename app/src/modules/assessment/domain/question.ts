@@ -80,8 +80,8 @@ export interface ServedTimeRange {
 }
 
 /** Returns the time range of a valid time locator; null for any other locator. */
-export function toServedTimeRange(locator: CitationLocator): ServedTimeRange | null {
-  if (locator.kind !== 'time' || !isValidLocator(locator)) {
+export function toServedTimeRange(locator: CitationLocator | null | undefined): ServedTimeRange | null {
+  if (locator?.kind !== 'time' || !isValidLocator(locator)) {
     return null;
   }
   return { endSec: locator.endSec, startSec: locator.startSec };
