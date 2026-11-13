@@ -29,16 +29,21 @@ export function MediaLesson({ documentId, kind, title, durationSec, initialStart
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
-      <div className="min-w-0 space-y-4">
+      <div className="min-w-0 lg:col-start-1">
         <MediaPlayer playback={playback} kind={kind} title={title} />
-        <CheckpointList items={checkpoints.items} kind={kind} onSeekAction={checkpoints.seekToSeconds} />
       </div>
       <CheckpointPanel
+        className="lg:col-start-2 lg:row-span-2 lg:row-start-1"
         kind={kind}
         quizId={quizId}
         checkpoints={checkpoints}
         isSourceUnavailable={isSourceUnavailable}
       />
+      {checkpoints.items.length > 0 ? (
+        <div className="min-w-0 lg:col-start-1">
+          <CheckpointList items={checkpoints.items} kind={kind} onSeekAction={checkpoints.seekToSeconds} />
+        </div>
+      ) : null}
     </div>
   );
 }

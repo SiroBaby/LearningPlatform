@@ -13,6 +13,7 @@ interface CheckpointPanelProps {
   readonly checkpoints: UseMediaCheckpointsResult;
   /** The media cannot be played at all (for example the file is gone). */
   readonly isSourceUnavailable: boolean;
+  readonly className?: string;
 }
 
 function getIdleMessage(kind: MediaPlayerKind, count: number, isEnabled: boolean): string {
@@ -26,9 +27,15 @@ function getToggleLabel(kind: MediaPlayerKind): string {
   return kind === "VIDEO" ? "Dừng để hỏi khi xem" : "Dừng để hỏi khi nghe";
 }
 
-function PanelShell({ announcement, children }: { readonly announcement: string; readonly children: React.ReactNode }) {
+interface PanelShellProps {
+  readonly announcement: string;
+  readonly className?: string;
+  readonly children: React.ReactNode;
+}
+
+function PanelShell({ announcement, className, children }: PanelShellProps) {
   return (
-    <aside aria-label="Câu hỏi trong bài" className="min-w-0">
+    <aside aria-label="Câu hỏi trong bài" className={`min-w-0 ${className ?? ""}`}>
       <Card>
         <CardBody className="space-y-4">
           <p role="status" className="sr-only">{announcement}</p>
@@ -39,24 +46,24 @@ function PanelShell({ announcement, children }: { readonly announcement: string;
   );
 }
 
-export function CheckpointPanel({ kind, quizId, checkpoints, isSourceUnavailable }: CheckpointPanelProps) {
+export function CheckpointPanel({ kind, quizId, checkpoints, isSourceUnavailable, className }: CheckpointPanelProps) {
   if (quizId === null || checkpoints.loadState === "idle" || checkpoints.loadState === "empty") return null;
   const quizLink = <LinkButton href={routes.quizStart(quizId)} variant="outline">Làm quiz của bài này</LinkButton>;
 
   if (isSourceUnavailable) {
     return (
-      <PanelShell announcement="">
+      <PanelShell className={className} announcement="">
         <p className="text-sm text-ink-700">Bạn vẫn có thể làm quiz của bài này.</p>
         {quizLink}
       </PanelShell>
     );
   }
   if (checkpoints.loadState === "loading") {
-    return <PanelShell announcement=""><p className="animate-pulse text-sm text-ink-600 motion-reduce:animate-none">Đang tải câu hỏi…</p></PanelShell>;
+    return <PanelShell className={className} announcement=""><p className="animate-pulse text-sm text-ink-600 motion-reduce:animate-none">Đang tải câu hỏi…</p></PanelShell>;
   }
   if (checkpoints.loadState === "error") {
     return (
-      <PanelShell announcement="">
+      <PanelShell className={className} announcement="">
         <p className="text-sm text-ink-700" role="alert">Chưa tải được câu hỏi.</p>
         <Button type="button" variant="outline" onClick={checkpoints.retryLoad}>Thử lại</Button>
       </PanelShell>
@@ -64,7 +71,7 @@ export function CheckpointPanel({ kind, quizId, checkpoints, isSourceUnavailable
   }
   if (checkpoints.openCheckpoint) {
     return (
-      <PanelShell announcement="Đã dừng để hỏi bạn.">
+      <PanelShell className={className} announcement="Đã dừng để hỏi bạn.">
         <CheckpointQuestion
           open={checkpoints.openCheckpoint}
           kind={kind}
@@ -80,14 +87,14 @@ export function CheckpointPanel({ kind, quizId, checkpoints, isSourceUnavailable
   const isAllAnswered = checkpoints.items.length > 0 && checkpoints.items.every((item) => item.status === "answered");
   if (isAllAnswered) {
     return (
-      <PanelShell announcement="">
+      <PanelShell className={className} announcement="">
         <p className="text-sm text-ink-700">Bạn đã trả lời hết câu hỏi trong bài.</p>
         {quizLink}
       </PanelShell>
     );
   }
   return (
-    <PanelShell announcement="">
+    <PanelShell className={className} announcement="">
       <p className="text-sm text-ink-700">
         {getIdleMessage(kind, checkpoints.timedQuestionCount, checkpoints.isPauseEnabled)}
       </p>

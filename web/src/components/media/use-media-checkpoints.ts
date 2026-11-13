@@ -15,6 +15,7 @@ import type {
   CheckpointStatus,
 } from "@/lib/media-checkpoints/checkpoint-engine";
 import { findAnsweredGroupIds } from "@/lib/media-checkpoints/checkpoint-progress";
+import { decideNativePlayOutcome, findNextUnansweredQuestionId } from "@/lib/media-checkpoints/checkpoint-resolution";
 import type { CheckpointAnswerMap } from "@/lib/media-checkpoints/checkpoint-progress";
 import { buildCheckpointGroups } from "@/lib/media-checkpoints/checkpoint-schedule";
 import type { CheckpointGroup } from "@/lib/media-checkpoints/checkpoint-schedule";
@@ -70,14 +71,9 @@ interface EngineView {
 
 const RESUME_SEEK_TOLERANCE_SEC = 0.05;
 
-function firstUnansweredQuestionId(
-  group: CheckpointGroup | undefined,
-  answered: CheckpointAnswerMap,
-  afterQuestionId: string | null = null,
-): string | null {
-  if (!group) return null;
-  const startIndex = afterQuestionId === null ? 0 : group.questionIds.indexOf(afterQuestionId) + 1;
-  return group.questionIds.slice(startIndex).find((questionId) => !(questionId in answered)) ?? null;
+/** Monotonic clock: unaffected by system clock changes, and the same source for every engine event. */
+function readNowMs(): number {
+  return globalThis.performance.now();
 }
 
 function toEngineView(state: { statuses: Readonly<Record<string, CheckpointStatus>>; openGroupId: string | null; enabled: boolean }): EngineView {
@@ -123,6 +119,9 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
   const groupsRef = useRef(groups);
   const answeredRef = useRef(answered);
   const dispatchRef = useRef<(event: CheckpointEngineEvent) => void>(() => undefined);
+  const feedbackRef = useRef(practice.feedbackByQuestionId);
+  const selectedRef = useRef(selectedOptions);
+  const activeQuestionRef = useRef(activeQuestionId);
   const resumingRef = useRef(false);
   const frameRef = useRef(0);
   const startFrameLoopRef = useRef<() => void>(() => undefined);
@@ -130,7 +129,18 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
   useEffect(() => {
     groupsRef.current = groups;
     answeredRef.current = answered;
-  }, [groups, answered]);
+    feedbackRef.current = practice.feedbackByQuestionId;
+    selectedRef.current = selectedOptions;
+    activeQuestionRef.current = activeQuestionId;
+  }, [groups, answered, practice.feedbackByQuestionId, selectedOptions, activeQuestionId]);
+
+  /** A check that is still loading when its question closes must not mark it answered later. */
+  const cancelPendingFeedback = useCallback((): void => {
+    const questionId = activeQuestionRef.current;
+    if (questionId === null) return;
+    if (feedbackRef.current[questionId]?.status !== "loading") return;
+    resetQuestionFeedback(questionId, selectedRef.current[questionId] ?? "");
+  }, [resetQuestionFeedback]);
 
   const runEffect = useCallback((effect: CheckpointEngineEffect): void => {
     if (effect === null) return;
@@ -140,9 +150,16 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
     }
     if (effect.type === "PAUSE" || effect.type === "OPEN_NEXT") {
       const group = groupsRef.current.find((candidate) => candidate.id === effect.groupId);
-      setActiveQuestionId(firstUnansweredQuestionId(group, answeredRef.current));
+      const nextQuestionId = findNextUnansweredQuestionId(group, answeredRef.current);
+      if (nextQuestionId === null) {
+        // Nothing left to ask (already answered elsewhere): never show an empty panel.
+        dispatchRef.current({ type: "RESOLVE", groupId: effect.groupId, outcome: "answered" });
+        return;
+      }
+      setActiveQuestionId(nextQuestionId);
       return;
     }
+    cancelPendingFeedback();
     setActiveQuestionId(null);
     if (Math.abs(adapter.getCurrentTime() - effect.timeSec) > RESUME_SEEK_TOLERANCE_SEC) adapter.seekTo(effect.timeSec);
     const mediaDurationSec = adapter.getDuration();
@@ -152,7 +169,7 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
       void adapter.play().finally(() => { resumingRef.current = false; });
     }
     focusMedia?.();
-  }, [adapter, focusMedia]);
+  }, [adapter, cancelPendingFeedback, focusMedia]);
 
   const dispatchEngine = useCallback((event: CheckpointEngineEvent): void => {
     const result = reduceCheckpointEngine(engineRef.current, event);
@@ -183,8 +200,8 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
     const runFrame = (): void => {
       frameRef.current = 0;
       const timeSec = adapter.getCurrentTime();
-      if (adapter.isPaused() || !isNearCheckpoint(engineRef.current, timeSec)) return;
-      dispatchRef.current({ type: "TICK", timeSec, nowMs: Date.now(), playbackRate: adapter.getPlaybackRate() });
+      if (adapter.isPaused() || adapter.isSwapPending() || !isNearCheckpoint(engineRef.current, timeSec)) return;
+      dispatchRef.current({ type: "TICK", timeSec, nowMs: readNowMs(), playbackRate: adapter.getPlaybackRate(), isPaused: false });
       if (isNearCheckpoint(engineRef.current, adapter.getCurrentTime())) frameRef.current = globalThis.requestAnimationFrame(runFrame);
     };
     startFrameLoopRef.current = (): void => {
@@ -201,12 +218,18 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
       case "time": {
         const mediaDurationSec = adapter.getDuration();
         if (mediaDurationSec !== null) setMeasuredDurationSec((current) => current ?? mediaDurationSec);
-        dispatchRef.current({ type: "TICK", timeSec: event.timeSec, nowMs: Date.now(), playbackRate: adapter.getPlaybackRate() });
+        dispatchRef.current({
+          type: "TICK",
+          timeSec: event.timeSec,
+          nowMs: readNowMs(),
+          playbackRate: adapter.getPlaybackRate(),
+          isPaused: adapter.isPaused(),
+        });
         if (isNearCheckpoint(engineRef.current, event.timeSec)) startFrameLoopRef.current();
         return;
       }
       case "seeked":
-        dispatchRef.current({ type: "SEEKED", timeSec: event.timeSec });
+        dispatchRef.current({ type: "SEEKED", timeSec: event.timeSec, nowMs: readNowMs() });
         return;
       case "ended":
         dispatchRef.current({ type: "ENDED", timeSec: event.timeSec });
@@ -214,8 +237,10 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
       case "play": {
         const openGroupId = engineRef.current.openGroupId;
         if (openGroupId !== null && !resumingRef.current) {
-          dispatchRef.current({ type: "RESOLVE", groupId: openGroupId, outcome: "skipped" });
+          const group = groupsRef.current.find((candidate) => candidate.id === openGroupId);
+          dispatchRef.current({ type: "RESOLVE", groupId: openGroupId, outcome: decideNativePlayOutcome(group, answeredRef.current) });
         }
+        dispatchRef.current({ type: "PLAYED", nowMs: readNowMs() });
         return;
       }
       case "pause":
@@ -251,7 +276,7 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
     const openGroupId = engineRef.current.openGroupId;
     if (openGroupId === null) return;
     const group = groupsRef.current.find((candidate) => candidate.id === openGroupId);
-    const nextQuestionId = firstUnansweredQuestionId(group, answeredRef.current, activeQuestionId);
+    const nextQuestionId = findNextUnansweredQuestionId(group, answeredRef.current, activeQuestionId);
     if (nextQuestionId !== null) {
       setActiveQuestionId(nextQuestionId);
       return;

@@ -17,7 +17,7 @@ const STATUS_LABELS: Readonly<Record<CheckpointStatus, string>> = {
   upcoming: "Sắp tới",
   open: "Đang hỏi",
   answered: "Đã trả lời",
-  passed: "Đã bỏ qua",
+  passed: "Đã qua",
 };
 
 export function CheckpointList({ items, kind, onSeekAction }: CheckpointListProps) {

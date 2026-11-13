@@ -21,8 +21,17 @@ export interface CheckpointEngineState {
 }
 
 export type CheckpointEngineEvent =
-  | { readonly type: "TICK"; readonly timeSec: number; readonly nowMs: number; readonly playbackRate: number }
-  | { readonly type: "SEEKED"; readonly timeSec: number }
+  | {
+    readonly type: "TICK";
+    readonly timeSec: number;
+    readonly nowMs: number;
+    readonly playbackRate: number;
+    /** A paused position change is a seek (the learner scrubbed), never playback reaching a stop. */
+    readonly isPaused?: boolean;
+  }
+  | { readonly type: "SEEKED"; readonly timeSec: number; readonly nowMs?: number }
+  /** Playback started: the wall clock restarts here so the first tick is judged fairly. */
+  | { readonly type: "PLAYED"; readonly nowMs: number }
   | { readonly type: "ENDED"; readonly timeSec: number }
   | { readonly type: "PAUSED_AT"; readonly timeSec: number }
   | { readonly type: "RESOLVE"; readonly groupId: string; readonly outcome: "answered" | "skipped" }
@@ -102,7 +111,7 @@ function applyBaseline(state: CheckpointEngineState, timeSec: number, nowMs: num
 }
 
 /** A real jump of the position (explicit or detected): forward skips stops, backward re-arms them. */
-function applySeek(state: CheckpointEngineState, timeSec: number): CheckpointEngineState {
+function applySeek(state: CheckpointEngineState, timeSec: number, nowMs: number | null): CheckpointEngineState {
   const from = state.lastTimeSec ?? timeSec;
   let next = state;
   if (timeSec < from) {
@@ -117,7 +126,7 @@ function applySeek(state: CheckpointEngineState, timeSec: number): CheckpointEng
   return {
     ...next,
     lastTimeSec: timeSec,
-    lastWallMs: null,
+    lastWallMs: nowMs,
     resumeAtSec: next.openGroupId === null ? next.resumeAtSec : timeSec,
   };
 }
@@ -165,23 +174,29 @@ export function isNearCheckpoint(state: CheckpointEngineState, timeSec: number, 
   ));
 }
 
+/** While paused nothing plays, so a moved position can only be a scrub (the seek event may come later). */
+function reducePausedTick(state: CheckpointEngineState, event: Extract<CheckpointEngineEvent, { type: "TICK" }>): CheckpointEngineState {
+  const lastTimeSec = state.lastTimeSec ?? event.timeSec;
+  if (Math.abs(event.timeSec - lastTimeSec) >= SEEK_NOISE_SEC) return applySeek(state, event.timeSec, event.nowMs);
+  return { ...state, lastTimeSec: event.timeSec, lastWallMs: event.nowMs };
+}
+
 function reduceTick(state: CheckpointEngineState, event: Extract<CheckpointEngineEvent, { type: "TICK" }>): CheckpointEngineResult {
   if (state.lastTimeSec === null) return done(applyBaseline(state, event.timeSec, event.nowMs));
-  if (isImplicitSeek(state, event)) {
-    return done({ ...applySeek(state, event.timeSec), lastWallMs: event.nowMs });
-  }
+  if (event.isPaused === true) return done(reducePausedTick(state, event));
+  if (isImplicitSeek(state, event)) return done(applySeek(state, event.timeSec, event.nowMs));
   if (state.openGroupId !== null) {
     return done({ ...state, lastTimeSec: event.timeSec, lastWallMs: event.nowMs });
   }
   return advanceTo(state, event.timeSec, event.nowMs);
 }
 
-function reduceSeeked(state: CheckpointEngineState, timeSec: number): CheckpointEngineResult {
-  if (state.lastTimeSec === null) return done(applyBaseline(state, timeSec, null));
+function reduceSeeked(state: CheckpointEngineState, timeSec: number, nowMs: number | null): CheckpointEngineResult {
+  if (state.lastTimeSec === null) return done(applyBaseline(state, timeSec, nowMs));
   if (Math.abs(timeSec - state.lastTimeSec) < SEEK_NOISE_SEC) {
     return done({ ...state, lastTimeSec: timeSec });
   }
-  return done(applySeek(state, timeSec));
+  return done(applySeek(state, timeSec, nowMs));
 }
 
 function reduceEnded(state: CheckpointEngineState, timeSec: number): CheckpointEngineResult {
@@ -261,7 +276,8 @@ export function reduceCheckpointEngine(
 ): CheckpointEngineResult {
   switch (event.type) {
     case "TICK": return reduceTick(state, event);
-    case "SEEKED": return reduceSeeked(state, event.timeSec);
+    case "SEEKED": return reduceSeeked(state, event.timeSec, event.nowMs ?? null);
+    case "PLAYED": return done({ ...state, lastWallMs: event.nowMs });
     case "ENDED": return reduceEnded(state, event.timeSec);
     case "PAUSED_AT": return reducePausedAt(state, event.timeSec);
     case "RESOLVE": return reduceResolve(state, event);

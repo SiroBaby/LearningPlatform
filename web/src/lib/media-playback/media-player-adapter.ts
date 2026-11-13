@@ -18,6 +18,8 @@ export interface MediaPlayerAdapter {
   getDuration(): number | null;
   getPlaybackRate(): number;
   isPaused(): boolean;
+  /** True while a source swap has not restored the viewer's place: positions read now are meaningless. */
+  isSwapPending(): boolean;
   play(): Promise<void>;
   pause(): void;
   seekTo(timeSec: number): void;

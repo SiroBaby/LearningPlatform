@@ -318,6 +318,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
     },
     getPlaybackRate: (): number => mediaRef.current?.playbackRate ?? 1,
     isPaused: (): boolean => mediaRef.current?.paused ?? true,
+    isSwapPending: (): boolean => appliedRef.current?.isPending() === true,
     play,
     pause,
     seekTo,

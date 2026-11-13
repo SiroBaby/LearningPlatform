@@ -263,3 +263,77 @@ test("isNearCheckpoint is true only within one second before an upcoming stop", 
   assert.equal(isNearCheckpoint(state, 10.1), false);
   assert.equal(isNearCheckpoint(setup([group("a", 10)], { enabled: false }), 9.5), false);
 });
+
+test("browser order while paused: tick at the target before seeked does not open the jumped-over stop", () => {
+  let state = setup([group("a", 20), group("b", 25)]);
+  state = send(state, { type: "TICK", timeSec: 5, nowMs: 0, playbackRate: 1 }).state;
+  state = send(state, { type: "TICK", timeSec: 5.25, nowMs: 250, playbackRate: 1, isPaused: true }).state;
+  const tick = send(state, { type: "TICK", timeSec: 40, nowMs: 60250, playbackRate: 1, isPaused: true });
+  const seeked = send(tick.state, { type: "SEEKED", timeSec: 40, nowMs: 60251 });
+
+  assert.equal(tick.effect, null);
+  assert.equal(seeked.effect, null);
+  assert.equal(getCheckpointStatus(seeked.state, "a"), "passed");
+  assert.equal(getCheckpointStatus(seeked.state, "b"), "passed");
+});
+
+test("the stale-wall scrub from the review (paused tick without the paused flag) still needs the flag", () => {
+  let state = setup([group("a", 20)]);
+  state = send(state, { type: "TICK", timeSec: 5, nowMs: 0, playbackRate: 1 }).state;
+  const tick = send(state, { type: "TICK", timeSec: 40, nowMs: 60250, playbackRate: 1 });
+
+  // Wall delta of 60s makes a 35s advance look like normal playback; the controller therefore sends isPaused.
+  assert.deepEqual(tick.effect, { type: "PAUSE", groupId: "a" });
+});
+
+test("browser order while playing: tick at the target before seeked is a seek, not a stop", () => {
+  let state = setup([group("a", 20)]);
+  state = send(state, { type: "TICK", timeSec: 5, nowMs: 0, playbackRate: 1 }).state;
+  state = send(state, { type: "TICK", timeSec: 5.25, nowMs: 250, playbackRate: 1 }).state;
+  const tick = send(state, { type: "TICK", timeSec: 40, nowMs: 500, playbackRate: 1 });
+  const seeked = send(tick.state, { type: "SEEKED", timeSec: 40, nowMs: 501 });
+
+  assert.equal(tick.effect, null);
+  assert.equal(seeked.effect, null);
+  assert.equal(getCheckpointStatus(seeked.state, "a"), "passed");
+});
+
+test("a paused backward scrub re-arms the stop", () => {
+  let state = setup([group("a", 20)]);
+  state = send(state, { type: "TICK", timeSec: 30, nowMs: 0, playbackRate: 1 }).state;
+  state = send(state, { type: "TICK", timeSec: 2, nowMs: 5000, playbackRate: 1, isPaused: true }).state;
+
+  assert.equal(getCheckpointStatus(state, "a"), "upcoming");
+});
+
+test("a small paused position change is noise and never fires", () => {
+  let state = setup([group("a", 10)]);
+  state = send(state, { type: "TICK", timeSec: 9.9, nowMs: 0, playbackRate: 1 }).state;
+  const result = send(state, { type: "TICK", timeSec: 10.1, nowMs: 90000, playbackRate: 1, isPaused: true });
+
+  assert.equal(result.effect, null);
+  assert.equal(getCheckpointStatus(result.state, "a"), "upcoming");
+});
+
+test("first tick after resume at 2x with a janky 1s gap is not mistaken for a seek", () => {
+  let state = setup([group("a", 10), group("b", 14)]);
+  state = send(state, { type: "TICK", timeSec: 9.8, nowMs: 0, playbackRate: 2 }).state;
+  state = send(state, { type: "TICK", timeSec: 10.1, nowMs: 100, playbackRate: 2 }).state;
+  state = send(state, { type: "PAUSED_AT", timeSec: 10.1 }).state;
+  state = send(state, { type: "RESOLVE", groupId: "a", outcome: "answered" }).state;
+  state = send(state, { type: "SEEKED", timeSec: 10.1, nowMs: 5000 }).state;
+  state = send(state, { type: "PLAYED", nowMs: 5010 }).state;
+  const result = send(state, { type: "TICK", timeSec: 14.1, nowMs: 7010, playbackRate: 2 });
+
+  assert.deepEqual(result.effect, { type: "PAUSE", groupId: "b" });
+});
+
+test("PLAYED restarts the wall clock after a long pause", () => {
+  let state = setup([group("a", 20)]);
+  state = send(state, { type: "TICK", timeSec: 5, nowMs: 0, playbackRate: 1 }).state;
+  state = send(state, { type: "PLAYED", nowMs: 600000 }).state;
+  const result = send(state, { type: "TICK", timeSec: 5.25, nowMs: 600250, playbackRate: 1 });
+
+  assert.equal(result.effect, null);
+  assert.equal(result.state.lastTimeSec, 5.25);
+});

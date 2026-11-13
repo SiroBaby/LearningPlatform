@@ -65,3 +65,13 @@ test("the quiz result page links time citations back to the media only for playa
   assert.match(source, /document\.status !== "READY"\) return null/u);
   assert.match(source, /catch \{\s*return null;/u);
 });
+
+test("the controller tells the engine when playback is paused, restarts the clock on play and gates frames on swaps", () => {
+  const source = readSource("src/components/media/use-media-checkpoints.ts");
+
+  assert.match(source, /isPaused: adapter\.isPaused\(\)/u);
+  assert.match(source, /type: "PLAYED"/u);
+  assert.match(source, /adapter\.isSwapPending\(\)/u);
+  assert.match(source, /decideNativePlayOutcome\(/u);
+  assert.doesNotMatch(source, /Date\.now\(\)/u);
+});
