@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from '@jest/globals';
 import type { Mapper } from '@automapper/core';
 
 import { ContentController } from './content.controller';
+import type { SubtitlePreviewService } from './subtitles/subtitle-preview.service';
 import { ContentService } from './content.service';
 import { Document } from './entities/document.entity';
 import { DocumentStatus } from './enums/document-status.enum';
@@ -27,6 +28,7 @@ describe('ContentController.delete', () => {
     controller = new ContentController(
       content as unknown as ContentService,
       mapper as unknown as Mapper,
+      {} as unknown as SubtitlePreviewService,
     );
   });
 

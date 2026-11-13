@@ -1,0 +1,24 @@
+﻿WEBVTT - Bài giảng cấu trúc dữ liệu
+
+NOTE Đây là ghi chú, không phải phụ đề.
+
+STYLE
+::cue { color: lime }
+
+1
+00:00:01.000 --> 00:00:04.500 align:start position:10%
+<v Thầy Nam>Xin chào các bạn, hôm nay chúng ta học về <b>ngăn xếp</b>.
+
+00:00:03.000 --> 00:00:06.000
+Ngăn xếp (stack) hoạt động theo nguyên tắc <c.highlight>vào sau ra trước</c>.
+
+intro
+00:00:00.500 --> 00:00:01.000
+&gt;&gt; Mở đầu &amp; giới thiệu
+
+00:07.000 --> 00:09.250
+Ví dụ: &lt;script&gt;alert(1)&lt;/script&gt; chỉ là chữ.
+<00:00:08.000>Dòng thứ hai nối vào dòng đầu.
+
+01:02:03.456 --> 01:02:05.000
+Đoạn cuối, có giờ.

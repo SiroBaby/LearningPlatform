@@ -6,4 +6,5 @@ export enum DocumentType {
   VIDEO = 'VIDEO',
   AUDIO = 'AUDIO',
   TEXT = 'TEXT',
+  YOUTUBE = 'YOUTUBE',
 }

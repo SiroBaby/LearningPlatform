@@ -109,6 +109,10 @@ export class Document {
   @Column({ name: 'media_source_content_length', type: 'bigint', nullable: true })
   mediaSourceContentLength!: number | null;
 
+  /** Canonical video id of a YOUTUBE Document; the raw URL is never stored. */
+  @Column({ name: 'youtube_video_id', type: 'varchar', length: 11, nullable: true })
+  youtubeVideoId!: string | null;
+
   @Column({ name: 'deletion_fence', type: 'bigint', default: 0 })
   deletionFence!: number;
 

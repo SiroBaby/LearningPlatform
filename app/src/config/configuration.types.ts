@@ -222,6 +222,7 @@ export const CONFIG_PATH = {
       publicKey: 'app.externalApproval.publicKey',
     },
     identityMode: 'app.identityMode',
+    youtubeLessonsEnabled: 'app.youtubeLessonsEnabled',
     googleOAuth: {
       clientId: 'app.googleOAuth.clientId',
       clientSecret: 'app.googleOAuth.clientSecret',

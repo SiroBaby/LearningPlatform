@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import type { PlanModelCatalogItem } from '../../ai/contracts/model-selection.contracts';
-import { estimateTextCredits } from './text-credit-estimator';
+import { capTimedExtraction, estimateTextCredits } from './text-credit-estimator';
 
 const model: PlanModelCatalogItem = {
   creditPerInputToken: 1,
@@ -50,5 +50,25 @@ describe('estimateTextCredits', () => {
     { name: 'a fractional chunk count', chunkCount: 1.5, extractedChars: 100 },
   ])('rejects $name', ({ chunkCount, extractedChars }) => {
     expect(() => estimateTextCredits({ chunkCount, extractedChars, model })).toThrow(RangeError);
+  });
+});
+
+describe('capTimedExtraction', () => {
+  it.each([
+    { name: 'below the cap', chunkCount: 12, extractedChars: 5_000, expected: { chunkCount: 12, extractedChars: 5_000 } },
+    { name: 'exactly at the cap', chunkCount: 30, extractedChars: 7_001, expected: { chunkCount: 30, extractedChars: 7_001 } },
+    { name: 'above the cap', chunkCount: 90, extractedChars: 9_001, expected: { chunkCount: 30, extractedChars: 3_001 } },
+  ])('scales the billable measurement $name', ({ chunkCount, extractedChars, expected }) => {
+    expect(capTimedExtraction({ chunkCount, extractedChars })).toEqual(expected);
+  });
+
+  it('rounds the billable characters up so the estimate never undercounts', () => {
+    expect(capTimedExtraction({ chunkCount: 31, extractedChars: 100 })).toEqual({ chunkCount: 30, extractedChars: 97 });
+  });
+
+  it('passes an invalid measurement through so the estimator rejects it', () => {
+    const invalid = { chunkCount: 0, extractedChars: 10 };
+
+    expect(capTimedExtraction(invalid)).toBe(invalid);
   });
 });

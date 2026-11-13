@@ -15,3 +15,6 @@ export const GENERATION_PROMPT_OVERHEAD_TOKENS = 200;
 
 /** One Vietnamese MCQ with explanation, including headroom for provider-side reasoning tokens. */
 export const GENERATION_OUTPUT_TOKENS_PER_QUESTION = 600;
+
+/** Mirrors Go `MaxMediaQuestions`: timed transcripts (media, YouTube subtitles) generate at most this many questions. */
+export const MAX_TIMED_DOCUMENT_QUESTIONS = 30;

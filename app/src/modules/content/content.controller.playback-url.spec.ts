@@ -7,6 +7,7 @@ import type { Mapper } from '@automapper/core';
 
 import { SessionAuthGuard } from '../auth/session-auth.guard';
 import { ContentController } from './content.controller';
+import type { SubtitlePreviewService } from './subtitles/subtitle-preview.service';
 import { ContentService } from './content.service';
 import { MediaPlaybackUrlResult } from './contracts/media-playback-url.result';
 import { CreateMediaPlaybackUrlDto } from './dto/create-media-playback-url.dto';
@@ -41,6 +42,7 @@ describe('ContentController.createPlaybackUrl', () => {
     const controller = new ContentController(
       { createMediaPlaybackUrl } as unknown as ContentService,
       mapper as unknown as Mapper,
+      {} as unknown as SubtitlePreviewService,
     );
 
     const actualResponse = await controller.createPlaybackUrl('owner-1', 'document-1', new CreateMediaPlaybackUrlDto());

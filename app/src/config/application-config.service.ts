@@ -224,6 +224,11 @@ export class ApplicationConfigService {
     };
   }
 
+  /** Strict boolean feature flag for YouTube subtitle lessons; missing or non-boolean values mean disabled. */
+  get youtubeLessonsEnabled(): boolean {
+    return this.config.get<unknown>(CONFIG_PATH.app.youtubeLessonsEnabled) === true;
+  }
+
   get authAdminGoogleSubs(): readonly string[] {
     const raw = this.config.get<string | undefined>(CONFIG_PATH.app.authAdminGoogleSubs);
     if (!raw?.trim()) return [];

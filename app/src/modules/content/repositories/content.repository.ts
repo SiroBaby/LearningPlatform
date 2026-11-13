@@ -8,6 +8,7 @@ import { BaseRepository } from '../../../database/base.repository';
 import { normalizeStorageVersionId } from '../../../storage/storage-version-id';
 import { CreateUploadUrlCommand } from '../contracts/create-upload-url.command';
 import { InsufficientCreditsError } from '../contracts/insufficient-credits.error';
+import { SubtitlePrerequisiteError } from '../contracts/subtitle-snapshot';
 import {
   DocumentStatusProjectionPersistenceCommand,
   DocumentStatusProjectionOutcome,
@@ -48,13 +49,18 @@ export class ContentRepository extends BaseRepository<Document> {
 
   async createUploaded(
     ownerId: string,
-    command: CreateUploadUrlCommand & { readonly estimatedCredits: number | null; readonly selectedModelLabel: string },
+    command: CreateUploadUrlCommand & {
+      readonly estimatedCredits: number | null;
+      readonly selectedModelLabel: string;
+      readonly youtubeVideoId?: string | null;
+    },
     storageRef: string,
   ): Promise<Document> {
     const document = this.create({
       ownerId,
       type: command.type,
       originalName: command.originalName,
+      youtubeVideoId: command.youtubeVideoId ?? null,
       storageRef,
       sizeBytes: command.sizeBytes,
       customModelConfigId: command.selection.customModelConfigId,
@@ -196,6 +202,7 @@ export class ContentRepository extends BaseRepository<Document> {
         nextDeletionFence,
         this.isMediaDocument(document),
       );
+      await this.deleteSubtitleSnapshot(manager, id, ownerId);
 
       const cancellationEvent = manager.create(OutboxEvent, {
         aggregateId: id,
@@ -242,6 +249,18 @@ export class ContentRepository extends BaseRepository<Document> {
 
       return manager.findOneByOrFail(Document, { id, ownerId });
     });
+  }
+
+  /** The parsed subtitle snapshot is Owner content: it goes with the Document, in the same transaction. */
+  private async deleteSubtitleSnapshot(
+    manager: EntityManager,
+    documentId: string,
+    ownerId: string,
+  ): Promise<void> {
+    await manager.query(
+      'DELETE FROM "course"."document_subtitle_transcripts" WHERE "document_id" = $1 AND "owner_id" = $2',
+      [documentId, ownerId],
+    );
   }
 
   /**
@@ -552,6 +571,50 @@ export class ContentRepository extends BaseRepository<Document> {
         await this.enqueueTextProcessingStart(manager, document, selection);
       }
 
+      return manager.findOne(Document, { where: { id, ownerId } });
+    });
+  }
+
+  /**
+   * Starts processing of a YOUTUBE Document from its parsed subtitle snapshot, in one transaction: lock the
+   * Document, require the snapshot, record the Owner's rights confirmation (kept once set), then run the same
+   * CAS and TEXT_EXTRACT/FULL_PIPELINE enqueue as a text Document. A retry reuses the stored confirmation.
+   */
+  async confirmSubtitleProcessing(
+    ownerId: string,
+    id: string,
+    selection: DocumentModelSelection,
+    options: { readonly allowedStatuses: readonly DocumentStatus[]; readonly rightsConfirmed: boolean },
+  ): Promise<Document | null> {
+    return this.dataSource.transaction(async (manager) => {
+      const current = await manager.findOne(Document, {
+        where: { id, ownerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!current || current.type !== DocumentType.YOUTUBE) return null;
+      const snapshots = await manager.query<readonly { readonly rightsConfirmedAt: Date | null }[]>(
+        `SELECT "rights_confirmed_at" AS "rightsConfirmedAt"
+           FROM "course"."document_subtitle_transcripts"
+          WHERE "document_id" = $1 AND "owner_id" = $2
+          FOR UPDATE`,
+        [id, ownerId],
+      );
+      if (snapshots.length === 0) throw new SubtitlePrerequisiteError('PREVIEW_REQUIRED');
+      if (!options.rightsConfirmed && snapshots[0].rightsConfirmedAt === null) {
+        throw new SubtitlePrerequisiteError('RIGHTS_REQUIRED');
+      }
+      if (!options.allowedStatuses.includes(current.status)) return current;
+      await manager.query(
+        `UPDATE "course"."document_subtitle_transcripts"
+            SET "rights_confirmed_at" = COALESCE("rights_confirmed_at", now()), "updated_at" = now()
+          WHERE "document_id" = $1 AND "owner_id" = $2`,
+        [id, ownerId],
+      );
+      const started = await this.startProcessing(manager, ownerId, id, options.allowedStatuses);
+      if (started) {
+        const document = await manager.findOneByOrFail(Document, { id, ownerId });
+        await this.enqueueTextProcessingStart(manager, document, selection);
+      }
       return manager.findOne(Document, { where: { id, ownerId } });
     });
   }

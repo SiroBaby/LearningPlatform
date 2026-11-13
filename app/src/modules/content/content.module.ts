@@ -12,6 +12,8 @@ import { ContentDocumentSourceReader } from './document-source-reader.service';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
 import { ContentMappingProfile } from './mappings/content-mapping.profile';
 import { ContentRepository } from './repositories/content.repository';
+import { SubtitleTranscriptRepository } from './repositories/subtitle-transcript.repository';
+import { SubtitlePreviewService } from './subtitles/subtitle-preview.service';
 import { CourseOutboxRepository } from './repositories/course-outbox.repository';
 import { BudgetReservationRepository } from './repositories/budget-reservation.repository';
 import { BUDGET_RESERVATION } from './contracts/budget-reservation.port';
@@ -27,6 +29,8 @@ import { AuthModule } from '../auth/auth.module';
     DocumentStatusProjectionService,
     MediaCreditEstimator,
     ContentRepository,
+    SubtitleTranscriptRepository,
+    SubtitlePreviewService,
     CourseOutboxRepository,
     BudgetReservationRepository,
     OwnerEntitlementRepository,

@@ -38,6 +38,14 @@ export class DocumentResponseDto {
   @AutoMap()
   readonly pageCount: number | null;
 
+  @ApiProperty({
+    description: 'Canonical YouTube video id; null for every other Document type.',
+    example: 'dQw4w9WgXcQ',
+    nullable: true,
+  })
+  @AutoMap()
+  readonly youtubeVideoId: string | null;
+
   @ApiProperty({ nullable: true, example: null })
   @AutoMap()
   readonly errorMessage: string | null;
