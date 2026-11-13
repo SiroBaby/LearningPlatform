@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import { ApplicationConfigService } from '../../../config/application-config.service';
 import { StorageService } from '../../../storage/storage.service';
 import { SubtitlePreviewResult } from '../contracts/subtitle-preview.result';
 import type { SubtitleSnapshot } from '../contracts/subtitle-snapshot';
@@ -40,9 +41,17 @@ export class SubtitlePreviewService {
     private readonly documents: ContentRepository,
     private readonly storage: StorageService,
     private readonly snapshots: SubtitleTranscriptRepository,
+    private readonly config: ApplicationConfigService,
   ) {}
 
   async preview(ownerId: string, documentId: string): Promise<SubtitlePreviewResult> {
+    if (!this.config.youtubeLessonsEnabled) {
+      throw new ConflictException({
+        code: 'YOUTUBE_LESSONS_DISABLED',
+        message: 'YouTube lessons are not enabled.',
+        retryable: false,
+      });
+    }
     const document = await this.findPreviewableDocument(ownerId, documentId);
     const source = await this.readSubtitleObject(document);
     const parsed = this.parse(source, detectSubtitleFormat(document.originalName));

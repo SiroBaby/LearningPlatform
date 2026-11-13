@@ -95,7 +95,7 @@ describe('YouTube subtitle lesson flow', () => {
       new FakeModelCatalog(),
       { youtubeLessonsEnabled: true } as never,
     );
-    preview = new SubtitlePreviewService(contentRepository, storage as never, new SubtitleTranscriptRepository(dataSource));
+    preview = new SubtitlePreviewService(contentRepository, storage as never, new SubtitleTranscriptRepository(dataSource), { youtubeLessonsEnabled: true } as never);
     await db.client.query(
       'TRUNCATE "ai"."media_probe_cancellation_tombstones", "ai"."media_probe_jobs", "ai"."processing_jobs", "course"."document_probe_receipts", "course"."document_purge_manifests", "course"."documents", "course"."outbox" CASCADE',
     );
@@ -246,6 +246,54 @@ describe('YouTube subtitle lesson flow', () => {
       expect(missingError).toBeInstanceOf(BadRequestException);
       expect(resizedError).toBeInstanceOf(BadRequestException);
       expect(await findSnapshot(resized.id)).toBeUndefined();
+    });
+  });
+
+  describe('flag', () => {
+    it('refuses preview and a new confirm with YOUTUBE_LESSONS_DISABLED but still allows retry', async () => {
+      const ownerId = randomUUID();
+      const document = await seedYoutubeDocument(ownerId, readFixture('bai-giang.vi.vtt'));
+      await seedWallet(ownerId);
+      await preview.preview(ownerId, document.id);
+      await content.confirm(ownerId, document.id, { rightsConfirmed: true });
+      await documents.update({ id: document.id }, { errorCode: 'PROVIDER_UNAVAILABLE' as never, errorMessage: 'x', status: DocumentStatus.FAILED });
+      const disabledConfig = { youtubeLessonsEnabled: false } as never;
+      const disabledContent = new ContentService(contentRepository, storage as never, verifier, null as never, new FakeModelCatalog(), disabledConfig);
+      const disabledPreview = new SubtitlePreviewService(contentRepository, storage as never, new SubtitleTranscriptRepository(dataSource), disabledConfig);
+      const second = await seedYoutubeDocument(ownerId, readFixture('bai-giang.vi.vtt'));
+
+      const previewError = await captureRejection(disabledPreview.preview(ownerId, second.id));
+      const confirmError = await captureRejection(disabledContent.confirm(ownerId, second.id, { rightsConfirmed: true }));
+      const retried = await disabledContent.retry(ownerId, document.id);
+
+      expect((previewError as ConflictException).getResponse()).toMatchObject({ code: 'YOUTUBE_LESSONS_DISABLED' });
+      expect((confirmError as ConflictException).getResponse()).toMatchObject({ code: 'YOUTUBE_LESSONS_DISABLED' });
+      expect(retried.status).toBe(DocumentStatus.PROCESSING);
+    });
+  });
+
+  describe('subtitle repository start', () => {
+    const selection = { customModelConfigId: null, kind: 'PLAN', platformModelId: 'platform-default' } as const;
+
+    it('returns null in RETRY mode when the Document is not FAILED, and for a DELETING Document', async () => {
+      const ownerId = randomUUID();
+      const processing = await seedYoutubeDocument(ownerId, readFixture('bai-giang.vi.vtt'));
+      await preview.preview(ownerId, processing.id);
+      await db.client.query('UPDATE "course"."document_subtitle_transcripts" SET "rights_confirmed_at" = now() WHERE "document_id" = $1', [processing.id]);
+      const deleting = await seedYoutubeDocument(ownerId, readFixture('bai-giang.vi.vtt'));
+      await preview.preview(ownerId, deleting.id);
+      await documents.update({ id: deleting.id }, { status: DocumentStatus.DELETING });
+
+      const uploadedRetry = await contentRepository.confirmSubtitleProcessing(ownerId, processing.id, selection, {
+        allowedStatuses: [DocumentStatus.FAILED], mode: 'RETRY', rightsConfirmed: false,
+      });
+      const deletingConfirm = await contentRepository.confirmSubtitleProcessing(ownerId, deleting.id, selection, {
+        allowedStatuses: [DocumentStatus.UPLOADED, DocumentStatus.FAILED], mode: 'CONFIRM', rightsConfirmed: true,
+      });
+
+      expect(uploadedRetry).toBeNull();
+      expect(deletingConfirm).toBeNull();
+      expect(await outbox.countBy({ aggregateId: processing.id })).toBe(0);
     });
   });
 

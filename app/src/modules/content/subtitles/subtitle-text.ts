@@ -1,13 +1,17 @@
 import { SubtitleParseError, SubtitleParseErrorCode } from './subtitle-parse-error';
 import { MAX_SUBTITLE_BYTES } from './subtitle.constants';
 
-const BYTE_ORDER_MARK = '﻿';
+const BYTE_ORDER_MARK = '\uFEFF';
 const FORBIDDEN_CONTROL_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
-const MARKUP_TAG_PATTERN =
-  /<\/?(?:c|v|b|i|u|ruby|rt|lang|font)(?:[. \t][^<>]*)?>|<(?:\d{2,}:)?\d{2}:\d{2}\.\d{3}>/giu;
+const FORBIDDEN_CONTROL_CODE_POINT_MAX_C0 = 0x1f;
+const DELETE_CODE_POINT = 0x7f;
+const C1_CODE_POINT_MAX = 0x9f;
+// Any well-formed tag (letter right after `<` or `</`) plus VTT timestamp tags; escaped `&lt;script&gt;` is untouched
+// because entities are decoded only afterwards.
+const MARKUP_TAG_PATTERN = /<\/?[A-Za-z][^<>]*>|<(?:\d{2,}:)?\d{2}:\d{2}\.\d{3}>/gu;
 const STYLE_OVERRIDE_PATTERN = /\{\\[^{}]*\}/gu;
 const ENTITY_PATTERN = /&(amp|lt|gt|nbsp|quot|apos|lrm|rlm|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});/gu;
-const INVISIBLE_FORMATTING_PATTERN = /[​-‏‪-‮⁠-⁤⁦-⁩﻿]/gu;
+const INVISIBLE_FORMATTING_PATTERN = /[\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/gu;
 const WHITESPACE_RUN_PATTERN = /\s+/gu;
 const MAX_CODE_POINT = 0x10ffff;
 const SURROGATE_RANGE_START = 0xd800;
@@ -77,7 +81,6 @@ export function sanitizeCuePayload(payloadLines: readonly string[]): string {
     .replace(STYLE_OVERRIDE_PATTERN, '');
   return decodeEntities(withoutMarkup)
     .replace(INVISIBLE_FORMATTING_PATTERN, '')
-    .replace(FORBIDDEN_CONTROL_PATTERN, '')
     .replace(WHITESPACE_RUN_PATTERN, ' ')
     .trim()
     .normalize('NFC');
@@ -95,7 +98,17 @@ function decodeEntity(name: string): string {
     : Number.parseInt(name.slice(1), DECIMAL_RADIX);
   const isSurrogate = codePoint >= SURROGATE_RANGE_START && codePoint <= SURROGATE_RANGE_END;
   if (codePoint > MAX_CODE_POINT || isSurrogate) return '';
+  if (isForbiddenControl(codePoint)) {
+    throw new SubtitleParseError(SubtitleParseErrorCode.SUBTITLE_ENCODING_INVALID);
+  }
   return String.fromCodePoint(codePoint);
+}
+
+/** C0 (except tab, LF, CR), DEL and C1 controls are rejected like raw control bytes. */
+function isForbiddenControl(codePoint: number): boolean {
+  const isAllowedWhitespace = codePoint === 0x09 || codePoint === 0x0a || codePoint === 0x0d;
+  const isC0 = codePoint <= FORBIDDEN_CONTROL_CODE_POINT_MAX_C0 && !isAllowedWhitespace;
+  return isC0 || (codePoint >= DELETE_CODE_POINT && codePoint <= C1_CODE_POINT_MAX);
 }
 
 export function countCodePoints(text: string): number {

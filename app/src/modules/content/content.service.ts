@@ -565,6 +565,8 @@ export class ContentService {
       throw this.mediaSourceIdentityUnavailable();
     }
     const isSubtitleDocument = document.type === DocumentType.YOUTUBE;
+    // Retry of an already confirmed Document stays allowed while the flag is off; a new confirm is not.
+    if (isSubtitleDocument && mode === 'CONFIRM') this.assertYoutubeLessonsEnabled(document.type);
     if (isSubtitleDocument && mode === 'CONFIRM' && !rightsConfirmed) {
       throw this.subtitleRightsRequired();
     }
@@ -626,6 +628,7 @@ export class ContentService {
           allowedStatuses: mode === 'RETRY'
             ? [DocumentStatus.FAILED]
             : [DocumentStatus.UPLOADED, DocumentStatus.FAILED],
+          mode,
           rightsConfirmed: subtitle.rightsConfirmed,
         });
       }

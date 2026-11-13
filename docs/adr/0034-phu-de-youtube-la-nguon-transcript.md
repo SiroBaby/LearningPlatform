@@ -72,6 +72,9 @@ markup, mốc thời gian chồng lấn hoặc không khớp video.
    bằng `YOUTUBE_LESSONS_DISABLED`) và web (ẩn lựa chọn nguồn). Owner bật trên
    dev trong cùng PR qua `youtube_lessons_enabled` ở `infra/ansible/vars/dev.yml`.
    Rollback: đặt lại `false`; Document YOUTUBE đã tạo vẫn xem và làm quiz được.
+   API cũng chặn `subtitle-preview` và `confirm` mới của YOUTUBE khi cờ tắt
+   (409 `YOUTUBE_LESSONS_DISABLED`); `retry` của Document đã được xác nhận quyền
+   vẫn được phép để việc xử lý dở dang không bị kẹt khi rollback.
 
 ## Hệ quả
 

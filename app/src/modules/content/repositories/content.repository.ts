@@ -584,14 +584,18 @@ export class ContentRepository extends BaseRepository<Document> {
     ownerId: string,
     id: string,
     selection: DocumentModelSelection,
-    options: { readonly allowedStatuses: readonly DocumentStatus[]; readonly rightsConfirmed: boolean },
+    options: {
+      readonly allowedStatuses: readonly DocumentStatus[];
+      readonly mode: 'CONFIRM' | 'RETRY';
+      readonly rightsConfirmed: boolean;
+    },
   ): Promise<Document | null> {
     return this.dataSource.transaction(async (manager) => {
       const current = await manager.findOne(Document, {
         where: { id, ownerId },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!current || current.type !== DocumentType.YOUTUBE) return null;
+      if (!current || current.type !== DocumentType.YOUTUBE || current.status === DocumentStatus.DELETING) return null;
       const snapshots = await manager.query<readonly { readonly rightsConfirmedAt: Date | null }[]>(
         `SELECT "rights_confirmed_at" AS "rightsConfirmedAt"
            FROM "course"."document_subtitle_transcripts"
@@ -603,7 +607,7 @@ export class ContentRepository extends BaseRepository<Document> {
       if (!options.rightsConfirmed && snapshots[0].rightsConfirmedAt === null) {
         throw new SubtitlePrerequisiteError('RIGHTS_REQUIRED');
       }
-      if (!options.allowedStatuses.includes(current.status)) return current;
+      if (!options.allowedStatuses.includes(current.status)) return options.mode === 'RETRY' ? null : current;
       await manager.query(
         `UPDATE "course"."document_subtitle_transcripts"
             SET "rights_confirmed_at" = COALESCE("rights_confirmed_at", now()), "updated_at" = now()
@@ -611,6 +615,7 @@ export class ContentRepository extends BaseRepository<Document> {
         [id, ownerId],
       );
       const started = await this.startProcessing(manager, ownerId, id, options.allowedStatuses);
+      if (!started && options.mode === 'RETRY') return null;
       if (started) {
         const document = await manager.findOneByOrFail(Document, { id, ownerId });
         await this.enqueueTextProcessingStart(manager, document, selection);

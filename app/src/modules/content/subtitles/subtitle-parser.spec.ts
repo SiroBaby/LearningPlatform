@@ -219,3 +219,31 @@ describe('parseSubtitle failures', () => {
     expectFailure(source, 'SRT', SubtitleParseErrorCode.SUBTITLE_TOO_MANY_CHARS);
   });
 });
+
+describe('parseSubtitle sanitizer hardening', () => {
+  function cueText(payload: string): string {
+    return parseSubtitle(vttWithBlocks(`00:00:00.000 --> 00:00:01.000\n${payload}`), 'VTT').cues[0].text;
+  }
+
+  it.each([
+    ['a&#0;b&#0;c'],
+    ['a&#1;&#1;d'],
+    ['&#1;&#x85;&#x85;x'],
+    ['x&#x7F;y'],
+    ['x&#8;y'],
+  ])('rejects entity-encoded controls in %s', (payload) => {
+    expectFailure(vttWithBlocks(`00:00:00.000 --> 00:00:01.000\n${payload}`), 'VTT', SubtitleParseErrorCode.SUBTITLE_ENCODING_INVALID);
+  });
+
+  it('keeps entity-encoded tab, newline and carriage return as whitespace', () => {
+    expect(cueText('a&#9;b&#10;c&#13;d')).toBe('a b c d');
+  });
+
+  it('strips any well-formed tag but keeps escaped markup and lone angle brackets as text', () => {
+    expect(cueText('x<br>y <span class=x>z</span> &lt;script&gt; 1 < 2 > 0')).toBe('xy z <script> 1 < 2 > 0');
+  });
+
+  it('removes Arabic letter mark and Mongolian vowel separator', () => {
+    expect(cueText('a؜b᠎c')).toBe('abc');
+  });
+});

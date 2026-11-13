@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -57,7 +58,7 @@ func DecodeSubtitleCues(raw []byte) ([]TranscriptSegment, error) {
 	runes := 0
 	var previousStartMs int64
 	for _, cue := range cues {
-		if cue.StartMs < 0 || cue.EndMs <= cue.StartMs || cue.EndMs > maxSubtitleEndMs || cue.StartMs < previousStartMs || !utf8.ValidString(cue.Text) {
+		if cue.StartMs < 0 || cue.EndMs <= cue.StartMs || cue.EndMs > maxSubtitleEndMs || cue.StartMs < previousStartMs || !utf8.ValidString(cue.Text) || containsForbiddenControl(cue.Text) {
 			return nil, Failure{Code: ProcessingFailed}
 		}
 		text := normalizeExtractedText(cue.Text)
@@ -76,6 +77,16 @@ func DecodeSubtitleCues(raw []byte) ([]TranscriptSegment, error) {
 		})
 	}
 	return segments, nil
+}
+
+// containsForbiddenControl reports C0, DEL and C1 controls other than tab, LF and CR, which the Node parser rejects.
+func containsForbiddenControl(text string) bool {
+	for _, character := range text {
+		if unicode.IsControl(character) && character != '\t' && character != '\n' && character != '\r' {
+			return true
+		}
+	}
+	return false
 }
 
 // SubtitleSegments reads the confirmed subtitle snapshot of the job's Document. The query repeats the identity and
