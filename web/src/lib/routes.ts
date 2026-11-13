@@ -21,6 +21,9 @@ export const routes = {
   processing: (docId: string) => `/processing/${docId}`,
   library: "/library",
   document: (id: string) => `/library/${id}`,
+  /** Opens a media document at a whole-second position (`?t=`). */
+  libraryDocumentAt: (id: string, startSec: number) =>
+    `/library/${id}?t=${Math.max(0, Math.floor(startSec))}`,
   quizStart: (quizId: string) => `/quiz/${quizId}`,
   quizPlay: (quizId: string) => `/quiz/${quizId}/play`,
   quizResult: (quizId: string, attemptId: string) =>

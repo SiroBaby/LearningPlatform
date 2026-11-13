@@ -15,6 +15,7 @@ import type {
   Phase0EstimateResponse,
   Phase0ModelOption,
   Phase0ModelSelectionKind,
+  Phase0PlaybackUrlResponse,
   Phase0PracticeFeedbackResponse,
   Phase0QuizOption,
   Phase0QuizQuestion,
@@ -456,4 +457,53 @@ export function mapAttemptResultResponse(value: unknown): Phase0AttemptResultRes
 
 export function mapAttemptHistoryResponse(value: unknown): readonly Phase0AttemptHistoryItem[] {
   return readArray(value, "attempts").map(mapAttemptHistoryItem);
+}
+
+function readPlaybackMimeType(value: unknown): Phase0PlaybackUrlResponse["mimeType"] {
+  const mimeType = readString(value, "mimeType");
+  if (mimeType !== "video/mp4" && mimeType !== "audio/mpeg") {
+    throw new TypeError("Expected mimeType to be a supported media type.");
+  }
+  return mimeType;
+}
+
+function readHttpUrl(value: unknown, field: string): string {
+  const url = readString(value, field);
+  let protocol = "";
+  try {
+    protocol = new URL(url).protocol;
+  } catch {
+    protocol = "";
+  }
+  if (protocol !== "https:" && protocol !== "http:") {
+    throw new TypeError(`Expected ${field} to be an http(s) URL.`);
+  }
+  return url;
+}
+
+function readIsoInstant(value: unknown, field: string): string {
+  const instant = readString(value, field);
+  if (!Number.isFinite(Date.parse(instant))) {
+    throw new TypeError(`Expected ${field} to be an ISO datetime.`);
+  }
+  return instant;
+}
+
+export function mapPlaybackUrlResponse(value: unknown): Phase0PlaybackUrlResponse {
+  const source = readObject(value);
+  const ttlSec = readNumber(source.ttlSec, "ttlSec");
+  if (!Number.isInteger(ttlSec) || ttlSec < 1) {
+    throw new TypeError("Expected ttlSec to be a positive integer.");
+  }
+  const durationSec = readNullableNumber(source.durationSec ?? null, "durationSec");
+  if (durationSec !== null && durationSec < 0) {
+    throw new TypeError("Expected durationSec to be non-negative.");
+  }
+  return {
+    url: readHttpUrl(source.url, "url"),
+    expiresAt: readIsoInstant(source.expiresAt, "expiresAt"),
+    ttlSec,
+    mimeType: readPlaybackMimeType(source.mimeType),
+    durationSec,
+  };
 }

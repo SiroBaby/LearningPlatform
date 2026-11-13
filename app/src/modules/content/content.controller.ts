@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { Mapper } from '@automapper/core';
 import {
@@ -11,6 +11,7 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
 
@@ -24,6 +25,10 @@ import { ContentService } from './content.service';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { DocumentResponseDto } from './dto/document.response.dto';
 import { DocumentQuizResponseDto } from './dto/document-quiz.response.dto';
+import { MediaPlaybackUrlResult } from './contracts/media-playback-url.result';
+import { CreateMediaPlaybackUrlDto } from './dto/create-media-playback-url.dto';
+import { MediaPlaybackUrlResponseDto } from './dto/media-playback-url.response.dto';
+import { MEDIA_PLAYBACK_DEFAULT_REASON } from './contracts/media-playback-policy';
 import { UploadUrlResponseDto } from './dto/upload-url.response.dto';
 import { DocumentEstimateResponseDto } from '../ai/dto/document-estimate.response.dto';
 import { Document } from './entities/document.entity';
@@ -99,6 +104,28 @@ export class ContentController {
   ): Promise<DocumentQuizResponseDto> {
     const result = await this.content.findQuiz(ownerId, documentId);
     return this.mapper.map(result, DocumentQuizResult, DocumentQuizResponseDto);
+  }
+
+  @Post(':id/playback-url')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Issue a short-lived streaming URL for an owned READY audio or video Document.' })
+  @ApiOkResponse({ type: MediaPlaybackUrlResponseDto })
+  @ApiBadRequestResponse({ description: 'Invalid Document id or reason.' })
+  @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner or is being deleted.' })
+  @ApiConflictResponse({ description: 'Document is not playable media, not READY, or its source identity is incomplete.' })
+  @ApiServiceUnavailableResponse({ description: 'Media playback is disabled or the URL could not be signed.' })
+  async createPlaybackUrl(
+    @CurrentUser() ownerId: string,
+    @Param('id', new ParseUUIDPipe()) documentId: string,
+    @Body() dto: CreateMediaPlaybackUrlDto,
+  ): Promise<MediaPlaybackUrlResponseDto> {
+    const result = await this.content.createMediaPlaybackUrl({
+      ownerId,
+      documentId,
+      reason: dto.reason ?? MEDIA_PLAYBACK_DEFAULT_REASON,
+    });
+    return this.mapper.map(result, MediaPlaybackUrlResult, MediaPlaybackUrlResponseDto);
   }
 
   @Post(':id/confirm')

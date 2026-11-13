@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { LearnerShell } from "@/components/layout";
 import { DocumentDetail } from "@/components/library/document-detail";
+import { parseStartSec } from "@/lib/media-playback/start-position";
 import { isDocumentDeleting } from "@/lib/phase0/document-deletion";
 import { getPhase0DocumentServer, Phase0ServerError } from "@/lib/phase0/server-data";
 
 interface LibraryDetailPageProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 async function loadDocument(id: string) {
@@ -43,16 +45,18 @@ export async function generateMetadata({ params }: LibraryDetailPageProps): Prom
   }
 }
 
-export default async function LibraryDetailPage({ params }: LibraryDetailPageProps) {
+export default async function LibraryDetailPage({ params, searchParams }: LibraryDetailPageProps) {
   const { id } = await params;
+  const { t } = await searchParams;
   const document = await loadDocument(id);
+  const initialStartSec = parseStartSec(t, document.durationSec);
 
   return (
     <LearnerShell
       title={document.originalName}
       subtitle="Xem thông tin tài liệu, theo dõi trạng thái và mở quiz khi đã có sẵn."
     >
-      <DocumentDetail document={document} />
+      <DocumentDetail document={document} initialStartSec={initialStartSec} />
     </LearnerShell>
   );
 }

@@ -8,12 +8,14 @@ import { Phase0ClientError, getPhase0DocumentQuiz } from "@/lib/phase0/client";
 import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
 import type { DocumentType, DocumentStatus } from "@/lib/types";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
+import { MediaPlayer } from "@/components/media/media-player";
 import { DeleteDocumentButton } from "./delete-document-button";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
 
 interface DocumentDetailProps {
   readonly document: Phase0Document;
+  readonly initialStartSec?: number;
 }
 
 function formatDateTime(iso: string): string {
@@ -67,7 +69,7 @@ function mapStatus(status: Phase0Document["status"]): DocumentStatus {
   }
 }
 
-export function DocumentDetail({ document }: DocumentDetailProps) {
+export function DocumentDetail({ document, initialStartSec }: DocumentDetailProps) {
   const [quizDiscovery, setQuizDiscovery] = useState<Phase0DocumentQuizResponse | null>(null);
   const [isQuizLoading, setIsQuizLoading] = useState(false);
   const [quizUnavailable, setQuizUnavailable] = useState(false);
@@ -183,6 +185,22 @@ export function DocumentDetail({ document }: DocumentDetailProps) {
           ) : null}
         </CardBody>
       </Card>
+
+      {document.status === "READY" && (document.type === "VIDEO" || document.type === "AUDIO") ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>{document.type === "VIDEO" ? "Xem video" : "Nghe bài"}</CardTitle>
+          </CardHeader>
+          <CardBody>
+            <MediaPlayer
+              documentId={document.id}
+              kind={document.type}
+              title={document.originalName}
+              initialStartSec={initialStartSec}
+            />
+          </CardBody>
+        </Card>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
         <Card>

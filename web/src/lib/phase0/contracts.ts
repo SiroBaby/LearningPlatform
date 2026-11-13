@@ -264,3 +264,18 @@ export interface Phase0ApiError {
   readonly retryable?: boolean;
   readonly shortfallCredits?: number;
 }
+
+export const phase0PlaybackReasons = ["INITIAL", "SCHEDULED_REFRESH", "FOREGROUND", "EXPIRED", "MANUAL_RETRY"] as const;
+
+export type Phase0PlaybackReason = (typeof phase0PlaybackReasons)[number];
+
+export type Phase0PlaybackMimeType = "video/mp4" | "audio/mpeg";
+
+export interface Phase0PlaybackUrlResponse {
+  /** Short-lived signed URL: never log, persist or render it. */
+  readonly url: string;
+  readonly expiresAt: string;
+  readonly ttlSec: number;
+  readonly mimeType: Phase0PlaybackMimeType;
+  readonly durationSec: number | null;
+}

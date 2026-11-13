@@ -8,6 +8,8 @@ import type {
   Phase0EstimateRequest,
   Phase0EstimateResponse,
   Phase0ModelOption,
+  Phase0PlaybackReason,
+  Phase0PlaybackUrlResponse,
   Phase0PracticeFeedbackRequest,
   Phase0PracticeFeedbackResponse,
   Phase0QuizResponse,
@@ -17,6 +19,7 @@ import type {
   Phase0UploadUrlResponse,
 } from "@/lib/phase0/contracts";
 import { mapSafeBackendError } from "@/lib/phase0/backend-error";
+import { parseRetryAfterSeconds } from "@/lib/phase0/retry-after";
 import {
   mapAttemptResultResponse,
   mapAttemptHistoryResponse,
@@ -26,6 +29,7 @@ import {
   mapDocumentResponse,
   mapEstimateResponse,
   mapModelOptionsResponse,
+  mapPlaybackUrlResponse,
   mapPracticeFeedbackResponse,
   mapQuizResponse,
   mapSubmitQuizAttemptResponse,
@@ -37,14 +41,16 @@ export class Phase0ClientError extends Error {
   public readonly retryable?: boolean;
   public readonly shortfallCredits?: number;
   public readonly status: number;
+  public readonly retryAfterSec?: number;
 
-  public constructor(status: number, error: Phase0ApiError) {
+  public constructor(status: number, error: Phase0ApiError, retryAfterSec?: number) {
     super(error.message);
     this.name = "Phase0ClientError";
     this.status = status;
     this.code = error.code;
     this.retryable = error.retryable;
     this.shortfallCredits = error.shortfallCredits;
+    this.retryAfterSec = retryAfterSec;
   }
 }
 
@@ -75,10 +81,14 @@ async function requestPhase0Api<T>(
   method: "GET" | "POST" | "DELETE",
   mapResponse: (value: unknown) => T,
   body?: unknown,
+  externalSignal?: AbortSignal,
 ): Promise<T> {
   const headers = body === undefined ? undefined : { "Content-Type": "application/json" };
   const abortController = new AbortController();
   const timeoutId = globalThis.setTimeout(() => abortController.abort(), PHASE0_REQUEST_TIMEOUT_MS);
+  const abortFromCaller = (): void => abortController.abort();
+  if (externalSignal?.aborted) abortController.abort();
+  externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
 
   try {
     const response = await fetch(path, {
@@ -90,10 +100,17 @@ async function requestPhase0Api<T>(
     });
     const responseBody = await readResponseBody(response);
     if (!response.ok) {
-      throw new Phase0ClientError(response.status, readApiError(responseBody));
+      throw new Phase0ClientError(
+        response.status,
+        readApiError(responseBody),
+        parseRetryAfterSeconds(response.headers.get("retry-after"), Date.now()) ?? undefined,
+      );
     }
     return mapResponse(responseBody);
   } catch (error: unknown) {
+    if (externalSignal?.aborted) {
+      throw error;
+    }
     if (abortController.signal.aborted) {
       throw new Phase0ClientError(408, {
         code: "REQUEST_TIMEOUT",
@@ -104,6 +121,7 @@ async function requestPhase0Api<T>(
     throw error;
   } finally {
     globalThis.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -137,6 +155,20 @@ export function retryPhase0Document(documentId: string): Promise<Phase0ConfirmDo
 
 export function deletePhase0Document(documentId: string): Promise<Phase0ConfirmDocumentResponse> {
   return requestPhase0Api(`/api/phase0/documents/${documentId}`, "DELETE", mapConfirmDocumentResponse);
+}
+
+export function createPhase0PlaybackUrl(
+  documentId: string,
+  reason: Phase0PlaybackReason,
+  signal?: AbortSignal,
+): Promise<Phase0PlaybackUrlResponse> {
+  return requestPhase0Api(
+    `/api/phase0/documents/${documentId}/playback-url`,
+    "POST",
+    mapPlaybackUrlResponse,
+    { reason },
+    signal,
+  );
 }
 
 export function getPhase0DocumentQuiz(documentId: string): Promise<Phase0DocumentQuizResponse> {
