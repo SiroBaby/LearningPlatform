@@ -1,6 +1,8 @@
 import { classes } from '@automapper/classes';
 import { createMapper, Mapper } from '@automapper/core';
 
+import { MediaPlaybackUrlResult } from '../contracts/media-playback-url.result';
+import { MediaPlaybackUrlResponseDto } from '../dto/media-playback-url.response.dto';
 import { UploadUrlResult } from '../contracts/upload-url.result';
 import { DocumentQuizResult } from '../contracts/document-quiz.result';
 import { DocumentEstimateResult } from '../contracts/document-estimate.result';
@@ -208,5 +210,26 @@ describe('ContentMappingProfile', () => {
       questionCount: result.questionCount,
       quizId: result.quizId,
     });
+  });
+
+  it('maps playback URL result with ISO expiresAt and explicit null duration', () => {
+    const result = Object.assign(new MediaPlaybackUrlResult(), {
+      url: 'https://storage.example/media',
+      expiresAt: new Date('2026-09-04T04:00:00.000Z'),
+      ttlSec: 14400,
+      mimeType: 'audio/mpeg',
+      durationSec: null,
+    });
+
+    const actual = mapper.map(result, MediaPlaybackUrlResult, MediaPlaybackUrlResponseDto);
+
+    expect(actual).toEqual({
+      url: 'https://storage.example/media',
+      expiresAt: '2026-09-04T04:00:00.000Z',
+      ttlSec: 14400,
+      mimeType: 'audio/mpeg',
+      durationSec: null,
+    });
+    expect(Object.prototype.hasOwnProperty.call(actual, 'durationSec')).toBe(true);
   });
 });

@@ -6,6 +6,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import {
   Injectable,
@@ -24,6 +25,17 @@ export type StorageObjectStat = {
   readonly size: number;
   readonly versionId?: string;
 };
+
+/** Hard ceiling for presigned GET lifetime; IAM user keys allow up to 7 days, we cap far lower. */
+export const MAX_PRESIGNED_GET_EXPIRES_SEC = 12 * 3600;
+
+export interface CreatePresignedGetUrlInput {
+  readonly key: string;
+  readonly versionId: string;
+  readonly responseContentType: string;
+  readonly expiresInSec: number;
+  readonly signingDate: Date;
+}
 
 type AsyncByteStream = AsyncIterable<Uint8Array> & {
   destroy?: () => void;
@@ -115,6 +127,33 @@ export class StorageService implements OnModuleInit {
       Key: objectKey,
     });
     return { formFields: fields, url, expirySec: this.presignExpiry };
+  }
+
+  /**
+   * Presigned GET pinned to an exact object version so a re-uploaded key can never
+   * change what an already-issued URL streams. Same client/endpoint as presigned POST.
+   */
+  async createPresignedGetUrl(
+    input: CreatePresignedGetUrlInput,
+    bucketKind: StorageBucketKind = 'documents',
+  ): Promise<string> {
+    if (
+      !Number.isInteger(input.expiresInSec)
+      || input.expiresInSec < 1
+      || input.expiresInSec > MAX_PRESIGNED_GET_EXPIRES_SEC
+    ) {
+      throw new RangeError('Presigned GET lifetime is outside the allowed range');
+    }
+    return getSignedUrl(
+      this.clientForBucket(bucketKind),
+      new GetObjectCommand({
+        Bucket: this.getBucketName(bucketKind),
+        Key: input.key,
+        VersionId: input.versionId,
+        ResponseContentType: input.responseContentType,
+      }),
+      { expiresIn: input.expiresInSec, signingDate: input.signingDate },
+    );
   }
 
   /** Lấy metadata object (size, contentType) — dùng ở bước confirm sau này. */

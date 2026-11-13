@@ -10,9 +10,11 @@ import {
   InternalServerErrorException,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 
 import { DateTimeUtil } from '../../common/datetime.util';
+import { createApplicationLogger } from '../../common/logging/application-logger.factory';
 import { ApplicationConfigService } from '../../config/application-config.service';
 import { StorageService } from '../../storage/storage.service';
 import { normalizeStorageVersionId } from '../../storage/storage-version-id';
@@ -36,9 +38,13 @@ import {
   getDocumentUploadPolicy,
   resolveDocumentUploadPolicy,
 } from './contracts/document-upload-policy';
+import type { CreateMediaPlaybackUrlCommand } from './contracts/media-playback-url.command';
+import { calculateMediaPlaybackTtlSec } from './contracts/media-playback-policy';
+import { MediaPlaybackUrlResult } from './contracts/media-playback-url.result';
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { MEDIA_PROBE_POLICY_VERSION } from './contracts/media-probe-policy';
 import { Document } from './entities/document.entity';
+import type { CreatePresignedGetUrlInput } from '../../storage/storage.service';
 import type { DocumentPurgeLocator } from './entities/document-purge-manifest.entity';
 import { DocumentStatus } from './enums/document-status.enum';
 import { DocumentType } from './enums/document-type.enum';
@@ -55,10 +61,15 @@ import {
 } from '../ai/contracts/model-selection.contracts';
 
 const isMediaDocumentType = (type: DocumentType): boolean => type === DocumentType.AUDIO || type === DocumentType.VIDEO;
+const SAFE_LOG_TOKEN = /^[A-Za-z0-9_.-]{1,64}$/u;
+const safeLogToken = (value: unknown): string =>
+  typeof value === 'string' && SAFE_LOG_TOKEN.test(value) ? value : 'unknown';
 type ProcessingStartMode = 'CONFIRM' | 'RETRY';
 
 @Injectable()
 export class ContentService {
+  private readonly logger = createApplicationLogger({ context: ContentService.name });
+
   constructor(
     private readonly contentRepository: ContentRepository,
     private readonly storage: StorageService,
@@ -104,6 +115,92 @@ export class ContentService {
       objectKey,
       bucket: this.storage.getBucketName(policy.bucket),
       expirySec,
+    });
+  }
+
+  /**
+   * Issues a short-lived presigned GET for an owned, READY media Document.
+   * Ownership and status are re-checked on every call so refresh never outlives access.
+   */
+  async createMediaPlaybackUrl(command: CreateMediaPlaybackUrlCommand): Promise<MediaPlaybackUrlResult> {
+    const { ownerId, documentId, reason } = command;
+    const document = await this.findPlayableMediaDocument(ownerId, documentId);
+    const locator = this.getPersistedMediaSourceLocator(document, this.storage.getBucketName('media'));
+    if (!locator?.versionId) {
+      throw this.rejectPlayback(documentId, this.mediaSourceIdentityUnavailable());
+    }
+    const durationSec = document.durationSec ?? null;
+    const ttlSec = calculateMediaPlaybackTtlSec(durationSec);
+    const signingDate = DateTimeUtil.nowUtc();
+    const mimeType = document.type === DocumentType.VIDEO ? 'video/mp4' : 'audio/mpeg';
+    const url = await this.signPlaybackUrl(documentId, {
+      key: locator.key,
+      versionId: locator.versionId,
+      responseContentType: mimeType,
+      expiresInSec: ttlSec,
+      signingDate,
+    });
+    this.logger.log({ event: 'media.playback.url_issued', documentId, reason, ttlSec, documentType: document.type });
+    return Object.assign(new MediaPlaybackUrlResult(), {
+      url,
+      expiresAt: new Date(signingDate.getTime() + ttlSec * 1000),
+      ttlSec,
+      mimeType,
+      durationSec,
+    });
+  }
+
+  private async findPlayableMediaDocument(ownerId: string, documentId: string): Promise<Document> {
+    const document = await this.contentRepository.findByOwnerId(ownerId, documentId);
+    if (!document || document.status === DocumentStatus.DELETING) {
+      throw new NotFoundException({ code: 'DOCUMENT_NOT_FOUND', message: `Document ${documentId} not found` });
+    }
+    if (!isMediaDocumentType(document.type)) {
+      throw this.rejectPlayback(documentId, new ConflictException({
+        code: 'MEDIA_PLAYBACK_NOT_AVAILABLE',
+        message: 'This Document has no audio or video to play.',
+        retryable: false,
+      }));
+    }
+    if (document.status !== DocumentStatus.READY) {
+      throw this.rejectPlayback(documentId, new ConflictException({
+        code: 'MEDIA_PLAYBACK_NOT_READY',
+        message: 'Media is not ready to play yet.',
+        retryable: false,
+      }));
+    }
+    if (!this.config?.storage.mediaEnabled) {
+      throw this.rejectPlayback(documentId, this.mediaPlaybackUnavailable());
+    }
+    return document;
+  }
+
+  private async signPlaybackUrl(documentId: string, input: CreatePresignedGetUrlInput): Promise<string> {
+    try {
+      return await this.storage.createPresignedGetUrl(input, 'media');
+    } catch (error) {
+      const failure = (typeof error === 'object' && error !== null ? error : {}) as { name?: unknown; code?: unknown; Code?: unknown };
+      this.logger.error({
+        event: 'media.playback.sign_failed',
+        documentId,
+        errorName: safeLogToken(failure.name),
+        code: safeLogToken(failure.Code ?? failure.code),
+      });
+      throw this.mediaPlaybackUnavailable();
+    }
+  }
+
+  private rejectPlayback<T extends HttpException>(documentId: string, exception: T): T {
+    const body = exception.getResponse() as { code?: string };
+    this.logger.warn({ event: 'media.playback.url_rejected', documentId, code: safeLogToken(body.code) });
+    return exception;
+  }
+
+  private mediaPlaybackUnavailable(): ServiceUnavailableException {
+    return new ServiceUnavailableException({
+      code: 'MEDIA_PLAYBACK_UNAVAILABLE',
+      message: 'Media playback is temporarily unavailable. Please try again shortly.',
+      retryable: true,
     });
   }
 

@@ -3,6 +3,8 @@ import { createMap, forMember, mapFrom, Mapper } from '@automapper/core';
 
 import { MAPPER } from '../../../common/mapping/mapper.provider';
 import { DateTimeUtil } from '../../../common/datetime.util';
+import { MediaPlaybackUrlResult } from '../contracts/media-playback-url.result';
+import { MediaPlaybackUrlResponseDto } from '../dto/media-playback-url.response.dto';
 import { UploadUrlResult } from '../contracts/upload-url.result';
 import { DocumentQuizResult } from '../contracts/document-quiz.result';
 import { DocumentEstimateResult } from '../contracts/document-estimate.result';
@@ -31,6 +33,19 @@ export class ContentMappingProfile {
       forMember(
         (destination) => destination.uploadFields,
         mapFrom((source) => source.uploadFields),
+      ),
+    );
+    createMap(
+      mapper,
+      MediaPlaybackUrlResult,
+      MediaPlaybackUrlResponseDto,
+      forMember(
+        (destination) => destination.expiresAt,
+        mapFrom((source) => DateTimeUtil.toUtcIsoString(source.expiresAt)),
+      ),
+      forMember(
+        (destination) => destination.durationSec,
+        mapFrom((source) => source.durationSec ?? null),
       ),
     );
     createMap(mapper, DocumentEstimateResult, DocumentEstimateResponseDto);
