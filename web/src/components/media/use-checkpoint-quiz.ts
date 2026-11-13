@@ -24,6 +24,8 @@ interface LoadedQuiz {
   readonly questions: readonly ServedCheckpointQuestion[];
 }
 
+const NO_QUESTIONS: readonly ServedCheckpointQuestion[] = [];
+
 function toServedQuestions(questions: readonly Phase0QuizQuestion[]): readonly ServedCheckpointQuestion[] {
   return questions.map((question, servedIndex) => ({ ...question, servedIndex }));
 }
@@ -62,7 +64,7 @@ export function useCheckpointQuiz(quizId: string | null): UseCheckpointQuizResul
 
   return {
     loadState: resolveLoadState(quizId, loaded),
-    questions: loaded !== null && loaded.quizId === quizId ? loaded.questions : [],
+    questions: loaded !== null && loaded.quizId === quizId ? loaded.questions : NO_QUESTIONS,
     retry,
   };
 }

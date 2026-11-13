@@ -75,3 +75,20 @@ test("the controller tells the engine when playback is paused, restarts the cloc
   assert.match(source, /decideNativePlayOutcome\(/u);
   assert.doesNotMatch(source, /Date\.now\(\)/u);
 });
+
+test("groups are applied to the engine once per groups change, through a stable dispatch", () => {
+  const source = readSource("src/components/media/use-media-checkpoints.ts");
+
+  assert.equal((source.match(/type: "GROUPS_CHANGED"/gu) ?? []).length, 1);
+  assert.match(source, /dispatchRef\.current\(\{ type: "GROUPS_CHANGED", groups \}\);[\s\S]*?\}, \[groups, hasGroups, progress\.isRestored\]\);/u);
+  assert.doesNotMatch(source, /\}, \[[^\]]*dispatchEngine[^\]]*\]\);\s*\n\s*\n\s*const \{ persist \}/u);
+});
+
+test("the controller keeps per-render function identities out of effect and engine deps", () => {
+  const source = readSource("src/components/media/use-media-checkpoints.ts");
+
+  assert.match(source, /resetFeedbackRef\.current\(/u);
+  assert.match(source, /const cancelPendingFeedback = useCallback\([\s\S]*?\}, \[\]\);/u);
+  assert.match(source, /\}, \[adapter, cancelPendingFeedback, focusMedia\]\);/u);
+  assert.match(source, /keepViewIfUnchanged\(/u);
+});

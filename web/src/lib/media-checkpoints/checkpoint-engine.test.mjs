@@ -277,6 +277,34 @@ test("browser order while paused: tick at the target before seeked does not open
   assert.equal(getCheckpointStatus(seeked.state, "b"), "passed");
 });
 
+test("the pause tick itself is playback finishing: a stop inside the last interval still fires at 2x", () => {
+  let state = setup([group("a", 30)]);
+  state = send(state, { type: "TICK", timeSec: 29.4, nowMs: 0, playbackRate: 2 }).state;
+  state = send(state, { type: "TICK", timeSec: 29.9, nowMs: 250, playbackRate: 2 }).state;
+  const pauseTick = send(state, { type: "TICK", timeSec: 30.3, nowMs: 450, playbackRate: 2, isPaused: true });
+
+  assert.deepEqual(pauseTick.effect, { type: "PAUSE", groupId: "a" });
+});
+
+test("a scrub that is the very first paused tick is still a seek, even after a long gap", () => {
+  let state = setup([group("a", 20)]);
+  state = send(state, { type: "TICK", timeSec: 5, nowMs: 0, playbackRate: 1 }).state;
+  const tick = send(state, { type: "TICK", timeSec: 40, nowMs: 60250, playbackRate: 1, isPaused: true });
+
+  assert.equal(tick.effect, null);
+  assert.equal(getCheckpointStatus(tick.state, "a"), "passed");
+});
+
+test("only the first paused tick after playing is treated as an advance", () => {
+  let state = setup([group("a", 20)]);
+  state = send(state, { type: "TICK", timeSec: 5, nowMs: 0, playbackRate: 1 }).state;
+  state = send(state, { type: "TICK", timeSec: 5.2, nowMs: 200, playbackRate: 1, isPaused: true }).state;
+  const scrub = send(state, { type: "TICK", timeSec: 20.4, nowMs: 5000, playbackRate: 1, isPaused: true });
+
+  assert.equal(scrub.effect, null);
+  assert.equal(getCheckpointStatus(scrub.state, "a"), "passed");
+});
+
 test("the stale-wall scrub from the review (paused tick without the paused flag) still needs the flag", () => {
   let state = setup([group("a", 20)]);
   state = send(state, { type: "TICK", timeSec: 5, nowMs: 0, playbackRate: 1 }).state;
@@ -309,6 +337,7 @@ test("a paused backward scrub re-arms the stop", () => {
 test("a small paused position change is noise and never fires", () => {
   let state = setup([group("a", 10)]);
   state = send(state, { type: "TICK", timeSec: 9.9, nowMs: 0, playbackRate: 1 }).state;
+  state = send(state, { type: "TICK", timeSec: 9.9, nowMs: 50, playbackRate: 1, isPaused: true }).state;
   const result = send(state, { type: "TICK", timeSec: 10.1, nowMs: 90000, playbackRate: 1, isPaused: true });
 
   assert.equal(result.effect, null);

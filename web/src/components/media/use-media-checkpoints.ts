@@ -76,6 +76,14 @@ function readNowMs(): number {
   return globalThis.performance.now();
 }
 
+/** Ticks arrive several times a second; only re-render when something the UI shows changed. */
+function keepViewIfUnchanged(current: EngineView, next: EngineView): EngineView {
+  const isSame = current.statuses === next.statuses
+    && current.openGroupId === next.openGroupId
+    && current.enabled === next.enabled;
+  return isSame ? current : next;
+}
+
 function toEngineView(state: { statuses: Readonly<Record<string, CheckpointStatus>>; openGroupId: string | null; enabled: boolean }): EngineView {
   return { statuses: state.statuses, openGroupId: state.openGroupId, enabled: state.enabled };
 }
@@ -93,7 +101,9 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
   const [selectedOptions, setSelectedOptions] = useState<Readonly<Record<string, string | null>>>({});
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
   const practice = usePracticeFeedback({ answers: selectedOptions });
-  const { loadPracticeFeedback, resetQuestionFeedback } = practice;
+  const { loadPracticeFeedback } = practice;
+  // `usePracticeFeedback` returns new function identities every render; keep them out of effect deps.
+  const resetFeedbackRef = useRef(practice.resetQuestionFeedback);
 
   const effectiveDurationSec = durationSec ?? measuredDurationSec;
   const groups = useMemo<readonly CheckpointGroup[]>(
@@ -132,15 +142,16 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
     feedbackRef.current = practice.feedbackByQuestionId;
     selectedRef.current = selectedOptions;
     activeQuestionRef.current = activeQuestionId;
-  }, [groups, answered, practice.feedbackByQuestionId, selectedOptions, activeQuestionId]);
+    resetFeedbackRef.current = practice.resetQuestionFeedback;
+  }, [groups, answered, practice.feedbackByQuestionId, practice.resetQuestionFeedback, selectedOptions, activeQuestionId]);
 
   /** A check that is still loading when its question closes must not mark it answered later. */
   const cancelPendingFeedback = useCallback((): void => {
     const questionId = activeQuestionRef.current;
     if (questionId === null) return;
     if (feedbackRef.current[questionId]?.status !== "loading") return;
-    resetQuestionFeedback(questionId, selectedRef.current[questionId] ?? "");
-  }, [resetQuestionFeedback]);
+    resetFeedbackRef.current(questionId, selectedRef.current[questionId] ?? "");
+  }, []);
 
   const runEffect = useCallback((effect: CheckpointEngineEffect): void => {
     if (effect === null) return;
@@ -174,7 +185,7 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
   const dispatchEngine = useCallback((event: CheckpointEngineEvent): void => {
     const result = reduceCheckpointEngine(engineRef.current, event);
     engineRef.current = result.state;
-    setEngineView(toEngineView(result.state));
+    setEngineView((current) => keepViewIfUnchanged(current, toEngineView(result.state)));
     runEffect(result.effect);
   }, [runEffect]);
 
@@ -186,9 +197,10 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
   const hasGroups = groups.length > 0;
   useEffect(() => {
     if (!progress.isRestored || !hasGroups) return;
-    dispatchEngine({ type: "GROUPS_CHANGED", groups });
-    dispatchEngine({ type: "RESTORE_ANSWERED", groupIds: findAnsweredGroupIds(groups, answeredRef.current) });
-  }, [dispatchEngine, groups, hasGroups, progress.isRestored]);
+    // Dispatch through the ref: this effect must re-run only when the groups change, never per render.
+    dispatchRef.current({ type: "GROUPS_CHANGED", groups });
+    dispatchRef.current({ type: "RESTORE_ANSWERED", groupIds: findAnsweredGroupIds(groups, answeredRef.current) });
+  }, [groups, hasGroups, progress.isRestored]);
 
   const { persist } = progress;
   useEffect(() => {
@@ -256,8 +268,8 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
     if (activeQuestionId === null) return;
     if (practice.feedbackByQuestionId[activeQuestionId]?.status === "ready") return;
     setSelectedOptions((current) => ({ ...current, [activeQuestionId]: optionId }));
-    resetQuestionFeedback(activeQuestionId, optionId);
-  }, [activeQuestionId, practice.feedbackByQuestionId, resetQuestionFeedback]);
+    practice.resetQuestionFeedback(activeQuestionId, optionId);
+  }, [activeQuestionId, practice]);
 
   const checkAnswer = useCallback((): void => {
     if (quizId === null || activeQuestionId === null) return;

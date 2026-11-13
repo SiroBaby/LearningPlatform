@@ -18,6 +18,8 @@ export interface CheckpointEngineState {
   readonly resumeAtSec: number | null;
   readonly enabled: boolean;
   readonly emitsSeekEvents: boolean;
+  /** True when the previous tick was a playing tick; the first paused tick after it is the pause itself. */
+  readonly lastTickWasPlaying: boolean;
 }
 
 export type CheckpointEngineEvent =
@@ -77,6 +79,7 @@ export function createCheckpointEngine(options: CreateCheckpointEngineOptions): 
     resumeAtSec: null,
     enabled: options.enabled,
     emitsSeekEvents: options.emitsSeekEvents,
+    lastTickWasPlaying: false,
   };
 }
 
@@ -131,11 +134,16 @@ function applySeek(state: CheckpointEngineState, timeSec: number, nowMs: number 
   };
 }
 
-function isImplicitSeek(state: CheckpointEngineState, event: Extract<CheckpointEngineEvent, { type: "TICK" }>): boolean {
+function isImplicitSeek(
+  state: CheckpointEngineState,
+  event: Extract<CheckpointEngineEvent, { type: "TICK" }>,
+  maxWallDeltaSec = Number.POSITIVE_INFINITY,
+): boolean {
   if (state.lastTimeSec === null) return false;
   const delta = event.timeSec - state.lastTimeSec;
   if (delta < -SEEK_NOISE_SEC) return true;
-  const wallDeltaSec = state.lastWallMs === null ? 0 : Math.max(0, event.nowMs - state.lastWallMs) / 1000;
+  const rawWallDeltaSec = state.lastWallMs === null ? 0 : Math.max(0, event.nowMs - state.lastWallMs) / 1000;
+  const wallDeltaSec = Math.min(rawWallDeltaSec, maxWallDeltaSec);
   const expectedAdvanceSec = wallDeltaSec * Math.max(event.playbackRate, 0) * JUMP_RATE_FACTOR + JUMP_SLACK_SEC;
   return delta > Math.max(MIN_FORWARD_JUMP_SEC, expectedAdvanceSec);
 }
@@ -181,14 +189,24 @@ function reducePausedTick(state: CheckpointEngineState, event: Extract<Checkpoin
   return { ...state, lastTimeSec: event.timeSec, lastWallMs: event.nowMs };
 }
 
-function reduceTick(state: CheckpointEngineState, event: Extract<CheckpointEngineEvent, { type: "TICK" }>): CheckpointEngineResult {
-  if (state.lastTimeSec === null) return done(applyBaseline(state, event.timeSec, event.nowMs));
-  if (event.isPaused === true) return done(reducePausedTick(state, event));
-  if (isImplicitSeek(state, event)) return done(applySeek(state, event.timeSec, event.nowMs));
+/** `pause()` queues one last `timeupdate`: that tick is playback finishing, not a scrub. */
+const PAUSE_TICK_MAX_WALL_SEC = 1;
+
+function reduceTickBody(state: CheckpointEngineState, event: Extract<CheckpointEngineEvent, { type: "TICK" }>): CheckpointEngineResult {
+  const isPauseTick = event.isPaused === true && state.lastTickWasPlaying;
+  if (event.isPaused === true && !isPauseTick) return done(reducePausedTick(state, event));
+  const maxWallDeltaSec = isPauseTick ? PAUSE_TICK_MAX_WALL_SEC : undefined;
+  if (isImplicitSeek(state, event, maxWallDeltaSec)) return done(applySeek(state, event.timeSec, event.nowMs));
   if (state.openGroupId !== null) {
     return done({ ...state, lastTimeSec: event.timeSec, lastWallMs: event.nowMs });
   }
   return advanceTo(state, event.timeSec, event.nowMs);
+}
+
+function reduceTick(state: CheckpointEngineState, event: Extract<CheckpointEngineEvent, { type: "TICK" }>): CheckpointEngineResult {
+  if (state.lastTimeSec === null) return done({ ...applyBaseline(state, event.timeSec, event.nowMs), lastTickWasPlaying: event.isPaused !== true });
+  const result = reduceTickBody(state, event);
+  return { state: { ...result.state, lastTickWasPlaying: event.isPaused !== true }, effect: result.effect };
 }
 
 function reduceSeeked(state: CheckpointEngineState, timeSec: number, nowMs: number | null): CheckpointEngineResult {
