@@ -160,15 +160,23 @@ export interface Phase0QuizOption {
   readonly content: string;
 }
 
+export interface Phase0QuizTimeRange {
+  readonly startSec: number;
+  readonly endSec: number;
+}
+
 export interface Phase0QuizQuestion {
   readonly id: string;
   readonly ordinal: number;
   readonly stem: string;
+  /** Source segment of an uploaded video or audio; null for other sources. */
+  readonly timeRange: Phase0QuizTimeRange | null;
   readonly options: readonly Phase0QuizOption[];
 }
 
 export interface Phase0QuizResponse {
   readonly id: string;
+  readonly documentId: string | null;
   readonly questions: readonly Phase0QuizQuestion[];
 }
 
@@ -244,6 +252,7 @@ interface Phase0TimeLocator {
 export interface Phase0AttemptResultResponse {
   readonly attemptId: string;
   readonly quizId: string;
+  readonly documentId: string | null;
   readonly submittedAt: string;
   readonly score: number;
   readonly questionCount: number;

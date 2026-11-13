@@ -14,6 +14,7 @@ import {
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
+  ServedTimeRangeResult,
 } from '../contracts/quiz-attempt.result';
 import {
   GradedAttemptResponseDto,
@@ -27,6 +28,7 @@ import {
 import {
   QuizOptionResponseDto,
   QuizQuestionResponseDto,
+  QuizQuestionTimeRangeResponseDto,
   QuizResponseDto,
 } from '../dto/quiz.response.dto';
 import { PracticeFeedbackResponseDto } from '../dto/practice-feedback.response.dto';
@@ -36,7 +38,18 @@ import { QuizSummaryResponseDto } from '../dto/quiz-summary.response.dto';
 export class AssessmentMappingProfile {
   constructor(@Inject(MAPPER) mapper: Mapper) {
     createMap(mapper, ServedOptionResult, QuizOptionResponseDto);
-    createMap(mapper, ServedQuestionResult, QuizQuestionResponseDto);
+    createMap(mapper, ServedTimeRangeResult, QuizQuestionTimeRangeResponseDto);
+    createMap(
+      mapper,
+      ServedQuestionResult,
+      QuizQuestionResponseDto,
+      forMember(
+        (destination) => destination.timeRange,
+        mapFrom((source) => (source.timeRange
+          ? { endSec: source.timeRange.endSec, startSec: source.timeRange.startSec }
+          : null)),
+      ),
+    );
     createMap(mapper, ServedQuizResult, QuizResponseDto);
     createMap(
       mapper,

@@ -4,12 +4,14 @@ import { test } from "node:test";
 import { phase0DocumentProcessingFailureCodes, phase0DocumentStatuses } from "./contracts.ts";
 import {
   mapAttemptHistoryResponse,
+  mapAttemptResultResponse,
   mapConfirmDocumentResponse,
   mapDocumentResponse,
   mapDocumentsResponse,
   mapEstimateResponse,
   mapPlaybackUrlResponse,
   mapPracticeFeedbackResponse,
+  mapQuizResponse,
 } from "./mappers.ts";
 
 const budgetStatuses = [
@@ -264,4 +266,64 @@ test("rejects malformed playback URL responses", () => {
   ]) {
     assert.throws(() => mapPlaybackUrlResponse({ ...playbackPayload, ...override }), TypeError, JSON.stringify(override));
   }
+});
+
+function buildQuizQuestion(overrides = {}) {
+  return {
+    id: "q1",
+    ordinal: 1,
+    stem: "Câu hỏi?",
+    options: [{ id: "o1", optionIndex: 0, content: "A" }],
+    ...overrides,
+  };
+}
+
+test("maps quiz documentId and a valid question timeRange", () => {
+  const quiz = mapQuizResponse({
+    id: "quiz-1",
+    documentId: "doc-1",
+    questions: [buildQuizQuestion({ timeRange: { startSec: 10, endSec: 25.5 } })],
+  });
+
+  assert.equal(quiz.documentId, "doc-1");
+  assert.deepEqual(quiz.questions[0].timeRange, { startSec: 10, endSec: 25.5 });
+});
+
+test("reads missing quiz documentId and timeRange as null (older backend)", () => {
+  const quiz = mapQuizResponse({ id: "quiz-1", questions: [buildQuizQuestion()] });
+
+  assert.equal(quiz.documentId, null);
+  assert.equal(quiz.questions[0].timeRange, null);
+});
+
+test("reads malformed timeRange values as null without throwing", () => {
+  const malformed = [
+    null,
+    "10-20",
+    [],
+    {},
+    { startSec: "1", endSec: 2 },
+    { startSec: 5, endSec: 2 },
+    { startSec: -1, endSec: 2 },
+    { startSec: Number.NaN, endSec: 2 },
+  ];
+
+  for (const timeRange of malformed) {
+    const quiz = mapQuizResponse({ id: "quiz-1", questions: [buildQuizQuestion({ timeRange })] });
+    assert.equal(quiz.questions[0].timeRange, null, JSON.stringify(timeRange));
+  }
+});
+
+test("maps attempt result documentId and tolerates its absence", () => {
+  const base = {
+    attemptId: "a1",
+    quizId: "quiz-1",
+    submittedAt: "2026-07-27T00:00:00.000Z",
+    score: 1,
+    questionCount: 1,
+    results: [],
+  };
+
+  assert.equal(mapAttemptResultResponse({ ...base, documentId: "doc-1" }).documentId, "doc-1");
+  assert.equal(mapAttemptResultResponse(base).documentId, null);
 });

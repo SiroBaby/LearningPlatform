@@ -4,7 +4,7 @@ import { Badge, Card, CardBody, CardHeader, CardTitle, EmptyState, LinkButton, P
 import { formatVietnameseDateTime } from "@/lib/date-time";
 import { formatTimeCitationLabel } from "@/lib/media-time-citation";
 import type { Phase0CitationLocator } from "@/lib/phase0/contracts";
-import { getPhase0AttemptResultServer } from "@/lib/phase0/server-data";
+import { getPhase0AttemptResultServer, getPhase0DocumentServer } from "@/lib/phase0/server-data";
 import {
   isQuizAttemptNotAvailableError,
   QUIZ_ATTEMPT_NOT_AVAILABLE_DESCRIPTION,
@@ -24,6 +24,22 @@ async function loadAttemptResultOrSafeError(quizId: string, attemptId: string) {
       return null;
     }
     throw error;
+  }
+}
+
+const LISTEN_LINK_LABEL = "Nghe đoạn này";
+const WATCH_LINK_LABEL = "Xem đoạn này";
+
+/** Label for "go to this part" links, or null when the source cannot be played (missing, deleting, not media). */
+async function loadMediaLinkLabel(documentId: string | null): Promise<string | null> {
+  if (documentId === null) return null;
+  try {
+    const document = await getPhase0DocumentServer(documentId);
+    if (document.status !== "READY") return null;
+    if (document.type === "VIDEO") return WATCH_LINK_LABEL;
+    return document.type === "AUDIO" ? LISTEN_LINK_LABEL : null;
+  } catch {
+    return null;
   }
 }
 
@@ -71,6 +87,7 @@ export default async function QuizResultPage({ params }: QuizResultPageProps) {
       </LearnerShell>
     );
   }
+  const mediaLinkLabel = await loadMediaLinkLabel(attempt.documentId);
   const scorePct = toPercent(attempt.score, attempt.questionCount);
   const correctCount = attempt.results.filter((item) => item.isCorrect).length;
   const resultTone = scorePct >= 70 ? "success" : "warning";
@@ -165,6 +182,16 @@ export default async function QuizResultPage({ params }: QuizResultPageProps) {
                   <p className="mt-1.5 text-sm italic leading-relaxed text-ink-700">
                     “{item.citation.snippet}”
                   </p>
+                  {attempt.documentId && mediaLinkLabel && item.citation.locator.kind === "time" ? (
+                    <LinkButton
+                      href={routes.libraryDocumentAt(attempt.documentId, item.citation.locator.startSec)}
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                    >
+                      {mediaLinkLabel}
+                    </LinkButton>
+                  ) : null}
                 </div>
               </div>
             ))}

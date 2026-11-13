@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 
+import { shouldForwardPlayerEvent } from "@/lib/media-playback/event-gate";
+import type { MediaPlayerAdapter, MediaPlayerEvent, MediaPlayerEventListener } from "@/lib/media-playback/media-player-adapter";
 import { applySource } from "@/lib/media-playback/apply-source";
 import type { AppliedSourceHandle, MediaElementLike } from "@/lib/media-playback/apply-source";
 import {
@@ -40,6 +42,8 @@ export interface UseMediaPlaybackResult {
   readonly playHint: string | null;
   readonly canRetry: boolean;
   readonly retryAvailableInSec: number;
+  /** Stable player-agnostic view of the same element, for features such as checkpoints. */
+  readonly adapter: MediaPlayerAdapter;
   retry(): void;
   play(): Promise<void>;
   pause(): void;
@@ -81,7 +85,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
   const [playHint, setPlayHint] = useState<string | null>(null);
   const startSecRef = useRef<number | undefined>(initialStartSec);
   const isMountedRef = useRef(false);
-  const timeListenersRef = useRef<Set<(timeSec: number) => void>>(new Set());
+  const playerListenersRef = useRef<Set<MediaPlayerEventListener>>(new Set());
   const fetchPlaybackRef = useRef<(reason: Phase0PlaybackReason, fetchOptions?: FetchOptions) => Promise<void>>(
     () => Promise.resolve(),
   );
@@ -227,20 +231,33 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
       }
       dispatchEvent({ type: "SOURCE_FAILED", nowMs: Date.now() });
     };
-    const onTimeUpdate = (): void => {
+    const emit = (event: MediaPlayerEvent): void => {
       // While a swap is restoring, currentTime is the reset value (0), not the viewer's position.
-      if (appliedRef.current?.isPending()) return;
-      for (const listener of timeListenersRef.current) listener(element.currentTime);
+      if (!shouldForwardPlayerEvent(event.type, appliedRef.current?.isPending() === true)) return;
+      for (const listener of playerListenersRef.current) listener(event);
     };
+    const onTimeUpdate = (): void => emit({ type: "time", timeSec: element.currentTime });
+    const onSeeked = (): void => emit({ type: "seeked", timeSec: element.currentTime });
+    const onEnded = (): void => emit({ type: "ended", timeSec: element.currentTime });
+    const onPlayEvent = (): void => emit({ type: "play" });
+    const onPauseEvent = (): void => emit({ type: "pause" });
     element.addEventListener("play", onPlay);
     element.addEventListener("playing", onPlaying);
     element.addEventListener("error", onError);
     element.addEventListener("timeupdate", onTimeUpdate);
+    element.addEventListener("seeked", onSeeked);
+    element.addEventListener("ended", onEnded);
+    element.addEventListener("play", onPlayEvent);
+    element.addEventListener("pause", onPauseEvent);
     return () => {
       element.removeEventListener("play", onPlay);
       element.removeEventListener("playing", onPlaying);
       element.removeEventListener("error", onError);
       element.removeEventListener("timeupdate", onTimeUpdate);
+      element.removeEventListener("seeked", onSeeked);
+      element.removeEventListener("ended", onEnded);
+      element.removeEventListener("play", onPlayEvent);
+      element.removeEventListener("pause", onPauseEvent);
     };
   }, [dispatchEvent, documentId, fetchPlayback]);
 
@@ -284,10 +301,30 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
 
   const getCurrentTime = useCallback((): number => mediaRef.current?.currentTime ?? 0, []);
 
-  const onTimeUpdate = useCallback((listener: (timeSec: number) => void): (() => void) => {
-    timeListenersRef.current.add(listener);
-    return () => { timeListenersRef.current.delete(listener); };
+  const subscribe = useCallback((listener: MediaPlayerEventListener): (() => void) => {
+    playerListenersRef.current.add(listener);
+    return () => { playerListenersRef.current.delete(listener); };
   }, []);
+
+  const onTimeUpdate = useCallback((listener: (timeSec: number) => void): (() => void) => subscribe((event) => {
+    if (event.type === "time") listener(event.timeSec);
+  }), [subscribe]);
+
+  const adapter = useMemo<MediaPlayerAdapter>(() => ({
+    getCurrentTime,
+    getDuration: (): number | null => {
+      const duration = mediaRef.current?.duration;
+      return typeof duration === "number" && Number.isFinite(duration) ? duration : null;
+    },
+    getPlaybackRate: (): number => mediaRef.current?.playbackRate ?? 1,
+    isPaused: (): boolean => mediaRef.current?.paused ?? true,
+    isSwapPending: (): boolean => appliedRef.current?.isPending() === true,
+    play,
+    pause,
+    seekTo,
+    subscribe,
+    emitsSeekEvents: true,
+  }), [getCurrentTime, pause, play, seekTo, subscribe]);
 
   const failureKind = state.failureKind;
   const isBlockingError = state.phase === "error" && failureKind !== null;
@@ -307,6 +344,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
     playHint,
     canRetry,
     retryAvailableInSec: isErrorVisible ? computeRetryAvailableInSec(state, nowMs) : 0,
+    adapter,
     retry,
     play,
     pause,

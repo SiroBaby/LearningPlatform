@@ -15,6 +15,16 @@ export class QuizOptionResponseDto {
   readonly content: string;
 }
 
+export class QuizQuestionTimeRangeResponseDto {
+  @ApiProperty({ example: 12.5, minimum: 0 })
+  @AutoMap()
+  readonly startSec: number;
+
+  @ApiProperty({ example: 18, minimum: 0 })
+  @AutoMap()
+  readonly endSec: number;
+}
+
 export class QuizQuestionResponseDto {
   @ApiProperty({ format: 'uuid' })
   @AutoMap()
@@ -31,9 +41,20 @@ export class QuizQuestionResponseDto {
   @ApiProperty({ isArray: true, type: QuizOptionResponseDto })
   @AutoMap(() => [QuizOptionResponseDto])
   readonly options: QuizOptionResponseDto[];
+
+  @ApiProperty({
+    description: 'Time range of the source in the media, or null when the source has no time locator.',
+    nullable: true,
+    type: QuizQuestionTimeRangeResponseDto,
+  })
+  readonly timeRange: QuizQuestionTimeRangeResponseDto | null;
 }
 
 export class QuizResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  @AutoMap()
+  readonly documentId: string;
+
   @ApiProperty({ format: 'uuid' })
   @AutoMap()
   readonly id: string;

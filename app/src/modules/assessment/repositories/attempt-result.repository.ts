@@ -11,6 +11,7 @@ import { AttemptAnswerEntity } from '../entities/attempt-answer.entity';
 import { AttemptEntity } from '../entities/attempt.entity';
 import { QuestionEntity } from '../entities/question.entity';
 import { QuestionOptionEntity } from '../entities/question-option.entity';
+import { QuizEntity } from '../entities/quiz.entity';
 
 @Injectable()
 export class AttemptResultRepository
@@ -46,6 +47,13 @@ export class AttemptResultRepository
   ): Promise<PersistedAttemptResult | null> {
     const attempt = await this.findOne({ where: { id: attemptId, ownerId, quizId } });
     if (!attempt) {
+      return null;
+    }
+    const quiz = await this.dataSource.getRepository(QuizEntity).findOne({
+      select: { documentId: true },
+      where: { id: quizId, ownerId },
+    });
+    if (!quiz) {
       return null;
     }
     const answers = await this.dataSource.getRepository(AttemptAnswerEntity).find({
@@ -87,6 +95,7 @@ export class AttemptResultRepository
       });
     }
     return {
+      documentId: quiz.documentId,
       id: attempt.id,
       questionCount: attempt.questionCount,
       quizId: attempt.quizId,

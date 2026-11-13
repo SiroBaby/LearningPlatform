@@ -74,6 +74,19 @@ export class Question {
   }
 }
 
+export interface ServedTimeRange {
+  readonly endSec: number;
+  readonly startSec: number;
+}
+
+/** Returns the time range of a valid time locator; null for any other locator. */
+export function toServedTimeRange(locator: CitationLocator | null | undefined): ServedTimeRange | null {
+  if (locator?.kind !== 'time' || !isValidLocator(locator)) {
+    return null;
+  }
+  return { endSec: locator.endSec, startSec: locator.startSec };
+}
+
 function isValidLocator(locator: CitationLocator): boolean {
   switch (locator.kind) {
     case 'page':

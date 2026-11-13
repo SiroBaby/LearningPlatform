@@ -20,6 +20,7 @@ import type {
   Phase0QuizOption,
   Phase0QuizQuestion,
   Phase0QuizResponse,
+  Phase0QuizTimeRange,
   Phase0SubmitQuizAttemptResponse,
   Phase0UploadUrlResponse,
 } from "@/lib/phase0/contracts";
@@ -308,12 +309,33 @@ function mapQuizOption(value: unknown): Phase0QuizOption {
   };
 }
 
+/** Lenient on purpose: an older backend omits the field, and a bad range must not break the quiz. */
+function readQuestionTimeRange(value: unknown): Phase0QuizTimeRange | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const source = readObject(value);
+  const { startSec, endSec } = source;
+  if (typeof startSec !== "number" || typeof endSec !== "number") {
+    return null;
+  }
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || startSec < 0 || endSec < startSec) {
+    return null;
+  }
+  return { startSec, endSec };
+}
+
+function readOptionalDocumentId(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
 function mapQuizQuestion(value: unknown): Phase0QuizQuestion {
   const source = readObject(value);
   return {
     id: readString(source.id, "question.id"),
     ordinal: readNumber(source.ordinal, "question.ordinal"),
     stem: readString(source.stem, "question.stem"),
+    timeRange: readQuestionTimeRange(source.timeRange),
     options: readArray(source.options, "question.options").map(mapQuizOption),
   };
 }
@@ -411,6 +433,7 @@ export function mapQuizResponse(value: unknown): Phase0QuizResponse {
   const source = readObject(value);
   return {
     id: readString(source.id, "quiz.id"),
+    documentId: readOptionalDocumentId(source.documentId),
     questions: readArray(source.questions, "quiz.questions").map(mapQuizQuestion),
   };
 }
@@ -448,6 +471,7 @@ export function mapAttemptResultResponse(value: unknown): Phase0AttemptResultRes
   return {
     attemptId: readString(source.attemptId, "attemptId"),
     quizId: readString(source.quizId, "quizId"),
+    documentId: readOptionalDocumentId(source.documentId),
     submittedAt: readString(source.submittedAt, "submittedAt"),
     score: readNumber(source.score, "score"),
     questionCount: readNumber(source.questionCount, "questionCount"),

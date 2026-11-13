@@ -2,8 +2,8 @@ import { randomUUID } from 'crypto';
 
 import { describe, expect, it } from '@jest/globals';
 
-import type { QuestionCandidate } from '../contracts/quiz-generation-handoff.contract';
-import { Question } from './question';
+import type { CitationLocator, QuestionCandidate } from '../contracts/quiz-generation-handoff.contract';
+import { Question, toServedTimeRange } from './question';
 
 describe('Question', () => {
   it('accepts a structurally valid single-select question', () => {
@@ -52,4 +52,36 @@ describe('Question', () => {
       },
     };
   }
+});
+
+describe('toServedTimeRange', () => {
+  it('returns the range of a valid time locator', () => {
+    const inputLocator = { endSec: 30, kind: 'time', startSec: 12.5 } as const;
+
+    const actualRange = toServedTimeRange(inputLocator);
+
+    expect(actualRange).toEqual({ endSec: 30, startSec: 12.5 });
+  });
+
+  it('accepts a zero-length range starting at zero', () => {
+    expect(toServedTimeRange({ endSec: 0, kind: 'time', startSec: 0 })).toEqual({ endSec: 0, startSec: 0 });
+  });
+
+  const nullLocators: readonly { readonly name: string; readonly locator: CitationLocator }[] = [
+    { name: 'page locator', locator: { kind: 'page', page: 1 } },
+    { name: 'text-range locator', locator: { end: 5, kind: 'text-range', start: 0 } },
+    { name: 'negative start', locator: { endSec: 5, kind: 'time', startSec: -1 } },
+    { name: 'end before start', locator: { endSec: 4, kind: 'time', startSec: 5 } },
+    { name: 'non-finite start', locator: { endSec: 5, kind: 'time', startSec: Number.NaN } },
+    { name: 'non-finite end', locator: { endSec: Number.POSITIVE_INFINITY, kind: 'time', startSec: 1 } },
+  ];
+
+  it('returns null instead of throwing for a missing locator', () => {
+    expect(toServedTimeRange(undefined)).toBeNull();
+    expect(toServedTimeRange(null)).toBeNull();
+  });
+
+  it.each(nullLocators)('returns null for $name', ({ locator }) => {
+    expect(toServedTimeRange(locator)).toBeNull();
+  });
 });

@@ -13,6 +13,7 @@ import {
   ServedOptionResult,
   ServedQuestionResult,
   ServedQuizResult,
+  ServedTimeRangeResult,
 } from '../contracts/quiz-attempt.result';
 import { GradedAttemptResponseDto } from '../dto/graded-attempt.response.dto';
 import {
@@ -32,37 +33,60 @@ describe('AssessmentMappingProfile', () => {
     new AssessmentMappingProfile(mapper);
   });
 
-  it('maps a served Quiz without correctness or grading evidence', () => {
+  it('maps a served Quiz with Document and time range without correctness or grading evidence', () => {
     const option = Object.assign(new ServedOptionResult(), {
       content: 'Option',
       id: '5a8bc836-a508-4b2f-8bea-a0ee2518bbb6',
       optionIndex: 0,
     });
-    const question = Object.assign(new ServedQuestionResult(), {
+    const timeQuestion = Object.assign(new ServedQuestionResult(), {
       id: 'f387b115-f93f-4e21-8c8e-6433b155d55d',
       ordinal: 0,
       options: [option],
       stem: 'Question?',
+      timeRange: Object.assign(new ServedTimeRangeResult(), { endSec: 30, startSec: 12.5 }),
+    });
+    const pageQuestion = Object.assign(new ServedQuestionResult(), {
+      id: 'a387b115-f93f-4e21-8c8e-6433b155d55d',
+      ordinal: 1,
+      options: [option],
+      stem: 'Page question?',
+      timeRange: null,
     });
     const quiz = Object.assign(new ServedQuizResult(), {
+      documentId: 'd9c63d87-9ec5-4f00-9ab7-32d35a5b1e7e',
       id: '4e248637-40c9-4d58-9de3-8d230fe56309',
-      questions: [question],
+      questions: [timeQuestion, pageQuestion],
     });
 
     const actual = mapper.map(quiz, ServedQuizResult, QuizResponseDto);
 
     expect(actual).toEqual({
+      documentId: quiz.documentId,
       id: quiz.id,
-      questions: [{
-        id: question.id,
-        ordinal: 0,
-        options: [{ content: 'Option', id: option.id, optionIndex: 0 }],
-        stem: 'Question?',
-      }],
+      questions: [
+        {
+          id: timeQuestion.id,
+          ordinal: 0,
+          options: [{ content: 'Option', id: option.id, optionIndex: 0 }],
+          stem: 'Question?',
+          timeRange: { endSec: 30, startSec: 12.5 },
+        },
+        {
+          id: pageQuestion.id,
+          ordinal: 1,
+          options: [{ content: 'Option', id: option.id, optionIndex: 0 }],
+          stem: 'Page question?',
+          timeRange: null,
+        },
+      ],
     });
+    expect(actual.questions[1]).toHaveProperty('timeRange', null);
     expect(JSON.stringify(actual)).not.toContain('isCorrect');
     expect(JSON.stringify(actual)).not.toContain('explanation');
     expect(JSON.stringify(actual)).not.toContain('citation');
+    expect(JSON.stringify(actual)).not.toContain('snippet');
+    expect(JSON.stringify(actual)).not.toContain('Transcript cue');
   });
 
   it('maps Quiz summaries with the public id field', () => {
@@ -195,6 +219,7 @@ describe('AssessmentMappingProfile', () => {
       stem: 'Question?',
     });
     const attempt = Object.assign(new PersistedAttemptResult(), {
+      documentId: 'd9c63d87-9ec5-4f00-9ab7-32d35a5b1e7e',
       id: 'aeb863c3-78ba-4e38-b86e-a5f04b9f8fc5',
       questionCount: 1,
       quizId: '4e248637-40c9-4d58-9de3-8d230fe56309',
@@ -207,6 +232,7 @@ describe('AssessmentMappingProfile', () => {
 
     expect(actual).toEqual({
       attemptId: attempt.id,
+      documentId: attempt.documentId,
       questionCount: 1,
       quizId: attempt.quizId,
       results: [result],

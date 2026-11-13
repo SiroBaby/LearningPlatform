@@ -8,7 +8,7 @@ import { Phase0ClientError, getPhase0DocumentQuiz } from "@/lib/phase0/client";
 import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/contracts";
 import type { DocumentType, DocumentStatus } from "@/lib/types";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
-import { MediaPlayer } from "@/components/media/media-player";
+import { MediaLesson } from "@/components/media/media-lesson";
 import { DeleteDocumentButton } from "./delete-document-button";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
@@ -192,11 +192,13 @@ export function DocumentDetail({ document, initialStartSec }: DocumentDetailProp
             <CardTitle>{document.type === "VIDEO" ? "Xem video" : "Nghe bài"}</CardTitle>
           </CardHeader>
           <CardBody>
-            <MediaPlayer
+            <MediaLesson
               documentId={document.id}
               kind={document.type}
               title={document.originalName}
               initialStartSec={initialStartSec}
+              quizId={quizDiscovery?.quizId ?? null}
+              durationSec={document.durationSec}
             />
           </CardBody>
         </Card>

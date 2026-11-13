@@ -1,12 +1,16 @@
 import { CircleCheckBig, Loader2, XCircle } from "lucide-react";
 import { CitationSnippet } from "@/components/ui/citation";
+import type { Citation } from "@/lib/types";
 import { toCitationSnippet, type QuestionPracticeFeedbackState } from "./quiz-play-utils";
 
 interface PracticeFeedbackPanelProps {
   readonly feedback: QuestionPracticeFeedbackState | null;
+  /** Adds a jump button to the source (for example "go to this part of the video"). */
+  readonly onJumpAction?: (citation: Citation) => void;
+  readonly jumpLabel?: string;
 }
 
-export function PracticeFeedbackPanel({ feedback }: PracticeFeedbackPanelProps) {
+export function PracticeFeedbackPanel({ feedback, onJumpAction, jumpLabel }: PracticeFeedbackPanelProps) {
   if (feedback?.status === "loading") {
     return (
       <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-4 text-sm text-brand-700" aria-live="polite">
@@ -48,7 +52,7 @@ export function PracticeFeedbackPanel({ feedback }: PracticeFeedbackPanelProps) 
             </p>
             <p className="mt-1 text-sm leading-6 text-ink-700">{feedback.response.explanation}</p>
           </div>
-          <CitationSnippet citation={toCitationSnippet(feedback.response)} />
+          <CitationSnippet citation={toCitationSnippet(feedback.response)} onJumpAction={onJumpAction} jumpLabel={jumpLabel} />
         </div>
       </div>
     </div>

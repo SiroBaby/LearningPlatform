@@ -48,9 +48,11 @@ export function CitationBadge({
 export function CitationSnippet({
   citation,
   onJumpAction,
+  jumpLabel = "Xem nguồn",
 }: {
   citation: Citation;
   onJumpAction?: (citation: Citation) => void;
+  jumpLabel?: string;
 }) {
   const label = locatorLabel(citation.locator);
   return (
@@ -65,7 +67,7 @@ export function CitationSnippet({
             onClick={() => onJumpAction(citation)}
             className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-800"
           >
-            Xem nguồn <ExternalLink className="h-3 w-3" aria-hidden />
+            {jumpLabel} <ExternalLink className="h-3 w-3" aria-hidden />
           </button>
         )}
       </div>

@@ -175,8 +175,8 @@ export function getPhase0DocumentQuiz(documentId: string): Promise<Phase0Documen
   return requestPhase0Api(`/api/phase0/documents/${documentId}/quiz`, "GET", mapDocumentQuizResponse);
 }
 
-export function getPhase0Quiz(quizId: string): Promise<Phase0QuizResponse> {
-  return requestPhase0Api(`/api/phase0/quizzes/${quizId}`, "GET", mapQuizResponse);
+export function getPhase0Quiz(quizId: string, signal?: AbortSignal): Promise<Phase0QuizResponse> {
+  return requestPhase0Api(`/api/phase0/quizzes/${quizId}`, "GET", mapQuizResponse, undefined, signal);
 }
 
 export function requestPhase0PracticeFeedback(
