@@ -1,4 +1,4 @@
-import type { CitationCandidate } from './quiz-generation-handoff.contract';
+import type { CitationCandidate, CitationLocator } from './quiz-generation-handoff.contract';
 
 export const QUIZ_ATTEMPT_STORE = Symbol('QUIZ_ATTEMPT_STORE');
 
@@ -14,6 +14,7 @@ export interface ServedOption {
 }
 
 export interface ServedQuestion {
+  readonly citationLocator: CitationLocator;
   readonly id: string;
   readonly ordinal: number;
   readonly options: readonly ServedOption[];
@@ -21,6 +22,7 @@ export interface ServedQuestion {
 }
 
 export interface ServedQuiz {
+  readonly documentId: string;
   readonly id: string;
   readonly questions: readonly ServedQuestion[];
 }
@@ -69,6 +71,7 @@ export interface PersistedAttemptQuestionResult extends GradedAnswer {
 }
 
 export interface PersistedAttemptResult {
+  readonly documentId: string;
   readonly id: string;
   readonly questionCount: number;
   readonly quizId: string;

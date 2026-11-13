@@ -90,7 +90,7 @@ export class QuizRepository
 
   async findServedByOwnerId(ownerId: string, quizId: string): Promise<ServedQuiz | null> {
     const quiz = await this.findOne({
-      select: { id: true },
+      select: { documentId: true, id: true },
       where: { id: quizId, ownerId },
     });
     if (!quiz) {
@@ -99,7 +99,7 @@ export class QuizRepository
 
     const questions = await this.dataSource.getRepository(QuestionEntity).find({
       order: { ordinal: 'ASC', id: 'ASC' },
-      select: { id: true, ordinal: true, stem: true },
+      select: { citation: true, id: true, ordinal: true, stem: true },
       where: { ownerId, quizId },
     });
     const options = questions.length === 0
@@ -119,8 +119,10 @@ export class QuizRepository
       });
 
     return {
+      documentId: quiz.documentId,
       id: quiz.id,
       questions: questions.map((question) => ({
+        citationLocator: question.citation.locator,
         id: question.id,
         ordinal: question.ordinal,
         options: options

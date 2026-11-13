@@ -15,6 +15,7 @@ import { AssessmentService } from './assessment.service';
 
 describe('AssessmentService', () => {
   const ownerId = randomUUID();
+  const documentId = randomUUID();
   const quizId = randomUUID();
   const firstQuestionId = randomUUID();
   const secondQuestionId = randomUUID();
@@ -45,8 +46,22 @@ describe('AssessmentService', () => {
     service = new AssessmentService(store, attempts, quizzes);
   });
 
-  it('serves only the quiz owned by the current Owner', async () => {
-    await expect(service.getQuiz(ownerId, quizId)).resolves.toEqual(servedQuiz());
+  it('serves only the quiz owned by the current Owner with its Document and time ranges', async () => {
+    const expectedQuiz = servedQuiz();
+
+    const actualQuiz = await service.getQuiz(ownerId, quizId);
+
+    expect(actualQuiz).toMatchObject({
+      documentId,
+      id: quizId,
+      questions: [
+        { id: firstQuestionId, timeRange: null },
+        { id: secondQuestionId, timeRange: { endSec: 30, startSec: 12.5 } },
+      ],
+    });
+    expect(actualQuiz.questions).toHaveLength(expectedQuiz.questions.length);
+    expect(JSON.stringify(actualQuiz)).not.toContain('citation');
+    expect(JSON.stringify(actualQuiz)).not.toContain('Source');
     expect(store.findServedByOwnerId).toHaveBeenCalledWith(ownerId, quizId);
   });
 
@@ -204,8 +219,12 @@ describe('AssessmentService', () => {
 
   function servedQuiz(): ServedQuiz {
     return {
+      documentId,
       id: quizId,
-      questions: gradingQuiz().questions.map((question) => ({
+      questions: gradingQuiz().questions.map((question, index) => ({
+        citationLocator: index === 1
+          ? { endSec: 30, kind: 'time' as const, startSec: 12.5 }
+          : question.citation.locator,
         id: question.id,
         ordinal: question.ordinal,
         options: question.options.map((option) => ({
@@ -230,6 +249,7 @@ describe('AssessmentService', () => {
 
   function persistedAttemptResult(): PersistedAttemptResult {
     return {
+      documentId,
       id: randomUUID(),
       questionCount: 2,
       quizId,

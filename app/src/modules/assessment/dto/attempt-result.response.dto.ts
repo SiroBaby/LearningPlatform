@@ -47,6 +47,10 @@ export class AttemptResultQuestionResponseDto {
 export class AttemptResultResponseDto {
   @ApiProperty({ format: 'uuid' })
   @AutoMap()
+  readonly documentId: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @AutoMap()
   readonly attemptId: string;
 
   @ApiProperty({ format: 'uuid' })

@@ -13,6 +13,14 @@ export class ServedOptionResult {
   optionIndex!: number;
 }
 
+export class ServedTimeRangeResult {
+  @AutoMap()
+  startSec!: number;
+
+  @AutoMap()
+  endSec!: number;
+}
+
 export class ServedQuestionResult {
   @AutoMap()
   id!: string;
@@ -25,9 +33,14 @@ export class ServedQuestionResult {
 
   @AutoMap()
   stem!: string;
+
+  timeRange!: ServedTimeRangeResult | null;
 }
 
 export class ServedQuizResult {
+  @AutoMap()
+  documentId!: string;
+
   @AutoMap()
   id!: string;
 
@@ -113,6 +126,9 @@ export class PersistedAttemptQuestionResult {
 }
 
 export class PersistedAttemptResult {
+  @AutoMap()
+  documentId!: string;
+
   @AutoMap()
   id!: string;
 

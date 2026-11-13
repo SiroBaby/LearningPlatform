@@ -74,6 +74,8 @@ export async function verifyQuizAttemptFlow(fixture: QuizAttemptFlowFixture): Pr
   expect(JSON.stringify(servedBody)).not.toContain('isCorrect');
   expect(JSON.stringify(servedBody)).not.toContain('is_correct');
   expect(JSON.stringify(servedBody)).not.toContain('explanation');
+  expect(JSON.stringify(servedBody)).not.toContain('snippet');
+  expect(JSON.stringify(servedBody)).not.toContain('citation');
 
   const hiddenQuiz = await fixture.request(`/api/v1/quizzes/${fixture.quiz.id}`, {
     headers: fixture.authHeaders(fixture.otherOwnerId),

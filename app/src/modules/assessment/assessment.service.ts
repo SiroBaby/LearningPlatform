@@ -33,6 +33,7 @@ import {
   ServedQuizResult,
 } from './contracts/quiz-attempt.result';
 import { gradeAttempt, gradePracticeFeedback } from './domain/attempt';
+import { toServedTimeRange } from './domain/question';
 
 @Injectable()
 export class AssessmentService {
@@ -71,12 +72,14 @@ export class AssessmentService {
       throw new NotFoundException(`Quiz ${quizId} not found`);
     }
     return Object.assign(new ServedQuizResult(), {
+      documentId: quiz.documentId,
       id: quiz.id,
       questions: quiz.questions.map((question) => Object.assign(new ServedQuestionResult(), {
         id: question.id,
         ordinal: question.ordinal,
         options: question.options.map((option) => Object.assign(new ServedOptionResult(), option)),
         stem: question.stem,
+        timeRange: toServedTimeRange(question.citationLocator),
       })),
     });
   }
@@ -142,6 +145,7 @@ export class AssessmentService {
       throw new NotFoundException(`Attempt ${attemptId} not found`);
     }
     return Object.assign(new PersistedAttemptResult(), {
+      documentId: attempt.documentId,
       id: attempt.id,
       questionCount: attempt.questionCount,
       quizId: attempt.quizId,

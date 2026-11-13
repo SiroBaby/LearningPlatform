@@ -34,8 +34,10 @@ describe('QuizRepository attempt flow', () => {
     const quiz = await repository.findServedByOwnerId(fixture.ownerId, fixture.quizId);
 
     expect(quiz).toEqual({
+      documentId: fixture.documentId,
       id: fixture.quizId,
       questions: [{
+        citationLocator: fixture.citation.locator,
         id: fixture.questionId,
         ordinal: 0,
         options: [{ content: 'Correct', id: fixture.optionId, optionIndex: 0 }],
@@ -44,6 +46,8 @@ describe('QuizRepository attempt flow', () => {
     });
     expect(JSON.stringify(quiz)).not.toContain('isCorrect');
     expect(JSON.stringify(quiz)).not.toContain('explanation');
+    expect(JSON.stringify(quiz)).not.toContain(fixture.citation.snippet);
+    expect(JSON.stringify(quiz)).not.toContain('snippet');
     await expect(repository.findServedByOwnerId(randomUUID(), fixture.quizId)).resolves.toBeNull();
   });
 
@@ -171,6 +175,7 @@ describe('QuizRepository attempt flow', () => {
     await expect(
       attemptResults.findByOwnerQuizAndAttemptId(fixture.ownerId, fixture.quizId, attempt.id),
     ).resolves.toMatchObject({
+      documentId: fixture.documentId,
       id: attempt.id,
       questionCount: 1,
       quizId: fixture.quizId,
