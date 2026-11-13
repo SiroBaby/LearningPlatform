@@ -55,6 +55,8 @@ spec:
               value: https://{{ web_public_host }}
             - name: MEDIA_UPLOADS_ENABLED
               value: '{{ api_media_enabled | default(false) | bool | ternary("true", "false") }}'
+            - name: YOUTUBE_LESSONS_ENABLED
+              value: '{{ youtube_lessons_enabled | default(false) | bool | ternary("true", "false") }}'
           volumeMounts:
             - name: web-bff-tls
               mountPath: /var/run/identity/web-bff
@@ -143,6 +145,8 @@ spec:
               value: production
             - name: OBJECT_STORAGE_MEDIA_ENABLED
               value: '{{ api_media_enabled | default(false) | bool | ternary("true", "false") }}'
+            - name: YOUTUBE_LESSONS_ENABLED
+              value: '{{ youtube_lessons_enabled | default(false) | bool | ternary("true", "false") }}'
             - name: PORT
               value: '3000'
             - name: INTERNAL_MTLS_PORT

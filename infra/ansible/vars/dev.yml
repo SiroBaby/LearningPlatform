@@ -92,6 +92,10 @@ object_storage_egress_proxy_enabled: true
 # MEDIA_PROBE jobs, so api_media_enabled requires media_probe_worker_enabled.
 media_probe_worker_enabled: true
 api_media_enabled: true
+# YouTube lessons built from Owner-uploaded .vtt/.srt subtitles (#161, ADR-0034). The flag gates the YOUTUBE
+# upload option in the web UI and YOUTUBE upload-url in the API (strict boolean, default off in the template).
+# Owner enabled it on dev in the same PR; roll back by setting it to false (existing YOUTUBE Documents keep working).
+youtube_lessons_enabled: true
 # Shared in-cluster proxy route for the API, ai-worker and media-probe-worker.
 media_probe_worker_proxy_url: http://media-egress-proxy:3128
 # Derived audio for media STT (#160): the probe decodes with ffmpeg, cuts chunks
