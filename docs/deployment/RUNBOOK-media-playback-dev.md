@@ -33,8 +33,10 @@ cần thêm quyền đọc, giới hạn trong prefix `media/*`:
 }
 ```
 
-- Trạng thái dev hiện tại: **thiếu `s3:GetObjectVersion`** (đã có `s3:GetObject`). Presigned GET có
-  `versionId` sẽ trả `403` khi mở URL nếu thiếu quyền này. Owner thêm trước khi bật tính năng.
+- Trạng thái dev: owner đã thêm `s3:GetObjectVersion` ngày 2026-11-13. Policy của
+  `learning-platform-dev-api-media` hiện có `s3:PutObject`, `s3:GetObject` và `s3:GetObjectVersion`
+  trên `media/*` (kiểm tra bằng role chỉ đọc). Nếu thiếu `s3:GetObjectVersion`, presigned GET có
+  `versionId` sẽ trả `403` khi mở URL.
 - URL được ký bằng khóa dài hạn của IAM user, nên URL sống đúng TTL đã ký (tối đa 12 giờ). Nếu ký bằng
   khóa tạm (STS) thì URL chết cùng phiên; không dùng cách đó cho API này.
 - Không cấp `s3:ListBucket`, `s3:PutObject` hay `s3:DeleteObject` thêm cho tính năng này.
