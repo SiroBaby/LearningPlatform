@@ -6,4 +6,6 @@ export interface CreateUploadUrlCommand {
   sizeBytes: number;
   type: DocumentType;
   selection: DocumentModelSelection;
+  /** Raw URL as submitted; only valid (and required) for YOUTUBE, never persisted. */
+  youtubeUrl?: string;
 }

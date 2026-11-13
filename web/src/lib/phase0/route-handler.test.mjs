@@ -35,3 +35,28 @@ test("quiz attempts BFF keeps GET history separate from attempt submission", () 
   assert.match(route, /`\/quizzes\/\$\{encodeURIComponent\(id\)\}\/attempts`/u);
   assert.match(route, /export async function POST/u);
 });
+
+test("confirm BFF forwards an optional JSON body and rejects a malformed one", () => {
+  const route = source("../../app/api/phase0/documents/[id]/confirm/route.ts");
+  const handler = source("./route-handler.ts");
+
+  assert.match(route, /proxyPhase0OptionalJsonPost\(`\/documents\/\$\{encodeURIComponent\(id\)\}` \+ "\/confirm", request\)/u);
+  assert.match(handler, /export async function proxyPhase0OptionalJsonPost/u);
+  assert.match(handler, /text\.trim\(\)\.length === 0[\s\S]*proxyPhase0Request\(\{ method: "POST", path \}\)/u);
+  assert.match(handler, /JSON\.parse\(text\)[\s\S]*status: 400/u);
+});
+
+test("subtitle preview BFF is a POST with its own longer timeout, below the client timeout", () => {
+  const route = source("../../app/api/phase0/documents/[id]/subtitle-preview/route.ts");
+  const clientSource = source("./client.ts");
+
+  assert.match(route, /export async function POST/u);
+  assert.match(route, /`\/documents\/\$\{encodeURIComponent\(id\)\}\/subtitle-preview`/u);
+  assert.match(route, /timeoutMs: SUBTITLE_PREVIEW_TIMEOUT_MS/u);
+  const serverTimeout = Number(/SUBTITLE_PREVIEW_TIMEOUT_MS = ([\d_]+)/u.exec(route)?.[1].replaceAll("_", ""));
+  const clientTimeout = Number(/SUBTITLE_PREVIEW_TIMEOUT_MS = ([\d_]+)/u.exec(clientSource)?.[1].replaceAll("_", ""));
+  assert.ok(serverTimeout > 10_000);
+  assert.ok(clientTimeout > serverTimeout);
+  assert.match(source("./backend-client.ts"), /readonly timeoutMs\?: number;/u);
+  assert.match(source("./route-handler.ts"), /readonly timeoutMs\?: number;/u);
+});

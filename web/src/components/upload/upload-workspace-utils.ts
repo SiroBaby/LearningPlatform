@@ -7,7 +7,17 @@ import type {
 } from "@/lib/phase0/contracts";
 import { formatVietnameseDateTime } from "@/lib/date-time";
 
-export type UploadStep = "idle" | "creating" | "uploading" | "uploaded" | "confirming" | "confirmed";
+export type UploadStep =
+  | "idle"
+  | "creating"
+  | "uploading"
+  | "uploaded"
+  | "previewing"
+  | "previewed"
+  | "confirming"
+  | "confirmed";
+
+export type UploadSource = "file" | "youtube";
 
 export type SelectedPhase0File = {
   readonly file: File;
@@ -101,6 +111,7 @@ function getUploadFilePolicy(extension: string): UploadFilePolicy | null {
 }
 
 export function getUploadTypeLabel(type: Phase0DocumentType): string {
+  if (type === "YOUTUBE") return "Phụ đề YouTube";
   return UPLOAD_FILE_POLICIES.find((policy) => policy.type === type)?.label ?? type;
 }
 
@@ -263,6 +274,10 @@ export function getUploadStepLabel(step: UploadStep): string {
       return "Đang tải file lên";
     case "uploaded":
       return "Đã tải file lên";
+    case "previewing":
+      return "Đang đọc phụ đề";
+    case "previewed":
+      return "Chờ bạn xác nhận";
     case "confirming":
       return "Đang chuyển sang xử lý";
     case "confirmed":

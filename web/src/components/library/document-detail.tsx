@@ -9,6 +9,7 @@ import type { Phase0Document, Phase0DocumentQuizResponse } from "@/lib/phase0/co
 import type { DocumentType, DocumentStatus } from "@/lib/types";
 import { getDocumentFailurePresentation, isRetryableDocumentFailureCode } from "@/lib/phase0/document-failure";
 import { MediaLesson } from "@/components/media/media-lesson";
+import type { MediaLessonSource } from "@/components/media/media-lesson";
 import { DeleteDocumentButton } from "./delete-document-button";
 import { getPhase0UiErrorMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
@@ -49,8 +50,28 @@ function mapType(type: Phase0Document["type"]): DocumentType {
       return "audio";
     case "VIDEO":
       return "video";
+    case "YOUTUBE":
+      return "youtube";
   }
 }
+
+function getLessonSource(type: Phase0Document["type"], youtubeVideoId: string | null): MediaLessonSource | null {
+  if (type === "VIDEO" || type === "AUDIO") return { kind: "html", mediaKind: type };
+  if (type === "YOUTUBE" && youtubeVideoId !== null) return { kind: "youtube", videoId: youtubeVideoId };
+  return null;
+}
+
+function getLessonTitle(source: MediaLessonSource): string {
+  return source.kind === "html" && source.mediaKind === "AUDIO" ? "Nghe bài" : "Xem video";
+}
+
+const DOCUMENT_TYPE_LABELS: Readonly<Record<Phase0Document["type"], string>> = {
+  PDF: "PDF",
+  TEXT: "TXT",
+  AUDIO: "MP3",
+  VIDEO: "MP4",
+  YOUTUBE: "YouTube",
+};
 
 function mapStatus(status: Phase0Document["status"]): DocumentStatus {
   switch (status) {
@@ -78,6 +99,7 @@ export function DocumentDetail({ document, initialStartSec }: DocumentDetailProp
 
   const type = useMemo(() => mapType(document.type), [document.type]);
   const status = useMemo(() => mapStatus(document.status), [document.status]);
+  const lessonSource = useMemo(() => getLessonSource(document.type, document.youtubeVideoId), [document.type, document.youtubeVideoId]);
   const failurePresentation = useMemo(
     () => document.status === "FAILED" ? getDocumentFailurePresentation(document.errorCode) : null,
     [document.errorCode, document.status],
@@ -186,15 +208,15 @@ export function DocumentDetail({ document, initialStartSec }: DocumentDetailProp
         </CardBody>
       </Card>
 
-      {document.status === "READY" && (document.type === "VIDEO" || document.type === "AUDIO") ? (
+      {document.status === "READY" && lessonSource !== null ? (
         <Card>
           <CardHeader>
-            <CardTitle>{document.type === "VIDEO" ? "Xem video" : "Nghe bài"}</CardTitle>
+            <CardTitle>{getLessonTitle(lessonSource)}</CardTitle>
           </CardHeader>
           <CardBody>
             <MediaLesson
               documentId={document.id}
-              kind={document.type}
+              source={lessonSource}
               title={document.originalName}
               initialStartSec={initialStartSec}
               quizId={quizDiscovery?.quizId ?? null}
@@ -212,7 +234,7 @@ export function DocumentDetail({ document, initialStartSec }: DocumentDetailProp
           <CardBody className="grid gap-3 sm:grid-cols-2">
             <SpecItem
               label="Loại tài liệu"
-              value={document.type === "TEXT" ? "TXT" : document.type === "AUDIO" ? "MP3" : document.type === "VIDEO" ? "MP4" : "PDF"}
+              value={DOCUMENT_TYPE_LABELS[document.type]}
             />
             <SpecItem label="Kích thước" value={formatBytes(document.sizeBytes)} />
             <SpecItem label="Ngôn ngữ" value={document.language ?? "Chưa có"} />

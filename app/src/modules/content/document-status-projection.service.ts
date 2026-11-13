@@ -17,13 +17,14 @@ import {
 } from './contracts/document-status-projection.port';
 import { createApplicationLogger } from '../../common/logging/application-logger.factory';
 import { DocumentStatus } from './enums/document-status.enum';
+import { DocumentType } from './enums/document-type.enum';
 import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
 import { MAX_MEDIA_DURATION_SEC } from './contracts/media-probe-policy';
 import { ModelPriceTableError } from './credit-estimation/model-price-table';
 import { TEXT_EXTRACT_JOB_TYPE } from '../ai/contracts/ai-ingestion.port';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
 import { planReservationSettlement } from './credit-estimation/settlement-planner';
-import { estimateTextCredits } from './credit-estimation/text-credit-estimator';
+import { capTimedExtraction, estimateTextCredits } from './credit-estimation/text-credit-estimator';
 import { ContentRepository } from './repositories/content.repository';
 
 interface SettlementPlanning {
@@ -65,11 +66,10 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
       return { kind: 'UNAVAILABLE' };
     }
     try {
-      const estimatedCredits = estimateTextCredits({
-        chunkCount: command.chunkCount,
-        extractedChars: command.extractedChars,
-        model,
-      });
+      const billable = document.type === DocumentType.YOUTUBE
+        ? capTimedExtraction({ chunkCount: command.chunkCount, extractedChars: command.extractedChars })
+        : { chunkCount: command.chunkCount, extractedChars: command.extractedChars };
+      const estimatedCredits = estimateTextCredits({ ...billable, model });
       // Joined with `content.settlement.actual_usage` by documentId/jobId to calibrate the estimate (#281).
       this.logger.log({
         chunkCount: command.chunkCount,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { phase0DocumentProcessingFailureCodes, phase0DocumentStatuses } from "./contracts.ts";
+import { phase0DocumentProcessingFailureCodes, phase0DocumentStatuses, phase0DocumentTypes } from "./contracts.ts";
 import {
   mapAttemptHistoryResponse,
   mapAttemptResultResponse,
@@ -12,6 +12,7 @@ import {
   mapPlaybackUrlResponse,
   mapPracticeFeedbackResponse,
   mapQuizResponse,
+  mapSubtitlePreviewResponse,
 } from "./mappers.ts";
 
 const budgetStatuses = [
@@ -326,4 +327,58 @@ test("maps attempt result documentId and tolerates its absence", () => {
 
   assert.equal(mapAttemptResultResponse({ ...base, documentId: "doc-1" }).documentId, "doc-1");
   assert.equal(mapAttemptResultResponse(base).documentId, null);
+});
+
+test("accepts the YOUTUBE document type and reads its video id", () => {
+  const document = mapDocumentResponse(buildDocumentOverrides({
+    type: "YOUTUBE",
+    youtubeVideoId: "dQw4w9WgXcQ",
+    originalName: "bai-giang.vtt",
+  }));
+
+  assert.equal(document.type, "YOUTUBE");
+  assert.equal(document.youtubeVideoId, "dQw4w9WgXcQ");
+});
+
+test("lists YOUTUBE among the document types", () => {
+  assert.deepEqual([...phase0DocumentTypes], ["PDF", "TEXT", "AUDIO", "VIDEO", "YOUTUBE"]);
+});
+
+test("reads youtubeVideoId as null when an older backend omits it or sends a bad value", () => {
+  assert.equal(mapDocumentResponse(buildDocumentOverrides()).youtubeVideoId, null);
+  assert.equal(mapDocumentResponse(buildDocumentOverrides({ youtubeVideoId: null })).youtubeVideoId, null);
+  assert.equal(mapDocumentResponse(buildDocumentOverrides({ youtubeVideoId: "short" })).youtubeVideoId, null);
+  assert.equal(mapDocumentResponse(buildDocumentOverrides({ youtubeVideoId: 12 })).youtubeVideoId, null);
+});
+
+test("still rejects an unknown document type", () => {
+  assert.throws(() => mapDocumentResponse(buildDocumentOverrides({ type: "WEBINAR" })), /YOUTUBE/u);
+});
+
+test("maps a subtitle preview", () => {
+  const preview = mapSubtitlePreviewResponse({
+    format: "VTT",
+    cueCount: 2,
+    charCount: 21,
+    durationSec: 9,
+    cues: [
+      { startSec: 0, endSec: 4.5, text: "Xin chào" },
+      { startSec: 4.5, endSec: 9, text: "<b>không phải markup</b>" },
+    ],
+  });
+
+  assert.equal(preview.format, "VTT");
+  assert.equal(preview.cueCount, 2);
+  assert.equal(preview.durationSec, 9);
+  assert.deepEqual(preview.cues[1], { startSec: 4.5, endSec: 9, text: "<b>không phải markup</b>" });
+});
+
+test("rejects malformed subtitle previews", () => {
+  const valid = { format: "SRT", cueCount: 1, charCount: 1, durationSec: 1, cues: [{ startSec: 0, endSec: 1, text: "a" }] };
+  assert.equal(mapSubtitlePreviewResponse(valid).format, "SRT");
+  assert.throws(() => mapSubtitlePreviewResponse({ ...valid, format: "ASS" }), /VTT or SRT/u);
+  assert.throws(() => mapSubtitlePreviewResponse({ ...valid, cues: "none" }), /array/u);
+  assert.throws(() => mapSubtitlePreviewResponse({ ...valid, cues: [{ startSec: 2, endSec: 1, text: "a" }] }), /ordered/u);
+  assert.throws(() => mapSubtitlePreviewResponse({ ...valid, cues: [{ startSec: 0, endSec: 1, text: 3 }] }), /string/u);
+  assert.throws(() => mapSubtitlePreviewResponse({ ...valid, cueCount: "1" }), /number/u);
 });

@@ -70,6 +70,8 @@ function mapDocumentType(type: Phase0DocumentType): Phase0DocumentPresentation["
       return "audio";
     case "VIDEO":
       return "video";
+    case "YOUTUBE":
+      return "youtube";
   }
 }
 
@@ -141,7 +143,7 @@ function normalizeView(rawValue: string | null): LibraryView {
 }
 
 function normalizeTypeFilter(rawValue: string | null): DocumentTypeFilter {
-  return rawValue === "PDF" || rawValue === "TEXT" || rawValue === "AUDIO" || rawValue === "VIDEO" ? rawValue : "all";
+  return rawValue === "PDF" || rawValue === "TEXT" || rawValue === "AUDIO" || rawValue === "VIDEO" || rawValue === "YOUTUBE" ? rawValue : "all";
 }
 
 function normalizeStatusFilter(rawValue: string | null): DocumentStatusFilter {
@@ -417,6 +419,7 @@ export function LibraryBrowser() {
                 <option value="TEXT">Văn bản</option>
                 <option value="AUDIO">MP3</option>
                 <option value="VIDEO">MP4</option>
+                <option value="YOUTUBE">YouTube</option>
               </select>
             </label>
 

@@ -17,6 +17,14 @@ const NEW_MODULES = [
   "src/lib/media-checkpoints/checkpoint-engine.ts",
   "src/lib/media-checkpoints/checkpoint-schedule.ts",
   "src/lib/media-checkpoints/checkpoint-progress.ts",
+  "src/components/media/use-youtube-playback.ts",
+  "src/components/media/youtube-player.tsx",
+  "src/lib/media-playback/youtube-iframe-api.ts",
+  "src/lib/media-playback/youtube-player-adapter.ts",
+  "src/lib/media-playback/youtube-playback-errors.ts",
+  "src/lib/media-playback/youtube-video-id.ts",
+  "src/lib/media-playback/youtube-ready-watchdog.ts",
+  "src/lib/media-playback/subtitle-preview-paging.ts",
 ];
 
 test("the media player only renders; the lesson owns both hooks", () => {

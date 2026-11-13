@@ -606,6 +606,12 @@ check_application_edge_contract() {
     fail 'API media storage must be explicitly disabled by default and map media credentials/proxy only under their feature gates.'
   fi
 
+  if [ "$(grep -Fc '            - name: YOUTUBE_LESSONS_ENABLED' "${app_template}")" -ne 2 ] \
+    || [ "$(grep -Fc "              value: '{{ youtube_lessons_enabled | default(false) | bool | ternary(\"true\", \"false\") }}'" "${app_template}")" -ne 2 ] \
+    || ! grep -Fq '            - name: YOUTUBE_LESSONS_ENABLED' <<<"${api_block}"; then
+    fail 'YOUTUBE_LESSONS_ENABLED must be a default-off manifest literal for exactly the web and API containers.'
+  fi
+
   if [ "$(grep -Fc "{% if media_egress_proxy_enabled | default(false) | bool %}" "${app_template}")" -ne 1 ] \
     || [ "$(grep -Fc "{% if object_storage_egress_proxy_enabled | default(false) | bool %}" "${app_template}")" -ne 2 ]; then
     fail 'The proxy workload must have its own deployment gate; runtime proxy consumers must keep the separate routing gate.'
@@ -968,6 +974,8 @@ check_ansible_when_installed() {
       "${ANSIBLE_DIR}/roles/applications/tests/media-audio-prep-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-stt-flag-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/youtube-lessons-flag-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/media-probe-db-egress-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \

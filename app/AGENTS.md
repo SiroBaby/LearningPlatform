@@ -28,7 +28,7 @@
 ## Database And Async
 
 - Schema ownership: content/course -> `course`, AI processing -> `ai`, assessment -> `quiz`.
-- Không cross-schema query hoặc transaction. Một transaction chỉ thay đổi schema mà module đó sở hữu. Go AI worker chỉ đọc source descriptor tối thiểu (`id`, `owner_id`, `type`, `storage_ref`, `size_bytes`, `status`) từ `course.documents` theo `id` + `owner_id`; không được query `course.outbox` hay mutate bất kỳ dữ liệu `course` nào.
+- Không cross-schema query hoặc transaction. Một transaction chỉ thay đổi schema mà module đó sở hữu. Go AI worker chỉ đọc source descriptor tối thiểu (`id`, `owner_id`, `type`, `storage_ref`, `size_bytes`, `status`) từ `course.documents` theo `id` + `owner_id`; không được query `course.outbox` hay mutate bất kỳ dữ liệu `course` nào. Ngoại lệ hẹp (ADR-0034): Go chỉ SELECT snapshot phụ đề của Document `YOUTUBE` từ `course.document_subtitle_transcripts`, join `course.documents` theo `id` + `owner_id` + `status='PROCESSING'` và yêu cầu `rights_confirmed_at IS NOT NULL`; Node là parser duy nhất và là nơi duy nhất ghi bảng này.
 - Ngoại lệ hẹp: luồng xóa Document được phép dùng một transaction tường minh qua `course` và `ai` để ghi deletion fence, tombstone hủy AI, hủy job hiện tại và các outbox của `course`. Ngoại lệ này chỉ dành cho deletion coordinator, không mở rộng cho luồng xử lý thông thường, không dùng SQL function/RLS.
 - Mọi query resource-facing bắt buộc filter `owner_id`.
 - `content -> ai`: `course.outbox` -> relay -> `AiIngestion`; content không ghi `ai.*`.
@@ -47,6 +47,7 @@
 - Purge object storage trên bucket có versioning chỉ dùng `DeleteObject` kèm `VersionId` lấy từ purge manifest; locator thiếu `VersionId` chỉ được xóa theo key khi `GetBucketVersioning` cho thấy bucket chưa từng bật versioning. Regression phải kiểm bằng `ListObjectVersions` thật rằng version đã mất và không sinh delete marker.
 - Phân loại lỗi S3 cho thao tác xóa không hoàn tác được theo trường `Code` mà SDK chỉ gắn khi body là S3 error document, không theo HTTP status hay `name` (SDK tự đặt `Unknown`/`NotFound`/`Error` cho phản hồi không phải của S3; trang 403 HTML của Squid cho ra `Error`): chỉ `Code` `NoSuchKey`/`NoSuchVersion` hoặc `204` là đã xóa, chỉ `Code` S3 thật mới được dead-letter ngay; exception không có `Code` (proxy từ chối, gateway, lỗi mạng) phải retry có trần rồi `PURGE_ATTEMPTS_EXHAUSTED`. Manifest không có locator không được đánh `COMPLETED`; regression phải dùng fake proxy/gateway trả đúng body thật (trang lỗi Squid, không dùng body rỗng).
 - Node S3 client chạy sau egress proxy phải đặt `useDualstackEndpoint: false`, `useAccelerateEndpoint: false`, region cố định và để worker sở hữu retry (`maxAttempts: 1`); test qua fake CONNECT proxy ghi host thật mà client tunnel tới.
+- CHECK constraint dùng biểu thức so khớp (`~`, `=`, `IN`) trên cột nullable phải thêm `IS NOT NULL` tường minh khi giá trị bắt buộc: `NULL ~ 'regex'` là `NULL` và CHECK coi `NULL` là đạt, nên ràng buộc im lặng cho phép giá trị thiếu. Migration spec phải insert thử giá trị `NULL`.
 - Không tạo/sửa migration nếu không có yêu cầu rõ. Migration SQL thuần có cặp `.up.sql`/`.down.sql` trong `src/database/migrations/`.
 
 ## Validation, Time And API Contract

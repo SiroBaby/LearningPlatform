@@ -1,0 +1,16 @@
+1
+00:00:01,000 --> 00:00:04,500 X1:100 X2:200 Y1:10 Y2:20
+<i>Xin chào</i> các bạn, hôm nay học về {\an8}hàng đợi.
+
+2
+00:00:03,000 --> 00:00:06,000
+Hàng đợi (queue) hoạt động theo nguyên tắc <font color="#fff">vào trước ra trước</font>.
+
+3
+0:00:00,500 --> 0:00:01,000
+Mở đầu &amp; giới thiệu
+
+4
+00:00:07.000 --> 00:00:09,250
+Ví dụ &lt;b&gt;không phải thẻ&lt;/b&gt;.
+Dòng thứ hai.

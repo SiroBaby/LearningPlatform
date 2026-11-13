@@ -102,7 +102,9 @@ describe('ContentMappingProfile', () => {
       status: DocumentStatus.FAILED,
       type: DocumentType.PDF,
       updatedAt: '2026-06-21T12:35:56.789Z',
+      youtubeVideoId: null,
     });
+    expect(Object.prototype.hasOwnProperty.call(actual, 'youtubeVideoId')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'language')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'durationSec')).toBe(true);
     expect(Object.prototype.hasOwnProperty.call(actual, 'pageCount')).toBe(true);
@@ -116,6 +118,25 @@ describe('ContentMappingProfile', () => {
     expect(Object.prototype.hasOwnProperty.call(actual, 'budgetStatus')).toBe(true);
     expect(actual).not.toHaveProperty('ownerId');
     expect(actual).not.toHaveProperty('storageRef');
+  });
+
+  it('maps the YouTube video id of a YOUTUBE Document and null for any other type', () => {
+    const baseDocument = {
+      createdAt: new Date('2026-06-21T12:34:56.789Z'),
+      id: 'c1ce6db5-3afd-4d8a-a134-902847cc4f87',
+      originalName: 'bai-giang.vi.vtt',
+      sizeBytes: '2048',
+      status: DocumentStatus.UPLOADED,
+      updatedAt: new Date('2026-06-21T12:35:56.789Z'),
+    };
+    const youtubeDocument = Object.assign(new Document(), { ...baseDocument, type: DocumentType.YOUTUBE, youtubeVideoId: 'dQw4w9WgXcQ' });
+    const pdfDocument = Object.assign(new Document(), { ...baseDocument, type: DocumentType.PDF, youtubeVideoId: undefined });
+
+    const actualYoutube = mapper.map(youtubeDocument, Document, DocumentResponseDto);
+    const actualPdf = mapper.map(pdfDocument, Document, DocumentResponseDto);
+
+    expect(actualYoutube.youtubeVideoId).toBe('dQw4w9WgXcQ');
+    expect(actualPdf.youtubeVideoId).toBeNull();
   });
 
   it('map raw upload result sang public response DTO', () => {

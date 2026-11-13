@@ -35,6 +35,7 @@ import { DocumentEstimateResult } from './contracts/document-estimate.result';
 import { InsufficientCreditsError } from './contracts/insufficient-credits.error';
 import {
   assertDocumentUploadSize,
+  findMatchedExtension,
   getDocumentUploadPolicy,
   resolveDocumentUploadPolicy,
 } from './contracts/document-upload-policy';
@@ -43,6 +44,8 @@ import { calculateMediaPlaybackTtlSec } from './contracts/media-playback-policy'
 import { MediaPlaybackUrlResult } from './contracts/media-playback-url.result';
 import { UploadUrlResult } from './contracts/upload-url.result';
 import { MEDIA_PROBE_POLICY_VERSION } from './contracts/media-probe-policy';
+import { SubtitlePrerequisiteError } from './contracts/subtitle-snapshot';
+import { normalizeYoutubeVideoId } from './youtube/youtube-video-id';
 import { Document } from './entities/document.entity';
 import type { CreatePresignedGetUrlInput } from '../../storage/storage.service';
 import type { DocumentPurgeLocator } from './entities/document-purge-manifest.entity';
@@ -90,15 +93,24 @@ export class ContentService {
     ownerId: string,
     command: CreateUploadUrlCommand,
   ): Promise<UploadUrlResult> {
+    this.assertYoutubeLessonsEnabled(command.type);
     const policy = resolveDocumentUploadPolicy(command.type, command.originalName);
     this.assertMediaUploadsEnabled(policy.bucket);
+    const youtubeVideoId = this.resolveYoutubeVideoId(command);
     assertDocumentUploadSize(policy, command.sizeBytes);
     const estimate = await this.estimateModelSelection(ownerId, command.sizeBytes, command.selection, command.type);
+    const extension = findMatchedExtension(policy, command.originalName) ?? policy.extensions[0];
     const objectKey = policy.bucket === 'media'
-      ? `media/${ownerId}/${randomUUID()}${policy.extension}`
-      : `${ownerId}/${randomUUID()}${policy.extension}`;
+      ? `media/${ownerId}/${randomUUID()}${extension}`
+      : `${ownerId}/${randomUUID()}${extension}`;
 
-    const persistedCommand = { ...command, estimatedCredits: estimate.estimatedCredits, selectedModelLabel: estimate.selectedModelLabel };
+    const { youtubeUrl: _discardedRawUrl, ...storableCommand } = command;
+    const persistedCommand = {
+      ...storableCommand,
+      estimatedCredits: estimate.estimatedCredits,
+      selectedModelLabel: estimate.selectedModelLabel,
+      youtubeVideoId,
+    };
     const saved = await this.contentRepository.createUploaded(ownerId, persistedCommand, objectKey);
 
     const { url, formFields, expirySec } = await this.storage.createPresignedPostUrl(
@@ -397,6 +409,7 @@ export class ContentService {
     ownerId: string,
     input: { readonly sizeBytes: number; readonly type: DocumentType; readonly selection: DocumentModelSelection },
   ): Promise<DocumentEstimateResult> {
+    this.assertYoutubeLessonsEnabled(input.type);
     const policy = getDocumentUploadPolicy(input.type);
     this.assertMediaUploadsEnabled(policy.bucket);
     assertDocumentUploadSize(policy, input.sizeBytes);
@@ -487,7 +500,11 @@ export class ContentService {
    * files enter PROBING so the isolated probe worker can capture the exact
    * version before any processing credit is reserved.
    */
-  async confirm(ownerId: string, id: string): Promise<Document> {
+  async confirm(
+    ownerId: string,
+    id: string,
+    options: { readonly rightsConfirmed?: boolean } = {},
+  ): Promise<Document> {
     const document = await this.contentRepository.findByOwnerId(ownerId, id);
     if (!document) {
       throw new NotFoundException({
@@ -506,7 +523,7 @@ export class ContentService {
       });
     }
 
-    return this.verifyAndStartProcessing(ownerId, id, document, 'CONFIRM');
+    return this.verifyAndStartProcessing(ownerId, id, document, 'CONFIRM', options.rightsConfirmed === true);
   }
 
   private async verifyAndStartProcessing(
@@ -514,6 +531,7 @@ export class ContentService {
     id: string,
     document: Document,
     mode: ProcessingStartMode,
+    rightsConfirmed = false,
   ): Promise<Document> {
     if (document.status === DocumentStatus.DELETING) {
       throw new NotFoundException({
@@ -546,7 +564,14 @@ export class ContentService {
       // Without a first-claim locator, retrying could probe a replaced object.
       throw this.mediaSourceIdentityUnavailable();
     }
-    if (!mediaBucket) {
+    const isSubtitleDocument = document.type === DocumentType.YOUTUBE;
+    // Retry of an already confirmed Document stays allowed while the flag is off; a new confirm is not.
+    if (isSubtitleDocument && mode === 'CONFIRM') this.assertYoutubeLessonsEnabled(document.type);
+    if (isSubtitleDocument && mode === 'CONFIRM' && !rightsConfirmed) {
+      throw this.subtitleRightsRequired();
+    }
+    // A subtitle Document is validated by its parsed snapshot; the raw object has no magic bytes to verify.
+    if (!mediaBucket && !isSubtitleDocument) {
       const v = await this.verifier.verify(document.storageRef, document.type, policy.bucket);
       if (
         !v.exists ||
@@ -570,7 +595,7 @@ export class ContentService {
         MEDIA_PROBE_POLICY_VERSION,
         mediaBucket!,
       )
-      : await this.startTextProcessing(ownerId, id, selection, mode);
+      : await this.startTextProcessing(ownerId, id, selection, mode, isSubtitleDocument ? { rightsConfirmed } : undefined);
     if (!confirmed) {
       if (mode === 'CONFIRM') {
         throw new NotFoundException(`Document ${id} not found`);
@@ -595,12 +620,23 @@ export class ContentService {
     id: string,
     selection: DocumentModelSelection,
     mode: ProcessingStartMode,
+    subtitle?: { readonly rightsConfirmed: boolean },
   ): Promise<Document | null> {
     try {
+      if (subtitle) {
+        return await this.contentRepository.confirmSubtitleProcessing(ownerId, id, selection, {
+          allowedStatuses: mode === 'RETRY'
+            ? [DocumentStatus.FAILED]
+            : [DocumentStatus.UPLOADED, DocumentStatus.FAILED],
+          mode,
+          rightsConfirmed: subtitle.rightsConfirmed,
+        });
+      }
       return mode === 'RETRY'
         ? await this.contentRepository.retryProcessing(ownerId, id, selection)
         : await this.contentRepository.confirmProcessing(ownerId, id, selection);
     } catch (error) {
+      if (error instanceof SubtitlePrerequisiteError) throw this.subtitlePrerequisiteFailed(error);
       if (!(error instanceof InsufficientCreditsError)) throw error;
       throw new HttpException({
         availableCredits: error.availableCredits,
@@ -611,6 +647,52 @@ export class ContentService {
         shortfallCredits: error.shortfallCredits,
       }, HttpStatus.PAYMENT_REQUIRED);
     }
+  }
+
+  private subtitleRightsRequired(): BadRequestException {
+    return new BadRequestException({
+      code: 'SUBTITLE_RIGHTS_CONFIRMATION_REQUIRED',
+      message: 'Confirm that you have the right to use this video and subtitle before processing.',
+      retryable: false,
+    });
+  }
+
+  private subtitlePrerequisiteFailed(error: SubtitlePrerequisiteError): HttpException {
+    if (error.prerequisite === 'RIGHTS_REQUIRED') return this.subtitleRightsRequired();
+    return new ConflictException({
+      code: 'SUBTITLE_PREVIEW_REQUIRED',
+      message: 'Preview the subtitle before processing this Document.',
+      retryable: false,
+    });
+  }
+
+  private assertYoutubeLessonsEnabled(type: DocumentType): void {
+    if (type === DocumentType.YOUTUBE && !this.config?.youtubeLessonsEnabled) {
+      throw new ConflictException({
+        code: 'YOUTUBE_LESSONS_DISABLED',
+        message: 'YouTube lessons are not enabled.',
+        retryable: false,
+      });
+    }
+  }
+
+  /** YOUTUBE needs a valid URL (only its video id is kept); every other type must not send one. */
+  private resolveYoutubeVideoId(command: CreateUploadUrlCommand): string | null {
+    if (command.type !== DocumentType.YOUTUBE) {
+      if (command.youtubeUrl !== undefined) throw this.youtubeUrlInvalid();
+      return null;
+    }
+    const videoId = command.youtubeUrl === undefined ? null : normalizeYoutubeVideoId(command.youtubeUrl);
+    if (!videoId) throw this.youtubeUrlInvalid();
+    return videoId;
+  }
+
+  private youtubeUrlInvalid(): BadRequestException {
+    return new BadRequestException({
+      code: 'YOUTUBE_URL_INVALID',
+      message: 'The link is not a supported YouTube video URL.',
+      retryable: false,
+    });
   }
 
   /** D5 of #160: speech-to-text runs only on the platform model, never on an Owner-supplied endpoint. */

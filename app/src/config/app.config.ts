@@ -4,6 +4,8 @@ export default registerAs('app', () => ({
   env: process.env.NODE_ENV ?? 'development',
   identityMode: process.env.IDENTITY_MODE ?? 'mtls',
   port: parseInt(process.env.PORT ?? '3000', 10),
+  // Strict opt-in: only the literal string "true" enables YouTube subtitle lessons.
+  youtubeLessonsEnabled: process.env.YOUTUBE_LESSONS_ENABLED === 'true',
   googleOAuth: {
     clientId: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,

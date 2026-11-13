@@ -1,0 +1,114 @@
+---
+# YouTube lessons (#161, ADR-0034) are gated by one strict-boolean flag that the API enforces (YOUTUBE
+# upload-url) and the web reads server-side (to show the YOUTUBE source option). The flag must ship OFF in the
+# template, render as a manifest literal (never an ExternalSecret/SSM value) for exactly those two workloads,
+# and vars/dev.yml must keep it on for both.
+- name: Verify the YouTube lessons flag contract on the rendered manifests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../../vars/dev.yml
+  vars:
+    learning_platform_namespace: learning-platform-dev
+    ghcr_pull_secret_name: learning-platform-dev-ghcr
+    web_public_host: learningplatform-dev.example.test
+    api_public_host: learningplatform-dev-api.example.test
+    ingress_tls_secret_name: ''
+    web_image: ghcr.io/sirobaby/learningplatform-web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    api_image: ghcr.io/sirobaby/learningplatform-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    worker_image: ghcr.io/sirobaby/learningplatform-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    go_worker_image: ghcr.io/sirobaby/learningplatform-ai-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    media_probe_worker_image: ghcr.io/sirobaby/learningplatform-media-probe@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  tasks:
+    - name: Require the production dev vars to keep YouTube lessons on as a strict boolean
+      ansible.builtin.assert:
+        that:
+          - youtube_lessons_enabled is boolean
+          - youtube_lessons_enabled
+        fail_msg: >-
+          vars/dev.yml enables youtube_lessons_enabled for the API and the web (#161); roll back by setting it to
+          false.
+
+    - name: Render the web and API manifests with the flag absent, off and on
+      ansible.builtin.set_fact:
+        youtube_absent_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['web', 'api'], 'youtube_lessons_enabled': omit})
+             | from_yaml_all | list }}
+        youtube_off_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['web', 'api'], 'youtube_lessons_enabled': false})
+             | from_yaml_all | list }}
+        youtube_on_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['web', 'api'], 'youtube_lessons_enabled': true})
+             | from_yaml_all | list }}
+        youtube_worker_manifests: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../k8s/apps.yaml.j2',
+             template_vars={'deployment_targets': ['worker'], 'youtube_lessons_enabled': true})
+             | from_yaml_all | list }}
+        youtube_on_secrets: >-
+          {{ lookup('template', playbook_dir ~ '/../../../../ansible/roles/external_secrets/templates/external-secrets.yaml.j2',
+             template_vars={'deployment_targets': ['web', 'api'], 'youtube_lessons_enabled': true})
+             | from_yaml_all | list }}
+      no_log: true
+
+    - name: Select the flag env entries of every render
+      ansible.builtin.set_fact:
+        youtube_off_web_env: >-
+          {{ ((youtube_off_manifests | selectattr('kind', 'equalto', 'Deployment') | selectattr('metadata.name', 'equalto', 'web') | first)
+              .spec.template.spec.containers | selectattr('name', 'equalto', 'web') | first).env
+             | selectattr('name', 'equalto', 'YOUTUBE_LESSONS_ENABLED') | list }}
+        youtube_off_api_env: >-
+          {{ ((youtube_off_manifests | selectattr('kind', 'equalto', 'Deployment') | selectattr('metadata.name', 'equalto', 'api') | first)
+              .spec.template.spec.containers | selectattr('name', 'equalto', 'api') | first).env
+             | selectattr('name', 'equalto', 'YOUTUBE_LESSONS_ENABLED') | list }}
+        youtube_absent_web_env: >-
+          {{ ((youtube_absent_manifests | selectattr('kind', 'equalto', 'Deployment') | selectattr('metadata.name', 'equalto', 'web') | first)
+              .spec.template.spec.containers | selectattr('name', 'equalto', 'web') | first).env
+             | selectattr('name', 'equalto', 'YOUTUBE_LESSONS_ENABLED') | list }}
+        youtube_absent_api_env: >-
+          {{ ((youtube_absent_manifests | selectattr('kind', 'equalto', 'Deployment') | selectattr('metadata.name', 'equalto', 'api') | first)
+              .spec.template.spec.containers | selectattr('name', 'equalto', 'api') | first).env
+             | selectattr('name', 'equalto', 'YOUTUBE_LESSONS_ENABLED') | list }}
+        youtube_on_web_env: >-
+          {{ ((youtube_on_manifests | selectattr('kind', 'equalto', 'Deployment') | selectattr('metadata.name', 'equalto', 'web') | first)
+              .spec.template.spec.containers | selectattr('name', 'equalto', 'web') | first).env
+             | selectattr('name', 'equalto', 'YOUTUBE_LESSONS_ENABLED') | list }}
+        youtube_on_api_env: >-
+          {{ ((youtube_on_manifests | selectattr('kind', 'equalto', 'Deployment') | selectattr('metadata.name', 'equalto', 'api') | first)
+              .spec.template.spec.containers | selectattr('name', 'equalto', 'api') | first).env
+             | selectattr('name', 'equalto', 'YOUTUBE_LESSONS_ENABLED') | list }}
+        youtube_worker_env_names: >-
+          {{ youtube_worker_manifests | selectattr('kind', 'equalto', 'Deployment')
+             | map(attribute='spec.template.spec.containers') | flatten | selectattr('env', 'defined')
+             | map(attribute='env') | flatten
+             | map(attribute='name') | list }}
+
+    - name: Require the flag to render false, as a plain literal, when absent or off
+      ansible.builtin.assert:
+        that:
+          - youtube_absent_web_env | length == 1
+          - youtube_absent_api_env | length == 1
+          - youtube_absent_web_env[0].value == 'false'
+          - youtube_absent_api_env[0].value == 'false'
+          - youtube_off_web_env | map(attribute='value') | list == ['false']
+          - youtube_off_api_env | map(attribute='value') | list == ['false']
+        fail_msg: YOUTUBE_LESSONS_ENABLED must default to the literal 'false' for both web and API.
+
+    - name: Require the flag to render true as a manifest literal for web and API only
+      ansible.builtin.assert:
+        that:
+          - youtube_on_web_env | map(attribute='value') | list == ['true']
+          - youtube_on_api_env | map(attribute='value') | list == ['true']
+          - youtube_on_web_env | selectattr('valueFrom', 'defined') | list | length == 0
+          - youtube_on_api_env | selectattr('valueFrom', 'defined') | list | length == 0
+          - "'YOUTUBE_LESSONS_ENABLED' not in youtube_worker_env_names"
+          - >-
+            (youtube_on_secrets | selectattr('kind', 'equalto', 'ExternalSecret')
+             | map(attribute='spec.data') | flatten | map(attribute='secretKey') | list)
+            | select('match', '^YOUTUBE_') | list | length == 0
+        fail_msg: >-
+          YOUTUBE_LESSONS_ENABLED is a non-secret constant: render it as a literal for web and API only, never from
+          an ExternalSecret or SSM parameter and never into the workers.

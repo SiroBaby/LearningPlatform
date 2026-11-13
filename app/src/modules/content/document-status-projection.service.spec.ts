@@ -1,9 +1,14 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { ConsoleLogger } from '@nestjs/common';
 
-import type { DocumentProbeCompletionCommand, DocumentStatusProjectionCommand } from './contracts/document-status-projection.port';
+import type {
+  DocumentExtractionCompletionCommand,
+  DocumentProbeCompletionCommand,
+  DocumentStatusProjectionCommand,
+} from './contracts/document-status-projection.port';
 import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
 import { DocumentStatus } from './enums/document-status.enum';
+import { DocumentType } from './enums/document-type.enum';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
 import { DocumentStatusProjectionService } from './document-status-projection.service';
 
@@ -214,6 +219,68 @@ describe('DocumentStatusProjectionService.project settlement plan', () => {
 
     expect(repository.projectProcessingResult).toHaveBeenCalledWith(expect.objectContaining({
       settlement: { hasUncertainDispatch: true, knownActualCredits: 0 },
+    }));
+  });
+});
+
+describe('DocumentStatusProjectionService.completeExtraction timed transcript cap', () => {
+  const inputExtraction = (chunkCount: number, extractedChars: number): DocumentExtractionCompletionCommand => ({
+    chunkCount,
+    deletionFence: 0,
+    documentId: 'document-1',
+    eventCreatedAt: new Date(),
+    extractedChars,
+    fullPipelineJobId: 'job-1',
+    ownerId: 'owner-1',
+    processingAttempt: 1,
+  });
+  const createExtractionService = (documentType: DocumentType) => {
+    const repository = {
+      completeExtraction: jest.fn<(command: unknown) => Promise<'APPLIED'>>().mockResolvedValue('APPLIED'),
+      findByOwnerId: jest.fn<() => Promise<unknown>>().mockResolvedValue({
+        modelSelectionKind: 'PLAN',
+        platformModelId: 'plan-model',
+        type: documentType,
+      }),
+    };
+    const service = new DocumentStatusProjectionService(
+      repository as never,
+      { ai: { platformModels: [inputModel] } } as never,
+      new MediaCreditEstimator(),
+    );
+    return { repository, service };
+  };
+
+  it('prices at most 30 questions and the matching share of the text for a YOUTUBE Document', async () => {
+    const { repository, service } = createExtractionService(DocumentType.YOUTUBE);
+
+    await service.completeExtraction(inputExtraction(120, 120_000));
+
+    // 30 calls over ceil(120000 * 30 / 120) = 30000 chars: 30*200 + 10000 input, 30*600 output.
+    expect(repository.completeExtraction).toHaveBeenCalledWith(expect.objectContaining({
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 16_000 + 36_000, platformModelId: 'plan-model' },
+    }));
+  });
+
+  it('keeps the measured chunk count for a YOUTUBE Document at or below the cap', async () => {
+    const { repository, service } = createExtractionService(DocumentType.YOUTUBE);
+
+    await service.completeExtraction(inputExtraction(8, 9_000));
+
+    // 8*200 + 3000 input, 8*600 output * 2.
+    expect(repository.completeExtraction).toHaveBeenCalledWith(expect.objectContaining({
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 4_600 + 9_600, platformModelId: 'plan-model' },
+    }));
+  });
+
+  it('does not cap a TEXT Document', async () => {
+    const { repository, service } = createExtractionService(DocumentType.TEXT);
+
+    await service.completeExtraction(inputExtraction(120, 120_000));
+
+    // 120*200 + 40000 input, 120*600 output * 2.
+    expect(repository.completeExtraction).toHaveBeenCalledWith(expect.objectContaining({
+      creditEstimate: { kind: 'ESTIMATED', estimatedCredits: 64_000 + 144_000, platformModelId: 'plan-model' },
     }));
   });
 });

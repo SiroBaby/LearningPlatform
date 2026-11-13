@@ -22,6 +22,10 @@ import { DocumentQuizResult } from './contracts/document-quiz.result';
 import { DocumentEstimateResult } from './contracts/document-estimate.result';
 import { ConfirmDocumentResponseDto } from './dto/confirm-document.response.dto';
 import { ContentService } from './content.service';
+import { SubtitlePreviewResult } from './contracts/subtitle-preview.result';
+import { ConfirmDocumentDto } from './dto/confirm-document.dto';
+import { SubtitlePreviewResponseDto } from './dto/subtitle-preview.response.dto';
+import { SubtitlePreviewService } from './subtitles/subtitle-preview.service';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { DocumentResponseDto } from './dto/document.response.dto';
 import { DocumentQuizResponseDto } from './dto/document-quiz.response.dto';
@@ -43,6 +47,7 @@ export class ContentController {
   constructor(
     private readonly content: ContentService,
     @Inject(MAPPER) private readonly mapper: Mapper,
+    private readonly subtitlePreview: SubtitlePreviewService,
   ) {}
 
   @Post('upload-url')
@@ -62,6 +67,7 @@ export class ContentController {
         kind: dto.modelSelectionKind,
         platformModelId: dto.platformModelId ?? null,
       },
+      ...(dto.youtubeUrl === undefined ? {} : { youtubeUrl: dto.youtubeUrl }),
     });
 
     return this.mapper.map(result, UploadUrlResult, UploadUrlResponseDto);
@@ -128,17 +134,35 @@ export class ContentController {
     return this.mapper.map(result, MediaPlaybackUrlResult, MediaPlaybackUrlResponseDto);
   }
 
+  @Post(':id/subtitle-preview')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Parse the uploaded subtitle of a YOUTUBE Document and return every cue for review.' })
+  @ApiOkResponse({ type: SubtitlePreviewResponseDto })
+  @ApiBadRequestResponse({ description: 'The subtitle cannot be read; the body carries a SUBTITLE_* code and optional line.' })
+  @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner.' })
+  @ApiConflictResponse({ description: 'Document is not an UPLOADED YOUTUBE Document.' })
+  async previewSubtitle(
+    @CurrentUser() ownerId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<SubtitlePreviewResponseDto> {
+    const result = await this.subtitlePreview.preview(ownerId, id);
+    return this.mapper.map(result, SubtitlePreviewResult, SubtitlePreviewResponseDto);
+  }
+
   @Post(':id/confirm')
   @HttpCode(202)
   @ApiOperation({ summary: 'Verify an uploaded Document and enqueue processing.' })
   @ApiAcceptedResponse({ type: ConfirmDocumentResponseDto })
-  @ApiBadRequestResponse({ description: 'Uploaded object is missing or fails validation.' })
+  @ApiBadRequestResponse({ description: 'Uploaded object is missing or fails validation, or rights are not confirmed for a YOUTUBE Document.' })
   @ApiNotFoundResponse({ description: 'Document does not belong to the current Owner.' })
+  @ApiConflictResponse({ description: 'A YOUTUBE Document has no subtitle preview yet.' })
   async confirm(
     @CurrentUser() ownerId: string,
     @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto?: ConfirmDocumentDto,
   ): Promise<ConfirmDocumentResponseDto> {
-    const document = await this.content.confirm(ownerId, id);
+    const document = await this.content.confirm(ownerId, id, { rightsConfirmed: dto?.rightsConfirmed });
     return this.mapper.map(document, Document, ConfirmDocumentResponseDto);
   }
 

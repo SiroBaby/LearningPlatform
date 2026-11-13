@@ -11,6 +11,7 @@ interface BackendRequest {
   readonly method: "GET" | "POST" | "DELETE";
   readonly path: string;
   readonly body?: unknown;
+  readonly timeoutMs?: number;
 }
 
 const API_PREFIX = "/api/v1";

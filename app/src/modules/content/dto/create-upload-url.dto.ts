@@ -1,4 +1,4 @@
-import { IsEnum, IsInt, IsOptional, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 import { IsNonBlankString } from '../../../common/validators/is-non-blank-string.validator';
@@ -49,4 +49,15 @@ export class CreateUploadUrlDto {
   @Min(1)
   @Max(MAX_SIZE_BYTES)
   sizeBytes!: number;
+
+  @ApiProperty({
+    description: 'YouTube video URL. Required when type is YOUTUBE and rejected for other types; only the video id is stored.',
+    example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    maxLength: 2048,
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  youtubeUrl?: string;
 }

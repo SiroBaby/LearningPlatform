@@ -22,6 +22,9 @@ import type {
   Phase0QuizResponse,
   Phase0QuizTimeRange,
   Phase0SubmitQuizAttemptResponse,
+  Phase0SubtitleCue,
+  Phase0SubtitleFormat,
+  Phase0SubtitlePreviewResponse,
   Phase0UploadUrlResponse,
 } from "@/lib/phase0/contracts";
 
@@ -80,8 +83,10 @@ function readDocumentType(value: unknown): Phase0DocumentType {
       return "AUDIO";
     case "VIDEO":
       return "VIDEO";
+    case "YOUTUBE":
+      return "YOUTUBE";
     default:
-      throw new TypeError("Expected document.type to be PDF, TEXT, AUDIO, or VIDEO.");
+      throw new TypeError("Expected document.type to be PDF, TEXT, AUDIO, VIDEO, or YOUTUBE.");
   }
 }
 
@@ -260,6 +265,13 @@ function mapCitationLocator(value: unknown): Phase0CitationLocator {
   }
 }
 
+const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/u;
+
+/** Lenient on purpose: an older backend omits the field, and a malformed id must not break the page. */
+function readYoutubeVideoId(value: unknown): string | null {
+  return typeof value === "string" && YOUTUBE_VIDEO_ID_PATTERN.test(value) ? value : null;
+}
+
 function mapDocument(value: unknown): Phase0Document {
   const source = readObject(value);
   return {
@@ -271,6 +283,7 @@ function mapDocument(value: unknown): Phase0Document {
     status: readDocumentStatus(source.status, "document.status"),
     durationSec: readNullableNumber(source.durationSec, "document.durationSec"),
     pageCount: readNullableNumber(source.pageCount, "document.pageCount"),
+    youtubeVideoId: readYoutubeVideoId(source.youtubeVideoId),
     errorCode: readNullableDocumentProcessingFailureCode(source.errorCode, "document.errorCode"),
     errorMessage: readNullableString(source.errorMessage, "document.errorMessage"),
     selectedModelKind: readNullableModelSelectionKind(source.selectedModelKind, "document.selectedModelKind"),
@@ -529,5 +542,38 @@ export function mapPlaybackUrlResponse(value: unknown): Phase0PlaybackUrlRespons
     ttlSec,
     mimeType: readPlaybackMimeType(source.mimeType),
     durationSec,
+  };
+}
+
+function readSubtitleFormat(value: unknown): Phase0SubtitleFormat {
+  switch (readString(value, "format")) {
+    case "VTT":
+      return "VTT";
+    case "SRT":
+      return "SRT";
+    default:
+      throw new TypeError("Expected format to be VTT or SRT.");
+  }
+}
+
+function mapSubtitleCue(value: unknown): Phase0SubtitleCue {
+  const source = readObject(value);
+  const startSec = readNumber(source.startSec, "cue.startSec");
+  const endSec = readNumber(source.endSec, "cue.endSec");
+  if (startSec < 0 || endSec < startSec) {
+    throw new TypeError("Expected cue times to be non-negative and ordered.");
+  }
+  return { startSec, endSec, text: readString(source.text, "cue.text") };
+}
+
+export function mapSubtitlePreviewResponse(value: unknown): Phase0SubtitlePreviewResponse {
+  const source = readObject(value);
+  const cues = readArray(source.cues, "cues").map(mapSubtitleCue);
+  return {
+    format: readSubtitleFormat(source.format),
+    cueCount: readNumber(source.cueCount, "cueCount"),
+    charCount: readNumber(source.charCount, "charCount"),
+    durationSec: readNumber(source.durationSec, "durationSec"),
+    cues,
   };
 }

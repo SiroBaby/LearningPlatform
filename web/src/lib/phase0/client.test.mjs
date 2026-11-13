@@ -37,3 +37,14 @@ test("requests playback URLs via the dedicated BFF route with a reason and abort
   assert.match(source, /public readonly retryAfterSec\?: number/u);
   assert.match(source, /parseRetryAfterSeconds\(response\.headers\.get\("retry-after"\)/u);
 });
+
+test("confirms with an optional rights body and previews subtitles through a longer bounded request", () => {
+  assert.match(source, /export function confirmPhase0Document\(\s*documentId: string,\s*request\?: Phase0ConfirmDocumentRequest/u);
+  assert.match(source, /mapConfirmDocumentResponse,\s*request,/u);
+  assert.match(source, /export function previewPhase0Subtitle/u);
+  assert.match(source, /`\/api\/phase0\/documents\/\$\{documentId\}\/subtitle-preview`/u);
+  assert.match(source, /mapSubtitlePreviewResponse/u);
+  assert.match(source, /SUBTITLE_PREVIEW_TIMEOUT_MS/u);
+  assert.match(source, /public readonly line\?: number/u);
+  assert.match(source, /globalThis\.setTimeout\(\(\) => abortController\.abort\(\), timeoutMs\)/u);
+});

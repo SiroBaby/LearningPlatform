@@ -13,6 +13,8 @@ import { DocumentResponseDto } from '../dto/document.response.dto';
 import { DocumentQuizResponseDto } from '../dto/document-quiz.response.dto';
 import { UploadUrlResponseDto } from '../dto/upload-url.response.dto';
 import { DocumentEstimateResponseDto } from '../../ai/dto/document-estimate.response.dto';
+import { SubtitleCuePreviewResult, SubtitlePreviewResult } from '../contracts/subtitle-preview.result';
+import { SubtitleCuePreviewResponseDto, SubtitlePreviewResponseDto } from '../dto/subtitle-preview.response.dto';
 import { Document } from '../entities/document.entity';
 
 @Injectable()
@@ -48,6 +50,8 @@ export class ContentMappingProfile {
         mapFrom((source) => source.durationSec ?? null),
       ),
     );
+    createMap(mapper, SubtitleCuePreviewResult, SubtitleCuePreviewResponseDto);
+    createMap(mapper, SubtitlePreviewResult, SubtitlePreviewResponseDto);
     createMap(mapper, DocumentEstimateResult, DocumentEstimateResponseDto);
     createMap(mapper, DocumentQuizResult, DocumentQuizResponseDto);
     createMap(
@@ -86,6 +90,10 @@ export class ContentMappingProfile {
       forMember(
         (destination) => destination.pageCount,
         mapFrom((source) => source.pageCount ?? null),
+      ),
+      forMember(
+        (destination) => destination.youtubeVideoId,
+        mapFrom((source) => source.youtubeVideoId ?? null),
       ),
       forMember(
         (destination) => destination.errorMessage,

@@ -6,6 +6,7 @@ import type {
   Phase0ModelOptionGroup,
   Phase0UploadModelSelection,
 } from "@/lib/phase0/contracts";
+import { getSubtitleErrorMessage } from "@/lib/phase0/subtitle-errors";
 import { MEDIA_REQUIRES_PLATFORM_MODEL_MESSAGE } from "@/lib/phase0/document-failure";
 import {
   findModelOption,
@@ -19,7 +20,7 @@ import {
 
 function getClientErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Phase0ClientError) {
-    return error.message;
+    return getSubtitleErrorMessage(error) ?? error.message;
   }
 
   if (error instanceof Error && error.message.trim().length > 0) {
