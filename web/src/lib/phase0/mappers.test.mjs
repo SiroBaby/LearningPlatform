@@ -8,6 +8,7 @@ import {
   mapDocumentResponse,
   mapDocumentsResponse,
   mapEstimateResponse,
+  mapPlaybackUrlResponse,
   mapPracticeFeedbackResponse,
 } from "./mappers.ts";
 
@@ -233,4 +234,34 @@ test("rejects a time citation locator without a valid start", () => {
 test("keeps page citation locators unchanged", () => {
   const mapped = mapPracticeFeedbackResponse(buildPracticeFeedback({ kind: "page", page: 3 }));
   assert.deepEqual(mapped.citation.locator, { kind: "page", page: 3 });
+});
+
+const playbackPayload = {
+  url: "https://storage.example/media/key?X-Amz-Expires=14400",
+  expiresAt: "2026-09-04T04:00:00.000Z",
+  ttlSec: 14400,
+  mimeType: "video/mp4",
+  durationSec: 1800,
+};
+
+test("maps a playback URL response including a null duration", () => {
+  assert.deepEqual(mapPlaybackUrlResponse(playbackPayload), playbackPayload);
+  assert.equal(mapPlaybackUrlResponse({ ...playbackPayload, durationSec: null, mimeType: "audio/mpeg" }).durationSec, null);
+});
+
+test("rejects malformed playback URL responses", () => {
+  for (const override of [
+    { url: "javascript:alert(1)" },
+    { url: "not a url" },
+    { url: 5 },
+    { expiresAt: "tomorrow" },
+    { ttlSec: 0 },
+    { ttlSec: 1.5 },
+    { ttlSec: "14400" },
+    { mimeType: "application/pdf" },
+    { durationSec: -1 },
+    { durationSec: "10" },
+  ]) {
+    assert.throws(() => mapPlaybackUrlResponse({ ...playbackPayload, ...override }), TypeError, JSON.stringify(override));
+  }
 });

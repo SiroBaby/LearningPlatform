@@ -29,3 +29,11 @@ test("keeps attempt history as a top-level response contract", () => {
   assert.match(source, /`\/api\/phase0\/quizzes\/\$\{quizId\}\/attempts`/u);
   assert.match(source, /mapAttemptHistoryResponse/u);
 });
+
+test("requests playback URLs via the dedicated BFF route with a reason and abort support", () => {
+  assert.match(source, /export function createPhase0PlaybackUrl/u);
+  assert.match(source, /`\/api\/phase0\/documents\/\$\{documentId\}\/playback-url`/u);
+  assert.match(source, /mapPlaybackUrlResponse/u);
+  assert.match(source, /public readonly retryAfterSec\?: number/u);
+  assert.match(source, /parseRetryAfterSeconds\(response\.headers\.get\("retry-after"\)/u);
+});

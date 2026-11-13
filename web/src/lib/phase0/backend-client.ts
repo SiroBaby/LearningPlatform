@@ -1,6 +1,7 @@
 import "server-only";
 
 import { requestAuthenticatedBackend } from "@/lib/auth/backend-client";
+import { readPassthroughErrorHeaders } from "@/lib/phase0/retry-after";
 import {
   mapSafeBackendError,
   sanitizeBackendErrorText,
@@ -15,14 +16,15 @@ interface BackendRequest {
 const API_PREFIX = "/api/v1";
 
 async function toErrorResponse(response: Response): Promise<Response> {
+  const headers = readPassthroughErrorHeaders(response.headers, Date.now());
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
     const error = mapSafeBackendError(await response.json());
-    return Response.json(error ?? { message: "The Phase 0 API request failed." }, { status: response.status });
+    return Response.json(error ?? { message: "The Phase 0 API request failed." }, { status: response.status, headers });
   }
   return Response.json(
     { message: sanitizeBackendErrorText(await response.text()) },
-    { status: response.status },
+    { status: response.status, headers },
   );
 }
 
