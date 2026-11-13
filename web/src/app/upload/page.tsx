@@ -3,6 +3,7 @@ import { LearnerShell } from "@/components/layout";
 import { UploadWorkspace } from "@/components/upload/upload-workspace";
 
 const isMediaUploadEnabled = process.env.MEDIA_UPLOADS_ENABLED === "true";
+const isYoutubeLessonsEnabled = process.env.YOUTUBE_LESSONS_ENABLED === "true";
 
 export const metadata: Metadata = {
   title: "Tải tài liệu lên",
@@ -19,7 +20,7 @@ export default function UploadPage() {
         ? "Chọn file PDF, TXT, MP3 hoặc MP4 để hệ thống xử lý và chuẩn bị bài kiểm tra cho bạn."
         : "Chọn file PDF hoặc TXT để hệ thống xử lý và chuẩn bị bài kiểm tra cho bạn."}
     >
-      <UploadWorkspace isMediaUploadEnabled={isMediaUploadEnabled} />
+      <UploadWorkspace isMediaUploadEnabled={isMediaUploadEnabled} isYoutubeLessonsEnabled={isYoutubeLessonsEnabled} />
     </LearnerShell>
   );
 }

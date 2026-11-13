@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { estimatePhase0DocumentUpload, getPhase0ModelOptions, Phase0ClientError } from "@/lib/phase0/client";
 import type {
+  Phase0DocumentType,
   Phase0EstimateResponse,
   Phase0ModelOption,
   Phase0ModelOptionGroup,
@@ -27,6 +28,11 @@ function getClientErrorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+/** Subtitle text is processed like a text document, so it is estimated as one. */
+function toEstimateType(type: Phase0DocumentType): Phase0DocumentType {
+  return type === "YOUTUBE" ? "TEXT" : type;
 }
 
 interface UseUploadModelEstimateParams {
@@ -122,7 +128,7 @@ export function useUploadModelEstimate({
 
       try {
         const nextEstimate = await estimatePhase0DocumentUpload({
-          type: currentFile.normalizedType,
+          type: toEstimateType(currentFile.normalizedType),
           sizeBytes: currentFile.file.size,
           ...currentSelection,
         });

@@ -4,6 +4,8 @@ import type { Phase0EstimateResponse, Phase0ModelSelectionKind } from "@/lib/pha
 import { formatCredits, formatDateTime, getModelSourceLabel, getUploadStepLabel, type UploadStep } from "./upload-workspace-utils";
 import { UploadSpecRow } from "./upload-workspace-primitives";
 
+const HAS_UPLOADED_STEPS: ReadonlySet<UploadStep> = new Set<UploadStep>(["uploaded", "previewing", "previewed", "confirming", "confirmed"]);
+
 interface UploadStatusPanelProps {
   readonly step: UploadStep;
   readonly statusTone: "brand" | "success" | "warning";
@@ -63,7 +65,7 @@ export function UploadStatusPanel({
 
         <dl className="space-y-3 text-sm">
           <UploadSpecRow label="Bắt đầu lúc" value={createdAt ? formatDateTime(createdAt) : "Chưa bắt đầu"} />
-          <UploadSpecRow label="Đã tải file lên" value={step === "uploaded" || step === "confirming" || step === "confirmed" ? "Đã xong" : "Chưa"} />
+          <UploadSpecRow label="Đã tải file lên" value={HAS_UPLOADED_STEPS.has(step) ? "Đã xong" : "Chưa"} />
           <UploadSpecRow label="Bước xử lý" value={confirmStatus ?? (confirmError ? "Chưa thể tiếp tục" : "Chưa có")} />
           <UploadSpecRow label="Cách xử lý đã chọn" value={selectedModelLabel ?? "Chưa chọn"} />
           <UploadSpecRow label="Nguồn xử lý" value={selectedModelKind ? getModelSourceLabel(selectedModelKind) : "Chưa chọn"} />
