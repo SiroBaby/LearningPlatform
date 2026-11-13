@@ -6,23 +6,22 @@ import type { ReactNode } from "react";
 import { Button, LinkButton } from "@/components/ui";
 import { routes } from "@/lib/routes";
 
-import { useMediaPlayback } from "./use-media-playback";
+import type { UseMediaPlaybackResult } from "./use-media-playback";
 
 export type MediaPlayerKind = "VIDEO" | "AUDIO";
 
 interface MediaPlayerProps {
-  readonly documentId: string;
+  /** State and controls from `useMediaPlayback`; this component only renders them. */
+  readonly playback: UseMediaPlaybackResult;
   readonly kind: MediaPlayerKind;
   readonly title: string;
-  readonly initialStartSec?: number;
   readonly children?: ReactNode;
 }
 
 const LOADING_MESSAGE = "Đang tải nội dung…";
 const RETRY_LABEL = "Thử lại";
 
-export function MediaPlayer({ documentId, kind, title, initialStartSec, children }: MediaPlayerProps) {
-  const playback = useMediaPlayback({ documentId, initialStartSec });
+export function MediaPlayer({ playback, kind, title, children }: MediaPlayerProps) {
   const { mediaRef } = playback;
   const setVideoElement = useCallback((element: HTMLVideoElement | null): void => { mediaRef.current = element; }, [mediaRef]);
   const setAudioElement = useCallback((element: HTMLAudioElement | null): void => { mediaRef.current = element; }, [mediaRef]);

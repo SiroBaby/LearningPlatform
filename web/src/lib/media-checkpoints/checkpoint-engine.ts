@@ -55,6 +55,7 @@ const SEEK_NOISE_SEC = 0.3;
 const MIN_FORWARD_JUMP_SEC = 1.5;
 const JUMP_RATE_FACTOR = 1.5;
 const JUMP_SLACK_SEC = 0.5;
+const NEAR_WINDOW_SEC = 1;
 
 export function createCheckpointEngine(options: CreateCheckpointEngineOptions): CheckpointEngineState {
   return {
@@ -154,6 +155,14 @@ function advanceTo(
     { ...opened, openGroupId: target.id, crossFromSec: fromSec, resumeAtSec: timeSec },
     { type: "PAUSE", groupId: target.id },
   );
+}
+
+/** True while the next stop is close enough that the controller should poll every frame. */
+export function isNearCheckpoint(state: CheckpointEngineState, timeSec: number, windowSec = NEAR_WINDOW_SEC): boolean {
+  if (!state.enabled || state.openGroupId !== null) return false;
+  return state.groups.some((group) => (
+    getCheckpointStatus(state, group.id) === "upcoming" && group.atSec > timeSec && group.atSec - timeSec < windowSec
+  ));
 }
 
 function reduceTick(state: CheckpointEngineState, event: Extract<CheckpointEngineEvent, { type: "TICK" }>): CheckpointEngineResult {

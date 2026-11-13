@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   createCheckpointEngine,
   getCheckpointStatus,
+  isNearCheckpoint,
   reduceCheckpointEngine,
 } from "./checkpoint-engine.ts";
 
@@ -252,4 +253,13 @@ test("a backward seek while open does not re-arm the open group", () => {
 
   assert.deepEqual(result.effect, { type: "RESUME", timeSec: 3 });
   assert.equal(getCheckpointStatus(result.state, "a"), "answered");
+});
+
+test("isNearCheckpoint is true only within one second before an upcoming stop", () => {
+  const state = setup([group("a", 10)]);
+
+  assert.equal(isNearCheckpoint(state, 8.9), false);
+  assert.equal(isNearCheckpoint(state, 9.5), true);
+  assert.equal(isNearCheckpoint(state, 10.1), false);
+  assert.equal(isNearCheckpoint(setup([group("a", 10)], { enabled: false }), 9.5), false);
 });
