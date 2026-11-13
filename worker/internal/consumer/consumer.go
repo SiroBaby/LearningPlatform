@@ -72,6 +72,9 @@ const (
 	defaultMediaGenerationConcurrency = 4
 )
 
+// sourceTypeYoutube is the Document type whose transcript is an Owner-provided subtitle snapshot.
+const sourceTypeYoutube = "YOUTUBE"
+
 type processOutcome uint8
 
 const (
@@ -292,8 +295,15 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 		return bootstrap.finish(ctx, job, err, failureComponentPersistence)
 	}
 	isMedia := bootstrap.options.Media != nil && (source.Type == "AUDIO" || source.Type == "VIDEO")
+	isSubtitle := source.Type == sourceTypeYoutube
 	var chunks []processing.Chunk
-	if isMedia {
+	if isSubtitle {
+		// The Owner-confirmed subtitle snapshot is the transcript: no object read and no speech-to-text.
+		chunks, err = bootstrap.subtitleChunks(ctx, job)
+		if err != nil {
+			return bootstrap.finish(ctx, job, err, failureComponentExtraction)
+		}
+	} else if isMedia {
 		// Real STT (#160 PR5): the transcript is checkpointed per chunk, and the fence monitor stops paid provider
 		// calls as soon as the Document is deleted or the lease is lost.
 		err = bootstrap.withActiveFence(ctx, job, func(transcriptionCtx context.Context) error {
@@ -326,7 +336,7 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 	}
 	selected := allChunkIndexes(len(chunks))
 	concurrency := 1
-	if isMedia {
+	if isMedia || isSubtitle {
 		selected = processing.SelectQuestionChunks(len(chunks), processing.MaxMediaQuestions)
 		concurrency = bootstrap.options.MediaGenerationConcurrency
 	}
@@ -350,6 +360,24 @@ func (bootstrap *Bootstrap) processClaimed(ctx context.Context, job processing.J
 		return processOutcomeUnknown, err, failureComponentPersistence
 	}
 	return bootstrap.finish(ctx, job, err, failureComponentPersistence)
+}
+
+// subtitleChunks turns the confirmed subtitle snapshot into time-cited chunks. A Store without the snapshot
+// capability cannot serve YOUTUBE Documents, which then fail like a missing source.
+func (bootstrap *Bootstrap) subtitleChunks(ctx context.Context, job processing.Job) ([]processing.Chunk, error) {
+	subtitles, ok := bootstrap.store.(processing.SubtitleTranscriptStore)
+	if !ok {
+		return nil, processing.Failure{Code: processing.ObjectNotFound}
+	}
+	segments, err := subtitles.SubtitleSegments(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	extracted := processing.TimedSegmentsToExtracted(segments)
+	if len(extracted) == 0 {
+		return nil, processing.Failure{Code: processing.MediaTranscriptEmpty}
+	}
+	return processing.ChunkTranscript(job.DocumentID, job.OwnerID, extracted)
 }
 
 func allChunkIndexes(count int) []int {

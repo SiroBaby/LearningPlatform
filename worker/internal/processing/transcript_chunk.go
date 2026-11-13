@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"math"
 	"strings"
 	"unicode/utf8"
 )
@@ -29,7 +30,7 @@ func TimedSegmentsToExtracted(segments []TranscriptSegment) []ExtractedSegment {
 }
 
 // ChunkTranscript packs whole time segments into chunks of about targetChars
-// (never above maxChars). Each chunk cites [first.start, last.end]; the next
+// (never above maxChars). Each chunk cites [first.start, latest end of its pieces]; the next
 // chunk re-starts with trailing segments of the previous one totalling at most
 // overlapChars. A single segment above maxChars is split at word boundaries
 // with times interpolated by character position.
@@ -43,7 +44,7 @@ func ChunkTranscript(documentID, ownerID string, segments []ExtractedSegment) ([
 		if len(chunks) >= maxChunks || total > maxTotalChars {
 			return nil, Failure{Code: ChunkLimit}
 		}
-		locator := Locator{Kind: LocatorKindTime, StartSec: pieces[start].Locator.StartSec, EndSec: pieces[end-1].Locator.EndSec}
+		locator := Locator{Kind: LocatorKindTime, StartSec: pieces[start].Locator.StartSec, EndSec: latestEndSec(pieces[start:end])}
 		chunks = append(chunks, newChunk(documentID, ownerID, len(chunks), text, locator))
 		if end == len(pieces) {
 			break
@@ -51,6 +52,16 @@ func ChunkTranscript(documentID, ownerID string, segments []ExtractedSegment) ([
 		start = nextChunkStart(pieces, start, end)
 	}
 	return chunks, nil
+}
+
+// latestEndSec is the largest end among the packed pieces. Overlapping cues (subtitles) do not end in order, so the
+// last piece is not necessarily the one that ends latest; STT output never overlaps, where this equals the last end.
+func latestEndSec(pieces []ExtractedSegment) float64 {
+	latest := pieces[0].Locator.EndSec
+	for _, piece := range pieces[1:] {
+		latest = math.Max(latest, piece.Locator.EndSec)
+	}
+	return latest
 }
 
 func packPieces(pieces []ExtractedSegment, start int) (int, string) {
