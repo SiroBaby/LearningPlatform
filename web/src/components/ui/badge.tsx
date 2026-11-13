@@ -70,6 +70,7 @@ const typeLabels: Record<DocumentType, string> = {
   text: "Văn bản",
   video: "Video",
   audio: "Audio",
+  youtube: "YouTube",
 };
 
 export function TypeBadge({ type }: { type: DocumentType }) {

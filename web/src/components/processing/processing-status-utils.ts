@@ -37,6 +37,8 @@ export function mapType(type: Phase0Document["type"]): DocumentType {
       return "audio";
     case "VIDEO":
       return "video";
+    case "YOUTUBE":
+      return "youtube";
   }
 }
 

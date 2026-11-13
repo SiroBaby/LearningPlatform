@@ -3,7 +3,7 @@
  * Vocabulary mirrors CONTEXT.md: Document owns generated content; Course only references.
  */
 
-export type DocumentType = "pdf" | "text" | "video" | "audio";
+export type DocumentType = "pdf" | "text" | "video" | "audio" | "youtube";
 export type DocumentStatus = "uploaded" | "probing" | "processing" | "ready" | "failed" | "deleting";
 export type OutputKind = "quiz" | "flashcards" | "tutor" | "checkpoints";
 

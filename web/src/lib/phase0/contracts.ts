@@ -1,4 +1,4 @@
-export const phase0DocumentTypes = ["PDF", "TEXT", "AUDIO", "VIDEO"] as const;
+export const phase0DocumentTypes = ["PDF", "TEXT", "AUDIO", "VIDEO", "YOUTUBE"] as const;
 
 export type Phase0DocumentType = (typeof phase0DocumentTypes)[number];
 
@@ -73,6 +73,8 @@ export interface Phase0Document {
   readonly status: Phase0DocumentStatus;
   readonly durationSec: number | null;
   readonly pageCount: number | null;
+  /** Video id of a YouTube lesson; null for every other source (and for an older backend). */
+  readonly youtubeVideoId: string | null;
   readonly errorCode: Phase0DocumentProcessingFailureCode | null;
   readonly errorMessage: string | null;
   readonly selectedModelKind: Phase0ModelSelectionKind | null;
@@ -115,6 +117,8 @@ export type Phase0UploadUrlRequest = {
   readonly originalName: string;
   readonly type: Phase0DocumentType;
   readonly sizeBytes: number;
+  /** Required for YOUTUBE, rejected for other types. */
+  readonly youtubeUrl?: string;
 } & Phase0UploadModelSelection;
 
 export type Phase0EstimateRequest = {
@@ -141,6 +145,30 @@ export interface Phase0UploadUrlResponse {
   readonly uploadUrl: string;
   readonly uploadFields: Readonly<Record<string, string>>;
   readonly expirySec: number;
+}
+
+export interface Phase0ConfirmDocumentRequest {
+  /** YOUTUBE only: the owner states they may use the video and its subtitles. */
+  readonly rightsConfirmed?: boolean;
+}
+
+export const phase0SubtitleFormats = ["VTT", "SRT"] as const;
+
+export type Phase0SubtitleFormat = (typeof phase0SubtitleFormats)[number];
+
+export interface Phase0SubtitleCue {
+  readonly startSec: number;
+  readonly endSec: number;
+  /** Plain text: render as text only, never as markup. */
+  readonly text: string;
+}
+
+export interface Phase0SubtitlePreviewResponse {
+  readonly format: Phase0SubtitleFormat;
+  readonly cueCount: number;
+  readonly charCount: number;
+  readonly durationSec: number;
+  readonly cues: readonly Phase0SubtitleCue[];
 }
 
 export interface Phase0ConfirmDocumentResponse {
@@ -272,6 +300,8 @@ export interface Phase0ApiError {
   readonly message: string;
   readonly retryable?: boolean;
   readonly shortfallCredits?: number;
+  /** 1-based source line of a subtitle parse error. */
+  readonly line?: number;
 }
 
 export const phase0PlaybackReasons = ["INITIAL", "SCHEDULED_REFRESH", "FOREGROUND", "EXPIRED", "MANUAL_RETRY"] as const;

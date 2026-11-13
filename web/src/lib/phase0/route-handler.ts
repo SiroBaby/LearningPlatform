@@ -6,6 +6,7 @@ interface BackendRouteRequest {
   readonly method: "GET" | "POST" | "DELETE";
   readonly path: string;
   readonly body?: unknown;
+  readonly timeoutMs?: number;
 }
 
 export async function proxyPhase0Request(request: BackendRouteRequest): Promise<Response> {
@@ -27,6 +28,21 @@ export async function proxyPhase0JsonPost(path: string, request: Request): Promi
   let body: unknown;
   try {
     body = await request.json();
+  } catch {
+    return Response.json({ message: "The request body must be valid JSON." }, { status: 400 });
+  }
+  return proxyPhase0Request({ method: "POST", path, body });
+}
+
+/** POST whose JSON body is optional: an empty body is forwarded as no body; a malformed one is rejected. */
+export async function proxyPhase0OptionalJsonPost(path: string, request: Request): Promise<Response> {
+  const text = await request.text();
+  if (text.trim().length === 0) {
+    return proxyPhase0Request({ method: "POST", path });
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
   } catch {
     return Response.json({ message: "The request body must be valid JSON." }, { status: 400 });
   }

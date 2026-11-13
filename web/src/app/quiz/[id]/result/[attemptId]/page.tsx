@@ -36,7 +36,7 @@ async function loadMediaLinkLabel(documentId: string | null): Promise<string | n
   try {
     const document = await getPhase0DocumentServer(documentId);
     if (document.status !== "READY") return null;
-    if (document.type === "VIDEO") return WATCH_LINK_LABEL;
+    if (document.type === "VIDEO" || document.type === "YOUTUBE") return WATCH_LINK_LABEL;
     return document.type === "AUDIO" ? LISTEN_LINK_LABEL : null;
   } catch {
     return null;

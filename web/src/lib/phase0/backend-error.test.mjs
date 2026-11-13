@@ -38,3 +38,17 @@ test("drops malformed optional backend error fields", () => {
 
   assert.deepEqual(error, { message: "Quiz is not ready" });
 });
+
+test("preserves a safe 1-based line and drops malformed values", () => {
+  assert.deepEqual(
+    mapSafeBackendError({ code: "SUBTITLE_TIMESTAMP_INVALID", message: "x", retryable: false, line: 12, path: "/tmp/secret" }),
+    { code: "SUBTITLE_TIMESTAMP_INVALID", message: "x", retryable: false, line: 12 },
+  );
+  for (const line of [0, -2, 1.5, "7", null]) {
+    assert.deepEqual(
+      mapSafeBackendError({ code: "SUBTITLE_TIMESTAMP_INVALID", message: "x", line }),
+      { code: "SUBTITLE_TIMESTAMP_INVALID", message: "x" },
+      String(line),
+    );
+  }
+});
