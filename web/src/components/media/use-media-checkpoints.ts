@@ -177,7 +177,8 @@ export function useMediaCheckpoints(options: UseMediaCheckpointsOptions): UseMed
     const isAtEnd = mediaDurationSec !== null && effect.timeSec >= mediaDurationSec - RESUME_SEEK_TOLERANCE_SEC;
     if (!isAtEnd) {
       resumingRef.current = true;
-      void adapter.play().finally(() => { resumingRef.current = false; });
+      // A player may refuse to start (autoplay policy): the viewer then presses play themselves.
+      void adapter.play().catch(() => undefined).finally(() => { resumingRef.current = false; });
     }
     focusMedia?.();
   }, [adapter, cancelPendingFeedback, focusMedia]);
