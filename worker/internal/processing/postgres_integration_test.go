@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -704,4 +706,209 @@ func TestPostgresStoreSourceIgnoresProbeResultOfAnotherPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+const usageQuizBody = `{"choices":[{"finish_reason":"stop","message":{"content":"{\"questions\":[{\"stem\":\"S\",\"explanation\":\"E\",\"options\":[{\"content\":\"A\",\"isCorrect\":true},{\"content\":\"B\",\"isCorrect\":false},{\"content\":\"C\",\"isCorrect\":false},{\"content\":\"D\",\"isCorrect\":false}]}]}"}}],"usage":{"prompt_tokens":%d,"completion_tokens":%d}}`
+
+type usageResponse struct {
+	status        int
+	input, output int
+	checkDispatch func()
+}
+
+// callProvider sends one LLM call through the real adapter with the job's durable recorder attached.
+func (database *postgresIntegration) callProvider(ctx context.Context, job Job, response usageResponse) error {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if response.checkDispatch != nil {
+			response.checkDispatch()
+		}
+		writer.WriteHeader(response.status)
+		_, _ = fmt.Fprintf(writer, usageQuizBody, response.input, response.output)
+	}))
+	defer server.Close()
+	callCtx := WithUsageRecorder(WithUsageTracker(ctx, NewUsageTracker()), database.store, job)
+	_, err := NewOpenAI("key", server.URL, "model-a", chatCompletionsJSONProfile(), time.Second).Generate(callCtx, "source")
+	return err
+}
+
+func (database *postgresIntegration) resultUsage(t *testing.T, ctx context.Context, jobID string) Usage {
+	t.Helper()
+	var encoded []byte
+	if err := database.admin.QueryRow(ctx, `SELECT payload FROM ai.outbox WHERE aggregate_id=$1 AND event_type='DocumentProcessingResult' ORDER BY id DESC LIMIT 1`, jobID).Scan(&encoded); err != nil {
+		t.Fatalf("read result payload: %v", err)
+	}
+	var payload struct {
+		Usage *Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil || payload.Usage == nil {
+		t.Fatalf("decode result usage = (%v, %v)", payload.Usage, err)
+	}
+	return *payload.Usage
+}
+
+func (database *postgresIntegration) makeVisibleAgain(t *testing.T, ctx context.Context, jobID string) {
+	t.Helper()
+	if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET next_visible_at=now()-interval '1 second' WHERE id=$1`, jobID); err != nil {
+		t.Fatalf("make job visible: %v", err)
+	}
+}
+
+func (database *postgresIntegration) expireLease(t *testing.T, ctx context.Context, jobID string) {
+	t.Helper()
+	if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET lease_until=now()-interval '1 second' WHERE id=$1`, jobID); err != nil {
+		t.Fatalf("expire lease: %v", err)
+	}
+}
+
+func (database *postgresIntegration) stampProcessingAttempt(t *testing.T, ctx context.Context, documentID string, attempt int) {
+	t.Helper()
+	if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET processing_attempt=$2 WHERE document_id=$1`, documentID, attempt); err != nil {
+		t.Fatalf("stamp processing attempt: %v", err)
+	}
+}
+
+func TestPostgresStoreLLMUsageRecordsIntegration(t *testing.T) {
+	ctx := context.Background()
+	database := startPostgresIntegration(t, ctx)
+	t.Cleanup(func() {
+		database.store.Close()
+		database.admin.Close()
+		if err := database.container.Terminate(ctx); err != nil {
+			t.Errorf("terminate PostgreSQL container: %v", err)
+		}
+	})
+	recordCount := func(jobID string) int {
+		return countRows(t, ctx, database.admin, `SELECT count(*) FROM ai.provider_usage_records WHERE job_id=$1`, jobID)
+	}
+
+	t.Run("claim returns the processing attempt and keeps NULL for legacy jobs", func(t *testing.T) {
+		documentID, _ := database.insertDocumentAndJob(t, ctx)
+		legacy := database.claim(t, ctx)
+		if legacy.ProcessingAttempt != nil {
+			t.Fatalf("legacy ProcessingAttempt = %d, want nil", *legacy.ProcessingAttempt)
+		}
+		database.stampProcessingAttempt(t, ctx, documentID, 3)
+		database.expireLease(t, ctx, legacy.ID)
+		stamped := database.claim(t, ctx)
+		if stamped.ProcessingAttempt == nil || *stamped.ProcessingAttempt != 3 {
+			t.Fatalf("ProcessingAttempt = %v, want 3", stamped.ProcessingAttempt)
+		}
+	})
+
+	t.Run("inserts the dispatch row before the HTTP call and sums tokens across retry and lease reclaim", func(t *testing.T) {
+		documentID, _ := database.insertDocumentAndJob(t, ctx)
+		database.stampProcessingAttempt(t, ctx, documentID, 2)
+		first := database.claim(t, ctx)
+		sawRowBeforeHTTP := false
+		err := database.callProvider(ctx, *first, usageResponse{status: 200, input: 100, output: 20, checkDispatch: func() {
+			sawRowBeforeHTTP = countRows(t, ctx, database.admin, `SELECT count(*) FROM ai.provider_usage_records WHERE job_id=$1 AND usage_status='UNAVAILABLE' AND job_attempt=2 AND provider_identity='model-a' AND request_key=$2`, first.ID, fmt.Sprintf("go-llm:%s:2:1:1", first.ID)) == 1
+		}})
+		if err != nil || !sawRowBeforeHTTP {
+			t.Fatalf("first call err = %v, dispatch row visible before HTTP = %t", err, sawRowBeforeHTTP)
+		}
+		if result, err := database.store.Retry(ctx, *first, ProviderUnavailable); err != nil || !result.Scheduled {
+			t.Fatalf("Retry() = (%#v, %v)", result, err)
+		}
+		database.makeVisibleAgain(t, ctx, first.ID)
+		second := database.claim(t, ctx)
+		if err := database.callProvider(ctx, *second, usageResponse{status: 200, input: 50, output: 10}); err != nil {
+			t.Fatal(err)
+		}
+		database.expireLease(t, ctx, second.ID)
+		third := database.claim(t, ctx)
+		if err := database.callProvider(ctx, *third, usageResponse{status: 200, input: 5, output: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if done, err := database.store.Fail(WithUsageTracker(ctx, NewUsageTracker()), *third, Failure{Code: OutputInvalid}); err != nil || !done {
+			t.Fatalf("Fail() = (%t, %v)", done, err)
+		}
+
+		expected := Usage{LLM: []ModelUsage{{Model: "model-a", InputTokens: 155, OutputTokens: 31}}}
+		if actual := database.resultUsage(t, ctx, first.ID); !reflect.DeepEqual(actual, expected) || recordCount(first.ID) != 3 {
+			t.Fatalf("usage = %#v (rows %d), want %#v from 3 rows", actual, recordCount(first.ID), expected)
+		}
+	})
+
+	t.Run("an uncertain dispatch on attempt 1 stays uncertain after a successful attempt 2", func(t *testing.T) {
+		documentID, _ := database.insertDocumentAndJob(t, ctx)
+		database.stampProcessingAttempt(t, ctx, documentID, 1)
+		first := database.claim(t, ctx)
+		if err := database.callProvider(ctx, *first, usageResponse{status: 500}); err == nil {
+			t.Fatal("5xx call succeeded")
+		}
+		if _, err := database.store.Retry(ctx, *first, ProviderUnavailable); err != nil {
+			t.Fatal(err)
+		}
+		database.makeVisibleAgain(t, ctx, first.ID)
+		second := database.claim(t, ctx)
+		if err := database.callProvider(ctx, *second, usageResponse{status: 200, input: 30, output: 9}); err != nil {
+			t.Fatal(err)
+		}
+		if done, err := database.store.Fail(ctx, *second, Failure{Code: OutputInvalid}); err != nil || !done {
+			t.Fatalf("Fail() = (%t, %v)", done, err)
+		}
+
+		expected := Usage{LLM: []ModelUsage{{Model: "model-a", InputTokens: 30, OutputTokens: 9}}, UncertainDispatches: 1}
+		if actual := database.resultUsage(t, ctx, first.ID); !reflect.DeepEqual(actual, expected) {
+			t.Fatalf("usage = %#v, want %#v", actual, expected)
+		}
+	})
+
+	t.Run("a definitive rejection counts as known zero spend", func(t *testing.T) {
+		documentID, _ := database.insertDocumentAndJob(t, ctx)
+		database.stampProcessingAttempt(t, ctx, documentID, 1)
+		job := database.claim(t, ctx)
+		_ = database.callProvider(ctx, *job, usageResponse{status: 400})
+		if done, err := database.store.Fail(ctx, *job, Failure{Code: ProviderUnavailable}); err != nil || !done {
+			t.Fatalf("Fail() = (%t, %v)", done, err)
+		}
+
+		expected := Usage{LLM: []ModelUsage{{Model: "model-a"}}}
+		if actual := database.resultUsage(t, ctx, job.ID); !reflect.DeepEqual(actual, expected) {
+			t.Fatalf("usage = %#v, want %#v", actual, expected)
+		}
+	})
+
+	t.Run("a job without processing attempt keeps the in-memory tracker behaviour", func(t *testing.T) {
+		database.insertDocumentAndJob(t, ctx)
+		job := database.claim(t, ctx)
+		tracker := NewUsageTracker()
+		tracker.Dispatched()
+		tracker.Reported("model-t", 4, 2)
+		tracker.Dispatched()
+		if err := database.callProvider(ctx, *job, usageResponse{status: 200, input: 1, output: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if done, err := database.store.Fail(WithUsageTracker(ctx, tracker), *job, Failure{Code: OutputInvalid}); err != nil || !done {
+			t.Fatalf("Fail() = (%t, %v)", done, err)
+		}
+
+		expected := Usage{LLM: []ModelUsage{{Model: "model-t", InputTokens: 4, OutputTokens: 2}}, UncertainDispatches: 1}
+		if actual := database.resultUsage(t, ctx, job.ID); !reflect.DeepEqual(actual, expected) || recordCount(job.ID) != 0 {
+			t.Fatalf("usage = %#v (rows %d), want tracker usage %#v and no rows", actual, recordCount(job.ID), expected)
+		}
+	})
+
+	t.Run("a cancelled job cannot insert a dispatch row", func(t *testing.T) {
+		documentID, _ := database.insertDocumentAndJob(t, ctx)
+		database.stampProcessingAttempt(t, ctx, documentID, 1)
+		job := database.claim(t, ctx)
+		if _, err := database.admin.Exec(ctx, `UPDATE ai.processing_jobs SET status='CANCELLED', cancellation_marker_id=gen_random_uuid(), lease_id=NULL, lease_until=NULL WHERE id=$1`, job.ID); err != nil {
+			t.Fatal(err)
+		}
+
+		err := database.store.RecordDispatch(ctx, *job, fmt.Sprintf("go-llm:%s:1:1:1", job.ID), "model-a")
+		if !errors.Is(err, ErrJobFenceLost) || recordCount(job.ID) != 0 {
+			t.Fatalf("RecordDispatch() = %v (rows %d), want ErrJobFenceLost and no row", err, recordCount(job.ID))
+		}
+		var calls int
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+		defer server.Close()
+		callCtx := WithUsageRecorder(ctx, database.store, *job)
+		_, genErr := NewOpenAI("key", server.URL, "model-a", chatCompletionsJSONProfile(), time.Second).Generate(callCtx, "source")
+		assertFailure(t, genErr, ProviderUnavailable, true)
+		if calls != 0 {
+			t.Fatalf("provider calls = %d, want none for a fenced job", calls)
+		}
+	})
 }

@@ -547,7 +547,10 @@ check_application_edge_contract() {
     'OPENAI_CAPABILITY_VERSION' \
     'OPENAI_STRUCTURED_OUTPUT_MODE' \
     'OPENAI_TRANSPORT' \
-    'WORKER_EXECUTION_MODE'; do
+    'WORKER_EXECUTION_MODE' \
+    'CREDIT_RECONCILER_ENABLED' \
+    'CREDIT_RECONCILER_DRY_RUN' \
+    'CREDIT_RECONCILER_HELD_RELEASE_AFTER_MS'; do
     local forbidden_secret_contract_lower
     forbidden_secret_contract_lower="$(printf '%s' "${forbidden_secret_contract}" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
     if grep -Fq "'${forbidden_secret_contract}':" "${eso_template}" \
@@ -973,6 +976,8 @@ check_ansible_when_installed() {
       "${ANSIBLE_DIR}/roles/applications/tests/secret-key-reference-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/applications/tests/document-purge-flag-contract.yml"
+    ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
+      "${ANSIBLE_DIR}/roles/applications/tests/credit-reconciler-flag-contract.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \
       "${ANSIBLE_DIR}/roles/external_secrets/tests/target-render.yml"
     ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" ansible-playbook \

@@ -43,7 +43,7 @@ func (store *PostgresStore) Claim(ctx context.Context) (*Job, error) {
 		return nil, NewPersistenceError(FailureOperationClaim, err)
 	}
 	var job Job
-	err = tx.QueryRow(ctx, `UPDATE ai.processing_jobs SET attempts=attempts+1,lease_id=gen_random_uuid(),lease_until=now()+interval '15 minutes',status='RUNNING',updated_at=now() WHERE id=$1 AND job_type IN ('FULL_PIPELINE','TEXT_EXTRACT') AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations WHERE user_id=ai.processing_jobs.owner_id) RETURNING id,document_id,owner_id,correlation_id,attempts,lease_id,created_at,job_type`, id).Scan(&job.ID, &job.DocumentID, &job.OwnerID, &job.CorrelationID, &job.Attempt, &job.LeaseID, &job.CreatedAt, &job.Type)
+	err = tx.QueryRow(ctx, `UPDATE ai.processing_jobs SET attempts=attempts+1,lease_id=gen_random_uuid(),lease_until=now()+interval '15 minutes',status='RUNNING',updated_at=now() WHERE id=$1 AND job_type IN ('FULL_PIPELINE','TEXT_EXTRACT') AND cancellation_marker_id IS NULL AND NOT EXISTS (SELECT 1 FROM ai.account_access_revocations WHERE user_id=ai.processing_jobs.owner_id) RETURNING id,document_id,owner_id,correlation_id,attempts,lease_id,created_at,job_type,processing_attempt`, id).Scan(&job.ID, &job.DocumentID, &job.OwnerID, &job.CorrelationID, &job.Attempt, &job.LeaseID, &job.CreatedAt, &job.Type, &job.ProcessingAttempt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -223,7 +223,7 @@ func (store *PostgresStore) PersistAndComplete(ctx context.Context, job Job, chu
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
-	payload, err := marshalResult(ctx, stt, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "READY", "questions": questions, "promptVersion": "phase0-v1", "minimumQuestionCount": 1, "errorCode": nil, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
+	payload, err := marshalResult(ctx, tx, job, stt, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "READY", "questions": questions, "promptVersion": "phase0-v1", "minimumQuestionCount": 1, "errorCode": nil, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil})
 	if err != nil {
 		return false, err
 	}
@@ -256,7 +256,7 @@ func (store *PostgresStore) finalize(ctx context.Context, job Job, status, resul
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
-	payload, err := marshalResult(ctx, stt, withJobType(job, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": result, "errorCode": nilIfEmpty(code), "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil}))
+	payload, err := marshalResult(ctx, tx, job, stt, withJobType(job, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": result, "errorCode": nilIfEmpty(code), "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil}))
 	if err != nil {
 		return false, err
 	}
@@ -280,13 +280,26 @@ func withJobType(job Job, payload map[string]any) map[string]any {
 	return payload
 }
 
-// marshalResult encodes the return-seam payload and attaches the actual-usage block when the attempt tracked one.
-func marshalResult(ctx context.Context, stt *sttTotals, payload map[string]any) ([]byte, error) {
+// marshalResult encodes the return-seam payload and attaches the actual-usage block. When Node stamped a processing
+// attempt on the job, the LLM part is aggregated from the durable dispatch records of that attempt (every technical
+// retry and lease reclaim), read inside the terminal transaction; otherwise the in-memory tracker is the source.
+func marshalResult(ctx context.Context, tx pgx.Tx, job Job, stt *sttTotals, payload map[string]any) ([]byte, error) {
 	tracker := UsageTrackerFrom(ctx)
-	if tracker == nil && stt == nil {
+	var recorded *Usage
+	if job.ProcessingAttempt != nil && tx != nil {
+		usage, err := readRecordedLLMUsage(ctx, tx, job)
+		if err != nil {
+			return nil, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
+		}
+		recorded = &usage
+	}
+	if tracker == nil && stt == nil && (recorded == nil || recorded.isEmpty()) {
 		return json.Marshal(payload)
 	}
 	usage := tracker.Snapshot()
+	if recorded != nil {
+		usage.LLM, usage.UncertainDispatches = recorded.LLM, recorded.UncertainDispatches
+	}
 	if stt != nil {
 		usage.STTBilledSeconds = &stt.billedSeconds
 		usage.STTUncertainSeconds = &stt.uncertainSeconds
@@ -366,7 +379,7 @@ func (store *PostgresStore) finalizeWithDLQ(ctx context.Context, job Job, code F
 	if err != nil {
 		return false, NewPersistenceError(FailureOperationDocumentCompletionUpdate, err)
 	}
-	payload, err := marshalResult(ctx, stt, withJobType(job, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil}))
+	payload, err := marshalResult(ctx, tx, job, stt, withJobType(job, map[string]any{"version": 1, "documentId": job.DocumentID, "ownerId": job.OwnerID, "attempt": job.Attempt, "leaseId": job.LeaseID, "status": "FAILED", "errorCode": code, "errorMessage": nil, "budgetStatus": nil, "estimatedCredits": nil, "estimateStatus": nil, "settledCredits": nil}))
 	if err != nil {
 		return false, err
 	}

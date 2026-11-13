@@ -154,6 +154,20 @@ export interface MediaOrphanScannerSettings {
   readonly deleteDelayMs: number;
 }
 
+/** Settings of the credit reconciler that runs in the relay-only `worker` runtime. */
+export interface CreditReconcilerSettings {
+  /** Off by default; nothing is scanned or written while false. */
+  readonly enabled: boolean;
+  /** Report only (every transaction rolls back) unless false. */
+  readonly dryRun: boolean;
+  readonly intervalMs: number;
+  /** A reservation or its terminal evidence must be older than this before it is reconciled. */
+  readonly orphanGraceMs: number;
+  /** A HOLD older than this is auto-released back to available credits. */
+  readonly heldReleaseAfterMs: number;
+  readonly batchSize: number;
+}
+
 export interface DocumentPurgeStorageConnection {
   readonly accessKey: string;
   readonly egressProxyUrl: string | undefined;
@@ -251,6 +265,14 @@ export const CONFIG_PATH = {
     pollIntervalMs: 'documentPurge.pollIntervalMs',
     secretKey: 'documentPurge.secretKey',
     storageRequestTimeoutMs: 'documentPurge.storageRequestTimeoutMs',
+  },
+  creditReconciler: {
+    batchSize: 'creditReconciler.batchSize',
+    dryRun: 'creditReconciler.dryRun',
+    enabled: 'creditReconciler.enabled',
+    heldReleaseAfterMs: 'creditReconciler.heldReleaseAfterMs',
+    intervalMs: 'creditReconciler.intervalMs',
+    orphanGraceMs: 'creditReconciler.orphanGraceMs',
   },
   mediaOrphanScanner: {
     deleteDelayMs: 'mediaOrphanScanner.deleteDelayMs',

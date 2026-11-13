@@ -128,13 +128,11 @@ LOKI_RULES_DIRECTORY = '/etc/loki/rules'
 LOKI_RULES_TENANT_PATH = "#{LOKI_RULES_DIRECTORY}/fake"
 LOKI_RULES_CONFIG_MAP = 'learning-platform-loki-alert-rules'
 LOKI_RULES_VOLUME = 'alert-rules'
-LOKI_RULES_FILE = 'document-purge.yaml'
-LOKI_RULES_GROUP_NAME = 'learning-platform.document-purge'
 LOKI_ALERTMANAGER_SERVICE = 'learning-platform-monitori-alertmanager'
 LOKI_ALERTMANAGER_PORT = 9093
 LOKI_RULER_RULE_PATH = '/var/loki/ruler-scratch'
 LOKI_RULER_WAL_DIR = '/var/loki/ruler-wal'
-LOKI_ALERT_RULES = {
+LOKI_DOCUMENT_PURGE_ALERT_RULES = {
   'DocumentPurgeDeadLettered' => {
     'severity' => 'warning',
     'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.dead_lettered" [10m])) > 0'
@@ -162,6 +160,36 @@ LOKI_ALERT_RULES = {
   'MediaOrphanScanStale' => {
     'severity' => 'warning',
     'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"media.orphan.scan." [6h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "media.orphan.scan.completed" [3h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [6h]))'
+  }
+}.freeze
+CREDIT_RECONCILER_ALERT_RULES = {
+  'CreditReconcileFailed' => {
+    'severity' => 'warning',
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.failed" [10m])) > 0'
+  },
+  'CreditHeldAutoReleaseAbnormal' => {
+    'severity' => 'warning',
+    'expr' => 'sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json heldReleasedCount="message.heldReleasedCount" | __error__="" | unwrap heldReleasedCount [24h])) > 20'
+  },
+  'CreditOrphanReservationsAbnormal' => {
+    'severity' => 'warning',
+    'expr' => '(sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json releasedCount="message.releasedCount", mode="message.mode" | __error__="" | mode="apply" | unwrap releasedCount [1h])) + sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json heldCount="message.heldCount", mode="message.mode" | __error__="" | mode="apply" | unwrap heldCount [1h]))) > 10'
+  },
+  'CreditReconcileStale' => {
+    'severity' => 'warning',
+    'expr' => 'sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "\\"credit.reconcile." [6h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.disabled" [6h]))'
+  }
+}.freeze
+LOKI_RULE_FILES = {
+  'credit-reconciler.yaml' => {
+    'alerts' => CREDIT_RECONCILER_ALERT_RULES,
+    'group' => 'learning-platform.credit-reconciler',
+    'label' => 'credit reconciler'
+  },
+  'document-purge.yaml' => {
+    'alerts' => LOKI_DOCUMENT_PURGE_ALERT_RULES,
+    'group' => 'learning-platform.document-purge',
+    'label' => 'document purge'
   }
 }.freeze
 APPLICATION_PROMETHEUS_GROUP_NAME = 'learning-platform.application'
@@ -541,30 +569,34 @@ class Policy
       return
     end
     data = value(config_maps.first, 'data') || {}
-    unless data.keys == [LOKI_RULES_FILE]
-      fail_check("Loki rules ConfigMap/#{LOKI_RULES_CONFIG_MAP} must contain only #{LOKI_RULES_FILE}")
+    unless data.keys.sort == LOKI_RULE_FILES.keys.sort
+      fail_check("Loki rules ConfigMap/#{LOKI_RULES_CONFIG_MAP} must contain only #{LOKI_RULE_FILES.keys.sort.join(', ')}")
       return
     end
-    rules_document = YAML.safe_load(data[LOKI_RULES_FILE].to_s, permitted_classes: [], permitted_symbols: [], aliases: false)
+    LOKI_RULE_FILES.each { |file, contract| validate_loki_rule_file(file, data[file], contract) }
+  end
+
+  def validate_loki_rule_file(file, content, contract)
+    rules_document = YAML.safe_load(content.to_s, permitted_classes: [], permitted_symbols: [], aliases: false)
     groups = value(rules_document, 'groups')
-    unless groups.is_a?(Array) && groups.length == 1 && groups.first['name'] == LOKI_RULES_GROUP_NAME
-      fail_check("Loki rules must define exactly the #{LOKI_RULES_GROUP_NAME} group")
+    unless groups.is_a?(Array) && groups.length == 1 && groups.first['name'] == contract['group']
+      fail_check("Loki rules in #{file} must define exactly the #{contract['group']} group")
       return
     end
     rules = groups.first['rules'] || []
     actual_by_alert = rules.each_with_object({}) { |rule, result| result[rule['alert']] = rule }
-    unless rules.length == LOKI_ALERT_RULES.length && actual_by_alert.keys.sort == LOKI_ALERT_RULES.keys.sort
-      fail_check('Loki rules must define exactly the document purge alerts, once each')
+    unless rules.length == contract['alerts'].length && actual_by_alert.keys.sort == contract['alerts'].keys.sort
+      fail_check("Loki rules in #{file} must define exactly the #{contract['label']} alerts, once each")
       return
     end
-    LOKI_ALERT_RULES.each do |alert, contract|
+    contract['alerts'].each do |alert, alert_contract|
       rule = actual_by_alert.fetch(alert)
-      fail_check("Loki alert #{alert} expression must be exactly: #{contract['expr']}") unless rule['expr'].to_s.split.join(' ') == contract['expr']
-      fail_check("Loki alert #{alert} must have severity #{contract['severity']}") unless value(rule, 'labels', 'severity') == contract['severity']
+      fail_check("Loki alert #{alert} expression must be exactly: #{alert_contract['expr']}") unless rule['expr'].to_s.split.join(' ') == alert_contract['expr']
+      fail_check("Loki alert #{alert} must have severity #{alert_contract['severity']}") unless value(rule, 'labels', 'severity') == alert_contract['severity']
       fail_check("Loki alert #{alert} must fire without a for delay; its window already spans the emit interval") unless rule['for'].nil?
     end
   rescue Psych::Exception => error
-    fail_check("Loki rules ConfigMap/#{LOKI_RULES_CONFIG_MAP} must be valid YAML: #{error.message}")
+    fail_check("Loki rules #{file} in ConfigMap/#{LOKI_RULES_CONFIG_MAP} must be valid YAML: #{error.message}")
   end
 
   def validate_loki_rules_mount

@@ -3,6 +3,11 @@ import { DataSource } from 'typeorm';
 import type { EntityManager } from 'typeorm';
 
 import { BaseRepository } from '../../../database/base.repository';
+import type {
+  ProcessingSettlementFacts,
+  ProcessingSettlementFactsPort,
+  ReadSettlementFactsInput,
+} from '../contracts/processing-settlement-facts.port';
 import type { AccountAccessRevocation } from '../contracts/account-access-revocation.port';
 import { TEXT_EXTRACT_JOB_TYPE } from '../contracts/ai-ingestion.port';
 import type {
@@ -29,10 +34,74 @@ export interface ProcessingJobAttempt {
   readonly leaseId: string;
 }
 
+/** Raw row of the single settlement-facts statement (jsonb columns arrive parsed, timestamptz as Date). */
+interface SettlementFactsRow {
+  readonly hasUnpublishedResult: boolean;
+  readonly job: {
+    readonly attempts: number;
+    readonly cancellationMarkerId: string | null;
+    readonly cancelledAt: string | null;
+    readonly completedAt: string | null;
+    readonly platformModelId: string | null;
+    readonly probeResultId: string | null;
+    readonly processingAttempt: number | null;
+    readonly status: JobStatus;
+    readonly updatedAt: string;
+  } | null;
+  readonly latestResult: { readonly createdAt: string; readonly payload: Record<string, unknown> } | null;
+  readonly llmUnavailableCount: string;
+  readonly llmUsage: readonly { readonly inputTokens: string; readonly model: string; readonly outputTokens: string }[];
+  readonly revoked: boolean;
+  readonly sttBilledMs: string;
+  readonly sttUncertainMs: string;
+}
+
+const SETTLEMENT_FACTS_SQL = `
+  SELECT
+    (SELECT jsonb_build_object(
+        'attempts', job."attempts",
+        'cancellationMarkerId', job."cancellation_marker_id",
+        'cancelledAt', job."cancelled_at",
+        'completedAt', job."completed_at",
+        'platformModelId', job."platform_model_id",
+        'probeResultId', job."probe_result_id",
+        'processingAttempt', job."processing_attempt",
+        'status', job."status",
+        'updatedAt', job."updated_at")
+       FROM "ai"."processing_jobs" AS job
+      WHERE job."id" = $1 AND job."owner_id" = $2 AND job."job_type" = 'FULL_PIPELINE') AS "job",
+    EXISTS (SELECT 1 FROM "ai"."account_access_revocations" AS revocation WHERE revocation."user_id" = $2) AS "revoked",
+    EXISTS (SELECT 1 FROM "ai"."outbox" AS pending
+             WHERE pending."aggregate_id" = $1 AND pending."event_type" = 'DocumentProcessingResult'
+               AND pending."published_at" IS NULL) AS "hasUnpublishedResult",
+    (SELECT jsonb_build_object('createdAt', result."created_at", 'payload', result."payload")
+       FROM "ai"."outbox" AS result
+      WHERE result."aggregate_id" = $1 AND result."event_type" = 'DocumentProcessingResult'
+        AND result."published_at" IS NOT NULL
+        AND result."created_at" >= $3
+        AND ($4::timestamptz IS NULL OR result."created_at" < $4)
+      ORDER BY result."created_at" DESC, result."id" DESC
+      LIMIT 1) AS "latestResult",
+    COALESCE((SELECT SUM(chunk."billed_ms") FROM "ai"."media_stt_chunk_results" AS chunk
+               WHERE chunk."probe_result_id" = (SELECT job."probe_result_id" FROM "ai"."processing_jobs" AS job
+                                                 WHERE job."id" = $1 AND job."owner_id" = $2 AND job."job_type" = 'FULL_PIPELINE')), 0) AS "sttBilledMs",
+    COALESCE((SELECT SUM(chunk."uncertain_ms") FROM "ai"."media_stt_chunk_results" AS chunk
+               WHERE chunk."probe_result_id" = (SELECT job."probe_result_id" FROM "ai"."processing_jobs" AS job
+                                                 WHERE job."id" = $1 AND job."owner_id" = $2 AND job."job_type" = 'FULL_PIPELINE')), 0) AS "sttUncertainMs",
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('model', usage."provider_identity", 'inputTokens', usage."input_tokens", 'outputTokens', usage."output_tokens"))
+               FROM (SELECT "provider_identity", COALESCE(SUM("input_tokens"), 0) AS "input_tokens", COALESCE(SUM("output_tokens"), 0) AS "output_tokens"
+                       FROM "ai"."provider_usage_records"
+                      WHERE "job_id" = $1 AND "owner_id" = $2 AND "job_attempt" = $5 AND "request_key" LIKE 'go-llm:%'
+                      GROUP BY "provider_identity") AS usage), '[]'::jsonb) AS "llmUsage",
+    (SELECT COUNT(*) FROM "ai"."provider_usage_records"
+      WHERE "job_id" = $1 AND "owner_id" = $2 AND "job_attempt" = $5 AND "request_key" LIKE 'go-llm:%'
+        AND "usage_status" = 'UNAVAILABLE' AND NOT "cached") AS "llmUnavailableCount"
+`;
+
 const TECHNICAL_RETRY_DELAYS = ['5 seconds', '30 seconds', '5 minutes'] as const;
 
 @Injectable()
-export class ProcessingJobRepository extends BaseRepository<ProcessingJob> implements AccountAccessRevocation, ProcessingJobBudget, ProcessingJobModelSelection {
+export class ProcessingJobRepository extends BaseRepository<ProcessingJob> implements AccountAccessRevocation, ProcessingJobBudget, ProcessingJobModelSelection, ProcessingSettlementFactsPort {
   constructor(private readonly dataSource: DataSource) {
     super(ProcessingJob, dataSource);
   }
@@ -61,10 +130,10 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
         INSERT INTO "ai"."processing_jobs"
           ("id", "document_id", "owner_id", "job_type", "status",
            "idempotency_key", "correlation_id", "attempts", "model_selection_kind", "platform_model_id", "custom_model_config_id",
-           "probe_generation", "policy_version", "deletion_fence", "probe_result_id")
+           "probe_generation", "policy_version", "deletion_fence", "probe_result_id", "processing_attempt")
         SELECT COALESCE($1::uuid, gen_random_uuid()), $2, $3, 'FULL_PIPELINE', 'PENDING', $4, $5,
                CASE WHEN $13::integer IS NULL THEN 0 ELSE $13::integer - 1 END,
-               $6, $7, $8, $9, $10, $11, $12
+               $6, $7, $8, $9, $10, $11, $12, $13::integer
         WHERE NOT EXISTS (
           SELECT 1
           FROM "ai"."account_access_revocations" AS "revocation"
@@ -85,6 +154,7 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
               "policy_version" = EXCLUDED."policy_version",
               "deletion_fence" = EXCLUDED."deletion_fence",
               "probe_result_id" = EXCLUDED."probe_result_id",
+              "processing_attempt" = EXCLUDED."processing_attempt",
               "failure_code" = NULL,
               "error_message" = NULL,
               "completed_at" = NULL,
@@ -179,6 +249,50 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
         command.fullPipelineJobId,
       ],
     );
+  }
+
+  /**
+   * Everything the credit reconciler needs to decide a settlement, in ONE statement on the caller's transaction.
+   * Read-only; `ai.*` facts only, so the content context never queries this schema itself.
+   */
+  async readSettlementFacts(manager: EntityManager, input: ReadSettlementFactsInput): Promise<ProcessingSettlementFacts> {
+    const rows = await manager.query<SettlementFactsRow[]>(SETTLEMENT_FACTS_SQL, [
+      input.jobId,
+      input.ownerId,
+      input.reservedAt,
+      input.nextAttemptReservedAt,
+      input.processingAttempt,
+    ]);
+    const row = rows[0];
+    if (!row) throw new Error('Settlement facts statement returned no row');
+    return {
+      hasUnpublishedResult: row.hasUnpublishedResult,
+      job: row.job === null ? null : {
+        attempts: Number(row.job.attempts),
+        cancellationMarkerId: row.job.cancellationMarkerId,
+        cancelledAt: toNullableDate(row.job.cancelledAt),
+        completedAt: toNullableDate(row.job.completedAt),
+        platformModelId: row.job.platformModelId,
+        probeResultId: row.job.probeResultId,
+        processingAttempt: row.job.processingAttempt === null ? null : Number(row.job.processingAttempt),
+        status: row.job.status,
+        updatedAt: new Date(row.job.updatedAt),
+      },
+      latestPublishedResult: row.latestResult === null ? null : {
+        createdAt: new Date(row.latestResult.createdAt),
+        payload: row.latestResult.payload,
+      },
+      llmRecords: {
+        unavailableCount: Number(row.llmUnavailableCount),
+        usage: row.llmUsage.map((entry) => ({
+          inputTokens: Number(entry.inputTokens),
+          model: entry.model,
+          outputTokens: Number(entry.outputTokens),
+        })),
+      },
+      revoked: row.revoked,
+      stt: { billedMs: Number(row.sttBilledMs), uncertainMs: Number(row.sttUncertainMs) },
+    };
   }
 
   async apply(input: Parameters<AccountAccessRevocation['apply']>[0]): Promise<void> {
@@ -589,4 +703,8 @@ export class ProcessingJobRepository extends BaseRepository<ProcessingJob> imple
     }
     return null;
   }
+}
+
+function toNullableDate(value: string | null): Date | null {
+  return value === null ? null : new Date(value);
 }

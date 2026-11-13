@@ -1111,6 +1111,17 @@ export class ContentRepository extends BaseRepository<Document> {
       processingAttempt,
     });
     if (outcome.kind === 'NO_RESERVATION') return;
+    if (outcome.kind === 'ALREADY_SETTLED') {
+      // The credit reconciler (or an earlier delivery) settled this attempt first: the ledger keeps that decision.
+      this.logger.warn({
+        documentId: command.documentId,
+        event: 'content.settlement.after_reconcile',
+        jobId: command.jobId,
+        processingAttempt,
+        runtime: 'worker',
+        settledCredits: outcome.settledCredits,
+      });
+    }
     await manager.update(
       Document,
       { id: command.documentId, ownerId: command.ownerId },

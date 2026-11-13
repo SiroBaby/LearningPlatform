@@ -46,11 +46,14 @@ export async function settleReservation(manager: EntityManager, input: SettleRes
     [settleKey],
   );
   if (existing.length > 0) {
-    const holds = await manager.query<readonly { readonly id: string }[]>(
-      'SELECT "id" FROM "course"."credit_ledger_entries" WHERE "business_key" = $1',
-      [`hold:${jobId}:${processingAttempt}`],
+    const ledgerKeys = await manager.query<readonly { readonly businessKey: string }[]>(
+      'SELECT "business_key" AS "businessKey" FROM "course"."credit_ledger_entries" WHERE "business_key" = ANY($1::text[])',
+      [[`hold:${jobId}:${processingAttempt}`, `hold-release:${jobId}:${processingAttempt}`]],
     );
-    return { isHeld: holds.length > 0, kind: 'ALREADY_SETTLED', settledCredits: Number(existing[0]?.credits ?? 0) };
+    const keys = new Set(ledgerKeys.map((row) => row.businessKey));
+    // A HOLD that was auto-released is no longer held: a replay must not flip the Document back to HELD.
+    const isHeld = keys.has(`hold:${jobId}:${processingAttempt}`) && !keys.has(`hold-release:${jobId}:${processingAttempt}`);
+    return { isHeld, kind: 'ALREADY_SETTLED', settledCredits: Number(existing[0]?.credits ?? 0) };
   }
   const reserve = await manager.query<readonly { readonly credits: string }[]>(
     'SELECT "credits" FROM "course"."credit_ledger_entries" WHERE "business_key" = $1',
@@ -68,6 +71,76 @@ export async function settleReservation(manager: EntityManager, input: SettleRes
     [ownerId, reserved, released, Math.max(0, input.knownActualCredits - reserved)],
   );
   return { isHeld: held > 0, kind: 'SETTLED', settledCredits: input.knownActualCredits };
+}
+
+export interface ReleaseExpiredHoldInput {
+  readonly jobId: string;
+  readonly ownerId: string;
+  readonly processingAttempt: number;
+}
+
+export type ExpiredHoldReleaseOutcome =
+  | { readonly kind: 'RELEASED'; readonly credits: number; readonly documentId: string | null }
+  | { readonly kind: 'ALREADY_RELEASED' | 'NO_HOLD' | 'SKIPPED_LOCKED' };
+
+/**
+ * Give an unresolved HOLD back to the wallet after the owner-approved wait (`hold-release:{job}:{attempt}`).
+ * HOLD subtracted the amount from `reserved_credits` without crediting `available_credits`, so release only
+ * adds it to `available_credits`. The Document row is locked first (SKIP LOCKED: a busy Document is retried on the
+ * next run), then the wallet; a Document that no longer exists locks the wallet directly. Idempotent per key.
+ */
+export async function releaseExpiredHold(manager: EntityManager, input: ReleaseExpiredHoldInput): Promise<ExpiredHoldReleaseOutcome> {
+  const { jobId, ownerId, processingAttempt } = input;
+  const lock = await lockDocumentOrWallet(manager, { jobId, ownerId });
+  if (lock.kind === 'LOCKED_BY_OTHER') return { kind: 'SKIPPED_LOCKED' };
+  const holds = await manager.query<readonly { readonly credits: string }[]>(
+    'SELECT "credits" FROM "course"."credit_ledger_entries" WHERE "business_key" = $1',
+    [`hold:${jobId}:${processingAttempt}`],
+  );
+  if (holds.length === 0) return { kind: 'NO_HOLD' };
+  const held = Number(holds[0]?.credits ?? 0);
+  const inserted = await manager.query<readonly { readonly id: string }[]>(
+    'INSERT INTO "course"."credit_ledger_entries" ("owner_id", "job_id", "job_attempt", "business_key", "entry_type", "credits") VALUES ($1, $2, $3, $4, \'RELEASE\', $5) ON CONFLICT ("business_key") DO NOTHING RETURNING "id"',
+    [ownerId, jobId, processingAttempt, `hold-release:${jobId}:${processingAttempt}`, held],
+  );
+  if (inserted.length === 0) return { kind: 'ALREADY_RELEASED' };
+  await manager.query(
+    'UPDATE "course"."owner_credit_wallets" SET "available_credits" = "available_credits" + $2, "updated_at" = now() WHERE "owner_id" = $1',
+    [ownerId, held],
+  );
+  const documentId = lock.documentId;
+  if (documentId !== null) {
+    await manager.query(
+      'UPDATE "course"."documents" SET "budget_status" = \'SETTLED\' WHERE "id" = $1 AND "full_pipeline_job_id" = $2 AND "processing_attempt" = $3 AND "budget_status" = \'HELD\'',
+      [documentId, jobId, processingAttempt],
+    );
+  }
+  return { credits: held, documentId, kind: 'RELEASED' };
+}
+
+export type DocumentOrWalletLock =
+  | { readonly kind: 'LOCKED'; readonly documentId: string | null }
+  | { readonly kind: 'LOCKED_BY_OTHER' };
+
+/** Document -> wallet lock order. `SKIP LOCKED` hides a busy row, so existence is checked without a lock first. */
+export async function lockDocumentOrWallet(
+  manager: EntityManager,
+  input: { readonly jobId: string; readonly ownerId: string },
+): Promise<DocumentOrWalletLock> {
+  const existing = await manager.query<readonly { readonly id: string }[]>(
+    'SELECT "id" FROM "course"."documents" WHERE "owner_id" = $1 AND "full_pipeline_job_id" = $2',
+    [input.ownerId, input.jobId],
+  );
+  if (existing.length === 0) {
+    await manager.query('SELECT 1 FROM "course"."owner_credit_wallets" WHERE "owner_id" = $1 FOR UPDATE', [input.ownerId]);
+    return { documentId: null, kind: 'LOCKED' };
+  }
+  const locked = await manager.query<readonly { readonly id: string }[]>(
+    'SELECT "id" FROM "course"."documents" WHERE "owner_id" = $1 AND "full_pipeline_job_id" = $2 FOR UPDATE SKIP LOCKED',
+    [input.ownerId, input.jobId],
+  );
+  const documentId = locked[0]?.id;
+  return documentId === undefined ? { kind: 'LOCKED_BY_OTHER' } : { documentId, kind: 'LOCKED' };
 }
 
 export interface ReserveCreditsInput {

@@ -294,6 +294,22 @@ data:
           - alert: MediaOrphanScanStale
             expr: sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "\"media.orphan.scan." [6h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "media.orphan.scan.completed" [3h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="document-purge-worker"} |= "document.purge.shutdown.completed" [6h]))
             labels: {severity: warning}
+  credit-reconciler.yaml: |
+    groups:
+      - name: learning-platform.credit-reconciler
+        rules:
+          - alert: CreditReconcileFailed
+            expr: sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.failed" [10m])) > 0
+            labels: {severity: warning}
+          - alert: CreditHeldAutoReleaseAbnormal
+            expr: sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json heldReleasedCount="message.heldReleasedCount" | __error__="" | unwrap heldReleasedCount [24h])) > 20
+            labels: {severity: warning}
+          - alert: CreditOrphanReservationsAbnormal
+            expr: (sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json releasedCount="message.releasedCount", mode="message.mode" | __error__="" | mode="apply" | unwrap releasedCount [1h])) + sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json heldCount="message.heldCount", mode="message.mode" | __error__="" | mode="apply" | unwrap heldCount [1h]))) > 10
+            labels: {severity: warning}
+          - alert: CreditReconcileStale
+            expr: sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "\"credit.reconcile." [6h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.disabled" [6h]))
+            labels: {severity: warning}
 ---
 apiVersion: apps/v1
 kind: DaemonSet

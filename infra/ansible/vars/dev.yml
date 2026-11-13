@@ -126,6 +126,14 @@ document_purge_enabled: true
 # user s3:ListBucketVersions (RUNBOOK-document-purge-dev.md section 10).
 media_orphan_scanner_enabled: true
 media_orphan_scanner_delete_enabled: false
+# The credit reconciler (#275) runs inside the relay-only `worker` runtime. It settles
+# reservations that no Go result will ever settle (Document deleted or account revoked
+# mid-run, reserve before forward) and auto-releases a HOLD after 24 hours. The owner
+# approved enabling it for real on dev in the same change: set credit_reconciler_dry_run
+# to true for report-only, or credit_reconciler_enabled to false to stop it
+# (RUNBOOK-credit-reconciler-dev.md). Template defaults stay disabled and dry-run.
+credit_reconciler_enabled: true
+credit_reconciler_dry_run: false
 
 web_resources:
   requests: {cpu: 100m, memory: 128Mi}

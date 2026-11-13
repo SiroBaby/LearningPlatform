@@ -15,6 +15,13 @@ import { Document } from '../modules/content/entities/document.entity';
 import { DocumentStatus } from '../modules/content/enums/document-status.enum';
 import { DocumentType } from '../modules/content/enums/document-type.enum';
 import { ContentRepository } from '../modules/content/repositories/content.repository';
+import {
+  createReconcilerService,
+  IMMEDIATE_RECONCILER_SETTINGS,
+  ReconcilerFixture,
+  type ReconcilerRun,
+} from '../test-support/credit-reconciler-fixture';
+import type { CreditReconcilerService } from '../modules/content/credit-reconciler.service';
 import { createTestDataSource } from '../test-support/test-data-source';
 import { runWithBlockedDocumentRow } from '../test-support/block-document-row';
 import { startTestDb, TestDb } from '../test-support/test-db';
@@ -461,16 +468,148 @@ describe('ReturnRelay credit settlement (#160 D7)', () => {
       expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '4000', reserved_credits: '0' });
       expect((await documents.findOneByOrFail({ id: run.document.id })).budgetStatus).toBe('HELD');
     });
+  });
 
-    // BUG (#164, tracked by #275): Go finalize/retry SQL requires `cancellation_marker_id IS NULL`
-    // (worker/internal/processing/postgres.go:248,355,395). deleteOwnedDocument sets that marker, so a job running
-    // during deletion is FENCED and emits NO ai.outbox result. No Node path settles the RESERVE row in that case
-    // (cancelAiWork only cancels jobs; the return seam only settles when a result arrives), so `reserved_credits`
-    // stays locked. The same orphan applies more broadly: (a) the job is PENDING and was never claimed, (b) RESERVE
-    // happened at completeProbe/completeExtraction but FULL_PIPELINE was not yet forwarded (cancellation placeholder
-    // occupies the slot), and possibly (c) account revocation, which fences the job the same way.
-    // Enable once #275's reconciler exists and assert reserved_credits === 0 with one RELEASE (or HELD).
-    it.todo('releases or holds the reservation of a deleted Document whose Go job never emits a result: running-fenced, PENDING-never-claimed, or RESERVE-before-forward placeholder (and possibly account revocation) (#275)');
+  describe('Document deleted mid-run: no Go result is ever emitted (#275)', () => {
+    const DELETION_BUCKETS = { documents: 'documents', media: 'media' } as const;
+    const MINUTES_PAST_GRACE = 60;
+    let fixture: ReconcilerFixture;
+    let reconciler: CreditReconcilerService;
+
+    beforeEach(() => {
+      fixture = new ReconcilerFixture(db, ds);
+      reconciler = createReconcilerService(ds, { ...IMMEDIATE_RECONCILER_SETTINGS, heldReleaseAfterMs: 86_400_000 });
+    });
+
+    const toRun = (run: SeededRun): ReconcilerRun => ({ document: run.document, jobId: run.jobId, ownerId: run.document.ownerId });
+
+    async function deleteAndAge(run: SeededRun): Promise<void> {
+      await new ContentRepository(ds).deleteOwnedDocument(run.document.ownerId, run.document.id, DELETION_BUCKETS);
+      await fixture.age(toRun(run), MINUTES_PAST_GRACE);
+    }
+
+    it('holds reserved minus the known spend when the Document is deleted while the job runs and Go emits no result', async () => {
+      const run = await seedReservedRun();
+      await fixture.seedJob(toRun(run), { status: 'RUNNING' });
+      await fixture.seedUsageRecord(toRun(run), { inputTokens: 100, outputTokens: 0, status: 'AVAILABLE' });
+      await fixture.seedUsageRecord(toRun(run), { status: 'UNAVAILABLE' });
+      await deleteAndAge(run);
+
+      const actualReport = await reconciler.reconcileOnce();
+
+      expect(actualReport).toMatchObject({ heldCount: 1, heldCredits: 900, settledCount: 1 });
+      expect(await readLedger(run.jobId)).toEqual({
+        [key('reserve', run.jobId)]: '1000',
+        [key('settle', run.jobId)]: '100',
+        [key('release', run.jobId)]: '0',
+        [key('hold', run.jobId)]: '900',
+      });
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '4000', reserved_credits: '0' });
+      const deleted = await documents.findOneByOrFail({ id: run.document.id });
+      expect(deleted.status).toBe(DocumentStatus.DELETING);
+      expect(deleted.budgetStatus).toBe('HELD');
+    });
+
+    it('releases the whole reservation when the job was PENDING and never claimed', async () => {
+      const run = await seedReservedRun();
+      await fixture.seedJob(toRun(run), { attempts: PROCESSING_ATTEMPT - 1, status: 'PENDING' });
+      await deleteAndAge(run);
+
+      await reconciler.reconcileOnce();
+
+      expect(await readLedger(run.jobId)).toEqual({
+        [key('reserve', run.jobId)]: '1000',
+        [key('settle', run.jobId)]: '0',
+        [key('release', run.jobId)]: '1000',
+      });
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '5000', reserved_credits: '0' });
+      expect((await documents.findOneByOrFail({ id: run.document.id })).status).toBe(DocumentStatus.DELETING);
+    });
+
+    it('releases the whole reservation when it was made before the job was forwarded (no job row)', async () => {
+      const run = await seedReservedRun();
+      await deleteAndAge(run);
+
+      await reconciler.reconcileOnce();
+
+      expect(await readLedger(run.jobId)).toEqual({
+        [key('reserve', run.jobId)]: '1000',
+        [key('settle', run.jobId)]: '0',
+        [key('release', run.jobId)]: '1000',
+      });
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '5000', reserved_credits: '0' });
+    });
+
+    it('treats a late result after the reconcile as ALREADY_SETTLED: ledger unchanged and the pump still fulfils', async () => {
+      const run = await seedReservedRun();
+      await deleteAndAge(run);
+      await reconciler.reconcileOnce();
+      const ledgerAfterReconcile = await readLedger(run.jobId);
+      const event = await seedResult(run, {
+        usage: { llm: [{ inputTokens: 300, model: 'gpt-5.4-mini', outputTokens: 50 }], uncertainDispatches: 0 },
+      });
+      const warn = jest.spyOn(ConsoleLogger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await expect(relay.pump(10)).resolves.toBeUndefined();
+
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+        documentId: run.document.id,
+        event: 'content.settlement.after_reconcile',
+        jobId: run.jobId,
+      }));
+      warn.mockRestore();
+      expect(await readLedger(run.jobId)).toEqual(ledgerAfterReconcile);
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '5000', reserved_credits: '0' });
+      expect((await outbox.findOneByOrFail({ id: event.id })).publishedAt).not.toBeNull();
+    });
+
+    it('keeps budget_status SETTLED when a result is replayed after the HOLD was auto-released', async () => {
+      const run = await seedReservedRun();
+      await new ContentRepository(ds).deleteOwnedDocument(run.document.ownerId, run.document.id, DELETION_BUCKETS);
+      const payload = {
+        ...failedPayload(DocumentProcessingFailureCode.PROVIDER_UNAVAILABLE),
+        usage: { llm: [{ inputTokens: 100, model: 'gpt-5.4-mini', outputTokens: 0 }], uncertainDispatches: 1 },
+      };
+      await seedResult(run, payload);
+      await relay.pump(10);
+      expect((await documents.findOneByOrFail({ id: run.document.id })).budgetStatus).toBe('HELD');
+      await fixture.age(toRun(run), 2 * MINUTES_PAST_GRACE);
+      await createReconcilerService(ds, { ...IMMEDIATE_RECONCILER_SETTINGS, heldReleaseAfterMs: 1 }).reconcileOnce();
+      expect((await documents.findOneByOrFail({ id: run.document.id })).budgetStatus).toBe('SETTLED');
+      await seedResult(run, payload);
+      const warn = jest.spyOn(ConsoleLogger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await relay.pump(10);
+
+      warn.mockRestore();
+      expect((await documents.findOneByOrFail({ id: run.document.id })).budgetStatus).toBe('SETTLED');
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '4900', reserved_credits: '0' });
+    });
+
+    it('settles exactly once when the relay and the reconciler run at the same time on one Document', async () => {
+      const run = await seedReservedRun();
+      await new ContentRepository(ds).deleteOwnedDocument(run.document.ownerId, run.document.id, DELETION_BUCKETS);
+      await seedResult(run, {
+        ...failedPayload(DocumentProcessingFailureCode.EXTRACTION_OBJECT_NOT_FOUND),
+        usage: { llm: [], uncertainDispatches: 0 },
+      });
+      await fixture.age(toRun(run), MINUTES_PAST_GRACE);
+
+      const results = await runWithBlockedDocumentRow({
+        db,
+        documentId: run.document.id,
+        minimumWaiters: 1,
+        start: () => [relay.pump(10), reconciler.reconcileOnce()],
+      });
+
+      expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+      expect(await readLedger(run.jobId)).toEqual({
+        [key('reserve', run.jobId)]: '1000',
+        [key('settle', run.jobId)]: '0',
+        [key('release', run.jobId)]: '1000',
+      });
+      expect(await readWallet(run.document.ownerId)).toEqual({ available_credits: '5000', reserved_credits: '0' });
+    });
   });
 
   describe('concurrent relays (#164)', () => {

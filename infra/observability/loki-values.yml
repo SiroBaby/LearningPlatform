@@ -232,3 +232,43 @@ extraObjects:
                   summary: Media orphan scanner stopped completing scans
                   description: >-
                     The orphan scanner logged scan events within the last 6 hours but no media.orphan.scan.completed for 3 hours (default interval 1 hour, failures back off up to 8 hours). Follow docs/deployment/RUNBOOK-document-purge-dev.md section 10.
+      credit-reconciler.yaml: |
+        groups:
+          - name: learning-platform.credit-reconciler
+            rules:
+              - alert: CreditReconcileFailed
+                expr: >-
+                  sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.failed" [10m])) > 0
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Credit reconciler failed
+                  description: >-
+                    A credit reconciliation run or one reservation failed; check the stage field. Follow docs/deployment/RUNBOOK-credit-reconciler-dev.md section 6.
+              - alert: CreditHeldAutoReleaseAbnormal
+                expr: >-
+                  sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json heldReleasedCount="message.heldReleasedCount" | __error__="" | unwrap heldReleasedCount [24h])) > 20
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Unusually many HELD credits auto-released
+                  description: >-
+                    More than 20 HELD reservations were auto-released in 24 hours. Providers may be returning unknown outcomes more than usual. Follow docs/deployment/RUNBOOK-credit-reconciler-dev.md section 6.
+              - alert: CreditOrphanReservationsAbnormal
+                expr: >-
+                  (sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json releasedCount="message.releasedCount", mode="message.mode" | __error__="" | mode="apply" | unwrap releasedCount [1h])) + sum by (namespace) (sum_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" | json heldCount="message.heldCount", mode="message.mode" | __error__="" | mode="apply" | unwrap heldCount [1h]))) > 10
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Unusually many orphan reservations reconciled
+                  description: >-
+                    More than 10 orphan reservations were released or held in one hour. A fence or deletion path may be leaving reservations without a result. Follow docs/deployment/RUNBOOK-credit-reconciler-dev.md section 6.
+              - alert: CreditReconcileStale
+                expr: >-
+                  sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "\"credit.reconcile." [6h])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.completed" [15m])) unless sum by (namespace) (count_over_time({namespace="learning-platform-dev", container="worker"} |= "credit.reconcile.disabled" [6h]))
+                labels:
+                  severity: warning
+                annotations:
+                  summary: Credit reconciler stopped completing runs
+                  description: >-
+                    The reconciler logged events within the last 6 hours but no credit.reconcile.completed for 15 minutes (default interval 5 minutes; failures back off up to 40 minutes). Follow docs/deployment/RUNBOOK-credit-reconciler-dev.md section 6.

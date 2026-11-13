@@ -17,14 +17,12 @@ import {
 } from './contracts/document-status-projection.port';
 import { createApplicationLogger } from '../../common/logging/application-logger.factory';
 import { DocumentStatus } from './enums/document-status.enum';
-import {
-  DocumentProcessingFailureCode,
-  isFailureBeforeProviderDispatch,
-} from '../ai/contracts/document-processing-result';
+import { DocumentProcessingFailureCode } from '../ai/contracts/document-processing-result';
 import { MAX_MEDIA_DURATION_SEC } from './contracts/media-probe-policy';
 import { ModelPriceTableError } from './credit-estimation/model-price-table';
 import { TEXT_EXTRACT_JOB_TYPE } from '../ai/contracts/ai-ingestion.port';
 import { MediaCreditEstimator } from './credit-estimation/media-credit-estimator';
+import { planReservationSettlement } from './credit-estimation/settlement-planner';
 import { estimateTextCredits } from './credit-estimation/text-credit-estimator';
 import { ContentRepository } from './repositories/content.repository';
 
@@ -127,43 +125,35 @@ export class DocumentStatusProjectionService implements DocumentStatusProjection
     if (command.jobType === TEXT_EXTRACT_JOB_TYPE) return { settlement: null };
     const document = await this.contentRepository.findByOwnerId(command.ownerId, command.documentId);
     if (!document || document.modelSelectionKind !== 'PLAN') return { settlement: null };
+    const planning = planReservationSettlement({
+      errorCode: command.errorCode,
+      estimator: this.mediaCreditEstimator,
+      platformModelId: document.platformModelId,
+      platformModels: this.config.ai.platformModels,
+      status: command.status,
+      usage: command.usage,
+    });
+    if (planning.unpricedReason) this.logSettlementUnpriced(command, planning.unpricedReason);
+    const { actual } = planning;
     const { usage } = command;
-    if (!usage) {
-      const isKnownUnspent = command.status === DocumentStatus.FAILED && isFailureBeforeProviderDispatch(command.errorCode);
-      return { settlement: { hasUncertainDispatch: !isKnownUnspent, knownActualCredits: 0 } };
-    }
-    const hasUncertainDispatch = usage.uncertainDispatches > 0 || (usage.sttUncertainSeconds ?? 0) > 0;
-    const platformModels = this.config.ai.platformModels;
-    const model = platformModels.find((candidate) => candidate.id === document.platformModelId);
-    const defaultModel = platformModels[0];
-    if (!model || !defaultModel) {
-      this.logSettlementUnpriced(command, 'platform_model_not_configured');
-      return { settlement: { hasUncertainDispatch: true, knownActualCredits: 0 } };
-    }
-    try {
-      const actual = this.mediaCreditEstimator.calculateActual({ defaultModel, model, usage });
-      return {
-        logActualUsage: () => this.logger.log({
-          actualCostMicroUsd: actual.costMicroUsd,
-          documentId: command.documentId,
-          event: 'content.settlement.actual_usage',
-          generationCredits: actual.generationCredits,
-          hasUncertainDispatch,
-          inputTokens: usage.llm.reduce((total, entry) => total + entry.inputTokens, 0),
-          jobId: command.jobId,
-          outputTokens: usage.llm.reduce((total, entry) => total + entry.outputTokens, 0),
-          priceTableVersion: actual.priceTableVersion,
-          runtime: 'worker',
-          sttCredits: actual.sttCredits,
-          totalCredits: actual.totalCredits,
-        }),
-        settlement: { hasUncertainDispatch, knownActualCredits: actual.totalCredits },
-      };
-    } catch (error) {
-      if (!(error instanceof ModelPriceTableError)) throw error;
-      this.logSettlementUnpriced(command, 'price_missing');
-      return { settlement: { hasUncertainDispatch: true, knownActualCredits: 0 } };
-    }
+    if (!actual || !usage) return { settlement: planning.settlement };
+    return {
+      logActualUsage: () => this.logger.log({
+        actualCostMicroUsd: actual.costMicroUsd,
+        documentId: command.documentId,
+        event: 'content.settlement.actual_usage',
+        generationCredits: actual.generationCredits,
+        hasUncertainDispatch: planning.hasUncertainDispatch,
+        inputTokens: usage.llm.reduce((total, entry) => total + entry.inputTokens, 0),
+        jobId: command.jobId,
+        outputTokens: usage.llm.reduce((total, entry) => total + entry.outputTokens, 0),
+        priceTableVersion: actual.priceTableVersion,
+        runtime: 'worker',
+        sttCredits: actual.sttCredits,
+        totalCredits: actual.totalCredits,
+      }),
+      settlement: planning.settlement,
+    };
   }
 
   private logSettlementUnpriced(command: DocumentStatusProjectionCommand, reason: string): void {
