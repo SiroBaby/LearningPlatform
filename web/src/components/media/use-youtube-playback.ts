@@ -8,6 +8,7 @@ import { loadYouTubeIframeApi } from "@/lib/media-playback/youtube-iframe-api";
 import type { YouTubePlayerHandle } from "@/lib/media-playback/youtube-iframe-api";
 import { createYouTubePlayerAdapter } from "@/lib/media-playback/youtube-player-adapter";
 import type { YouTubePlayerAdapter } from "@/lib/media-playback/youtube-player-adapter";
+import { createReadyWatchdog } from "@/lib/media-playback/youtube-ready-watchdog";
 import {
   canRetryYouTubePlayback,
   classifyYouTubeErrorCode,
@@ -87,7 +88,9 @@ export function useYouTubePlayback(options: UseYouTubePlaybackOptions): UseYouTu
     if (host === null) return undefined;
     let isCancelled = false;
     let player: YouTubePlayerHandle | null = null;
+    const readyWatchdog = createReadyWatchdog(() => fail("load-failed"));
     const fail = (errorKind: YouTubePlaybackErrorKind): void => {
+      readyWatchdog.cancel();
       if (isCancelled) return;
       adapter.detachPlayer();
       setView(toErrorView(errorKind));
@@ -104,6 +107,7 @@ export function useYouTubePlayback(options: UseYouTubePlaybackOptions): UseYouTu
         playerVars: buildPlayerVars(startSecRef.current),
         events: {
           onReady: (): void => {
+            readyWatchdog.cancel();
             if (isCancelled || player === null) return;
             adapter.attachPlayer(player);
             host.querySelector("iframe")?.setAttribute("title", titleRef.current);
@@ -115,9 +119,11 @@ export function useYouTubePlayback(options: UseYouTubePlaybackOptions): UseYouTu
           onError: (event): void => fail(classifyYouTubeErrorCode(event.data)),
         },
       });
+      readyWatchdog.start();
     }).catch(() => fail("load-failed"));
     return () => {
       isCancelled = true;
+      readyWatchdog.cancel();
       adapter.detachPlayer();
       try {
         player?.destroy();

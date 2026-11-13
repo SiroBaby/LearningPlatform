@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui";
 import { parseYoutubeVideoId } from "@/lib/media-playback/youtube-video-id";
 import {
   confirmPhase0Document,
@@ -14,6 +15,7 @@ import { getSubtitleErrorMessage } from "@/lib/phase0/subtitle-errors";
 import { getInsufficientCreditsMessage } from "@/lib/phase0/ui-errors";
 import { routes } from "@/lib/routes";
 import { normalizeSubtitleSelection } from "./subtitle-file";
+import { decidePreviewFailureAction } from "./subtitle-preview-failure";
 import { UploadEstimatePanel } from "./upload-estimate-panel";
 import { UploadModelPanel } from "./upload-model-panel";
 import { UploadStatusPanel } from "./upload-status-panel";
@@ -89,6 +91,7 @@ export function UploadWorkspace({ isMediaUploadEnabled, isYoutubeLessonsEnabled 
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [subtitlePreview, setSubtitlePreview] = useState<Phase0SubtitlePreviewResponse | null>(null);
   const [isRightsConfirmed, setIsRightsConfirmed] = useState(false);
+  const [canRetryPreview, setCanRetryPreview] = useState(false);
 
   const isYoutube = source === "youtube";
   const youtubeVideoId = useMemo(() => parseYoutubeVideoId(youtubeUrl), [youtubeUrl]);
@@ -152,6 +155,7 @@ export function UploadWorkspace({ isMediaUploadEnabled, isYoutubeLessonsEnabled 
     setConfirmStatus(null);
     setSubtitlePreview(null);
     setIsRightsConfirmed(false);
+    setCanRetryPreview(false);
   }
 
   function clearSelectionState(): void {
@@ -219,12 +223,18 @@ export function UploadWorkspace({ isMediaUploadEnabled, isYoutubeLessonsEnabled 
 
   async function runPreview(documentIdToPreview: string): Promise<void> {
     setStep("previewing");
+    setStorageError(null);
+    setCanRetryPreview(false);
     try {
       setSubtitlePreview(await previewPhase0Subtitle(documentIdToPreview));
       setStep("previewed");
     } catch (error) {
       setStorageError(getClientErrorMessage(error, "Chưa đọc được phụ đề. Thử lại."));
-      setStep("idle");
+      // A transport or timeout failure keeps the uploaded document so a retry does not create another one.
+      const failure = error instanceof Phase0ClientError ? error : {};
+      const action = decidePreviewFailureAction(failure);
+      setCanRetryPreview(action === "retry");
+      setStep(action === "retry" ? "uploaded" : "idle");
     }
   }
 
@@ -358,7 +368,11 @@ export function UploadWorkspace({ isMediaUploadEnabled, isYoutubeLessonsEnabled 
               onSubtitleFileChange={handleFileChange}
             />
           )}
-          youtubeConfirmSection={isYoutube && subtitlePreview !== null && documentId !== null ? (
+          youtubeConfirmSection={isYoutube && canRetryPreview && documentId !== null ? (
+            <Button type="button" variant="outline" onClick={() => { void runPreview(documentId); }}>
+              Thử lại
+            </Button>
+          ) : isYoutube && subtitlePreview !== null && documentId !== null ? (
             <YoutubeConfirmSection
               key={documentId}
               rightsInputId={rightsInputId}

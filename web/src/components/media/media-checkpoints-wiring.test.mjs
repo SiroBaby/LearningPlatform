@@ -23,6 +23,7 @@ const NEW_MODULES = [
   "src/lib/media-playback/youtube-player-adapter.ts",
   "src/lib/media-playback/youtube-playback-errors.ts",
   "src/lib/media-playback/youtube-video-id.ts",
+  "src/lib/media-playback/youtube-ready-watchdog.ts",
   "src/lib/media-playback/subtitle-preview-paging.ts",
 ];
 

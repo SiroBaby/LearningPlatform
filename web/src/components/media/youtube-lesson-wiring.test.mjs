@@ -154,3 +154,22 @@ test("subtitle text is rendered as plain text and no new module reads session st
 test("new YouTube modules have no phase-based names", () => {
   for (const path of YOUTUBE_FILES) assert.doesNotMatch(readSource(path), /Phase0[A-Z]\w*(YouTube|Youtube|Subtitle)|(YouTube|Youtube|Subtitle)\w*Phase0/u, path);
 });
+
+test("a player that never reports ready times out into the retryable load-failed state", () => {
+  const source = readSource("src/components/media/use-youtube-playback.ts");
+
+  assert.match(source, /createReadyWatchdog\(\(\) => fail\("load-failed"\)\)/u);
+  assert.match(source, /readyWatchdog\.start\(\);/u);
+  assert.match(source, /onReady: \(\): void => \{\s*readyWatchdog\.cancel\(\);/u);
+  assert.match(source, /isCancelled = true;\s*readyWatchdog\.cancel\(\);/u);
+  assert.match(source, /\}, \[adapter, videoId, attempt\]\);/u);
+});
+
+test("a failed preview keeps the document for a retry only when retrying can help", () => {
+  const source = readSource("src/components/upload/upload-workspace.tsx");
+
+  assert.match(source, /decidePreviewFailureAction\(failure\)/u);
+  assert.match(source, /setStep\(action === "retry" \? "uploaded" : "idle"\)/u);
+  assert.match(source, /canRetryPreview && documentId !== null[\s\S]*runPreview\(documentId\)/u);
+  assert.doesNotMatch(readSource("src/components/upload/use-upload-model-estimate.ts"), /toEstimateType/u);
+});
