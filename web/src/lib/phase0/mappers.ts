@@ -469,7 +469,12 @@ function readPlaybackMimeType(value: unknown): Phase0PlaybackUrlResponse["mimeTy
 
 function readHttpUrl(value: unknown, field: string): string {
   const url = readString(value, field);
-  const protocol = URL.canParse(url) ? new URL(url).protocol : "";
+  let protocol = "";
+  try {
+    protocol = new URL(url).protocol;
+  } catch {
+    protocol = "";
+  }
   if (protocol !== "https:" && protocol !== "http:") {
     throw new TypeError(`Expected ${field} to be an http(s) URL.`);
   }

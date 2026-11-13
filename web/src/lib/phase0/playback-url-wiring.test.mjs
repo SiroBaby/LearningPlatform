@@ -12,7 +12,8 @@ test("the playback BFF route is dynamic, uncached and POST only", () => {
   assert.match(source, /export const dynamic = "force-dynamic"/u);
   assert.match(source, /export async function POST/u);
   assert.doesNotMatch(source, /export async function (GET|PUT|PATCH|DELETE)/u);
-  assert.match(source, /"Cache-Control", "no-store"/u);
+  assert.match(source, /"Cache-Control", NO_STORE/u);
+  assert.match(source, /catch \{[\s\S]*"Cache-Control": NO_STORE/u);
   assert.match(source, /\/documents\/\$\{encodeURIComponent\(id\)\}\/playback-url/u);
 });
 

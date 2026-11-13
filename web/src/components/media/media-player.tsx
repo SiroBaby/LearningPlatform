@@ -56,11 +56,8 @@ export function MediaPlayer({ documentId, kind, title, initialStartSec, children
         ) : null}
 
         {playback.errorMessage ? (
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-900/90 p-4 text-center text-sm text-white"
-            role="alert"
-          >
-            <p>{playback.errorMessage}</p>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-900/90 p-4 text-center text-sm text-white">
+            <p role="alert">{playback.errorMessage}</p>
             {isUnauthorized ? <LinkButton href={routes.login} variant="outline">Đăng nhập</LinkButton> : null}
             {playback.canRetry ? (
               <Button type="button" variant="outline" onClick={playback.retry} disabled={playback.retryAvailableInSec > 0}>
@@ -70,6 +67,7 @@ export function MediaPlayer({ documentId, kind, title, initialStartSec, children
           </div>
         ) : null}
       </div>
+      {playback.playHint ? <p className="text-sm text-ink-600" role="status">{playback.playHint}</p> : null}
       {children}
     </div>
   );

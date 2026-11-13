@@ -8,6 +8,10 @@ import {
   classifyPlaybackFailure,
   computeRetryAvailableInSec,
   computeRetryDelayMs,
+  decideMediaErrorAction,
+  shouldRefreshBeforePlay,
+  shouldRefreshOnWake,
+  shouldRetryOnOnline,
   computeScheduledRefreshDelayMs,
   getPlaybackFailureMessage,
   initialPlaybackState,
@@ -179,4 +183,45 @@ test("exposes the exact Vietnamese failure copy", () => {
   assert.equal(getPlaybackFailureMessage("forbidden"), "Bạn không còn quyền xem nội dung này.");
   assert.equal(getPlaybackFailureMessage("not-found"), "Không tìm thấy tài liệu này.");
   assert.equal(getPlaybackFailureMessage("not-ready"), "Nội dung chưa sẵn sàng để phát.");
+});
+
+test("wake-ups refresh only a ready source that is inside the margin", () => {
+  const dueMs = NOW_MS + TTL_SEC * 1000 - REFRESH_MARGIN_MS;
+  const ready = readyState();
+  const retryWait = reduce(ready, { type: "REQUEST_STARTED" }, { type: "REQUEST_FAILED", nowMs: dueMs, failure: { status: 503 } });
+  const fatal = reduce(ready, { type: "REQUEST_FAILED", nowMs: dueMs, failure: { status: 401 } });
+
+  assert.equal(shouldRefreshOnWake(ready, dueMs - 1), false);
+  assert.equal(shouldRefreshOnWake(ready, dueMs), true);
+  assert.equal(shouldRefreshOnWake(retryWait, dueMs), false);
+  assert.equal(shouldRefreshOnWake(fatal, dueMs), false);
+  assert.equal(shouldRefreshOnWake(initialPlaybackState, dueMs), false);
+});
+
+test("online retries only a non-fatal error after its cooldown", () => {
+  let errorState = initialPlaybackState;
+  for (let index = 0; index < 4; index += 1) {
+    errorState = reduce(errorState, { type: "REQUEST_STARTED" }, { type: "REQUEST_FAILED", nowMs: NOW_MS, failure: { status: 503 } });
+  }
+  const fatal = reduce(readyState(), { type: "REQUEST_FAILED", nowMs: NOW_MS, failure: { status: 403 } });
+
+  assert.equal(shouldRetryOnOnline(errorState, NOW_MS + 1000), false);
+  assert.equal(shouldRetryOnOnline(errorState, NOW_MS + 5000), true);
+  assert.equal(shouldRetryOnOnline(fatal, NOW_MS + 60_000), false);
+  assert.equal(shouldRetryOnOnline(readyState(), NOW_MS), false);
+});
+
+test("play refreshes first only near expiry and never while loading", () => {
+  const nearExpiryMs = NOW_MS + TTL_SEC * 1000 - PLAY_GUARD_MS;
+
+  assert.equal(shouldRefreshBeforePlay(readyState(), NOW_MS), false);
+  assert.equal(shouldRefreshBeforePlay(readyState(), nearExpiryMs), true);
+  assert.equal(shouldRefreshBeforePlay(initialPlaybackState, nearExpiryMs), false);
+});
+
+test("a media error recovers once, then fails, and is ignored without a source", () => {
+  assert.equal(decideMediaErrorAction(readyState(), 0), "recover");
+  assert.equal(decideMediaErrorAction(readyState(), 1), "fail");
+  assert.equal(decideMediaErrorAction(initialPlaybackState, 0), "ignore");
+  assert.equal(decideMediaErrorAction(playbackReducer(initialPlaybackState, { type: "REQUEST_STARTED" }), 0), "ignore");
 });

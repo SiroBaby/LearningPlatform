@@ -9,5 +9,5 @@ export function parseStartSec(
   if (value === undefined || !NON_NEGATIVE_INTEGER_PATTERN.test(value)) return undefined;
   const startSec = Number(value);
   if (durationSec === null || !Number.isFinite(durationSec)) return startSec;
-  return Math.min(startSec, Math.max(0, Math.floor(durationSec)));
+  return Math.min(startSec, Math.max(0, Math.floor(durationSec) - 1));
 }

@@ -9,18 +9,20 @@ import {
   computeRetryAvailableInSec,
   computeScheduledRefreshDelayMs,
   getPlaybackFailureMessage,
-  initialPlaybackState,
   isFatalPlaybackFailure,
-  isRefreshDue,
-  isTooCloseToExpiryForPlay,
+  initialPlaybackState,
+  decideMediaErrorAction,
   playbackReducer,
+  shouldRefreshBeforePlay,
+  shouldRefreshOnWake,
+  shouldRetryOnOnline,
 } from "@/lib/media-playback/playback-refresh-policy";
 import type { PlaybackEvent, PlaybackFailureKind, PlaybackPhase, PlaybackState } from "@/lib/media-playback/playback-refresh-policy";
 import { Phase0ClientError, createPhase0PlaybackUrl } from "@/lib/phase0/client";
 import type { Phase0PlaybackReason } from "@/lib/phase0/contracts";
 
 const COUNTDOWN_TICK_MS = 1000;
-const MAX_MEDIA_RECOVERIES_PER_SOURCE = 1;
+const PLAY_HINT = "Bấm phát để tiếp tục.";
 
 export interface UseMediaPlaybackOptions {
   readonly documentId: string;
@@ -34,6 +36,8 @@ export interface UseMediaPlaybackResult {
   readonly hasSource: boolean;
   readonly errorKind: PlaybackFailureKind | null;
   readonly errorMessage: string | null;
+  /** Non-blocking hint shown when the browser refused to resume playback by itself. */
+  readonly playHint: string | null;
   readonly canRetry: boolean;
   readonly retryAvailableInSec: number;
   retry(): void;
@@ -73,6 +77,8 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
   const appliedRef = useRef<AppliedSourceHandle | null>(null);
   const reasonRef = useRef<Phase0PlaybackReason>("INITIAL");
   const recoveriesRef = useRef(0);
+  const retryOptionsRef = useRef<FetchOptions>({});
+  const [playHint, setPlayHint] = useState<string | null>(null);
   const startSecRef = useRef<number | undefined>(initialStartSec);
   const isMountedRef = useRef(false);
   const timeListenersRef = useRef<Set<(timeSec: number) => void>>(new Set());
@@ -96,7 +102,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
     const now = Date.now();
     if (current.phase === "retry-wait" && current.retryAtMs !== null) {
       timerRef.current = globalThis.setTimeout(
-        () => { void fetchPlaybackRef.current(reasonRef.current); },
+        () => { void fetchPlaybackRef.current(reasonRef.current, retryOptionsRef.current); },
         Math.max(0, current.retryAtMs - now),
       );
       return;
@@ -115,6 +121,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
     const abortController = new AbortController();
     abortRef.current = abortController;
     reasonRef.current = reason;
+    retryOptionsRef.current = fetchOptions;
     clearTimer();
     dispatchEvent({ type: "REQUEST_STARTED" });
     const run = async (): Promise<void> => {
@@ -124,24 +131,30 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
         dispatchEvent({ type: "REQUEST_SUCCEEDED", receivedAtMs: Date.now(), ttlSec: response.ttlSec });
         const element = mediaRef.current;
         if (element) {
+          // A swap that has not restored yet already reset the element: carry its snapshot over.
+          const seed = appliedRef.current?.getPendingSnapshot() ?? null;
           appliedRef.current?.cancel();
           appliedRef.current = applySource(element as MediaElementLike, {
             url: response.url,
             startSec: startSecRef.current,
             resumePlayback: fetchOptions.resumePlayback,
+            seed,
+            onPlayRejected: () => { if (isMountedRef.current) setPlayHint(PLAY_HINT); },
           });
+          retryOptionsRef.current = {};
           startSecRef.current = undefined;
         }
       } catch (error: unknown) {
         if (abortController.signal.aborted) return;
         dispatchEvent({ type: "REQUEST_FAILED", nowMs: Date.now(), failure: toFailureInput(error) });
       } finally {
-        inFlightRef.current = null;
+        if (inFlightRef.current === promise) inFlightRef.current = null;
         if (!abortController.signal.aborted) scheduleNext();
       }
     };
-    inFlightRef.current = run();
-    return inFlightRef.current;
+    const promise = run();
+    inFlightRef.current = promise;
+    return promise;
   }, [clearTimer, dispatchEvent, documentId, scheduleNext]);
 
   useEffect(() => {
@@ -150,8 +163,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
 
   const refreshIfDue = useCallback((reason: Phase0PlaybackReason): void => {
     const current = stateRef.current;
-    const isBusy = current.phase === "loading" || current.phase === "refreshing";
-    if (!current.hasSource || isBusy || !isRefreshDue(current.deadlineMs, Date.now())) return;
+    if (!shouldRefreshOnWake(current, Date.now())) return;
     void fetchPlayback(reason);
   }, [fetchPlayback]);
 
@@ -179,11 +191,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
       if (document.visibilityState === "visible") refreshIfDue("FOREGROUND");
     };
     const onOnline = (): void => {
-      const current = stateRef.current;
-      const canAutoRecover = current.phase === "error"
-        && current.failureKind !== null
-        && !isFatalPlaybackFailure(current.failureKind);
-      if (canAutoRecover && computeRetryAvailableInSec(current, Date.now()) === 0) {
+      if (shouldRetryOnOnline(stateRef.current, Date.now())) {
         dispatchEvent({ type: "MANUAL_RETRY", nowMs: Date.now() });
         void fetchPlayback("MANUAL_RETRY");
         return;
@@ -203,15 +211,16 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
     const element = mediaRef.current;
     if (!element) return undefined;
     const onPlay = (): void => {
-      const current = stateRef.current;
-      if (!current.hasSource || !isTooCloseToExpiryForPlay(current.deadlineMs, Date.now())) return;
+      setPlayHint(null);
+      if (!shouldRefreshBeforePlay(stateRef.current, Date.now())) return;
       element.pause();
       void fetchPlayback("EXPIRED", { resumePlayback: true });
     };
     const onPlaying = (): void => { recoveriesRef.current = 0; };
     const onError = (): void => {
-      if (element.getAttribute("src") === null || stateRef.current.phase === "loading") return;
-      if (recoveriesRef.current < MAX_MEDIA_RECOVERIES_PER_SOURCE) {
+      const action = decideMediaErrorAction(stateRef.current, recoveriesRef.current);
+      if (action === "ignore") return;
+      if (action === "recover") {
         recoveriesRef.current += 1;
         void fetchPlayback("EXPIRED", { resumePlayback: !element.paused });
         return;
@@ -219,6 +228,8 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
       dispatchEvent({ type: "SOURCE_FAILED", nowMs: Date.now() });
     };
     const onTimeUpdate = (): void => {
+      // While a swap is restoring, currentTime is the reset value (0), not the viewer's position.
+      if (appliedRef.current?.isPending()) return;
       for (const listener of timeListenersRef.current) listener(element.currentTime);
     };
     element.addEventListener("play", onPlay);
@@ -250,8 +261,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
   const play = useCallback(async (): Promise<void> => {
     const element = mediaRef.current;
     if (!element) return;
-    const current = stateRef.current;
-    if (current.hasSource && isTooCloseToExpiryForPlay(current.deadlineMs, Date.now())) {
+    if (shouldRefreshBeforePlay(stateRef.current, Date.now())) {
       element.pause();
       await fetchPlayback("EXPIRED", { resumePlayback: true });
       return;
@@ -259,7 +269,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
     try {
       await element.play();
     } catch {
-      // Autoplay or interruption: the viewer can press play again.
+      setPlayHint(PLAY_HINT);
     }
   }, [fetchPlayback]);
 
@@ -280,6 +290,11 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
   }, []);
 
   const failureKind = state.failureKind;
+  const isBlockingError = state.phase === "error" && failureKind !== null;
+  useEffect(() => {
+    // The error overlay covers the native controls: stop audio that may still be playing underneath.
+    if (isBlockingError) mediaRef.current?.pause();
+  }, [isBlockingError]);
   const isErrorVisible = state.phase === "error" && failureKind !== null;
   const canRetry = isErrorVisible && failureKind !== null && !isFatalPlaybackFailure(failureKind);
 
@@ -289,6 +304,7 @@ export function useMediaPlayback(options: UseMediaPlaybackOptions): UseMediaPlay
     hasSource: state.hasSource,
     errorKind: isErrorVisible ? failureKind : null,
     errorMessage: isErrorVisible && failureKind !== null ? getPlaybackFailureMessage(failureKind) : null,
+    playHint,
     canRetry,
     retryAvailableInSec: isErrorVisible ? computeRetryAvailableInSec(state, nowMs) : 0,
     retry,

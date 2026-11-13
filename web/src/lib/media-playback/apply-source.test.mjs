@@ -31,6 +31,17 @@ function createFakeElement(overrides = {}) {
     },
     ...overrides,
   };
+  // Like a real element: assigning src runs the load algorithm and resets position, pause state and rate.
+  let currentSrc = element.src;
+  Object.defineProperty(element, "src", {
+    get: () => currentSrc,
+    set: (value) => {
+      currentSrc = value;
+      element.currentTime = 0;
+      element.paused = true;
+      element.playbackRate = element.defaultPlaybackRate;
+    },
+  });
   return element;
 }
 
@@ -38,7 +49,6 @@ test("restores the position after the new source loads metadata", () => {
   const element = createFakeElement({ currentTime: 125.5 });
 
   applySource(element, { url: "https://new.example/media" });
-  element.currentTime = 0;
   element.emit("loadedmetadata");
 
   assert.equal(element.src, "https://new.example/media");
@@ -123,4 +133,54 @@ test("cancel stops a pending restore", () => {
 
   assert.equal(element.playCalls, 0);
   assert.equal(element.listenerCount("loadedmetadata"), 0);
+});
+
+test("a second swap before metadata keeps the position, rate and play state", () => {
+  const element = createFakeElement({ paused: false, currentTime: 300, playbackRate: 1.5 });
+
+  const first = applySource(element, { url: "https://new1.example/media" });
+  const seed = first.getPendingSnapshot();
+  first.cancel();
+  applySource(element, { url: "https://new2.example/media", seed });
+  element.emit("loadedmetadata");
+
+  assert.equal(element.src, "https://new2.example/media");
+  assert.equal(element.currentTime, 300);
+  assert.equal(element.playbackRate, 1.5);
+  assert.equal(element.playCalls, 1);
+});
+
+test("a first source superseded before metadata still starts at startSec", () => {
+  const element = createFakeElement({ src: "", defaultPlaybackRate: 1 });
+
+  const first = applySource(element, { url: "https://a.example/media", startSec: 120 });
+  const seed = first.getPendingSnapshot();
+  first.cancel();
+  applySource(element, { url: "https://b.example/media", seed, resumePlayback: false });
+  element.emit("loadedmetadata");
+
+  assert.equal(element.currentTime, 120);
+  assert.equal(first.isPending(), false);
+});
+
+test("the pending snapshot disappears once the position is restored", () => {
+  const element = createFakeElement({ currentTime: 9 });
+
+  const handle = applySource(element, { url: "https://new.example/media" });
+  assert.equal(handle.isPending(), true);
+  element.emit("loadedmetadata");
+
+  assert.equal(handle.getPendingSnapshot(), null);
+});
+
+test("reports an autoplay rejection to the caller", async () => {
+  const element = createFakeElement({ paused: false, currentTime: 5 });
+  element.playResult = () => Promise.reject(new DOMException("blocked", "NotAllowedError"));
+  let rejections = 0;
+
+  applySource(element, { url: "https://new.example/media", onPlayRejected: () => { rejections += 1; } });
+  element.emit("loadedmetadata");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(rejections, 1);
 });

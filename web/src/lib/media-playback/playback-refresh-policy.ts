@@ -124,6 +124,34 @@ export function isTooCloseToExpiryForPlay(deadlineMs: number | null, nowMs: numb
   return deadlineMs !== null && deadlineMs - nowMs <= PLAY_GUARD_MS;
 }
 
+/** Wake-ups (tab visible, back online) refresh only a healthy source; retry-wait and error own their timers. */
+export function shouldRefreshOnWake(state: PlaybackState, nowMs: number): boolean {
+  return state.phase === "ready" && state.hasSource && isRefreshDue(state.deadlineMs, nowMs);
+}
+
+/** Play (button or native controls) must refresh first when the URL is about to expire. */
+export function shouldRefreshBeforePlay(state: PlaybackState, nowMs: number): boolean {
+  return state.hasSource && state.phase !== "loading" && isTooCloseToExpiryForPlay(state.deadlineMs, nowMs);
+}
+
+/** Back online: retry a non-fatal error once its cooldown has elapsed. */
+export function shouldRetryOnOnline(state: PlaybackState, nowMs: number): boolean {
+  return state.phase === "error"
+    && state.failureKind !== null
+    && !isFatalPlaybackFailure(state.failureKind)
+    && computeRetryAvailableInSec(state, nowMs) === 0;
+}
+
+export const MAX_MEDIA_RECOVERIES_PER_SOURCE = 1;
+
+export type MediaErrorAction = "ignore" | "recover" | "fail";
+
+/** One automatic URL refresh per failing source, then a visible error; ignored before any source exists. */
+export function decideMediaErrorAction(state: PlaybackState, recoveries: number): MediaErrorAction {
+  if (!state.hasSource || state.phase === "loading") return "ignore";
+  return recoveries < MAX_MEDIA_RECOVERIES_PER_SOURCE ? "recover" : "fail";
+}
+
 /** Milliseconds until the next scheduled refresh: T-15min, but never before a cooldown ends. */
 export function computeScheduledRefreshDelayMs(state: PlaybackState, nowMs: number): number | null {
   if (!state.hasSource || state.deadlineMs === null) return null;
